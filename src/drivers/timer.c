@@ -6,6 +6,7 @@
 #include <kernel/io.h>
 #include <kernel/irq.h>
 #include <kernel/isr.h>
+#include <kernel/task.h>
 #include <lib/klog.h>
 #include <lib/kprintf.h>
 
@@ -37,6 +38,9 @@ static uint32_t active_timer_count = 0;
 static void timer_callback(registers_t *regs) {
     (void)regs;  // 未使用参数
     timer_ticks++;
+
+    // 每次定时器中断时，调用任务调度器
+    task_schedule();
     
     /* 处理定时器回调 */
     for (uint32_t i = 0; i < MAX_TIMER_CALLBACKS; i++) {

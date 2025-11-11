@@ -1,0 +1,379 @@
+// ============================================================================
+// task.c - 任务管理实现
+// ============================================================================
+
+#include <kernel/task.h>
+#include <kernel/gdt.h>
+#include <kernel/panic.h>
+#include <kernel/interrupt.h>
+#include <mm/heap.h>
+#include <mm/pmm.h>
+#include <mm/vmm.h>
+#include <lib/klog.h>
+#include <lib/kprintf.h>
+#include <lib/string.h>
+#include <drivers/timer.h>
+
+/* 任务表（静态分配，支持最多 MAX_TASKS 个任务） */
+static task_t task_table[MAX_TASKS];
+
+/* 当前运行的任务 */
+static task_t *current_task = NULL;
+
+/* 就绪队列头尾指针 */
+static task_t *ready_queue_head = NULL;
+static task_t *ready_queue_tail = NULL;
+
+/* 下一个可用的 PID */
+static uint32_t next_pid = 1;
+
+/* 默认时间片（单位：timer ticks） */
+#define DEFAULT_TIME_SLICE 10  // 假设 100Hz 定时器，10 ticks = 100ms
+
+/**
+ * 分配一个空闲的 PCB
+ */
+task_t *task_alloc(void) {
+    for (uint32_t i = 0; i < MAX_TASKS; i++) {
+        if (task_table[i].state == TASK_UNUSED) {
+            memset(&task_table[i], 0, sizeof(task_t));
+            task_table[i].pid = next_pid++;
+            task_table[i].state = TASK_READY;
+            return &task_table[i];
+        }
+    }
+    return NULL;  // 没有空闲 PCB
+}
+
+/**
+ * 释放 PCB
+ */
+void task_free(task_t *task) {
+    /* 释放内核栈 */
+    if (task->kernel_stack_base != 0) {
+        kfree((void *)task->kernel_stack_base);
+    }
+    
+    /* 标记为未使用 */
+    task->state = TASK_UNUSED;
+}
+
+/**
+ * 将任务添加到就绪队列
+ */
+void ready_queue_add(task_t *task) {
+    task->next = NULL;
+    task->state = TASK_READY;
+    
+    if (ready_queue_tail == NULL) {
+        ready_queue_head = ready_queue_tail = task;
+    } else {
+        ready_queue_tail->next = task;
+        ready_queue_tail = task;
+    }
+}
+
+/**
+ * 从就绪队列移除并返回第一个任务
+ */
+static task_t *ready_queue_remove(void) {
+    if (ready_queue_head == NULL) {
+        return NULL;
+    }
+    
+    task_t *task = ready_queue_head;
+    ready_queue_head = task->next;
+    
+    if (ready_queue_head == NULL) {
+        ready_queue_tail = NULL;
+    }
+    
+    task->next = NULL;
+    return task;
+}
+
+/**
+ * 初始化空闲任务（idle task）
+ * 当没有其他任务运行时，运行此任务
+ */
+static void idle_task_entry(void) {
+    LOG_INFO_MSG("Idle task started (PID 0)\n");
+    
+    while (1) {
+        __asm__ volatile("hlt");  // 等待中断
+    }
+}
+
+/**
+ * 初始化任务管理系统
+ */
+void task_init(void) {
+    LOG_INFO_MSG("Initializing task management...\n");
+    
+    /* 清空任务表 */
+    memset(task_table, 0, sizeof(task_table));
+    for (uint32_t i = 0; i < MAX_TASKS; i++) {
+        task_table[i].state = TASK_UNUSED;
+    }
+    
+    /* 创建空闲任务（PID 0） */
+    next_pid = 0;  // 从 0 开始，第一个任务是 idle
+    task_t *idle_task = task_alloc();
+    if (idle_task == NULL) {
+        PANIC("Failed to create idle task");
+    }
+    
+    strcpy(idle_task->name, "idle");
+    idle_task->priority = 0;  // 最低优先级
+    
+    /* idle 任务使用内核页目录 */
+    idle_task->page_dir = NULL;
+    idle_task->page_dir_phys = vmm_get_page_directory();
+    
+    /* 分配内核栈 */
+    idle_task->kernel_stack_base = (uint32_t)kmalloc(KERNEL_STACK_SIZE);
+    if (idle_task->kernel_stack_base == 0) {
+        PANIC("Failed to allocate kernel stack for idle task");
+    }
+    idle_task->kernel_stack = idle_task->kernel_stack_base + KERNEL_STACK_SIZE;
+    
+    /* 初始化上下文（准备首次运行） */
+    idle_task->context.eip = (uint32_t)idle_task_entry;
+    idle_task->context.esp = idle_task->kernel_stack;
+    idle_task->context.ebp = idle_task->kernel_stack;
+    idle_task->context.eflags = 0x202;  // IF (Interrupt Enable) = 1
+    idle_task->context.cs = GDT_KERNEL_CODE_SEGMENT;
+    idle_task->context.ds = GDT_KERNEL_DATA_SEGMENT;
+    idle_task->context.es = GDT_KERNEL_DATA_SEGMENT;
+    idle_task->context.fs = GDT_KERNEL_DATA_SEGMENT;
+    idle_task->context.gs = GDT_KERNEL_DATA_SEGMENT;
+    idle_task->context.ss = GDT_KERNEL_DATA_SEGMENT;
+    
+    /* 使用内核页目录的物理地址 */
+    idle_task->context.cr3 = idle_task->page_dir_phys;
+    
+    /* 设置为当前任务 */
+    idle_task->state = TASK_RUNNING;
+    current_task = idle_task;
+    
+    LOG_INFO_MSG("Task management initialized\n");
+    LOG_DEBUG_MSG("  Idle task created (PID %u)\n", idle_task->pid);
+    LOG_DEBUG_MSG("  Max tasks: %u\n", MAX_TASKS);
+    LOG_DEBUG_MSG("  Default time slice: %u ticks\n", DEFAULT_TIME_SLICE);
+}
+
+/**
+ * 创建内核线程
+ */
+uint32_t task_create_kernel_thread(void (*entry)(void), const char *name) {
+    /* 分配 PCB */
+    task_t *task = task_alloc();
+    if (task == NULL) {
+        LOG_ERROR_MSG("Failed to allocate PCB for %s\n", name);
+        return 0;
+    }
+    
+    /* 设置任务名称 */
+    strncpy(task->name, name, sizeof(task->name) - 1);
+    task->name[sizeof(task->name) - 1] = '\0';
+    
+    /* 内核线程共享内核页目录 */
+    task->page_dir = NULL;
+    task->page_dir_phys = vmm_get_page_directory();
+    
+    /* 分配内核栈 */
+    task->kernel_stack_base = (uint32_t)kmalloc(KERNEL_STACK_SIZE);
+    if (task->kernel_stack_base == 0) {
+        LOG_ERROR_MSG("Failed to allocate kernel stack for %s\n", name);
+        task_free(task);
+        return 0;
+    }
+    task->kernel_stack = task->kernel_stack_base + KERNEL_STACK_SIZE;
+    
+    /* 初始化上下文 */
+    task->context.eip = (uint32_t)entry;
+    task->context.esp = task->kernel_stack;
+    task->context.ebp = task->kernel_stack;
+    task->context.eflags = 0x202;  // IF = 1
+    task->context.cs = GDT_KERNEL_CODE_SEGMENT;
+    task->context.ds = GDT_KERNEL_DATA_SEGMENT;
+    task->context.es = GDT_KERNEL_DATA_SEGMENT;
+    task->context.fs = GDT_KERNEL_DATA_SEGMENT;
+    task->context.gs = GDT_KERNEL_DATA_SEGMENT;
+    task->context.ss = GDT_KERNEL_DATA_SEGMENT;
+    
+    /* 使用内核页目录的物理地址（内核线程共享） */
+    task->context.cr3 = task->page_dir_phys;
+    
+    /* 设置优先级和时间片 */
+    task->priority = 128;  // 默认优先级
+    task->time_slice = DEFAULT_TIME_SLICE;
+    
+    /* 添加到就绪队列 */
+    ready_queue_add(task);
+    
+    LOG_DEBUG_MSG("Created kernel thread: %s (PID %u)\n", name, task->pid);
+    
+    return task->pid;
+}
+
+/**
+ * 获取当前任务
+ */
+task_t *task_get_current(void) {
+    return current_task;
+}
+
+/**
+ * 根据 PID 获取任务
+ */
+task_t *task_get_by_pid(uint32_t pid) {
+    for (uint32_t i = 0; i < MAX_TASKS; i++) {
+        if (task_table[i].state != TASK_UNUSED && task_table[i].pid == pid) {
+            return &task_table[i];
+        }
+    }
+    return NULL;
+}
+
+/**
+ * 调度器（选择下一个任务）
+ */
+void task_schedule(void) {
+    if (current_task == NULL) {
+        return;  // 还未初始化
+    }
+    
+    /* 如果当前任务仍然可运行，放回就绪队列 */
+    if (current_task->state == TASK_RUNNING) {
+        current_task->time_slice = DEFAULT_TIME_SLICE;  // 重置时间片
+        ready_queue_add(current_task);
+    } else if (current_task->state == TASK_TERMINATED) {
+        /* 回收已终止任务的资源 */
+        LOG_DEBUG_MSG("Reaping terminated task %s (PID %u)\n", 
+                     current_task->name, current_task->pid);
+        task_free(current_task);
+    }
+    
+    /* 从就绪队列获取下一个任务 */
+    task_t *next_task = ready_queue_remove();
+    
+    /* 如果没有就绪任务，运行 idle */
+    if (next_task == NULL) {
+        next_task = &task_table[0];  // idle task (PID 0)
+    }
+    
+    /* 如果下一个任务就是当前任务，直接返回 */
+    if (next_task == current_task) {
+        next_task->state = TASK_RUNNING;
+        return;
+    }
+    
+    /* 保存当前任务指针 */
+    task_t *prev_task = current_task;
+    
+    /* 切换当前任务 */
+    current_task = next_task;
+    next_task->state = TASK_RUNNING;
+    
+    /* 切换页目录（如果不同）*/
+    if (prev_task->page_dir_phys != next_task->page_dir_phys) {
+        vmm_switch_page_directory(next_task->page_dir_phys);
+    }
+    
+    /* 执行上下文切换（汇编实现） */
+    task_switch(prev_task, next_task);
+}
+
+/**
+ * 主动让出 CPU
+ */
+void task_yield(void) {
+    bool prev_state = interrupts_disable();
+    task_schedule();
+    interrupts_restore(prev_state);
+}
+
+/**
+ * 退出当前任务
+ */
+void task_exit(uint32_t exit_code) {
+    bool prev_state = interrupts_disable();
+    
+    current_task->state = TASK_TERMINATED;
+    current_task->exit_code = exit_code;
+    
+    LOG_DEBUG_MSG("Task %s (PID %u) exited with code %u\n", 
+                 current_task->name, current_task->pid, exit_code);
+    
+    /* 调度到下一个任务 */
+    task_schedule();
+    
+    /* 永远不会执行到这里 */
+    interrupts_restore(prev_state);
+    while (1) {
+        __asm__ volatile("hlt");
+    }
+}
+
+/**
+ * 睡眠（简单实现：忙等待）
+ */
+void task_sleep(uint32_t ms) {
+    uint64_t target = timer_get_uptime_ms() + ms;
+    while (timer_get_uptime_ms() < target) {
+        task_yield();
+    }
+}
+
+/**
+ * 阻塞当前任务
+ */
+void task_block(void *channel) {
+    bool prev_state = interrupts_disable();
+    
+    current_task->state = TASK_BLOCKED;
+    current_task->wait_channel = channel;
+    
+    task_schedule();
+    
+    interrupts_restore(prev_state);
+}
+
+/**
+ * 唤醒等待特定通道的所有任务
+ */
+void task_wakeup(void *channel) {
+    bool prev_state = interrupts_disable();
+    
+    for (uint32_t i = 0; i < MAX_TASKS; i++) {
+        if (task_table[i].state == TASK_BLOCKED && 
+            task_table[i].wait_channel == channel) {
+            task_table[i].wait_channel = NULL;
+            ready_queue_add(&task_table[i]);
+        }
+    }
+    
+    interrupts_restore(prev_state);
+}
+
+/**
+ * 定时器回调（由 PIT 中断调用）
+ */
+void task_timer_tick(void) {
+    if (current_task == NULL) {
+        return;
+    }
+    
+    current_task->total_runtime++;
+    
+    /* 减少时间片 */
+    if (current_task->time_slice > 0) {
+        current_task->time_slice--;
+    }
+    
+    /* 时间片用完，触发调度 */
+    if (current_task->time_slice == 0) {
+        task_schedule();
+    }
+}
