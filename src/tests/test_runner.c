@@ -11,6 +11,9 @@
 #include <tests/string_test.h>
 #include <tests/kprintf_test.h>
 #include <tests/klog_test.h>
+#include <tests/pmm_test.h>
+#include <tests/vmm_test.h>
+#include <tests/heap_test.h>
 #include <lib/kprintf.h>
 #include <drivers/vga.h>
 
@@ -44,6 +47,11 @@ static const test_entry_t test_suite[] = {
     // 输出系统测试
     TEST_ENTRY("kprintf Module Tests", run_kprintf_tests),
     TEST_ENTRY("klog Module Tests", run_klog_tests),
+    
+    // 内存管理测试
+    TEST_ENTRY("Physical Memory Manager Tests", run_pmm_tests),
+    TEST_ENTRY("Virtual Memory Manager Tests", run_vmm_tests),
+    TEST_ENTRY("Heap Allocator Tests", run_heap_tests),
     
     // ========== 在下方添加新的测试 ==========
     // TEST_ENTRY("New Test Module", run_new_tests),

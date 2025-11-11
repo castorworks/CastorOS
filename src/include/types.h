@@ -27,4 +27,14 @@ typedef unsigned char bool;
 #define NULL ((void *)0)
 #endif
 
+#define PAGE_SIZE           4096
+#define PAGE_SHIFT          12
+#define PAGE_MASK           0xFFFFF000
+#define KERNEL_VIRTUAL_BASE 0x80000000
+
+#define VIRT_TO_PHYS(addr)  ((uint32_t)(addr) - KERNEL_VIRTUAL_BASE)
+#define PHYS_TO_VIRT(addr)  ((uint32_t)(addr) + KERNEL_VIRTUAL_BASE)
+#define PAGE_ALIGN_DOWN(addr) ((addr) & PAGE_MASK)
+#define PAGE_ALIGN_UP(addr)   (((addr) + PAGE_SIZE - 1) & PAGE_MASK)
+
 #endif // _TYPES_H_
