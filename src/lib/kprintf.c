@@ -41,13 +41,13 @@ static int str_len(const char *str) {
 /**
  * 打印格式化的字符串（带宽度和填充）
  */
-static void print_formatted(const char *str, int width, bool zero_pad, bool is_hex) {
+static void print_formatted(const char *str, int width, bool zero_pad, bool left_align, bool is_hex) {
     int len = str_len(str);
     int pad_count = width > len ? width - len : 0;
     
     // 对于十六进制数，先输出 "0x" 前缀，然后零填充
     bool has_hex_prefix = (is_hex && len >= 2 && str[0] == '0' && str[1] == 'x');
-    if (has_hex_prefix && zero_pad && width > 0) {
+    if (has_hex_prefix && zero_pad && width > 0 && !left_align) {
         kputchar('0');
         kputchar('x');
         str += 2;
@@ -58,56 +58,62 @@ static void print_formatted(const char *str, int width, bool zero_pad, bool is_h
     
     // 对于负数，先输出负号，然后零填充
     bool has_minus = (str[0] == '-');
-    if (has_minus && zero_pad) {
+    if (has_minus && zero_pad && !left_align) {
         kputchar('-');
         str++;
         len--;
     }
     
-    // 输出填充字符
-    char pad_char = zero_pad ? '0' : ' ';
-    for (int i = 0; i < pad_count; i++) {
-        kputchar(pad_char);
+    // 左对齐：先输出内容，再填充空格
+    if (left_align) {
+        print_string(str);
+        for (int i = 0; i < pad_count; i++) {
+            kputchar(' ');
+        }
+    } else {
+        // 右对齐：先填充，再输出内容
+        char pad_char = zero_pad ? '0' : ' ';
+        for (int i = 0; i < pad_count; i++) {
+            kputchar(pad_char);
+        }
+        print_string(str);
     }
-    
-    // 输出实际内容
-    print_string(str);
 }
 
 /**
  * 打印整数（内部辅助函数）
  */
-static void print_int(int32_t value, int width, bool zero_pad) {
+static void print_int(int32_t value, int width, bool zero_pad, bool left_align) {
     char buffer[12];
     int32_to_str(value, buffer);
-    print_formatted(buffer, width, zero_pad, false);
+    print_formatted(buffer, width, zero_pad, left_align, false);
 }
 
 /**
  * 打印无符号整数（内部辅助函数）
  */
-static void print_uint(uint32_t value, int width, bool zero_pad) {
+static void print_uint(uint32_t value, int width, bool zero_pad, bool left_align) {
     char buffer[12];
     uint32_to_str(value, buffer);
-    print_formatted(buffer, width, zero_pad, false);
+    print_formatted(buffer, width, zero_pad, left_align, false);
 }
 
 /**
  * 打印 64 位整数（内部辅助函数）
  */
-static void print_int64(int64_t value, int width, bool zero_pad) {
+static void print_int64(int64_t value, int width, bool zero_pad, bool left_align) {
     char buffer[21];
     int64_to_str(value, buffer);
-    print_formatted(buffer, width, zero_pad, false);
+    print_formatted(buffer, width, zero_pad, left_align, false);
 }
 
 /**
  * 打印 64 位无符号整数（内部辅助函数）
  */
-static void print_uint64(uint64_t value, int width, bool zero_pad) {
+static void print_uint64(uint64_t value, int width, bool zero_pad, bool left_align) {
     char buffer[21];
     uint64_to_str(value, buffer);
-    print_formatted(buffer, width, zero_pad, false);
+    print_formatted(buffer, width, zero_pad, left_align, false);
 }
 
 /**
@@ -205,15 +211,24 @@ void vkprintf(const char *fmt, va_list args) {
         if (*fmt == '%') {
             fmt++;
             
-            // 解析宽度和零填充
+            // 解析标志位：左对齐、零填充
+            bool left_align = false;
             bool zero_pad = false;
             int width = 0;
             
-            if (*fmt == '0') {
+            // 检查左对齐标志
+            if (*fmt == '-') {
+                left_align = true;
+                fmt++;
+            }
+            
+            // 检查零填充标志（左对齐时忽略零填充）
+            if (*fmt == '0' && !left_align) {
                 zero_pad = true;
                 fmt++;
             }
             
+            // 解析宽度
             while (*fmt >= '0' && *fmt <= '9') {
                 width = width * 10 + (*fmt - '0');
                 fmt++;
@@ -233,10 +248,9 @@ void vkprintf(const char *fmt, va_list args) {
                 case 's': {  // 字符串
                     const char *s = va_arg(args, const char *);
                     if (!s) {
-                        print_string("(null)");
-                    } else {
-                        print_string(s);
+                        s = "(null)";
                     }
+                    print_formatted(s, width, false, left_align, false);
                     break;
                 }
                 case 'c': {  // 字符
@@ -247,20 +261,20 @@ void vkprintf(const char *fmt, va_list args) {
                 case 'd': {  // 有符号十进制整数
                     if (is_long_long) {
                         int64_t val = va_arg(args, int64_t);
-                        print_int64(val, width, zero_pad);
+                        print_int64(val, width, zero_pad, left_align);
                     } else {
                         int val = va_arg(args, int);
-                        print_int(val, width, zero_pad);
+                        print_int(val, width, zero_pad, left_align);
                     }
                     break;
                 }
                 case 'u': {  // 无符号十进制整数
                     if (is_long_long) {
                         uint64_t val = va_arg(args, uint64_t);
-                        print_uint64(val, width, zero_pad);
+                        print_uint64(val, width, zero_pad, left_align);
                     } else {
                         uint32_t val = va_arg(args, uint32_t);
-                        print_uint(val, width, zero_pad);
+                        print_uint(val, width, zero_pad, left_align);
                     }
                     break;
                 }

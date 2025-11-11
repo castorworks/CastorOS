@@ -18,6 +18,7 @@
 #include <kernel/irq.h>
 #include <kernel/isr.h>
 #include <kernel/task.h>
+#include <kernel/kernel_shell.h>
 
 #include <mm/pmm.h>
 #include <mm/vmm.h>
@@ -25,8 +26,7 @@
 
 #include <tests/test_runner.h>
 
-void test_task1(void);
-void test_task2(void);
+void kernel_task_test1();
 
 // 内核主函数
 void kernel_main(multiboot_info_t* mbi) {
@@ -147,6 +147,8 @@ void kernel_main(multiboot_info_t* mbi) {
     task_init();
     LOG_DEBUG_MSG("  [5.1] Task management initialized\n");
 
+    task_create_kernel_thread(kernel_task_test1, "kernel_task_test1");
+
     // ========================================================================
     // 单元测试
     // ========================================================================
@@ -154,46 +156,37 @@ void kernel_main(multiboot_info_t* mbi) {
     run_all_tests();
     kprintf("\n");
 
-    /* 创建测试任务 */
-    LOG_INFO_MSG("Creating test tasks...\n");
-    task_create_kernel_thread(test_task1, "test1");
-    task_create_kernel_thread(test_task2, "test2");
+    // ========================================================================
+    // 阶段 6: 内核 Shell（Kernel Shell）
+    // ========================================================================
+    LOG_INFO_MSG("[Stage 6] Starting kernel shell...\n");
     
-    /* 进入空闲循环（idle task 会自动运行） */
-    LOG_INFO_MSG("Kernel initialization complete\n");
-    LOG_INFO_MSG("Entering scheduler...\n\n");
+    // 初始化 Shell
+    kernel_shell_init();
+    LOG_DEBUG_MSG("  [6.1] Kernel shell initialized\n");
     
-    // 主动调度（切换到第一个就绪任务）
-    task_schedule();
+    /* 内核初始化完成 */
+    LOG_INFO_MSG("Kernel initialization complete\n\n");
     
-    // 进入空闲循环
+    // 进入 Shell 主循环（该函数会阻塞，直到用户输入 "exit"）
+    kernel_shell_run();
+    
+    // Shell 退出后进入空闲循环
+    LOG_INFO_MSG("\nShell exited, entering idle loop...\n");
     while (1) {
         __asm__ volatile ("hlt");
     }
 }
 
-/* 测试任务 1 */
-void test_task1(void) {
-    LOG_INFO_MSG("Test task 1 started (PID %u)\n", task_get_current()->pid);
+void kernel_task_test1() {
+    LOG_INFO_MSG("Kernel task 1 started (PID %u)\n", task_get_current()->pid);
     
-    for (int i = 0; i < 10; i++) {
-        kprintf("[Task 1] Hello %d\n", i);
+    for (;;) {
         task_sleep(500);  // 睡眠 500ms
+        LOG_INFO_MSG("Kernel task 1 running (PID %u)\n", task_get_current()->pid);
     }
     
-    LOG_INFO_MSG("Test task 1 exiting\n");
-    task_exit(0);
-}
-
-/* 测试任务 2 */
-void test_task2(void) {
-    LOG_INFO_MSG("Test task 2 started (PID %u)\n", task_get_current()->pid);
-    
-    for (int i = 0; i < 10; i++) {
-        kprintf("[Task 2] World %d\n", i);
-        task_sleep(700);  // 睡眠 700ms
-    }
-    
-    LOG_INFO_MSG("Test task 2 exiting\n");
+    // never reach here
+    LOG_INFO_MSG("Kernel task 1 exiting\n");
     task_exit(0);
 }
