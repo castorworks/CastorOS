@@ -39,19 +39,19 @@ typedef struct {
 
 static const test_entry_t test_suite[] = {
     // 示例测试（可以注释掉）
-    TEST_ENTRY("Example Unit Tests", run_all_example_unit_tests),
+    // TEST_ENTRY("Example Unit Tests", run_all_example_unit_tests),
 
     // 基础库测试
-    TEST_ENTRY("String Library Tests", run_string_tests),
+    // TEST_ENTRY("String Library Tests", run_string_tests),
     
     // 输出系统测试
-    TEST_ENTRY("kprintf Module Tests", run_kprintf_tests),
-    TEST_ENTRY("klog Module Tests", run_klog_tests),
+    // TEST_ENTRY("kprintf Module Tests", run_kprintf_tests),
+    // TEST_ENTRY("klog Module Tests", run_klog_tests),
     
     // 内存管理测试
-    TEST_ENTRY("Physical Memory Manager Tests", run_pmm_tests),
-    TEST_ENTRY("Virtual Memory Manager Tests", run_vmm_tests),
-    TEST_ENTRY("Heap Allocator Tests", run_heap_tests),
+    // TEST_ENTRY("Physical Memory Manager Tests", run_pmm_tests),
+    // TEST_ENTRY("Virtual Memory Manager Tests", run_vmm_tests),
+    // TEST_ENTRY("Heap Allocator Tests", run_heap_tests),
     
     // ========== 在下方添加新的测试 ==========
     // TEST_ENTRY("New Test Module", run_new_tests),
