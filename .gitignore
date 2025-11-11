@@ -1,0 +1,21 @@
+# 构建输出
+build/
+*.bin
+*.iso
+*.o
+*.elf
+
+# 编辑器和 IDE
+.idea/
+*.swp
+*.swo
+*~
+compile_commands.json
+.clangd/
+
+# 调试文件
+*.log
+
+# OS 特定文件
+.DS_Store
+Thumbs.db

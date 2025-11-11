@@ -2,6 +2,10 @@
 
 > CastorOS is an operating system designed for learning and fun.
 
+## 当前进展
+
++ [x] [开发环境搭建](./docs/00-environment.md)
+
 ## Git 提交格式
 
 + `feat` 添加了新特性
@@ -17,4 +21,3 @@
 + `ci` 持续集成
 + `types` 类型定义
 + `wip` 开发中
-
