@@ -9,6 +9,7 @@
 + [x] [基础设施](./docs/02-infrastructure.md)
 + [x] [内存管理](./docs/03-mm.md)
 + [x] [补充驱动](./docs/04-drivers.md)
++ [x] [任务管理](./docs/05-task.md)
 
 ## Git 提交格式
 

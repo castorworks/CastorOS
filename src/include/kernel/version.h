@@ -1,6 +1,6 @@
 #ifndef _KERNEL_VERSION_H_
 #define _KERNEL_VERSION_H_
 
-#define KERNEL_VERSION "0.0.4"
+#define KERNEL_VERSION "0.0.5"
 
 #endif // _KERNEL_VERSION_H_
