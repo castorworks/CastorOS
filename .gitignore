@@ -19,3 +19,7 @@ compile_commands.json
 # OS 特定文件
 .DS_Store
 Thumbs.db
+
+# 临时目录
+tmp/
+mnt/
