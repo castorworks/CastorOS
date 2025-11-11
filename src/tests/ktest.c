@@ -1,0 +1,346 @@
+// ============================================================================
+// ktest.c - 单元测试框架实现
+// ============================================================================
+
+#include <tests/ktest.h>
+#include <lib/kprintf.h>
+#include <lib/string.h>
+#include <drivers/vga.h>
+
+// 全局测试上下文
+static test_context_t g_test_ctx;
+
+// ============================================================================
+// 辅助函数：彩色输出
+// ============================================================================
+
+static void print_pass(const char* msg) {
+    vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    kprintf("%s", msg);
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+}
+
+static void print_fail(const char* msg) {
+    vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+    kprintf("%s", msg);
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+}
+
+static void print_info(const char* msg) {
+    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    kprintf("%s", msg);
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+}
+
+// ============================================================================
+// 核心函数实现
+// ============================================================================
+
+void unittest_init(void) {
+    g_test_ctx.current_test_name = NULL;
+    g_test_ctx.current_suite_name = NULL;
+    g_test_ctx.test_failed = false;
+    g_test_ctx.stats.total = 0;
+    g_test_ctx.stats.passed = 0;
+    g_test_ctx.stats.failed = 0;
+    g_test_ctx.stats.assertions = 0;
+}
+
+void unittest_begin_suite(const char* suite_name) {
+    g_test_ctx.current_suite_name = suite_name;
+    kprintf("\n");
+    print_info("================================================================================\n");
+    print_info("Test Suite: ");
+    kprintf("%s\n", suite_name);
+    print_info("================================================================================\n");
+}
+
+void unittest_end_suite(void) {
+    g_test_ctx.current_suite_name = NULL;
+}
+
+void unittest_run_test(const char* test_name, test_func_t test_func) {
+    g_test_ctx.current_test_name = test_name;
+    g_test_ctx.test_failed = false;
+    g_test_ctx.stats.total++;
+    
+    kprintf("  [ RUN  ] %s\n", test_name);
+    
+    // 运行测试
+    test_func();
+    
+    // 检查结果
+    if (!g_test_ctx.test_failed) {
+        g_test_ctx.stats.passed++;
+        kprintf("  ");
+        print_pass("[  OK  ]");
+        kprintf(" %s\n", test_name);
+    } else {
+        g_test_ctx.stats.failed++;
+        kprintf("  ");
+        print_fail("[ FAIL ]");
+        kprintf(" %s\n", test_name);
+    }
+    
+    g_test_ctx.current_test_name = NULL;
+}
+
+void unittest_print_summary(void) {
+    kprintf("\n");
+    print_info("================================================================================\n");
+    print_info("Test Summary\n");
+    print_info("================================================================================\n");
+    
+    kprintf("Total tests:      %u\n", g_test_ctx.stats.total);
+    
+    if (g_test_ctx.stats.passed > 0) {
+        kprintf("Passed tests:     ");
+        vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        kprintf("%u", g_test_ctx.stats.passed);
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        kprintf("\n");
+    }
+    
+    if (g_test_ctx.stats.failed > 0) {
+        kprintf("Failed tests:     ");
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("%u", g_test_ctx.stats.failed);
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        kprintf("\n");
+    }
+    
+    kprintf("Total assertions: %u\n", g_test_ctx.stats.assertions);
+    
+    kprintf("\nResult: ");
+    if (g_test_ctx.stats.failed == 0) {
+        vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        kprintf("ALL TESTS PASSED");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        kprintf("\n");
+    } else {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("SOME TESTS FAILED");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        kprintf("\n");
+    }
+    print_info("================================================================================\n\n");
+}
+
+test_stats_t unittest_get_stats(void) {
+    return g_test_ctx.stats;
+}
+
+// ============================================================================
+// 断言函数实现
+// ============================================================================
+
+void _assert_true(bool condition, const char* expr, 
+                  const char* file, int line) {
+    g_test_ctx.stats.assertions++;
+    
+    if (!condition) {
+        g_test_ctx.test_failed = true;
+        kprintf("    ");
+        print_fail("Assertion failed: ");
+        kprintf("%s\n", expr);
+        kprintf("    Expected: true\n");
+        kprintf("    Actual:   false\n");
+        kprintf("    Location: %s:%d\n", file, line);
+    }
+}
+
+void _assert_false(bool condition, const char* expr,
+                   const char* file, int line) {
+    g_test_ctx.stats.assertions++;
+    
+    if (condition) {
+        g_test_ctx.test_failed = true;
+        kprintf("    ");
+        print_fail("Assertion failed: ");
+        kprintf("%s\n", expr);
+        kprintf("    Expected: false\n");
+        kprintf("    Actual:   true\n");
+        kprintf("    Location: %s:%d\n", file, line);
+    }
+}
+
+void _assert_eq_int(int32_t expected, int32_t actual,
+                    const char* file, int line) {
+    g_test_ctx.stats.assertions++;
+    
+    if (expected != actual) {
+        g_test_ctx.test_failed = true;
+        kprintf("    ");
+        print_fail("Assertion failed: ");
+        kprintf("expected == actual\n");
+        kprintf("    Expected: %d\n", expected);
+        kprintf("    Actual:   %d\n", actual);
+        kprintf("    Location: %s:%d\n", file, line);
+    }
+}
+
+void _assert_ne_int(int32_t expected, int32_t actual,
+                    const char* file, int line) {
+    g_test_ctx.stats.assertions++;
+    
+    if (expected == actual) {
+        g_test_ctx.test_failed = true;
+        kprintf("    ");
+        print_fail("Assertion failed: ");
+        kprintf("expected != actual\n");
+        kprintf("    Expected not: %d\n", expected);
+        kprintf("    Actual:       %d\n", actual);
+        kprintf("    Location:     %s:%d\n", file, line);
+    }
+}
+
+void _assert_eq_uint(uint32_t expected, uint32_t actual,
+                     const char* file, int line) {
+    g_test_ctx.stats.assertions++;
+    
+    if (expected != actual) {
+        g_test_ctx.test_failed = true;
+        kprintf("    ");
+        print_fail("Assertion failed: ");
+        kprintf("expected == actual\n");
+        kprintf("    Expected: %u (%x)\n", expected, expected);
+        kprintf("    Actual:   %u (%x)\n", actual, actual);
+        kprintf("    Location: %s:%d\n", file, line);
+    }
+}
+
+void _assert_ne_uint(uint32_t expected, uint32_t actual,
+                     const char* file, int line) {
+    g_test_ctx.stats.assertions++;
+    
+    if (expected == actual) {
+        g_test_ctx.test_failed = true;
+        kprintf("    ");
+        print_fail("Assertion failed: ");
+        kprintf("expected != actual\n");
+        kprintf("    Expected not: %u (%x)\n", expected, expected);
+        kprintf("    Actual:       %u (%x)\n", actual, actual);
+        kprintf("    Location:     %s:%d\n", file, line);
+    }
+}
+
+void _assert_eq_ptr(void* expected, void* actual,
+                    const char* file, int line) {
+    g_test_ctx.stats.assertions++;
+    
+    if (expected != actual) {
+        g_test_ctx.test_failed = true;
+        kprintf("    ");
+        print_fail("Assertion failed: ");
+        kprintf("expected == actual\n");
+        kprintf("    Expected: %p\n", expected);
+        kprintf("    Actual:   %p\n", actual);
+        kprintf("    Location: %s:%d\n", file, line);
+    }
+}
+
+void _assert_ne_ptr(void* expected, void* actual,
+                    const char* file, int line) {
+    g_test_ctx.stats.assertions++;
+    
+    if (expected == actual) {
+        g_test_ctx.test_failed = true;
+        kprintf("    ");
+        print_fail("Assertion failed: ");
+        kprintf("expected != actual\n");
+        kprintf("    Expected not: %p\n", expected);
+        kprintf("    Actual:       %p\n", actual);
+        kprintf("    Location:     %s:%d\n", file, line);
+    }
+}
+
+void _assert_null(void* ptr, const char* file, int line) {
+    g_test_ctx.stats.assertions++;
+    
+    if (ptr != NULL) {
+        g_test_ctx.test_failed = true;
+        kprintf("    ");
+        print_fail("Assertion failed: ");
+        kprintf("ptr == NULL\n");
+        kprintf("    Expected: NULL\n");
+        kprintf("    Actual:   %p\n", ptr);
+        kprintf("    Location: %s:%d\n", file, line);
+    }
+}
+
+void _assert_not_null(void* ptr, const char* file, int line) {
+    g_test_ctx.stats.assertions++;
+    
+    if (ptr == NULL) {
+        g_test_ctx.test_failed = true;
+        kprintf("    ");
+        print_fail("Assertion failed: ");
+        kprintf("ptr != NULL\n");
+        kprintf("    Expected: not NULL\n");
+        kprintf("    Actual:   NULL\n");
+        kprintf("    Location: %s:%d\n", file, line);
+    }
+}
+
+void _assert_eq_str(const char* expected, const char* actual,
+                    const char* file, int line) {
+    g_test_ctx.stats.assertions++;
+    
+    // 处理 NULL 指针
+    if (expected == NULL && actual == NULL) {
+        return;
+    }
+    
+    if (expected == NULL || actual == NULL) {
+        g_test_ctx.test_failed = true;
+        kprintf("    ");
+        print_fail("Assertion failed: ");
+        kprintf("expected == actual\n");
+        kprintf("    Expected: %s\n", expected ? expected : "(null)");
+        kprintf("    Actual:   %s\n", actual ? actual : "(null)");
+        kprintf("    Location: %s:%d\n", file, line);
+        return;
+    }
+    
+    if (strcmp(expected, actual) != 0) {
+        g_test_ctx.test_failed = true;
+        kprintf("    ");
+        print_fail("Assertion failed: ");
+        kprintf("expected == actual\n");
+        kprintf("    Expected: \"%s\"\n", expected);
+        kprintf("    Actual:   \"%s\"\n", actual);
+        kprintf("    Location: %s:%d\n", file, line);
+    }
+}
+
+void _assert_ne_str(const char* expected, const char* actual,
+                    const char* file, int line) {
+    g_test_ctx.stats.assertions++;
+    
+    // 处理 NULL 指针
+    if ((expected == NULL && actual != NULL) || 
+        (expected != NULL && actual == NULL)) {
+        return;
+    }
+    
+    if (expected == NULL && actual == NULL) {
+        g_test_ctx.test_failed = true;
+        kprintf("    ");
+        print_fail("Assertion failed: ");
+        kprintf("expected != actual\n");
+        kprintf("    Both are NULL\n");
+        kprintf("    Location: %s:%d\n", file, line);
+        return;
+    }
+    
+    if (strcmp(expected, actual) == 0) {
+        g_test_ctx.test_failed = true;
+        kprintf("    ");
+        print_fail("Assertion failed: ");
+        kprintf("expected != actual\n");
+        kprintf("    Expected not: \"%s\"\n", expected);
+        kprintf("    Actual:       \"%s\"\n", actual);
+        kprintf("    Location:     %s:%d\n", file, line);
+    }
+}
+

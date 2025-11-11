@@ -57,4 +57,10 @@ void vga_putchar(char c);
  */
 void vga_set_color(vga_color_t fg, vga_color_t bg);
 
+/**
+ * 获取当前颜色属性
+ * @return 当前的颜色属性字节
+ */
+uint8_t vga_get_color(void);
+
 #endif /* _DRIVERS_VGA_H_ */

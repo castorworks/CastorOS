@@ -105,15 +105,30 @@ void vga_clear(void) {
 
 void vga_putchar(char c) {
     if (c == '\n') {
+        // 换行符：移到下一行行首
         vga_newline();
-    } else {
-        vga_putentry_at(c, vga_color, vga_col, vga_row);
-        vga_col++;
-        
-        // 到达行末自动换行
+    } else if (c == '\r') {
+        // 回车符：光标移到行首
+        vga_col = 0;
+    } else if (c == '\t') {
+        // 制表符：移到下一个 4 字符对齐位置
+        vga_col = (vga_col + 4) & ~3;
         if (vga_col >= VGA_WIDTH) {
             vga_newline();
         }
+    } else if (c == '\b') {
+        // 退格符：光标向左移动一格（不删除字符）
+        if (vga_col > 0) {
+            vga_col--;
+        }
+    } else {
+        // 如果当前行已满，先换行再输出字符
+        if (vga_col >= VGA_WIDTH) {
+            vga_newline();
+        }
+        
+        vga_putentry_at(c, vga_color, vga_col, vga_row);
+        vga_col++;
     }
     
     vga_update_cursor();
@@ -127,4 +142,8 @@ void vga_print(const char *msg) {
 
 void vga_set_color(vga_color_t fg, vga_color_t bg) {
     vga_color = vga_make_color(fg, bg);
+}
+
+uint8_t vga_get_color(void) {
+    return vga_color;
 }

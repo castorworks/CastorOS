@@ -7,6 +7,10 @@
 #include <kernel/multiboot.h>
 #include <kernel/version.h>
 
+#include <lib/klog.h>
+
+#include <tests/test_runner.h>
+
 // 内核主函数
 void kernel_main(multiboot_info_t* mbi) {
     // ========================================================================
@@ -27,6 +31,14 @@ void kernel_main(multiboot_info_t* mbi) {
     serial_print("Hello CastorOS!\n");
     vga_print("Version: "KERNEL_VERSION"\n");
     serial_print("Version: "KERNEL_VERSION"\n");
+
+
+    // ========================================================================
+    // 单元测试
+    // ========================================================================
+    LOG_INFO_MSG("Running test suite...\n");
+    run_all_tests();
+    kprintf("\n");
     
     // 进入空闲循环
     while (1) {
