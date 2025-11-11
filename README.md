@@ -5,6 +5,8 @@
 ## 当前进展
 
 + [x] [开发环境搭建](./docs/00-environment.md)
++ [x] [系统引导](./docs/01-boot.md)
++ [x] [基础设施](./docs/02-infrastructure.md)
 
 ## Git 提交格式
 
