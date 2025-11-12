@@ -54,6 +54,7 @@ typedef struct task {
     uint32_t priority;            // 优先级（0-255，数字越大优先级越高）
     uint32_t time_slice;          // 时间片（剩余 ticks）
     uint64_t total_runtime;       // 总运行时间（ticks）
+    uint64_t last_scheduled_tick; // 上次被调度的时间戳（ticks）
     
     struct task *next;            // 链表指针（用于就绪队列等）
     struct task *parent;          // 父进程

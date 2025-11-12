@@ -6,6 +6,7 @@
 #include <kernel/io.h>
 #include <kernel/irq.h>
 #include <kernel/isr.h>
+#include <kernel/task.h>
 #include <lib/klog.h>
 #include <lib/string.h>
 
@@ -304,7 +305,9 @@ bool keyboard_has_key(void) {
 char keyboard_getchar(void) {
     char c;
     while (!buffer_get(&c)) {
-        __asm__ volatile("hlt");  // 等待中断
+        // 在多任务环境下，使用 task_yield() 让出 CPU
+        // 这样其他任务可以继续运行，而不是使用 hlt 阻塞整个 CPU
+        task_yield();
     }
     return c;
 }

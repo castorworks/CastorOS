@@ -119,19 +119,18 @@ void kernel_shell_init(void) {
 static void shell_print_welcome(void) {
     vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     kprintf("================================================================================\n");
-    kprintf("   _____          _             ___  ____  \n");
-    kprintf("  / ____|        | |           / _ \\/ ___| \n");
-    kprintf(" | |     __ _ ___| |_ ___  _ _| | | \\___ \\ \n");
-    kprintf(" | |    / _` / __| __/ _ \\| '__| | | |___) |\n");
-    kprintf(" | |___| (_| \\__ \\ || (_) | |  | |_| |____/ \n");
-    kprintf("  \\_____\\__,_|___/\\__\\___/|_|   \\___/|_____/ \n");
+    kprintf("     ____          _              ___  ____\n");
+    kprintf("    / ___|__ _ ___| |_ ___  _ __ / _ \\/ ___|\n");
+    kprintf("   | |   / _` / __| __/ _ \\| '__| | | \\___ \\\n");
+    kprintf("   | |__| (_| \\__ \\ || (_) | |  | |_| |___) |\n");
+    kprintf("    \\____\\__,_|___/\\__\\___/|_|   \\___/|____/\n");
     kprintf("\n");
     vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    kprintf("   CastorOS Kernel Shell v%s\n", KERNEL_VERSION);
+    kprintf("          CastorOS Kernel Shell v%s\n", KERNEL_VERSION);
     kprintf("\n");
     vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-    kprintf("   Welcome to CastorOS!\n");
-    kprintf("   Type 'help' for available commands\n");
+    kprintf("          Welcome to CastorOS!\n");
+    kprintf("          Type 'help' for available commands\n");
     kprintf("\n");
     kprintf("================================================================================\n");
     vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);

@@ -27,6 +27,7 @@
 #include <tests/test_runner.h>
 
 void kernel_task_test1();
+void kernel_task_test2();
 
 // 内核主函数
 void kernel_main(multiboot_info_t* mbi) {
@@ -148,6 +149,7 @@ void kernel_main(multiboot_info_t* mbi) {
     LOG_DEBUG_MSG("  [5.1] Task management initialized\n");
 
     task_create_kernel_thread(kernel_task_test1, "kernel_task_test1");
+    task_create_kernel_thread(kernel_task_test2, "kernel_task_test2");
 
     // ========================================================================
     // 单元测试
@@ -168,11 +170,12 @@ void kernel_main(multiboot_info_t* mbi) {
     /* 内核初始化完成 */
     LOG_INFO_MSG("Kernel initialization complete\n\n");
     
-    // 进入 Shell 主循环（该函数会阻塞，直到用户输入 "exit"）
-    kernel_shell_run();
+    // 将 Shell 作为内核线程运行，这样它会出现在进程列表中
+    task_create_kernel_thread(kernel_shell_run, "kernel_shell");
+    LOG_DEBUG_MSG("  [6.2] Kernel shell thread created\n");
     
-    // Shell 退出后进入空闲循环
-    LOG_INFO_MSG("\nShell exited, entering idle loop...\n");
+    // 主线程进入空闲循环（让调度器接管）
+    LOG_INFO_MSG("Kernel entering scheduler...\n");
     while (1) {
         __asm__ volatile ("hlt");
     }
@@ -182,11 +185,22 @@ void kernel_task_test1() {
     LOG_INFO_MSG("Kernel task 1 started (PID %u)\n", task_get_current()->pid);
     
     for (;;) {
-        task_sleep(500);  // 睡眠 500ms
-        LOG_INFO_MSG("Kernel task 1 running (PID %u)\n", task_get_current()->pid);
+        task_sleep(100);
     }
     
     // never reach here
     LOG_INFO_MSG("Kernel task 1 exiting\n");
+    task_exit(0);
+}
+
+void kernel_task_test2() {
+    LOG_INFO_MSG("Kernel task 2 started (PID %u)\n", task_get_current()->pid);
+    
+    for (;;) {
+        task_sleep(100);
+    }
+    
+    // never reach here
+    LOG_INFO_MSG("Kernel task 2 exiting\n");
     task_exit(0);
 }

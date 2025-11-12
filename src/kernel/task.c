@@ -154,6 +154,7 @@ void task_init(void) {
     
     /* 设置为当前任务 */
     idle_task->state = TASK_RUNNING;
+    idle_task->last_scheduled_tick = timer_get_ticks();  // 记录初始调度时间
     current_task = idle_task;
     
     LOG_INFO_MSG("Task management initialized\n");
@@ -244,6 +245,23 @@ void task_schedule(void) {
         return;  // 还未初始化
     }
     
+    /* 更新当前任务的运行时间统计（切换时统计增量） */
+    uint64_t current_tick = timer_get_ticks();
+    if (current_task->last_scheduled_tick > 0) {
+        uint64_t elapsed_ticks = current_tick - current_task->last_scheduled_tick;
+        /* 累加从上次更新到现在的增量时间
+         * 如果elapsed为0，说明任务运行时间小于1个tick，但确实运行过
+         * 为了统计这类频繁yield的任务，至少计数1个tick */
+        if (elapsed_ticks == 0) {
+            /* 检查任务是否真的运行过（不是刚经历过timer_tick的情况）
+             * 由于timer_tick会重置时间戳，这里elapsed=0说明任务刚被调度
+             * 就被切换，确实应该计数 */
+            elapsed_ticks = 1;
+        }
+        current_task->total_runtime += elapsed_ticks;
+    }
+    /* 注意：不重置 last_scheduled_tick，由新任务设置自己的起始时间 */
+    
     /* 如果当前任务仍然可运行，放回就绪队列 */
     if (current_task->state == TASK_RUNNING) {
         current_task->time_slice = DEFAULT_TIME_SLICE;  // 重置时间片
@@ -266,6 +284,7 @@ void task_schedule(void) {
     /* 如果下一个任务就是当前任务，直接返回 */
     if (next_task == current_task) {
         next_task->state = TASK_RUNNING;
+        next_task->last_scheduled_tick = current_tick;  // 更新时间戳
         return;
     }
     
@@ -275,6 +294,7 @@ void task_schedule(void) {
     /* 切换当前任务 */
     current_task = next_task;
     next_task->state = TASK_RUNNING;
+    next_task->last_scheduled_tick = current_tick;  // 记录新任务开始运行的时间
     
     /* 切换页目录（如果不同）*/
     if (prev_task->page_dir_phys != next_task->page_dir_phys) {
@@ -365,7 +385,8 @@ void task_timer_tick(void) {
         return;
     }
     
-    current_task->total_runtime++;
+    /* 运行时间统计全部在 task_schedule() 中进行
+     * 这里只处理时间片管理 */
     
     /* 减少时间片 */
     if (current_task->time_slice > 0) {
