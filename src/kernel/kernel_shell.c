@@ -14,6 +14,8 @@
 #include <mm/pmm.h>
 #include <mm/heap.h>
 
+#include <fs/vfs.h>
+
 #include <lib/kprintf.h>
 #include <lib/string.h>
 
@@ -37,6 +39,17 @@ static int cmd_free(int argc, char **argv);
 static int cmd_ps(int argc, char **argv);
 static int cmd_reboot(int argc, char **argv);
 static int cmd_exit(int argc, char **argv);
+
+// 文件操作命令
+static int cmd_ls(int argc, char **argv);
+static int cmd_cat(int argc, char **argv);
+static int cmd_touch(int argc, char **argv);
+static int cmd_rm(int argc, char **argv);
+static int cmd_mkdir(int argc, char **argv);
+static int cmd_rmdir(int argc, char **argv);
+static int cmd_pwd(int argc, char **argv);
+static int cmd_cd(int argc, char **argv);
+static int cmd_write(int argc, char **argv);
 
 // ============================================================================
 // 命令表
@@ -62,6 +75,17 @@ static const shell_command_t commands[] = {
     
     // 系统控制命令
     {"reboot",   "Reboot the system",                 "reboot",            cmd_reboot},
+    
+    // 文件操作命令
+    {"ls",       "List directory contents",            "ls [path]",          cmd_ls},
+    {"cat",      "Display file contents",              "cat <file>",         cmd_cat},
+    {"touch",    "Create an empty file",              "touch <file>",        cmd_touch},
+    {"write",    "Write text to file",                 "write <file> <text...>", cmd_write},
+    {"rm",       "Remove a file",                     "rm <file>",           cmd_rm},
+    {"mkdir",    "Create a directory",                "mkdir <dir>",        cmd_mkdir},
+    {"rmdir",    "Remove a directory",                "rmdir <dir>",         cmd_rmdir},
+    {"pwd",      "Print working directory",           "pwd",                 cmd_pwd},
+    {"cd",       "Change directory",                  "cd [path]",           cmd_cd},
     
     // 结束标记
     {NULL, NULL, NULL, NULL}
@@ -101,6 +125,190 @@ static void format_memory_size(uint32_t bytes, char *buffer, size_t size) {
     }
 }
 
+/**
+ * 规范化路径，处理 . 和 ..
+ * @param path 输入路径
+ * @param normalized 输出：规范化后的路径缓冲区
+ * @param size 缓冲区大小
+ * @return 0 成功，-1 失败
+ */
+static int shell_normalize_path(const char *path, char *normalized, size_t size) {
+    if (!path || !normalized || size == 0) {
+        return -1;
+    }
+    
+    // 路径组件栈（最多支持 64 层）
+    const size_t MAX_COMPONENTS = 64;
+    char components[MAX_COMPONENTS][128];
+    size_t component_count = 0;
+    
+    const char *p = path;
+    char current_component[128];
+    size_t comp_len = 0;
+    bool is_absolute = (path[0] == '/');
+    
+    // 解析路径组件
+    while (*p != '\0') {
+        // 跳过连续的 '/'
+        while (*p == '/') {
+            p++;
+        }
+        
+        if (*p == '\0') {
+            break;
+        }
+        
+        // 提取一个组件
+        comp_len = 0;
+        while (*p != '\0' && *p != '/' && comp_len < 127) {
+            current_component[comp_len++] = *p++;
+        }
+        current_component[comp_len] = '\0';
+        
+        // 处理组件
+        if (comp_len == 0) {
+            continue;  // 空组件，跳过
+        } else if (strcmp(current_component, ".") == 0) {
+            // 当前目录，忽略
+            continue;
+        } else if (strcmp(current_component, "..") == 0) {
+            // 父目录
+            if (component_count > 0) {
+                // 有组件可以回退
+                component_count--;
+            } else if (!is_absolute) {
+                // 相对路径中，.. 在根目录时保持在根目录
+                // 不添加组件即可
+            }
+            // 绝对路径中，.. 在根目录时保持在根目录
+        } else {
+            // 普通组件，添加到栈中
+            if (component_count >= MAX_COMPONENTS) {
+                return -1;  // 路径太深
+            }
+            strncpy(components[component_count], current_component, 127);
+            components[component_count][127] = '\0';
+            component_count++;
+        }
+    }
+    
+    // 构建规范化路径
+    size_t pos = 0;
+    
+    // 绝对路径以 '/' 开头
+    if (is_absolute) {
+        if (pos < size - 1) {
+            normalized[pos++] = '/';
+        }
+    }
+    
+    // 添加所有组件
+    for (size_t i = 0; i < component_count; i++) {
+        size_t comp_len = strlen(components[i]);
+        
+        // 添加 '/'（除了第一个组件在绝对路径时）
+        if (pos > 0 && normalized[pos - 1] != '/') {
+            if (pos < size - 1) {
+                normalized[pos++] = '/';
+            }
+        }
+        
+        // 添加组件名
+        for (size_t j = 0; j < comp_len && pos < size - 1; j++) {
+            normalized[pos++] = components[i][j];
+        }
+    }
+    
+    // 如果路径为空，至少要有 '/'
+    if (pos == 0) {
+        if (is_absolute) {
+            normalized[pos++] = '/';
+        } else {
+            normalized[pos++] = '.';
+        }
+    }
+    
+    normalized[pos] = '\0';
+    
+    return 0;
+}
+
+/**
+ * 将相对路径转换为绝对路径，支持 . 和 ..
+ * @param path 输入路径（相对或绝对）
+ * @param abs_path 输出：绝对路径缓冲区
+ * @param size 缓冲区大小
+ * @return 0 成功，-1 失败
+ */
+static int shell_resolve_path(const char *path, char *abs_path, size_t size) {
+    if (!path || !abs_path || size == 0) {
+        return -1;
+    }
+    
+    char normalized[SHELL_MAX_PATH_LENGTH];
+    char temp_path[SHELL_MAX_PATH_LENGTH];
+    
+    // 如果是绝对路径，直接规范化
+    if (path[0] == '/') {
+        if (shell_normalize_path(path, normalized, sizeof(normalized)) != 0) {
+            return -1;
+        }
+        if (strlen(normalized) >= size) {
+            return -1;
+        }
+        strncpy(abs_path, normalized, size - 1);
+        abs_path[size - 1] = '\0';
+        return 0;
+    }
+    
+    // 相对路径：需要结合当前工作目录
+    size_t cwd_len = strlen(shell_state.cwd);
+    size_t path_len = strlen(path);
+    
+    // 计算需要的总长度
+    size_t total_len = cwd_len + 1 + path_len;  // cwd + '/' + path
+    
+    if (total_len >= sizeof(temp_path)) {
+        return -1;
+    }
+    
+    // 构建临时绝对路径
+    strncpy(temp_path, shell_state.cwd, sizeof(temp_path) - 1);
+    temp_path[sizeof(temp_path) - 1] = '\0';
+    
+    size_t current_len = strlen(temp_path);
+    
+    // 如果 cwd 不是根目录，添加 '/'
+    if (cwd_len > 1 && current_len < sizeof(temp_path) - 1) {
+        temp_path[current_len] = '/';
+        current_len++;
+        temp_path[current_len] = '\0';
+    }
+    
+    // 手动拼接路径
+    size_t i = 0;
+    while (path[i] != '\0' && current_len < sizeof(temp_path) - 1) {
+        temp_path[current_len] = path[i];
+        current_len++;
+        i++;
+    }
+    temp_path[current_len] = '\0';
+    
+    // 规范化路径
+    if (shell_normalize_path(temp_path, normalized, sizeof(normalized)) != 0) {
+        return -1;
+    }
+    
+    // 复制到输出缓冲区
+    if (strlen(normalized) >= size) {
+        return -1;
+    }
+    strncpy(abs_path, normalized, size - 1);
+    abs_path[size - 1] = '\0';
+    
+    return 0;
+}
+
 // ============================================================================
 // Shell 核心函数
 // ============================================================================
@@ -111,6 +319,7 @@ static void format_memory_size(uint32_t bytes, char *buffer, size_t size) {
 void kernel_shell_init(void) {
     memset(&shell_state, 0, sizeof(shell_state_t));
     shell_state.running = false;
+    strcpy(shell_state.cwd, "/");  // 初始化当前工作目录为根目录
 }
 
 /**
@@ -577,5 +786,544 @@ static int cmd_exit(int argc, char **argv) {
     vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     
     shell_state.running = false;
+    return 0;
+}
+
+// ============================================================================
+// 文件操作命令实现
+// ============================================================================
+
+/**
+ * ls 命令 - 列出目录内容
+ */
+static int cmd_ls(int argc, char **argv) {
+    char abs_path[SHELL_MAX_PATH_LENGTH];
+    const char *path;
+    
+    // 如果没有指定路径，使用当前目录
+    if (argc == 1) {
+        path = shell_state.cwd;
+    } else {
+        if (shell_resolve_path(argv[1], abs_path, sizeof(abs_path)) != 0) {
+            vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            kprintf("Error: Invalid path\n");
+            vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            return -1;
+        }
+        path = abs_path;
+    }
+    
+    // 查找目录节点
+    fs_node_t *dir = vfs_path_to_node(path);
+    if (!dir) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Directory '%s' not found\n", path);
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    if (dir->type != FS_DIRECTORY) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: '%s' is not a directory\n", path);
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    // 列出目录内容
+    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    kprintf("Directory: %s\n", path);
+    kprintf("================================================================================\n");
+    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    
+    uint32_t index = 0;
+    struct dirent *entry;
+    int count = 0;
+    
+    while ((entry = vfs_readdir(dir, index++)) != NULL) {
+        // 使用 d_type 字段判断文件类型（如果可用）
+        if (entry->d_type == DT_DIR) {
+            vga_set_color(VGA_COLOR_LIGHT_BLUE, VGA_COLOR_BLACK);
+            kprintf("%-20s <DIR>\n", entry->d_name);
+        } else if (entry->d_type == DT_REG) {
+            // 对于常规文件，查找节点以获取大小
+            fs_node_t *node = vfs_finddir(dir, entry->d_name);
+            if (node) {
+                vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                kprintf("%-20s %u bytes\n", entry->d_name, node->size);
+            } else {
+                vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                kprintf("%-20s\n", entry->d_name);
+            }
+        } else if (entry->d_type == DT_CHR) {
+            vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+            kprintf("%-20s <CHR>\n", entry->d_name);
+        } else if (entry->d_type == DT_BLK) {
+            vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+            kprintf("%-20s <BLK>\n", entry->d_name);
+        } else if (entry->d_type == DT_LNK) {
+            vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+            kprintf("%-20s <LNK>\n", entry->d_name);
+        } else {
+            // 未知类型或 d_type 未设置，回退到旧方法
+            fs_node_t *node = vfs_finddir(dir, entry->d_name);
+            if (node) {
+                if (node->type == FS_DIRECTORY) {
+                    vga_set_color(VGA_COLOR_LIGHT_BLUE, VGA_COLOR_BLACK);
+                    kprintf("%-20s <DIR>\n", entry->d_name);
+                } else {
+                    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                    kprintf("%-20s %u bytes\n", entry->d_name, node->size);
+                }
+            } else {
+                vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                kprintf("%-20s\n", entry->d_name);
+            }
+        }
+        count++;
+    }
+    
+    if (count == 0) {
+        kprintf("(empty)\n");
+    }
+    
+    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    return 0;
+}
+
+/**
+ * cat 命令 - 显示文件内容
+ */
+static int cmd_cat(int argc, char **argv) {
+    if (argc < 2) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Usage: cat <file>\n");
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    char abs_path[SHELL_MAX_PATH_LENGTH];
+    if (shell_resolve_path(argv[1], abs_path, sizeof(abs_path)) != 0) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Invalid path\n");
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    // 查找文件节点
+    fs_node_t *file = vfs_path_to_node(abs_path);
+    if (!file) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: File '%s' not found\n", abs_path);
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    // 检查文件类型：支持常规文件和设备文件
+    if (file->type != FS_FILE && file->type != FS_CHARDEVICE && file->type != FS_BLOCKDEVICE) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: '%s' is not a readable file or device\n", abs_path);
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    // 打开文件
+    vfs_open(file, 0);
+    
+    // 读取并显示文件内容
+    uint8_t buffer[512];
+    uint32_t offset = 0;
+    uint32_t max_read = 0;
+    bool is_device = (file->type == FS_CHARDEVICE || file->type == FS_BLOCKDEVICE);
+    
+    // 对于设备文件，限制读取次数以避免无限循环
+    if (is_device) {
+        max_read = 1024;  // 最多读取 1024 次（约 512KB）
+    }
+    
+    uint32_t read_count = 0;
+    
+    while (true) {
+        uint32_t to_read;
+        
+        if (is_device) {
+            // 设备文件：每次读取固定大小
+            to_read = sizeof(buffer);
+            if (read_count >= max_read) {
+                break;  // 防止无限循环
+            }
+            read_count++;
+        } else {
+            // 常规文件：根据文件大小读取
+            if (offset >= file->size) {
+                break;
+            }
+            to_read = (file->size - offset > sizeof(buffer)) 
+                      ? sizeof(buffer) : (file->size - offset);
+        }
+        
+        uint32_t read = vfs_read(file, offset, to_read, buffer);
+        
+        if (read == 0) {
+            break;  // 没有更多数据
+        }
+        
+        // 输出内容（只输出可打印字符）
+        for (uint32_t i = 0; i < read; i++) {
+            if (buffer[i] >= 32 && buffer[i] <= 126) {
+                kprintf("%c", buffer[i]);
+            } else if (buffer[i] == '\n') {
+                kprintf("\n");
+            } else if (buffer[i] == '\t') {
+                kprintf("    ");  // Tab 转换为空格
+            }
+        }
+        
+        offset += read;
+        
+        // 对于设备文件，如果读取的数据少于请求的大小，可能已经到达末尾
+        if (is_device && read < to_read) {
+            break;
+        }
+    }
+    
+    kprintf("\n");
+    
+    // 关闭文件
+    vfs_close(file);
+    
+    return 0;
+}
+
+/**
+ * touch 命令 - 创建空文件
+ */
+static int cmd_touch(int argc, char **argv) {
+    if (argc < 2) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Usage: touch <file>\n");
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    char abs_path[SHELL_MAX_PATH_LENGTH];
+    if (shell_resolve_path(argv[1], abs_path, sizeof(abs_path)) != 0) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Invalid path\n");
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    // 创建文件
+    if (vfs_create(abs_path) != 0) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Failed to create file '%s'\n", abs_path);
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    kprintf("File '%s' created\n", abs_path);
+    return 0;
+}
+
+/**
+ * rm 命令 - 删除文件
+ */
+static int cmd_rm(int argc, char **argv) {
+    if (argc < 2) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Usage: rm <file>\n");
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    char abs_path[SHELL_MAX_PATH_LENGTH];
+    if (shell_resolve_path(argv[1], abs_path, sizeof(abs_path)) != 0) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Invalid path\n");
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    // 检查文件是否存在且是文件
+    fs_node_t *file = vfs_path_to_node(abs_path);
+    if (!file) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: File '%s' not found\n", abs_path);
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    if (file->type != FS_FILE) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: '%s' is not a file (use rmdir for directories)\n", abs_path);
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    // 删除文件
+    if (vfs_unlink(abs_path) != 0) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Failed to remove file '%s'\n", abs_path);
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    kprintf("File '%s' removed\n", abs_path);
+    return 0;
+}
+
+/**
+ * mkdir 命令 - 创建目录
+ */
+static int cmd_mkdir(int argc, char **argv) {
+    if (argc < 2) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Usage: mkdir <dir>\n");
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    char abs_path[SHELL_MAX_PATH_LENGTH];
+    if (shell_resolve_path(argv[1], abs_path, sizeof(abs_path)) != 0) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Invalid path\n");
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    // 创建目录（权限：读写执行）
+    if (vfs_mkdir(abs_path, FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC) != 0) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Failed to create directory '%s'\n", abs_path);
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    kprintf("Directory '%s' created\n", abs_path);
+    return 0;
+}
+
+/**
+ * rmdir 命令 - 删除目录
+ */
+static int cmd_rmdir(int argc, char **argv) {
+    if (argc < 2) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Usage: rmdir <dir>\n");
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    char abs_path[SHELL_MAX_PATH_LENGTH];
+    if (shell_resolve_path(argv[1], abs_path, sizeof(abs_path)) != 0) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Invalid path\n");
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    // 不能删除根目录
+    if (strcmp(abs_path, "/") == 0) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Cannot remove root directory\n");
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    // 检查目录是否存在且是目录
+    fs_node_t *dir = vfs_path_to_node(abs_path);
+    if (!dir) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Directory '%s' not found\n", abs_path);
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    if (dir->type != FS_DIRECTORY) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: '%s' is not a directory\n", abs_path);
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    // 检查目录是否为空
+    struct dirent *entry = vfs_readdir(dir, 0);
+    if (entry != NULL) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Directory '%s' is not empty\n", abs_path);
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    // 删除目录
+    if (vfs_unlink(abs_path) != 0) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Failed to remove directory '%s'\n", abs_path);
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    kprintf("Directory '%s' removed\n", abs_path);
+    return 0;
+}
+
+/**
+ * pwd 命令 - 显示当前工作目录
+ */
+static int cmd_pwd(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    
+    kprintf("%s\n", shell_state.cwd);
+    return 0;
+}
+
+/**
+ * cd 命令 - 切换目录
+ */
+static int cmd_cd(int argc, char **argv) {
+    const char *path;
+    
+    // 如果没有指定路径，切换到根目录
+    if (argc == 1) {
+        path = "/";
+    } else {
+        path = argv[1];
+    }
+    
+    char abs_path[SHELL_MAX_PATH_LENGTH];
+    if (shell_resolve_path(path, abs_path, sizeof(abs_path)) != 0) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Invalid path\n");
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    // 查找目录节点
+    fs_node_t *dir = vfs_path_to_node(abs_path);
+    if (!dir) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Directory '%s' not found\n", abs_path);
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    if (dir->type != FS_DIRECTORY) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: '%s' is not a directory\n", abs_path);
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    // 更新当前工作目录
+    strncpy(shell_state.cwd, abs_path, SHELL_MAX_PATH_LENGTH - 1);
+    shell_state.cwd[SHELL_MAX_PATH_LENGTH - 1] = '\0';
+    
+    return 0;
+}
+
+/**
+ * write 命令 - 将文本写入文件
+ */
+static int cmd_write(int argc, char **argv) {
+    if (argc < 3) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Usage: write <file> <text...>\n");
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    char abs_path[SHELL_MAX_PATH_LENGTH];
+    if (shell_resolve_path(argv[1], abs_path, sizeof(abs_path)) != 0) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Invalid path\n");
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    // 检查文件是否存在
+    fs_node_t *file = vfs_path_to_node(abs_path);
+    
+    // 如果是设备文件，必须已存在
+    if (!file) {
+        // 文件不存在，尝试创建（仅对常规文件）
+        if (vfs_create(abs_path) != 0) {
+            vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            kprintf("Error: File or device '%s' not found\n", abs_path);
+            vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            return -1;
+        }
+        // 重新获取文件节点
+        file = vfs_path_to_node(abs_path);
+        if (!file) {
+            vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            kprintf("Error: Failed to open file '%s'\n", abs_path);
+            vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            return -1;
+        }
+    }
+    
+    // 检查文件类型：支持常规文件和设备文件
+    if (file->type != FS_FILE && file->type != FS_CHARDEVICE && file->type != FS_BLOCKDEVICE) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: '%s' is not a writable file or device\n", abs_path);
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    // 构建要写入的文本内容
+    // 计算总长度
+    size_t total_len = 0;
+    for (int i = 2; i < argc; i++) {
+        total_len += strlen(argv[i]);
+        if (i < argc - 1) {
+            total_len += 1;  // 空格
+        }
+    }
+    total_len += 1;  // 换行符
+    
+    // 分配缓冲区
+    char *buffer = (char *)kmalloc(total_len + 1);
+    if (!buffer) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Out of memory\n");
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    // 构建文本内容
+    size_t pos = 0;
+    for (int i = 2; i < argc; i++) {
+        size_t len = strlen(argv[i]);
+        memcpy(buffer + pos, argv[i], len);
+        pos += len;
+        if (i < argc - 1) {
+            buffer[pos++] = ' ';
+        }
+    }
+    buffer[pos++] = '\n';
+    buffer[pos] = '\0';
+    
+    // 打开文件（写入模式）
+    vfs_open(file, 0);
+    
+    // 写入文件（覆盖模式：从偏移 0 开始写入）
+    uint32_t written = vfs_write(file, 0, pos, (uint8_t *)buffer);
+    
+    // 关闭文件
+    vfs_close(file);
+    
+    // 释放缓冲区
+    kfree(buffer);
+    
+    if (written != pos) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Failed to write all data to file '%s'\n", abs_path);
+        kprintf("Written: %u bytes, Expected: %u bytes\n", written, (uint32_t)pos);
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    kprintf("Written %u bytes to '%s'\n", written, abs_path);
     return 0;
 }

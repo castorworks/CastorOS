@@ -1,0 +1,175 @@
+#ifndef _FS_VFS_H_
+#define _FS_VFS_H_
+
+#include <types.h>
+
+/**
+ * 虚拟文件系统（VFS）
+ * 
+ * 提供统一的文件系统接口层
+ */
+
+// 文件类型
+typedef enum {
+    FS_FILE,
+    FS_DIRECTORY,
+    FS_CHARDEVICE,
+    FS_BLOCKDEVICE,
+    FS_PIPE,
+    FS_SYMLINK,
+} fs_node_type_t;
+
+// 文件权限（内核使用）
+#define FS_PERM_READ    0x4
+#define FS_PERM_WRITE   0x2
+#define FS_PERM_EXEC    0x1
+
+/* 前向声明 */
+struct fs_node;
+
+/* 文件操作函数类型 */
+typedef uint32_t (*read_type_t)(struct fs_node *node, uint32_t offset, uint32_t size, uint8_t *buffer);
+typedef uint32_t (*write_type_t)(struct fs_node *node, uint32_t offset, uint32_t size, uint8_t *buffer);
+typedef void (*open_type_t)(struct fs_node *node, uint32_t flags);
+typedef void (*close_type_t)(struct fs_node *node);
+typedef struct dirent *(*readdir_type_t)(struct fs_node *node, uint32_t index);
+typedef struct fs_node *(*finddir_type_t)(struct fs_node *node, const char *name);
+typedef int (*create_type_t)(struct fs_node *node, const char *name);
+typedef int (*mkdir_type_t)(struct fs_node *node, const char *name, uint32_t permissions);
+typedef int (*unlink_type_t)(struct fs_node *node, const char *name);
+
+/**
+ * 文件节点（inode）
+ * 表示一个文件或目录
+ */
+typedef struct fs_node {
+    char name[128];              // 文件名
+    uint32_t inode;              // inode 编号
+    fs_node_type_t type;         // 文件类型
+    uint32_t size;               // 文件大小
+    uint32_t permissions;        // 权限
+    uint32_t uid;                // 用户 ID
+    uint32_t gid;                // 组 ID
+    uint32_t flags;              // 标志位
+    uint32_t impl;               // 实现相关数据（指针）
+    
+    // 文件操作函数
+    read_type_t read;
+    write_type_t write;
+    open_type_t open;
+    close_type_t close;
+    readdir_type_t readdir;
+    finddir_type_t finddir;
+    create_type_t create;
+    mkdir_type_t mkdir;
+    unlink_type_t unlink;
+    
+    struct fs_node *ptr;         // 用于符号链接和挂载点
+} fs_node_t;
+
+/* struct dirent 定义现在在 <uapi/types.h> 中 */
+
+/**
+ * 初始化 VFS
+ */
+void vfs_init(void);
+
+/**
+ * 获取根文件系统
+ * @return 根文件系统节点
+ */
+fs_node_t *vfs_get_root(void);
+
+/**
+ * 设置根文件系统
+ * @param root 根文件系统节点
+ */
+void vfs_set_root(fs_node_t *root);
+
+/**
+ * 读取文件
+ * @param node 文件节点
+ * @param offset 偏移量
+ * @param size 读取大小
+ * @param buffer 缓冲区
+ * @return 实际读取的字节数
+ */
+uint32_t vfs_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
+
+/**
+ * 写入文件
+ * @param node 文件节点
+ * @param offset 偏移量
+ * @param size 写入大小
+ * @param buffer 数据缓冲区
+ * @return 实际写入的字节数
+ */
+uint32_t vfs_write(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
+
+/**
+ * 打开文件
+ * @param node 文件节点
+ * @param flags 打开标志
+ */
+void vfs_open(fs_node_t *node, uint32_t flags);
+
+/**
+ * 关闭文件
+ * @param node 文件节点
+ */
+void vfs_close(fs_node_t *node);
+
+/**
+ * 读取目录项
+ * @param node 目录节点
+ * @param index 索引
+ * @return 目录项，没有更多时返回 NULL
+ */
+struct dirent *vfs_readdir(fs_node_t *node, uint32_t index);
+
+/**
+ * 在目录中查找文件
+ * @param node 目录节点
+ * @param name 文件名
+ * @return 文件节点，未找到返回 NULL
+ */
+fs_node_t *vfs_finddir(fs_node_t *node, const char *name);
+
+/**
+ * 路径解析
+ * @param path 路径字符串
+ * @return 文件节点，未找到返回 NULL
+ */
+fs_node_t *vfs_path_to_node(const char *path);
+
+/**
+ * 创建文件
+ * @param path 文件路径
+ * @return 0 成功，-1 失败
+ */
+int vfs_create(const char *path);
+
+/**
+ * 创建目录
+ * @param path 目录路径
+ * @param permissions 权限
+ * @return 0 成功，-1 失败
+ */
+int vfs_mkdir(const char *path, uint32_t permissions);
+
+/**
+ * 删除文件或目录
+ * @param path 文件路径
+ * @return 0 成功，-1 失败
+ */
+int vfs_unlink(const char *path);
+
+/**
+ * 挂载文件系统到指定路径
+ * @param path 挂载点路径（必须是已存在的目录）
+ * @param root 要挂载的文件系统根节点
+ * @return 0 成功，-1 失败
+ */
+int vfs_mount(const char *path, fs_node_t *root);
+
+#endif // _FS_VFS_H_

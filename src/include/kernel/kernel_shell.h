@@ -13,6 +13,7 @@
 #define SHELL_MAX_INPUT_LENGTH    256   // 最大输入长度
 #define SHELL_MAX_ARGS            32    // 最大参数个数
 #define SHELL_HISTORY_SIZE        16    // 历史记录大小
+#define SHELL_MAX_PATH_LENGTH     256   // 最大路径长度
 #define SHELL_PROMPT              "CastorOS> "
 
 /* 命令处理函数类型 */
@@ -38,6 +39,8 @@ typedef struct {
     char history[SHELL_HISTORY_SIZE][SHELL_MAX_INPUT_LENGTH]; // 历史记录
     int history_count;                          // 历史记录数量
     int history_index;                          // 当前历史索引
+    
+    char cwd[SHELL_MAX_PATH_LENGTH];            // 当前工作目录
     
     bool running;                               // Shell 是否运行中
 } shell_state_t;

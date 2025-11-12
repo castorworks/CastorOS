@@ -2,6 +2,17 @@
 
 > CastorOS is an operating system designed for learning and fun.
 
+## 构建系统
+
++ 参考 [docs/00-environment.md](./docs/00-environment.md) 安装开发环境
+
++ 编译并运行
+
+  ```bash
+  make clean
+  make run
+  ```
+
 ## 当前进展
 
 + [x] [开发环境搭建](./docs/00-environment.md)
@@ -11,6 +22,7 @@
 + [x] [补充驱动](./docs/04-drivers.md)
 + [x] [任务管理](./docs/05-task.md)
 + [x] [内核 Shell](./docs/06-kernel-shell.md)
++ [x] [文件系统](./docs/07-fs.md)
 
 ## Git 提交格式
 
