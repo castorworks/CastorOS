@@ -23,6 +23,7 @@
 + [x] [任务管理](./docs/05-task.md)
 + [x] [内核 Shell](./docs/06-kernel-shell.md)
 + [x] [文件系统](./docs/07-fs.md)
++ [x] [FAT32 文件系统](./docs/08-fat32.md)
 
 ## Git 提交格式
 

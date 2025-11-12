@@ -16,6 +16,7 @@ BUILD_DIR = build
 
 # 内核文件
 KERNEL = $(BUILD_DIR)/castor.bin
+DISK_IMAGE = $(BUILD_DIR)/bootable.img
 
 # 源文件
 C_SOURCES = $(wildcard $(SRC_DIR)/drivers/*.c) \
@@ -75,6 +76,16 @@ debug: $(KERNEL)
 
 debug-silent: $(KERNEL)
 	qemu-system-i386 -kernel $(KERNEL) -serial stdio -s -S -display none
+
+# 创建可启动的磁盘镜像
+disk: $(KERNEL)
+	@bash scripts/bootable-img-create.sh
+
+run-disk: disk
+	qemu-system-i386 -hda $(DISK_IMAGE) -serial stdio
+
+debug-disk: disk
+	qemu-system-i386 -hda $(DISK_IMAGE) -serial stdio -s -S
 
 # 清理
 clean:

@@ -121,6 +121,40 @@ void irq_register_handler(uint8_t irq, isr_handler_t handler) {
     }
 }
 
+static inline uint16_t irq_get_port(uint8_t irq) {
+    return (irq < 8) ? PIC1_DATA : PIC2_DATA;
+}
+
+void irq_disable_line(uint8_t irq) {
+    if (irq >= 16) {
+        return;
+    }
+
+    uint16_t port = irq_get_port(irq);
+    if (irq >= 8) {
+        irq -= 8;
+    }
+
+    uint8_t value = inb(port);
+    value |= (uint8_t)(1u << irq);
+    outb(port, value);
+}
+
+void irq_enable_line(uint8_t irq) {
+    if (irq >= 16) {
+        return;
+    }
+
+    uint16_t port = irq_get_port(irq);
+    if (irq >= 8) {
+        irq -= 8;
+    }
+
+    uint8_t value = inb(port);
+    value &= (uint8_t)~(1u << irq);
+    outb(port, value);
+}
+
 /**
  * 初始化 IRQ
  */

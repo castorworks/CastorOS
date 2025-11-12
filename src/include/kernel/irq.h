@@ -42,6 +42,18 @@ void irq_init(void);
  */
 void irq_register_handler(uint8_t irq, isr_handler_t handler);
 
+/**
+ * 禁用（屏蔽）指定 IRQ 线路
+ * @param irq IRQ 号（0-15）
+ */
+void irq_disable_line(uint8_t irq);
+
+/**
+ * 启用（取消屏蔽）指定 IRQ 线路
+ * @param irq IRQ 号（0-15）
+ */
+void irq_enable_line(uint8_t irq);
+
 /* IRQ 处理程序（汇编入口点） */
 extern void irq0(void);
 extern void irq1(void);

@@ -6,6 +6,7 @@
 #include <drivers/serial.h>
 #include <drivers/timer.h>
 #include <drivers/keyboard.h>
+#include <drivers/ata.h>
 
 #include <kernel/multiboot.h>
 #include <kernel/version.h>
@@ -19,21 +20,16 @@
 #include <kernel/isr.h>
 #include <kernel/task.h>
 #include <kernel/kernel_shell.h>
+#include <kernel/fs_bootstrap.h>
 
 #include <mm/pmm.h>
 #include <mm/vmm.h>
 #include <mm/heap.h>
 
-#include <fs/vfs.h>
-#include <fs/ramfs.h>
-#include <fs/devfs.h>
-
 #include <tests/test_runner.h>
 
 void kernel_task_test1();
 void kernel_task_test2();
-
-void fs_init(void);
 
 // 内核主函数
 void kernel_main(multiboot_info_t* mbi) {
@@ -145,6 +141,10 @@ void kernel_main(multiboot_info_t* mbi) {
     keyboard_init();
     LOG_DEBUG_MSG("  [4.2] Keyboard initialized\n");
 
+    // 4.3 初始化 ATA 驱动
+    ata_init();
+    LOG_DEBUG_MSG("  [4.3] ATA driver initialized\n");
+
     // ========================================================================
     // 阶段 5: 高级子系统（Advanced Subsystems）
     // ========================================================================
@@ -213,42 +213,4 @@ void kernel_task_test2() {
     // never reach here
     LOG_INFO_MSG("Kernel task 2 exiting\n");
     task_exit(0);
-}
-
-void fs_init(void) {
-    // 初始化 VFS
-    vfs_init();
-    
-    // 初始化 RAMFS
-    fs_node_t *root = ramfs_init();
-    if (!root) {
-        LOG_ERROR_MSG("Failed to initialize RAMFS\n");
-        return;
-    }
-    LOG_INFO_MSG("RAMFS initialized\n");
-    
-    // 设置 RAMFS 为根文件系统
-    vfs_set_root(root);
-
-    // 在根文件系统中创建 /dev 目录
-    if (vfs_mkdir("/dev", FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC) != 0) {
-        LOG_ERROR_MSG("Failed to create /dev directory\n");
-        return;
-    }
-    LOG_INFO_MSG("/dev directory created\n");
-
-    // 初始化 devfs
-    fs_node_t *devfs_root = devfs_init();
-    if (!devfs_root) {
-        LOG_ERROR_MSG("Failed to initialize devfs\n");
-        return;
-    }
-    LOG_INFO_MSG("devfs initialized\n");
-    
-    // 将 devfs 挂载到 /dev
-    if (vfs_mount("/dev", devfs_root) != 0) {
-        LOG_ERROR_MSG("Failed to mount devfs to /dev\n");
-        return;
-    }
-    LOG_INFO_MSG("devfs mounted at /dev\n");
 }
