@@ -164,6 +164,20 @@ void task_init(void) {
 }
 
 /**
+ * 内核线程退出包装器
+ * 当内核线程函数返回时，调用此函数清理资源
+ */
+static void kernel_thread_exit_wrapper(void) {
+    /* 线程函数已返回，正常退出 */
+    task_exit(0);
+    
+    /* 永远不会到达这里 */
+    while (1) {
+        __asm__ volatile("hlt");
+    }
+}
+
+/**
  * 创建内核线程
  */
 uint32_t task_create_kernel_thread(void (*entry)(void), const char *name) {
@@ -191,9 +205,16 @@ uint32_t task_create_kernel_thread(void (*entry)(void), const char *name) {
     }
     task->kernel_stack = task->kernel_stack_base + KERNEL_STACK_SIZE;
     
+    /* 设置栈帧：当 entry 返回时，会返回到 kernel_thread_exit_wrapper 
+     * 注意：task_asm.asm 的恢复流程会执行 pop + add esp,4，所以需要两个栈位置
+     */
+    uint32_t *stack_ptr = (uint32_t *)(task->kernel_stack);
+    *(--stack_ptr) = (uint32_t)kernel_thread_exit_wrapper;  // 返回地址
+    *(--stack_ptr) = 0;  // 占位符，会被 add esp,4 跳过
+    
     /* 初始化上下文 */
     task->context.eip = (uint32_t)entry;
-    task->context.esp = task->kernel_stack;
+    task->context.esp = (uint32_t)stack_ptr;
     task->context.ebp = task->kernel_stack;
     task->context.eflags = 0x202;  // IF = 1
     task->context.cs = GDT_KERNEL_CODE_SEGMENT;
