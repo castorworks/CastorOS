@@ -41,7 +41,7 @@ void kernel_main(multiboot_info_t* mbi) {
     serial_init(); // 初始化串口
     
     /* 启用调试日志 */
-    klog_set_level(LOG_DEBUG);
+    klog_set_level(LOG_INFO);
 
     // ========================================================================
     // 启动信息

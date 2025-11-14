@@ -5,6 +5,7 @@
 #include <kernel/syscall.h>
 #include <kernel/syscalls/fs.h>
 #include <kernel/syscalls/process.h>
+#include <kernel/syscalls/time.h>
 #include <kernel/task.h>
 #include <kernel/idt.h>
 #include <kernel/gdt.h>
@@ -172,6 +173,12 @@ static uint32_t sys_nanosleep_wrapper(uint32_t *frame, uint32_t seconds, uint32_
     return sys_nanosleep(seconds);
 }
 
+static uint32_t sys_time_wrapper(uint32_t *frame, uint32_t p1, uint32_t p2, uint32_t p3,
+                                 uint32_t p4, uint32_t p5) {
+    (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
+    return sys_time();
+}
+
 uint32_t syscall_dispatcher(uint32_t syscall_num, uint32_t p1, uint32_t p2, 
                             uint32_t p3, uint32_t p4, uint32_t p5, uint32_t *frame) {
     /* 检查系统调用号是否在有效范围内 */
@@ -224,6 +231,7 @@ void syscall_init(void) {
     syscall_table[SYS_GETDENTS]    = sys_getdents_wrapper;
     
     /* 时间相关 */
+    syscall_table[SYS_TIME]        = sys_time_wrapper;
     syscall_table[SYS_NANOSLEEP]   = sys_nanosleep_wrapper;
     
     /* 注册 INT 0x80 处理程序 */

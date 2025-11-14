@@ -57,4 +57,20 @@ struct dirent {
     char     d_name[256];    // 文件名（以 null 结尾，最大 255 字符）
 };
 
+// 进程状态（用于 proc_info，与内核 task_state_t 对应）
+#define PROC_STATE_UNUSED    0   // 未使用
+#define PROC_STATE_READY     1   // 就绪
+#define PROC_STATE_RUNNING   2   // 运行中
+#define PROC_STATE_BLOCKED   3   // 阻塞
+#define PROC_STATE_TERMINATED 4  // 已终止
+
+// 进程信息结构（用于系统调用，用户态和内核态共享）
+struct proc_info {
+    uint32_t pid;           // 进程 ID
+    char name[32];          // 进程名称（以 null 结尾）
+    uint8_t state;          // 进程状态（PROC_STATE_*）
+    uint32_t priority;      // 优先级
+    uint64_t runtime_ms;   // 总运行时间（毫秒）
+} __attribute__((packed));
+
 #endif // _TYPES_H_

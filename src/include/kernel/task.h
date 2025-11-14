@@ -204,4 +204,12 @@ void ready_queue_add(task_t *task);
  */
 uint32_t get_usermode_wrapper(void);
 
+/**
+ * 遍历所有任务（用于系统调用）
+ * @param callback 回调函数，对每个任务调用 callback(task, user_data)
+ * @param user_data 传递给回调函数的用户数据
+ * @return 遍历的任务数
+ */
+uint32_t task_for_each(void (*callback)(task_t *task, void *user_data), void *user_data);
+
 #endif // _KERNEL_TASK_H_

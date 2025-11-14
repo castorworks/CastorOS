@@ -5,6 +5,7 @@
 #include <fs/vfs.h>
 #include <fs/ramfs.h>
 #include <fs/devfs.h>
+#include <fs/procfs.h>
 #include <fs/blockdev.h>
 #include <fs/partition.h>
 #include <fs/fat32.h>
@@ -102,5 +103,28 @@ void fs_init(void) {
         // 不返回错误，系统可以继续运行，只是没有 /dev
     } else {
         LOG_INFO_MSG("devfs mounted at /dev\n");
+    }
+
+    // 第五步：初始化 procfs
+    fs_node_t *procfs_root = procfs_init();
+    if (!procfs_root) {
+        LOG_ERROR_MSG("Failed to initialize procfs\n");
+        return;
+    }
+    LOG_INFO_MSG("procfs initialized\n");
+
+    // 创建 /proc 目录并挂载 procfs
+    if (vfs_mkdir("/proc", FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC) != 0) {
+        LOG_WARN_MSG("Failed to create /proc directory (may already exist)\n");
+    } else {
+        LOG_INFO_MSG("/proc directory created\n");
+    }
+
+    // 尝试挂载 procfs
+    if (vfs_mount("/proc", procfs_root) != 0) {
+        LOG_ERROR_MSG("Failed to mount procfs to /proc\n");
+        // 不返回错误，系统可以继续运行，只是没有 /proc
+    } else {
+        LOG_INFO_MSG("procfs mounted at /proc\n");
     }
 }

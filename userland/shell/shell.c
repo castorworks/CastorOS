@@ -290,6 +290,51 @@ static int shell_unlink(const char *path) {
 }
 
 // ============================================================================
+// 工具函数
+// ============================================================================
+
+/**
+ * 格式化时间（毫秒转为天/时/分/秒）
+ */
+static void format_uptime(uint32_t ms, char *buffer, size_t size) {
+    uint32_t seconds = ms / 1000;
+    uint32_t minutes = seconds / 60;
+    uint32_t hours = minutes / 60;
+    uint32_t days = hours / 24;
+    
+    seconds %= 60;
+    minutes %= 60;
+    hours %= 24;
+    
+    // 使用标准库的 snprintf
+    size_t pos = 0;
+    if (days > 0) {
+        pos += (size_t)snprintf(buffer + pos, size - pos, "%u days, ", days);
+    }
+    if (hours > 0 || days > 0) {
+        pos += (size_t)snprintf(buffer + pos, size - pos, "%u hours, ", hours);
+    }
+    if (minutes > 0 || hours > 0 || days > 0) {
+        pos += (size_t)snprintf(buffer + pos, size - pos, "%u minutes, ", minutes);
+    }
+    snprintf(buffer + pos, size - pos, "%u seconds", seconds);
+}
+
+/**
+ * 格式化内存大小（字节转为 KB/MB）
+ * 注意：目前未使用，保留用于将来系统调用支持时使用
+ */
+static void __attribute__((unused)) format_memory_size(uint32_t bytes, char *buffer, size_t size) {
+    if (bytes >= 1024 * 1024) {
+        snprintf(buffer, size, "%u MB", bytes / (1024 * 1024));
+    } else if (bytes >= 1024) {
+        snprintf(buffer, size, "%u KB", bytes / 1024);
+    } else {
+        snprintf(buffer, size, "%u bytes", bytes);
+    }
+}
+
+// ============================================================================
 // 内建命令声明
 // ============================================================================
 
@@ -300,6 +345,13 @@ static int cmd_exit(int argc, char **argv);
 static int cmd_pwd(int argc, char **argv);
 static int cmd_cd(int argc, char **argv);
 static int cmd_clear(int argc, char **argv);
+
+// 系统信息命令
+static int cmd_sysinfo(int argc, char **argv);
+static int cmd_uptime(int argc, char **argv);
+static int cmd_free(int argc, char **argv);
+static int cmd_ps(int argc, char **argv);
+static int cmd_reboot(int argc, char **argv);
 
 // 文件操作命令
 static int cmd_ls(int argc, char **argv);
@@ -315,13 +367,30 @@ static int cmd_rmdir(int argc, char **argv);
 // ============================================================================
 
 static const shell_command_t commands[] = {
+    // 基础命令
     {"help",     "Show available commands",        "help [command]",    cmd_help},
     {"echo",     "Print text to screen",           "echo [text...]",    cmd_echo},
     {"version",  "Show shell version",             "version",           cmd_version},
     {"clear",    "Clear screen",                   "clear",             cmd_clear},
+    {"exit",     "Exit shell",                     "exit",              cmd_exit},
+    
+    // 系统信息命令 TODO
+    {"sysinfo",  "Display system information",      "sysinfo",           cmd_sysinfo},
+    // 运行时间
+    {"uptime",   "Show system uptime",             "uptime",            cmd_uptime},
+    
+    // 内存管理命令 TODO
+    {"free",     "Display memory usage",           "free",              cmd_free},
+    
+    // 进程管理命令
+    {"ps",       "List running processes",         "ps",                cmd_ps},
+    
+    // 系统控制命令 TODO
+    {"reboot",   "Reboot the system",              "reboot",            cmd_reboot},
+    
+    // 目录操作命令
     {"pwd",      "Print working directory",        "pwd",               cmd_pwd},
     {"cd",       "Change directory",               "cd [path]",         cmd_cd},
-    {"exit",     "Exit shell",                     "exit",              cmd_exit},
     
     // 文件操作命令
     {"ls",       "List directory contents",         "ls [path]",         cmd_ls},
@@ -426,6 +495,293 @@ static int cmd_exit(int argc, char **argv) {
     printf("Exiting shell...\n");
     shell_state.running = 0;
     return 0;
+}
+
+// ============================================================================
+// 系统信息命令实现
+// ============================================================================
+
+/**
+ * sysinfo 命令 - 显示系统信息
+ */
+static int cmd_sysinfo(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    
+    // 注意：用户态无法直接访问内核信息，这里显示占位符
+    // 实际实现需要相应的系统调用支持
+    printf("System Information\n");
+    printf("================================================================================\n");
+    printf("Kernel:          CastorOS (User Shell)\n");
+    printf("Architecture:    i686 (x86 32-bit)\n");
+    printf("Uptime:          (Not available - requires system call)\n");
+    printf("\n");
+    printf("Total Memory:    (Not available - requires system call)\n");
+    printf("Used Memory:     (Not available - requires system call)\n");
+    printf("Free Memory:     (Not available - requires system call)\n");
+    printf("\n");
+    printf("Note: This command requires system call support for system information.\n");
+    return 0;
+}
+
+/**
+ * uptime 命令 - 显示系统运行时间
+ */
+static int cmd_uptime(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    
+    // 使用 time() 系统调用获取系统运行时间（秒）
+    time_t uptime_sec = time(NULL);
+    
+    if (uptime_sec == (time_t)-1) {
+        printf("Error: Failed to get system uptime\n");
+        return -1;
+    }
+    
+    // 转换为毫秒并格式化
+    char uptime_str[128];
+    format_uptime((uint32_t)(uptime_sec * 1000), uptime_str, sizeof(uptime_str));
+    
+    printf("System uptime: %s\n", uptime_str);
+    return 0;
+}
+
+/**
+ * free 命令 - 显示内存使用情况
+ */
+static int cmd_free(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    
+    // 注意：用户态无法直接访问物理内存信息，这里显示占位符
+    // 实际实现需要相应的系统调用支持（如 SYS_GETMEMINFO）
+    printf("Memory Usage\n");
+    printf("================================================================================\n");
+    printf("              Total          Used          Free\n");
+    printf("Physical:     (N/A)          (N/A)          (N/A)\n");
+    printf("              (N/A KB)       (N/A KB)       (N/A KB)\n");
+    printf("\n");
+    printf("Note: This command requires system call support for memory information.\n");
+    return 0;
+}
+
+/**
+ * 解析 /proc/[pid]/status 文件内容
+ */
+static int parse_proc_status(const char *status_content, uint32_t *pid, char *name, 
+                              char *state, uint32_t *priority, uint64_t *runtime_ms) {
+    if (!status_content || !pid || !name || !state || !priority || !runtime_ms) {
+        return -1;
+    }
+    
+    // 初始化
+    *pid = 0;
+    name[0] = '\0';
+    state[0] = '\0';
+    *priority = 0;
+    *runtime_ms = 0;
+    
+    // 简单的解析实现（逐行解析）
+    const char *p = status_content;
+    while (*p != '\0') {
+        // 解析 Name:
+        if (strncmp(p, "Name:\t", 6) == 0) {
+            p += 6;
+            int i = 0;
+            while (*p != '\n' && *p != '\0' && i < 31) {
+                name[i++] = *p++;
+            }
+            name[i] = '\0';
+        }
+        // 解析 Pid:
+        else if (strncmp(p, "Pid:\t", 5) == 0) {
+            p += 5;
+            *pid = 0;
+            while (*p >= '0' && *p <= '9') {
+                *pid = *pid * 10 + (*p - '0');
+                p++;
+            }
+        }
+        // 解析 State:
+        else if (strncmp(p, "State:\t", 7) == 0) {
+            p += 7;
+            if (*p != '\n' && *p != '\0') {
+                state[0] = *p;
+                state[1] = '\0';
+            }
+        }
+        // 解析 Priority:
+        else if (strncmp(p, "Priority:\t", 10) == 0) {
+            p += 10;
+            *priority = 0;
+            while (*p >= '0' && *p <= '9') {
+                *priority = *priority * 10 + (*p - '0');
+                p++;
+            }
+        }
+        // 解析 Runtime:
+        else if (strncmp(p, "Runtime:\t", 9) == 0) {
+            p += 9;
+            *runtime_ms = 0;
+            while (*p >= '0' && *p <= '9') {
+                *runtime_ms = *runtime_ms * 10 + (*p - '0');
+                p++;
+            }
+            // 跳过 " ms"
+            while (*p == ' ' || *p == 'm' || *p == 's') p++;
+        }
+        
+        // 移动到下一行
+        while (*p != '\n' && *p != '\0') p++;
+        if (*p == '\n') p++;
+    }
+    
+    return 0;
+}
+
+/**
+ * ps 命令 - 显示进程列表（通过 /proc 文件系统）
+ */
+static int cmd_ps(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    
+    // 打开 /proc 目录
+    int proc_fd = open("/proc", O_RDONLY, 0);
+    if (proc_fd < 0) {
+        printf("Error: Cannot open /proc directory\n");
+        return -1;
+    }
+    
+    // 显示表头
+    printf("Process List\n");
+    printf("================================================================================\n");
+    printf("PID   Name              State       Priority  Runtime (ms)\n");
+    printf("--------------------------------------------------------------------------------\n");
+    
+    // 读取 /proc 目录中的所有 PID 目录
+    struct dirent entry;
+    uint32_t index = 0;
+    int process_count = 0;
+    
+    while (getdents(proc_fd, index, &entry) == 0) {
+        // 跳过 . 和 ..
+        if (strcmp(entry.d_name, ".") == 0 || strcmp(entry.d_name, "..") == 0) {
+            index++;
+            continue;
+        }
+        
+        // 检查是否是数字目录（PID）
+        uint32_t pid = 0;
+        const char *p = entry.d_name;
+        while (*p >= '0' && *p <= '9') {
+            pid = pid * 10 + (*p - '0');
+            p++;
+        }
+        
+        // 如果是有效的 PID 目录
+        if (*p == '\0' && pid > 0) {
+            // 构建 status 文件路径
+            char status_path[64];
+            // 使用 snprintf 需要包含 stdio.h，这里使用简单的方式
+            size_t len = 0;
+            status_path[len++] = '/';
+            status_path[len++] = 'p';
+            status_path[len++] = 'r';
+            status_path[len++] = 'o';
+            status_path[len++] = 'c';
+            status_path[len++] = '/';
+            
+            const char *pid_str = entry.d_name;
+            while (*pid_str != '\0' && len < 63) {
+                status_path[len++] = *pid_str++;
+            }
+            status_path[len++] = '/';
+            status_path[len++] = 's';
+            status_path[len++] = 't';
+            status_path[len++] = 'a';
+            status_path[len++] = 't';
+            status_path[len++] = 'u';
+            status_path[len++] = 's';
+            status_path[len] = '\0';
+            
+            // 打开并读取 status 文件
+            int status_fd = open(status_path, O_RDONLY, 0);
+            if (status_fd >= 0) {
+                char status_buf[512];
+                int bytes_read = read(status_fd, status_buf, sizeof(status_buf) - 1);
+                close(status_fd);
+                
+                if (bytes_read > 0) {
+                    status_buf[bytes_read] = '\0';
+                    
+                    // 解析 status 文件内容
+                    uint32_t proc_pid;
+                    char proc_name[32];
+                    char proc_state[8];
+                    uint32_t proc_priority;
+                    uint64_t proc_runtime;
+                    
+                    if (parse_proc_status(status_buf, &proc_pid, proc_name, 
+                                          proc_state, &proc_priority, &proc_runtime) == 0) {
+                        // 转换状态字符串
+                        const char *state_str;
+                        if (strcmp(proc_state, "R") == 0) {
+                            state_str = "RUNNING";
+                        } else if (strcmp(proc_state, "S") == 0) {
+                            state_str = "BLOCKED";
+                        } else if (strcmp(proc_state, "Z") == 0) {
+                            state_str = "TERMINATED";
+                        } else {
+                            state_str = "UNKNOWN";
+                        }
+                        
+                        printf("%-5u %-17s %-11s %-9u %llu\n",
+                               proc_pid,
+                               proc_name,
+                               state_str,
+                               proc_priority,
+                               (unsigned long long)proc_runtime);
+                        process_count++;
+                    }
+                }
+            }
+        }
+        
+        index++;
+    }
+    
+    close(proc_fd);
+    
+    if (process_count == 0) {
+        printf("(No processes found)\n");
+    }
+    
+    return 0;
+}
+
+/**
+ * reboot 命令 - 重启系统
+ */
+static int cmd_reboot(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    
+    printf("Rebooting system...\n");
+    
+    // 注意：用户态无法直接重启系统，需要系统调用支持
+    // 这里尝试调用一个可能存在的重启系统调用
+    // 如果不存在，可以显示错误信息
+    
+    // 尝试通过系统调用重启（假设有 SYS_REBOOT 系统调用）
+    // 如果没有，可以尝试其他方法，如写入特殊设备文件
+    
+    // 暂时显示提示信息
+    printf("Error: Reboot functionality requires system call support.\n");
+    printf("Note: This command requires SYS_REBOOT system call.\n");
+    
+    return -1;
 }
 
 // ============================================================================

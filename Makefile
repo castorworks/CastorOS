@@ -107,7 +107,7 @@ clean:
 # 生成完整的 compile_commands.json
 .PHONY: compile-db
 compile-db:
-	@bear make clean && bear make
+	@bash scripts/merge-compile-commands.sh
 
 # 显示帮助
 help:

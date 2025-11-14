@@ -13,5 +13,8 @@ void num_to_str_oct(unsigned long long val, char *tmp, int *len);
 // printf 函数声明
 void printf(const char *format, ...);
 
+// snprintf 函数声明
+int snprintf(char *str, size_t size, const char *format, ...);
+
 #endif /* _USERLAND_LIB_STDIO_H_ */
 

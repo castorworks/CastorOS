@@ -327,3 +327,275 @@ void kprintf(const char *fmt, ...) {
     va_end(args);
 }
 
+/**
+ * 向缓冲区添加填充字符（辅助函数）
+ */
+static size_t add_padding(char *str, size_t size, size_t pos, char pad_char, int count) {
+    for (int i = 0; i < count && pos < size - 1; i++) {
+        str[pos++] = pad_char;
+    }
+    return pos;
+}
+
+/**
+ * 格式化输出到字符串缓冲区（内部辅助函数，用于 ksnprintf）
+ */
+static int vsnprintf_internal(char *str, size_t size, const char *fmt, va_list args) {
+    if (!str || size == 0) {
+        return 0;
+    }
+    
+    size_t pos = 0;
+    
+    while (*fmt && pos < size - 1) {
+        if (*fmt != '%') {
+            // 普通字符
+            str[pos++] = *fmt++;
+            continue;
+        }
+        
+        fmt++; // 跳过 '%'
+        
+        // 解析标志位和宽度
+        bool left_align = false;
+        bool zero_pad = false;
+        int width = 0;
+        bool is_long_long = false;
+        
+        // 检查左对齐标志
+        if (*fmt == '-') {
+            left_align = true;
+            fmt++;
+        }
+        
+        // 检查零填充标志（左对齐时忽略零填充）
+        if (*fmt == '0' && !left_align) {
+            zero_pad = true;
+            fmt++;
+        }
+        
+        // 解析宽度
+        while (*fmt >= '0' && *fmt <= '9') {
+            width = width * 10 + (*fmt - '0');
+            fmt++;
+        }
+        
+        // 解析长度修饰符
+        bool is_long = false;
+        if (*fmt == 'l') {
+            fmt++;
+            if (*fmt == 'l') {
+                is_long_long = true;
+                fmt++;
+            } else {
+                is_long = true;  // 单个 l 表示 long
+                // 注意：这里不递增 fmt，因为 fmt 已经指向格式字符（如 'u'）
+            }
+        }
+        
+        // 格式化值到临时缓冲区
+        char value_buf[64];
+        size_t value_len = 0;
+        bool is_negative = false;
+        
+        switch (*fmt) {
+            case 's': {  // 字符串
+                const char *s = va_arg(args, const char *);
+                if (!s) {
+                    s = "(null)";
+                }
+                value_len = strlen(s);
+                size_t copy_len = (value_len < sizeof(value_buf) - 1) ? value_len : (sizeof(value_buf) - 1);
+                memcpy(value_buf, s, copy_len);
+                value_buf[copy_len] = '\0';
+                value_len = copy_len;
+                break;
+            }
+            case 'c': {  // 字符
+                char c = (char)va_arg(args, int);
+                value_buf[0] = c;
+                value_buf[1] = '\0';
+                value_len = 1;
+                break;
+            }
+            case 'd': {  // 有符号十进制整数
+                if (is_long_long) {
+                    int64_t val = va_arg(args, int64_t);
+                    if (val < 0) {
+                        is_negative = true;
+                        val = -val;
+                    }
+                    int64_to_str(val, value_buf);
+                } else if (is_long) {
+                    // long 在 32 位系统上通常是 32 位，但 va_arg 需要精确类型
+                    long val = va_arg(args, long);
+                    if (val < 0) {
+                        is_negative = true;
+                        val = -val;
+                    }
+                    // 转换为 int32_t 以便使用现有的转换函数
+                    int32_t val32 = (int32_t)val;
+                    int32_to_str(val32, value_buf);
+                } else {
+                    int32_t val = va_arg(args, int32_t);
+                    if (val < 0) {
+                        is_negative = true;
+                        val = -val;
+                    }
+                    int32_to_str(val, value_buf);
+                }
+                value_len = strlen(value_buf);
+                break;
+            }
+            case 'u': {  // 无符号十进制整数
+                if (is_long_long) {
+                    uint64_t val = va_arg(args, uint64_t);
+                    uint64_to_str(val, value_buf);
+                } else if (is_long) {
+                    // long 在 32 位系统上通常是 32 位，但 va_arg 需要精确类型
+                    unsigned long val = va_arg(args, unsigned long);
+                    // 转换为 uint32_t 以便使用现有的转换函数
+                    uint32_t val32 = (uint32_t)val;
+                    uint32_to_str(val32, value_buf);
+                } else {
+                    uint32_t val = va_arg(args, uint32_t);
+                    uint32_to_str(val, value_buf);
+                }
+                value_len = strlen(value_buf);
+                break;
+            }
+            case 'x': {  // 十六进制（小写）
+                if (is_long_long) {
+                    uint64_t val = va_arg(args, uint64_t);
+                    uint64_to_hex(val, value_buf, false);
+                } else if (is_long) {
+                    unsigned long val = va_arg(args, unsigned long);
+                    uint32_t val32 = (uint32_t)val;
+                    uint32_to_hex(val32, value_buf, false);
+                } else {
+                    uint32_t val = va_arg(args, uint32_t);
+                    uint32_to_hex(val, value_buf, false);
+                }
+                value_len = strlen(value_buf);
+                break;
+            }
+            case 'X': {  // 十六进制（大写）
+                if (is_long_long) {
+                    uint64_t val = va_arg(args, uint64_t);
+                    uint64_to_hex(val, value_buf, true);
+                } else if (is_long) {
+                    unsigned long val = va_arg(args, unsigned long);
+                    uint32_t val32 = (uint32_t)val;
+                    uint32_to_hex(val32, value_buf, true);
+                } else {
+                    uint32_t val = va_arg(args, uint32_t);
+                    uint32_to_hex(val, value_buf, true);
+                }
+                value_len = strlen(value_buf);
+                break;
+            }
+            case 'p': {  // 指针
+                void *ptr = va_arg(args, void *);
+                uint32_to_hex((uint32_t)ptr, value_buf, false);
+                value_len = strlen(value_buf);
+                break;
+            }
+            case '%': {  // 百分号字面值
+                value_buf[0] = '%';
+                value_buf[1] = '\0';
+                value_len = 1;
+                break;
+            }
+            default: {  // 未知格式说明符
+                // 如果之前有长度修饰符，需要包含它
+                if (is_long || is_long_long) {
+                    value_buf[0] = '%';
+                    if (is_long_long) {
+                        value_buf[1] = 'l';
+                        value_buf[2] = 'l';
+                        value_buf[3] = *fmt;
+                        value_buf[4] = '\0';
+                        value_len = 4;
+                    } else {
+                        value_buf[1] = 'l';
+                        value_buf[2] = *fmt;
+                        value_buf[3] = '\0';
+                        value_len = 3;
+                    }
+                } else {
+                    value_buf[0] = '%';
+                    value_buf[1] = *fmt;
+                    value_buf[2] = '\0';
+                    value_len = 2;
+                }
+                break;
+            }
+        }
+        
+        // 计算需要填充的字符数
+        int pad_count = (width > (int)value_len) ? (width - (int)value_len) : 0;
+        if (is_negative) {
+            pad_count--;  // 负号占用一个字符位置
+        }
+        if (pad_count < 0) {
+            pad_count = 0;
+        }
+        
+        // 应用格式化和填充
+        if (left_align) {
+            // 左对齐：先输出值，再填充空格
+            if (is_negative && pos < size - 1) {
+                str[pos++] = '-';
+            }
+            // 输出值
+            size_t copy_len = (pos + value_len < size - 1) ? value_len : (size - 1 - pos);
+            memcpy(str + pos, value_buf, copy_len);
+            pos += copy_len;
+            // 填充空格
+            pos = add_padding(str, size, pos, ' ', pad_count);
+        } else {
+            // 右对齐：先填充，再输出值
+            if (zero_pad && is_negative) {
+                // 零填充时，负号在填充之前
+                if (pos < size - 1) {
+                    str[pos++] = '-';
+                }
+                pos = add_padding(str, size, pos, '0', pad_count);
+            } else {
+                // 空格填充，或零填充但无负号
+                char pad_char = zero_pad ? '0' : ' ';
+                pos = add_padding(str, size, pos, pad_char, pad_count);
+                if (is_negative && pos < size - 1) {
+                    str[pos++] = '-';
+                }
+            }
+            // 输出值
+            size_t copy_len = (pos + value_len < size - 1) ? value_len : (size - 1 - pos);
+            memcpy(str + pos, value_buf, copy_len);
+            pos += copy_len;
+        }
+        
+        fmt++;
+    }
+    
+    // 添加结尾的 '\0'
+    if (pos < size) {
+        str[pos] = '\0';
+    } else {
+        str[size - 1] = '\0';
+    }
+    
+    return (int)pos;
+}
+
+/**
+ * 格式化输出到字符串缓冲区
+ */
+int ksnprintf(char *str, size_t size, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    int result = vsnprintf_internal(str, size, fmt, args);
+    va_end(args);
+    return result;
+}
+

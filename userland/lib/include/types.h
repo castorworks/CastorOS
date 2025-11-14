@@ -22,6 +22,11 @@ typedef uint32_t size_t;
 typedef int32_t  ssize_t;
 #endif
 
+// NULL 定义
+#ifndef NULL
+#define NULL ((void *)0)
+#endif
+
 // 文件类型常量（用于 dirent.d_type）
 #define DT_UNKNOWN       0   // 未知类型
 #define DT_FIFO          1   // 命名管道
