@@ -28,6 +28,9 @@ static task_t *current_task = NULL;
 static task_t *ready_queue_head = NULL;
 static task_t *ready_queue_tail = NULL;
 
+/* 待回收（僵尸）任务链表 */
+static task_t *zombie_list = NULL;
+
 /* 下一个可用的 PID */
 static uint32_t next_pid = 1;
 
@@ -75,6 +78,32 @@ static int task_init_standard_fds(task_t *task) {
     
     LOG_DEBUG_MSG("task: initialized stdio for PID %u\n", task->pid);
     return 0;
+}
+
+/**
+ * 将任务加入僵尸队列，待安全时释放
+ */
+static void task_enqueue_zombie(task_t *task) {
+    if (!task) {
+        return;
+    }
+    task->next = zombie_list;
+    zombie_list = task;
+}
+
+/**
+ * 释放所有已终止但尚未回收的任务
+ * 仅在当前任务仍处于 RUNNING/READY 等状态时调用
+ */
+static void task_reap_zombies(void) {
+    while (zombie_list) {
+        task_t *task = zombie_list;
+        zombie_list = zombie_list->next;
+        task->next = NULL;
+        LOG_DEBUG_MSG("Reaping terminated task %s (PID %u)\n",
+                      task->name, task->pid);
+        task_free(task);
+    }
 }
 
 /**
@@ -496,6 +525,11 @@ void task_schedule(void) {
         return;  // 还未初始化
     }
 
+    /* 仅在当前任务不是终止状态时，安全地回收僵尸任务 */
+    if (current_task->state != TASK_TERMINATED) {
+        task_reap_zombies();
+    }
+
     /* 更新当前任务的运行时间统计（切换时统计增量） */
     uint64_t current_tick = timer_get_ticks();
     if (current_task->last_scheduled_tick > 0) {
@@ -518,10 +552,10 @@ void task_schedule(void) {
         current_task->time_slice = DEFAULT_TIME_SLICE;  // 重置时间片
         ready_queue_add(current_task);
     } else if (current_task->state == TASK_TERMINATED) {
-        /* 回收已终止任务的资源 */
-        LOG_DEBUG_MSG("Reaping terminated task %s (PID %u)\n", 
+        /* 不立即释放，加入僵尸链表，等待下一次安全回收 */
+        LOG_DEBUG_MSG("Marking terminated task %s (PID %u) for delayed cleanup\n", 
                      current_task->name, current_task->pid);
-        task_free(current_task);
+        task_enqueue_zombie(current_task);
     }
     
     /* 从就绪队列获取下一个任务 */

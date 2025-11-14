@@ -368,6 +368,7 @@ static int cmd_free(int argc, char **argv);
 static int cmd_ps(int argc, char **argv);
 static int cmd_reboot(int argc, char **argv);
 static int cmd_poweroff(int argc, char **argv);
+static int cmd_exec(int argc, char **argv);
 
 // 文件操作命令
 static int cmd_ls(int argc, char **argv);
@@ -415,6 +416,7 @@ static const shell_command_t commands[] = {
     
     // 进程管理命令
     {"ps",       "List running processes",         "ps",                cmd_ps},
+    {"exec",     "Execute a user program",         "exec <path>",       cmd_exec},
     
     // 系统控制命令
     {"reboot",   "Reboot the system",              "reboot",            cmd_reboot},
@@ -861,6 +863,45 @@ static int cmd_poweroff(int argc, char **argv) {
         printf("Error: poweroff system call failed (code=%d)\n", ret);
     }
     return ret;
+}
+
+/**
+ * exec 命令 - 执行 ELF 程序
+ */
+static int cmd_exec(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Error: Usage: exec <path>\n");
+        return -1;
+    }
+    
+    char abs_path[SHELL_MAX_PATH_LENGTH];
+    if (shell_resolve_path(argv[1], abs_path, sizeof(abs_path)) != 0) {
+        printf("Error: Invalid path\n");
+        return -1;
+    }
+    
+    // 简单检查文件是否存在
+    int fd = open(abs_path, O_RDONLY, 0);
+    if (fd < 0) {
+        printf("Error: Cannot access '%s'\n", abs_path);
+        return -1;
+    }
+    close(fd);
+    
+    int pid = fork();
+    if (pid < 0) {
+        printf("Error: fork failed\n");
+        return -1;
+    }
+    
+    if (pid == 0) {
+        int ret = exec(abs_path);
+        printf("Error: exec failed for '%s' (code=%d)\n", abs_path, ret);
+        exit(-1);
+    }
+    
+    printf("Started process PID %d: %s\n", pid, abs_path);
+    return 0;
 }
 
 // ============================================================================
