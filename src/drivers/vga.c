@@ -1,6 +1,7 @@
 #include <drivers/vga.h>
 #include <types.h>
 #include <kernel/io.h>
+#include <kernel/sync/spinlock.h>
 
 /* VGA 文本模式参数 */
 #define VGA_ADDRESS 0x800B8000  // 物理地址 0xB8000 + 内核基址 0x80000000
@@ -17,6 +18,7 @@ static int vga_col = 0;
 
 /* 当前颜色属性 */
 static uint8_t vga_color = 0x0F;  // 默认白色文字，黑色背景
+static spinlock_t vga_lock;
 
 /* ANSI 转义序列解析状态 */
 typedef enum {
@@ -97,11 +99,7 @@ static void vga_putentry_at(char c, uint8_t color, int x, int y) {
     vga[index] = vga_make_entry(c, color);
 }
 
-void vga_init(void) {
-    vga_clear();
-}
-
-void vga_clear(void) {
+static void vga_clear_locked(void) {
     volatile uint16_t *vga = (volatile uint16_t *)VGA_ADDRESS;
     uint16_t blank = vga_make_entry(' ', vga_color);
     
@@ -112,9 +110,26 @@ void vga_clear(void) {
     vga_row = 0;
     vga_col = 0;
     vga_update_cursor();
+    ansi_state = ANSI_NORMAL;
+    ansi_param = 0;
 }
 
-void vga_putchar(char c) {
+void vga_init(void) {
+    spinlock_init(&vga_lock);
+    bool irq_state;
+    spinlock_lock_irqsave(&vga_lock, &irq_state);
+    vga_clear_locked();
+    spinlock_unlock_irqrestore(&vga_lock, irq_state);
+}
+
+void vga_clear(void) {
+    bool irq_state;
+    spinlock_lock_irqsave(&vga_lock, &irq_state);
+    vga_clear_locked();
+    spinlock_unlock_irqrestore(&vga_lock, irq_state);
+}
+
+static void vga_handle_char(char c) {
     // ANSI 转义序列解析
     if (ansi_state == ANSI_NORMAL) {
         if (c == '\033' || c == 0x1B) {
@@ -140,7 +155,7 @@ void vga_putchar(char c) {
         } else if (c == 'J') {
             // 清屏命令：\033[2J 或 \033[J
             if (ansi_param == 2 || ansi_param == 0) {
-                vga_clear();
+                vga_clear_locked();
             }
             ansi_state = ANSI_NORMAL;
             ansi_param = 0;
@@ -230,16 +245,37 @@ void vga_putchar(char c) {
     vga_update_cursor();
 }
 
+void vga_putchar(char c) {
+    bool irq_state;
+    spinlock_lock_irqsave(&vga_lock, &irq_state);
+    vga_handle_char(c);
+    spinlock_unlock_irqrestore(&vga_lock, irq_state);
+}
+
 void vga_print(const char *msg) {
-    while (*msg) {
-        vga_putchar(*msg++);
+    if (msg == NULL) {
+        return;
     }
+
+    bool irq_state;
+    spinlock_lock_irqsave(&vga_lock, &irq_state);
+    while (*msg) {
+        vga_handle_char(*msg++);
+    }
+    spinlock_unlock_irqrestore(&vga_lock, irq_state);
 }
 
 void vga_set_color(vga_color_t fg, vga_color_t bg) {
+    bool irq_state;
+    spinlock_lock_irqsave(&vga_lock, &irq_state);
     vga_color = vga_make_color(fg, bg);
+    spinlock_unlock_irqrestore(&vga_lock, irq_state);
 }
 
 uint8_t vga_get_color(void) {
-    return vga_color;
+    bool irq_state;
+    spinlock_lock_irqsave(&vga_lock, &irq_state);
+    uint8_t color = vga_color;
+    spinlock_unlock_irqrestore(&vga_lock, irq_state);
+    return color;
 }

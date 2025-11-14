@@ -25,6 +25,7 @@ SHELL_ELF = userland/shell/shell.elf
 C_SOURCES = $(wildcard $(SRC_DIR)/drivers/*.c) \
 	$(wildcard $(SRC_DIR)/fs/*.c) \
 	$(wildcard $(SRC_DIR)/kernel/*.c) \
+	$(wildcard $(SRC_DIR)/kernel/sync/*.c) \
 	$(wildcard $(SRC_DIR)/kernel/syscalls/*.c) \
 	$(wildcard $(SRC_DIR)/lib/*.c) \
 	$(wildcard $(SRC_DIR)/mm/*.c) \

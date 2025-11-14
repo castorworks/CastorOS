@@ -14,6 +14,7 @@
 #include <tests/pmm_test.h>
 #include <tests/vmm_test.h>
 #include <tests/heap_test.h>
+#include <tests/sync_test.h>
 #include <lib/kprintf.h>
 #include <drivers/vga.h>
 
@@ -54,7 +55,7 @@ static const test_entry_t test_suite[] = {
     // TEST_ENTRY("Heap Allocator Tests", run_heap_tests),
     
     // ========== 在下方添加新的测试 ==========
-    // TEST_ENTRY("New Test Module", run_new_tests),
+    // TEST_ENTRY("Synchronization Primitive Tests", run_sync_tests),
     
 };
 
