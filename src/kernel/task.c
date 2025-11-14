@@ -558,8 +558,19 @@ void task_schedule(void) {
         task_enqueue_zombie(current_task);
     }
     
-    /* 从就绪队列获取下一个任务 */
-    task_t *next_task = ready_queue_remove();
+    /* 从就绪队列获取下一个任务（跳过已终止的任务） */
+    task_t *next_task = NULL;
+    while (1) {
+        next_task = ready_queue_remove();
+        if (next_task == NULL) {
+            break;  // 队列为空
+        }
+        if (next_task->state != TASK_TERMINATED) {
+            break;  // 找到有效任务
+        }
+        // 跳过已终止的任务，将其加入僵尸队列
+        task_enqueue_zombie(next_task);
+    }
     
     /* 如果没有就绪任务，运行 idle */
     if (next_task == NULL) {

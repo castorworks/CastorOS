@@ -7,6 +7,8 @@
 
 #define ATA_PRIMARY_IO_BASE   0x1F0
 #define ATA_PRIMARY_CTRL_BASE 0x3F6
+#define ATA_SECONDARY_IO_BASE   0x170
+#define ATA_SECONDARY_CTRL_BASE 0x376
 
 #define ATA_REG_DATA       0x00
 #define ATA_REG_ERROR      0x01
@@ -31,6 +33,7 @@
 #define ATA_CMD_IDENTIFY      0xEC
 
 #define ATA_SECTOR_SIZE 512
+#define ATA_MAX_DEVICES 4
 
 typedef struct ata_device {
     uint16_t io_base;
@@ -40,15 +43,14 @@ typedef struct ata_device {
     uint32_t total_sectors;
 } ata_device_t;
 
-static ata_device_t ata_primary_master = {
-    .io_base = ATA_PRIMARY_IO_BASE,
-    .ctrl_base = ATA_PRIMARY_CTRL_BASE,
-    .drive = 0,
-    .present = false,
-    .total_sectors = 0,
+static ata_device_t ata_devices[ATA_MAX_DEVICES] = {
+    {.io_base = ATA_PRIMARY_IO_BASE,    .ctrl_base = ATA_PRIMARY_CTRL_BASE,    .drive = 0, .present = false, .total_sectors = 0}, // ata0: primary master
+    {.io_base = ATA_PRIMARY_IO_BASE,    .ctrl_base = ATA_PRIMARY_CTRL_BASE,    .drive = 1, .present = false, .total_sectors = 0}, // ata1: primary slave
+    {.io_base = ATA_SECONDARY_IO_BASE,  .ctrl_base = ATA_SECONDARY_CTRL_BASE,  .drive = 0, .present = false, .total_sectors = 0}, // ata2: secondary master
+    {.io_base = ATA_SECONDARY_IO_BASE,  .ctrl_base = ATA_SECONDARY_CTRL_BASE,  .drive = 1, .present = false, .total_sectors = 0}, // ata3: secondary slave
 };
 
-static blockdev_t ata_blockdev;
+static blockdev_t ata_blockdevs[ATA_MAX_DEVICES];
 
 static void ata_io_wait(ata_device_t *dev) {
     inb(dev->ctrl_base);
@@ -224,29 +226,38 @@ static int ata_blockdev_write(void *dev_ptr, uint32_t sector, uint32_t count, co
 
 void ata_init(void) {
     irq_disable_line(14);
-    if (ata_identify(&ata_primary_master) != 0) {
-        LOG_WARN_MSG("ata: No ATA device detected on primary master\n");
-        return;
+    
+    const char *device_names[] = {"ata0", "ata1", "ata2", "ata3"};
+    const char *device_desc[] = {
+        "primary master",
+        "primary slave",
+        "secondary master",
+        "secondary slave"
+    };
+    
+    for (uint32_t i = 0; i < ATA_MAX_DEVICES; i++) {
+        if (ata_identify(&ata_devices[i]) == 0) {
+            memset(&ata_blockdevs[i], 0, sizeof(blockdev_t));
+            strcpy(ata_blockdevs[i].name, device_names[i]);
+            ata_blockdevs[i].private_data = &ata_devices[i];
+            ata_blockdevs[i].block_size = ATA_SECTOR_SIZE;
+            ata_blockdevs[i].total_sectors = ata_devices[i].total_sectors;
+            ata_blockdevs[i].read = ata_blockdev_read;
+            ata_blockdevs[i].write = ata_blockdev_write;
+            ata_blockdevs[i].get_size = NULL;
+            ata_blockdevs[i].get_block_size = NULL;
+
+            if (blockdev_register(&ata_blockdevs[i]) == 0) {
+                LOG_INFO_MSG("ata: %s detected, %u sectors (approx %u MB)\n",
+                             device_desc[i],
+                             ata_devices[i].total_sectors,
+                             (ata_devices[i].total_sectors / 2048));
+            } else {
+                LOG_WARN_MSG("ata: Failed to register %s as %s\n",
+                             device_desc[i], device_names[i]);
+            }
+        }
     }
-
-    memset(&ata_blockdev, 0, sizeof(ata_blockdev));
-    strcpy(ata_blockdev.name, "ata0");
-    ata_blockdev.private_data = &ata_primary_master;
-    ata_blockdev.block_size = ATA_SECTOR_SIZE;
-    ata_blockdev.total_sectors = ata_primary_master.total_sectors;
-    ata_blockdev.read = ata_blockdev_read;
-    ata_blockdev.write = ata_blockdev_write;
-    ata_blockdev.get_size = NULL;
-    ata_blockdev.get_block_size = NULL;
-
-    if (blockdev_register(&ata_blockdev) != 0) {
-        LOG_ERROR_MSG("ata: Failed to register block device\n");
-        return;
-    }
-
-    LOG_INFO_MSG("ata: Primary master detected, %u sectors (approx %u MB)\n",
-                 ata_primary_master.total_sectors,
-                 (ata_primary_master.total_sectors / 2048));
 }
 
 

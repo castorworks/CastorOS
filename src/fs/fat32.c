@@ -1558,7 +1558,7 @@ fs_node_t *fat32_init(blockdev_t *dev) {
     }
     
     memset(fs, 0, sizeof(fat32_fs_t));
-    fs->dev = dev;
+    fs->dev = blockdev_retain(dev);  // 保留设备引用，防止被销毁
     
     if (blockdev_read(dev, 0, 1, (uint8_t *)&fs->bpb) != 0) {
         kfree(fs);

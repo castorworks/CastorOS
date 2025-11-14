@@ -196,6 +196,12 @@ static uint32_t sys_poweroff_wrapper(uint32_t *frame, uint32_t p1, uint32_t p2, 
     return 0;
 }
 
+static uint32_t sys_kill_wrapper(uint32_t *frame, uint32_t pid, uint32_t signal,
+                                 uint32_t p3, uint32_t p4, uint32_t p5) {
+    (void)frame; (void)p3; (void)p4; (void)p5;
+    return sys_kill(pid, signal);
+}
+
 uint32_t syscall_dispatcher(uint32_t syscall_num, uint32_t p1, uint32_t p2, 
                             uint32_t p3, uint32_t p4, uint32_t p5, uint32_t *frame) {
     /* 检查系统调用号是否在有效范围内 */
@@ -234,6 +240,9 @@ void syscall_init(void) {
     syscall_table[SYS_EXECVE]      = sys_execve_wrapper;   
     syscall_table[SYS_GETPID]      = sys_getpid_wrapper;
     syscall_table[SYS_SCHED_YIELD] = sys_yield_wrapper;
+    
+    /* 信号与进程控制 */
+    syscall_table[SYS_KILL]        = sys_kill_wrapper;
     
     /* 文件系统操作 */
     syscall_table[SYS_OPEN]        = sys_open_wrapper;   

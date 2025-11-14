@@ -351,16 +351,19 @@ void partition_destroy_blockdev(blockdev_t *dev) {
     
     partition_blockdev_data_t *data = (partition_blockdev_data_t *)dev->private_data;
 
+    // blockdev_unregister 内部已经调用了 blockdev_release，所以这里不需要再次调用
     blockdev_unregister(dev);
-    blockdev_release(dev);
 
-    if (data) {
-        if (data->partition) {
-            kfree(data->partition);
+    // 只有在引用计数为 0 时才真正释放设备
+    // 如果设备仍被 FAT32 文件系统使用，引用计数会 > 0，此时不应该释放
+    if (dev->ref_count == 0) {
+        if (data) {
+            if (data->partition) {
+                kfree(data->partition);
+            }
+            kfree(data);
         }
-        kfree(data);
+        kfree(dev);
     }
-    
-    kfree(dev);
 }
 

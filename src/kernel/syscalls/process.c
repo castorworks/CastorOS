@@ -12,6 +12,7 @@
 #include <kernel/elf.h>
 #include <kernel/fd_table.h>
 #include <kernel/gdt.h>
+#include <kernel/interrupt.h>
 #include <fs/vfs.h>
 #include <mm/vmm.h>
 #include <mm/heap.h>
@@ -374,5 +375,79 @@ uint32_t sys_nanosleep(const struct timespec *req, struct timespec *rem) {
         rem->tv_nsec = 0;
     }
 
+    return 0;
+}
+
+/**
+ * sys_kill - 向进程发送信号
+ * 
+ * 简化实现：目前所有信号都直接终止目标进程
+ * 未来可以扩展为支持信号处理和不同的信号行为
+ */
+uint32_t sys_kill(uint32_t pid, uint32_t signal) {
+    task_t *current = task_get_current();
+    if (!current) {
+        LOG_ERROR_MSG("sys_kill: no current task\n");
+        return (uint32_t)-1;
+    }
+    
+    LOG_DEBUG_MSG("sys_kill: PID %u sending signal %u to PID %u\n", 
+                  current->pid, signal, pid);
+    
+    // 不能杀死 idle 进程（PID 0）
+    if (pid == 0) {
+        LOG_WARN_MSG("sys_kill: cannot kill idle process (PID 0)\n");
+        return (uint32_t)-1;
+    }
+    
+    // 查找目标进程
+    task_t *target = task_get_by_pid(pid);
+    if (!target) {
+        LOG_WARN_MSG("sys_kill: process %u not found\n", pid);
+        return (uint32_t)-1;
+    }
+    
+    // 检查进程状态
+    if (target->state == TASK_UNUSED || target->state == TASK_TERMINATED) {
+        LOG_WARN_MSG("sys_kill: process %u is already terminated\n", pid);
+        return (uint32_t)-1;
+    }
+    
+    // 简化实现：所有信号都直接终止进程
+    // 未来可以扩展为：
+    // - SIGTERM: 设置终止标志，让进程优雅退出
+    // - SIGKILL: 强制立即终止
+    // - SIGINT: 中断信号
+    // - 其他信号: 根据信号类型处理
+    
+    // 安全地访问进程名称（避免在日志中访问可能无效的内存）
+    const char *proc_name = (target->name[0] != '\0') ? target->name : "unknown";
+    LOG_DEBUG_MSG("sys_kill: terminating process %u (%s) with signal %u\n", 
+                  pid, proc_name, signal);
+    
+    // 设置进程为终止状态
+    // 注意：不能直接调用 task_exit，因为那是给当前进程用的
+    // 我们需要直接修改目标进程的状态
+    // 但是要小心：如果目标进程正在运行，我们需要确保安全地修改它
+    bool prev_state = interrupts_disable();
+    
+    // 再次检查进程状态（在禁用中断后，状态可能已经改变）
+    if (target->state == TASK_UNUSED || target->state == TASK_TERMINATED) {
+        interrupts_restore(prev_state);
+        LOG_DEBUG_MSG("sys_kill: process %u already terminated\n", pid);
+        return 0;  // 已经终止，返回成功
+    }
+    
+    // 安全地修改进程状态
+    target->state = TASK_TERMINATED;
+    target->exit_code = 128 + signal;  // 标准退出码：128 + 信号号
+    
+    // 如果目标进程在就绪队列中，需要移除它
+    // 这里简化处理，让调度器在下次调度时自动处理
+    
+    interrupts_restore(prev_state);
+    
+    LOG_DEBUG_MSG("sys_kill: process %u marked as terminated\n", pid);
+    
     return 0;
 }

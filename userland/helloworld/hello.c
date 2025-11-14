@@ -7,7 +7,7 @@
 // 主函数
 void _start(void) {
     while (1) {
-        print("Hello, World!\n");
+        // print("Hello, World!\n");
         sleep(1);
     }
     exit(0);

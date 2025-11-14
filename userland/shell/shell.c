@@ -34,6 +34,12 @@
 #define FS_PERM_WRITE 0x02
 #define FS_PERM_EXEC  0x04
 
+// 信号定义（标准 POSIX 信号）
+#define SIGTERM  15
+#define SIGKILL  9
+#define SIGINT   2
+#define SIGHUP   1
+
 // ============================================================================
 // 数据结构
 // ============================================================================
@@ -306,6 +312,13 @@ static int shell_unlink(const char *path) {
     return (int)syscall1(SYS_UNLINK, (uint32_t)path);
 }
 
+/**
+ * kill 系统调用封装
+ */
+static int shell_kill(int pid, int signal) {
+    return (int)syscall2(SYS_KILL, (uint32_t)pid, (uint32_t)signal);
+}
+
 // ============================================================================
 // 工具函数
 // ============================================================================
@@ -370,6 +383,7 @@ static int cmd_ps(int argc, char **argv);
 static int cmd_reboot(int argc, char **argv);
 static int cmd_poweroff(int argc, char **argv);
 static int cmd_exec(int argc, char **argv);
+static int cmd_kill(int argc, char **argv);
 
 // 文件操作命令
 static int cmd_ls(int argc, char **argv);
@@ -418,6 +432,7 @@ static const shell_command_t commands[] = {
     // 进程管理命令
     {"ps",       "List running processes",         "ps",                cmd_ps},
     {"exec",     "Execute a user program",         "exec <path>",       cmd_exec},
+    {"kill",     "Send signal to process",         "kill [-signal] <pid>", cmd_kill},
     
     // 系统控制命令
     {"reboot",   "Reboot the system",              "reboot",            cmd_reboot},
@@ -902,6 +917,95 @@ static int cmd_exec(int argc, char **argv) {
     }
     
     printf("Started process PID %d: %s\n", pid, abs_path);
+    return 0;
+}
+
+/**
+ * kill 命令 - 向进程发送信号
+ * 用法: kill [-signal] <pid>
+ * 示例: kill 1234        (发送 SIGTERM)
+ *       kill -9 1234     (发送 SIGKILL)
+ *       kill -SIGTERM 1234 (发送 SIGTERM)
+ */
+static int cmd_kill(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Error: Usage: kill [-signal] <pid>\n");
+        printf("  Examples:\n");
+        printf("    kill 1234          (send SIGTERM to PID 1234)\n");
+        printf("    kill -9 1234       (send SIGKILL to PID 1234)\n");
+        printf("    kill -SIGTERM 1234  (send SIGTERM to PID 1234)\n");
+        return -1;
+    }
+    
+    int signal = SIGTERM;  // 默认信号
+    int pid_arg_index = 1;
+    
+    // 检查是否有信号参数
+    if (argc >= 3 && argv[1][0] == '-') {
+        const char *signal_str = argv[1] + 1;  // 跳过 '-'
+        pid_arg_index = 2;
+        
+        // 尝试解析信号号或信号名
+        if (strcmp(signal_str, "SIGTERM") == 0 || strcmp(signal_str, "TERM") == 0) {
+            signal = SIGTERM;
+        } else if (strcmp(signal_str, "SIGKILL") == 0 || strcmp(signal_str, "KILL") == 0) {
+            signal = SIGKILL;
+        } else if (strcmp(signal_str, "SIGINT") == 0 || strcmp(signal_str, "INT") == 0) {
+            signal = SIGINT;
+        } else if (strcmp(signal_str, "SIGHUP") == 0 || strcmp(signal_str, "HUP") == 0) {
+            signal = SIGHUP;
+        } else {
+            // 尝试解析为数字
+            int parsed_signal = 0;
+            const char *p = signal_str;
+            while (*p >= '0' && *p <= '9') {
+                parsed_signal = parsed_signal * 10 + (*p - '0');
+                p++;
+            }
+            if (*p == '\0' && parsed_signal > 0) {
+                signal = parsed_signal;
+            } else {
+                printf("Error: Invalid signal '%s'\n", signal_str);
+                printf("  Valid signals: SIGTERM (15), SIGKILL (9), SIGINT (2), SIGHUP (1)\n");
+                return -1;
+            }
+        }
+    }
+    
+    // 解析 PID
+    if (pid_arg_index >= argc) {
+        printf("Error: PID not specified\n");
+        return -1;
+    }
+    
+    int pid = 0;
+    const char *pid_str = argv[pid_arg_index];
+    const char *p = pid_str;
+    while (*p >= '0' && *p <= '9') {
+        pid = pid * 10 + (*p - '0');
+        p++;
+    }
+    
+    if (*p != '\0' || pid <= 0) {
+        printf("Error: Invalid PID '%s'\n", pid_str);
+        return -1;
+    }
+    
+    // 发送信号
+    int ret = shell_kill(pid, signal);
+    if (ret != 0) {
+        printf("Error: Failed to send signal %d to process %d (code=%d)\n", signal, pid, ret);
+        return -1;
+    }
+    
+    // 显示信号名称
+    const char *signal_name = "UNKNOWN";
+    if (signal == SIGTERM) signal_name = "SIGTERM";
+    else if (signal == SIGKILL) signal_name = "SIGKILL";
+    else if (signal == SIGINT) signal_name = "SIGINT";
+    else if (signal == SIGHUP) signal_name = "SIGHUP";
+    
+    printf("Sent signal %s (%d) to process %d\n", signal_name, signal, pid);
     return 0;
 }
 

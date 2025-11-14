@@ -47,4 +47,12 @@ uint32_t sys_yield(void);
  */
 uint32_t sys_nanosleep(const struct timespec *req, struct timespec *rem);
 
+/**
+ * sys_kill - 向进程发送信号
+ * @param pid    目标进程 PID
+ * @param signal 信号号
+ * @return 0 成功，(uint32_t)-1 失败
+ */
+uint32_t sys_kill(uint32_t pid, uint32_t signal);
+
 #endif // _KERNEL_SYSCALLS_PROCESS_H_
