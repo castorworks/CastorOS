@@ -131,13 +131,6 @@ int chdir(const char *path);
 char *getcwd(char *buf, size_t size);
 int getdents(int fd, uint32_t index, struct dirent *dirent);
 
-// time_t 类型定义
-#ifndef _TIME_T_DEFINED
-#define _TIME_T_DEFINED
-typedef uint32_t time_t;
-#endif
-
-time_t time(time_t *tloc);
 size_t strlen_simple(const char *str);
 void print(const char *msg);
 int reboot(void);

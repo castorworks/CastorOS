@@ -15,6 +15,19 @@ typedef signed long long   int64_t;
 typedef uint32_t size_t;
 typedef int32_t  ssize_t;
 
+#ifndef _TIME_T_DEFINED
+#define _TIME_T_DEFINED
+typedef uint32_t time_t;
+#endif
+
+#ifndef _TIMESPEC_DEFINED
+#define _TIMESPEC_DEFINED
+struct timespec {
+    time_t tv_sec;
+    uint32_t tv_nsec;
+};
+#endif
+
 // 布尔类型
 #ifndef __cplusplus
 typedef unsigned char bool;

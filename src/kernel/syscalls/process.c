@@ -342,16 +342,37 @@ uint32_t sys_yield(void) {
 /**
  * sys_nanosleep - 睡眠指定时间
  */
-uint32_t sys_nanosleep(uint32_t nanoseconds) {
-    LOG_DEBUG_MSG("sys_nanosleep: sleeping for %u nanoseconds\n", nanoseconds);
-    
-    // 简化实现：转换为毫秒并调用 task_sleep
-    uint32_t milliseconds = nanoseconds / 1000000;
-    if (milliseconds == 0 && nanoseconds > 0) {
-        milliseconds = 1;  // 至少睡眠 1 毫秒
+uint32_t sys_nanosleep(const struct timespec *req, struct timespec *rem) {
+    if (!req) {
+        LOG_ERROR_MSG("sys_nanosleep: req is NULL\n");
+        return (uint32_t)-1;
     }
-    
-    task_sleep(milliseconds);
-    
+
+    if (req->tv_nsec >= 1000000000u) {
+        LOG_ERROR_MSG("sys_nanosleep: invalid tv_nsec=%u\n", req->tv_nsec);
+        return (uint32_t)-1;
+    }
+
+    uint64_t total_ns = (uint64_t)req->tv_sec * 1000000000ull + req->tv_nsec;
+    uint64_t total_ms = total_ns / 1000000ull;
+
+    if (total_ms == 0 && total_ns > 0) {
+        total_ms = 1;
+    }
+
+    if (total_ms > 0) {
+        if (total_ms > 0xFFFFFFFFull) {
+            total_ms = 0xFFFFFFFFull;
+        }
+        uint32_t sleep_ms = (uint32_t)total_ms;
+        LOG_DEBUG_MSG("sys_nanosleep: sleeping for %u ms\n", sleep_ms);
+        task_sleep(sleep_ms);
+    }
+
+    if (rem) {
+        rem->tv_sec = 0;
+        rem->tv_nsec = 0;
+    }
+
     return 0;
 }

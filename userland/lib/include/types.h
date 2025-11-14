@@ -22,6 +22,19 @@ typedef uint32_t size_t;
 typedef int32_t  ssize_t;
 #endif
 
+#ifndef _TIME_T_DEFINED
+#define _TIME_T_DEFINED
+typedef uint32_t time_t;
+#endif
+
+#ifndef _TIMESPEC_DEFINED
+#define _TIMESPEC_DEFINED
+struct timespec {
+    time_t tv_sec;
+    uint32_t tv_nsec;
+};
+#endif
+
 // NULL 定义
 #ifndef NULL
 #define NULL ((void *)0)

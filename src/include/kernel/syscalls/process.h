@@ -41,9 +41,10 @@ uint32_t sys_yield(void);
 
 /**
  * sys_nanosleep - 睡眠指定时间
- * @param nanoseconds 睡眠纳秒数
+ * @param req  请求的睡眠时间
+ * @param rem  剩余时间（若非 NULL）
  * @return 0 成功，(uint32_t)-1 失败
  */
-uint32_t sys_nanosleep(uint32_t nanoseconds);
+uint32_t sys_nanosleep(const struct timespec *req, struct timespec *rem);
 
 #endif // _KERNEL_SYSCALLS_PROCESS_H_

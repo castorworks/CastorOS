@@ -168,10 +168,12 @@ static uint32_t sys_yield_wrapper(uint32_t *frame, uint32_t p1, uint32_t p2, uin
     return sys_yield();
 }
 
-static uint32_t sys_nanosleep_wrapper(uint32_t *frame, uint32_t seconds, uint32_t p2, uint32_t p3,
-                                  uint32_t p4, uint32_t p5) {
-    (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
-    return sys_nanosleep(seconds);
+static uint32_t sys_nanosleep_wrapper(uint32_t *frame, uint32_t req_ptr, uint32_t rem_ptr, uint32_t p3,
+                                      uint32_t p4, uint32_t p5) {
+    (void)frame; (void)p3; (void)p4; (void)p5;
+    const struct timespec *req = (const struct timespec *)req_ptr;
+    struct timespec *rem = (struct timespec *)rem_ptr;
+    return sys_nanosleep(req, rem);
 }
 
 static uint32_t sys_time_wrapper(uint32_t *frame, uint32_t p1, uint32_t p2, uint32_t p3,

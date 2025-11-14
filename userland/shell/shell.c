@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <types.h>
+#include <time.h>
 
 // ============================================================================
 // 常量定义
