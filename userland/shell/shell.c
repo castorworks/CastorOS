@@ -363,7 +363,6 @@ static int cmd_cd(int argc, char **argv);
 static int cmd_clear(int argc, char **argv);
 
 // 系统信息命令
-static int cmd_sysinfo(int argc, char **argv);
 static int cmd_uptime(int argc, char **argv);
 static int cmd_free(int argc, char **argv);
 static int cmd_ps(int argc, char **argv);
@@ -408,18 +407,16 @@ static const shell_command_t commands[] = {
     {"clear",    "Clear screen",                   "clear",             cmd_clear},
     {"exit",     "Exit shell",                     "exit",              cmd_exit},
     
-    // 系统信息命令 TODO
-    {"sysinfo",  "Display system information",      "sysinfo",           cmd_sysinfo},
     // 运行时间
     {"uptime",   "Show system uptime",             "uptime",            cmd_uptime},
     
-    // 内存管理命令 TODO
+    // 内存管理命令
     {"free",     "Display memory usage",           "free",              cmd_free},
     
     // 进程管理命令
     {"ps",       "List running processes",         "ps",                cmd_ps},
     
-    // 系统控制命令 TODO
+    // 系统控制命令
     {"reboot",   "Reboot the system",              "reboot",            cmd_reboot},
     {"poweroff", "Power off the system",           "poweroff",          cmd_poweroff},
     
@@ -535,29 +532,6 @@ static int cmd_exit(int argc, char **argv) {
 // ============================================================================
 // 系统信息命令实现
 // ============================================================================
-
-/**
- * sysinfo 命令 - 显示系统信息
- */
-static int cmd_sysinfo(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
-    
-    // 注意：用户态无法直接访问内核信息，这里显示占位符
-    // 实际实现需要相应的系统调用支持
-    printf("System Information\n");
-    printf("================================================================================\n");
-    printf("Kernel:          CastorOS (User Shell)\n");
-    printf("Architecture:    i686 (x86 32-bit)\n");
-    printf("Uptime:          (Not available - requires system call)\n");
-    printf("\n");
-    printf("Total Memory:    (Not available - requires system call)\n");
-    printf("Used Memory:     (Not available - requires system call)\n");
-    printf("Free Memory:     (Not available - requires system call)\n");
-    printf("\n");
-    printf("Note: This command requires system call support for system information.\n");
-    return 0;
-}
 
 /**
  * uptime 命令 - 显示系统运行时间

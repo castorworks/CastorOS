@@ -34,7 +34,6 @@ static int cmd_help(int argc, char **argv);
 static int cmd_clear(int argc, char **argv);
 static int cmd_echo(int argc, char **argv);
 static int cmd_version(int argc, char **argv);
-static int cmd_sysinfo(int argc, char **argv);
 static int cmd_uptime(int argc, char **argv);
 static int cmd_free(int argc, char **argv);
 static int cmd_ps(int argc, char **argv);
@@ -66,7 +65,6 @@ static const shell_command_t commands[] = {
     {"exit",     "Exit shell",                        "exit",              cmd_exit},
     
     // 系统信息命令
-    {"sysinfo",  "Display system information",        "sysinfo",           cmd_sysinfo},
     {"uptime",   "Show system uptime",                "uptime",            cmd_uptime},
     
     // 内存管理命令
@@ -113,19 +111,6 @@ static void format_uptime(uint32_t ms, char *buffer, size_t size) {
     
     snprintf(buffer, size, "%u days, %u hours, %u minutes, %u seconds",
              days, hours, minutes, seconds);
-}
-
-/**
- * 格式化内存大小（字节转为 KB/MB）
- */
-static void format_memory_size(uint32_t bytes, char *buffer, size_t size) {
-    if (bytes >= 1024 * 1024) {
-        snprintf(buffer, size, "%u MB", bytes / (1024 * 1024));
-    } else if (bytes >= 1024) {
-        snprintf(buffer, size, "%u KB", bytes / 1024);
-    } else {
-        snprintf(buffer, size, "%u bytes", bytes);
-    }
 }
 
 /**
@@ -611,46 +596,6 @@ static int cmd_version(int argc, char **argv) {
     vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     kprintf("Compiled on: %s %s\n", __DATE__, __TIME__);
     kprintf("Architecture: i686 (x86 32-bit)\n");
-    return 0;
-}
-
-/**
- * sysinfo 命令 - 显示系统信息
- */
-static int cmd_sysinfo(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
-    
-    char uptime_str[128];
-    char mem_total_str[32], mem_used_str[32], mem_free_str[32];
-    
-    // 获取运行时间
-    uint32_t uptime_ms = timer_get_ticks() * 10;  // 假设 100 Hz
-    format_uptime(uptime_ms, uptime_str, sizeof(uptime_str));
-    
-    // 获取内存信息
-    pmm_info_t pmm_info = pmm_get_info();
-    uint32_t total_mem = pmm_info.total_frames * PAGE_SIZE;
-    uint32_t used_mem = pmm_info.used_frames * PAGE_SIZE;
-    uint32_t free_mem = pmm_info.free_frames * PAGE_SIZE;
-    
-    format_memory_size(total_mem, mem_total_str, sizeof(mem_total_str));
-    format_memory_size(used_mem, mem_used_str, sizeof(mem_used_str));
-    format_memory_size(free_mem, mem_free_str, sizeof(mem_free_str));
-    
-    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    kprintf("System Information\n");
-    kprintf("================================================================================\n");
-    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-    
-    kprintf("Kernel:          CastorOS v%s\n", KERNEL_VERSION);
-    kprintf("Architecture:    i686 (x86 32-bit)\n");
-    kprintf("Uptime:          %s\n", uptime_str);
-    kprintf("\n");
-    kprintf("Total Memory:    %s\n", mem_total_str);
-    kprintf("Used Memory:     %s\n", mem_used_str);
-    kprintf("Free Memory:     %s\n", mem_free_str);
-    
     return 0;
 }
 
