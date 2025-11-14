@@ -368,6 +368,7 @@ static int cmd_uptime(int argc, char **argv);
 static int cmd_free(int argc, char **argv);
 static int cmd_ps(int argc, char **argv);
 static int cmd_reboot(int argc, char **argv);
+static int cmd_poweroff(int argc, char **argv);
 
 // 文件操作命令
 static int cmd_ls(int argc, char **argv);
@@ -377,6 +378,23 @@ static int cmd_write(int argc, char **argv);
 static int cmd_rm(int argc, char **argv);
 static int cmd_mkdir(int argc, char **argv);
 static int cmd_rmdir(int argc, char **argv);
+
+static uint32_t shell_parse_meminfo_value(const char *line);
+
+static uint32_t shell_parse_meminfo_value(const char *line) {
+    if (!line) return 0;
+    
+    while (*line && !isdigit((unsigned char)*line)) {
+        line++;
+    }
+    
+    uint32_t value = 0;
+    while (*line && isdigit((unsigned char)*line)) {
+        value = value * 10 + (uint32_t)(*line - '0');
+        line++;
+    }
+    return value;
+}
 
 // ============================================================================
 // 命令表
@@ -403,6 +421,7 @@ static const shell_command_t commands[] = {
     
     // 系统控制命令 TODO
     {"reboot",   "Reboot the system",              "reboot",            cmd_reboot},
+    {"poweroff", "Power off the system",           "poweroff",          cmd_poweroff},
     
     // 目录操作命令
     {"pwd",      "Print working directory",        "pwd",               cmd_pwd},
@@ -570,15 +589,76 @@ static int cmd_free(int argc, char **argv) {
     (void)argc;
     (void)argv;
     
-    // 注意：用户态无法直接访问物理内存信息，这里显示占位符
-    // 实际实现需要相应的系统调用支持（如 SYS_GETMEMINFO）
+    int fd = open("/proc/meminfo", O_RDONLY, 0);
+    if (fd < 0) {
+        printf("Error: Failed to open /proc/meminfo\n");
+        return -1;
+    }
+    
+    char buffer[256];
+    int bytes_read = read(fd, buffer, sizeof(buffer) - 1);
+    close(fd);
+    
+    if (bytes_read <= 0) {
+        printf("Error: Failed to read /proc/meminfo\n");
+        return -1;
+    }
+    buffer[bytes_read] = '\0';
+    
+    uint32_t mem_total = 0;
+    uint32_t mem_free = 0;
+    uint32_t mem_used = 0;
+    uint32_t page_size = 0;
+    
+    char *line = buffer;
+    while (line && *line) {
+        char *next = strchr(line, '\n');
+        if (next) {
+            *next = '\0';
+            next++;
+        }
+        
+        if (strncmp(line, "MemTotal:", 9) == 0) {
+            mem_total = shell_parse_meminfo_value(line);
+        } else if (strncmp(line, "MemFree:", 8) == 0) {
+            mem_free = shell_parse_meminfo_value(line);
+        } else if (strncmp(line, "MemUsed:", 8) == 0) {
+            mem_used = shell_parse_meminfo_value(line);
+        } else if (strncmp(line, "PageSize:", 9) == 0) {
+            page_size = shell_parse_meminfo_value(line);
+        }
+        
+        if (!next) {
+            break;
+        }
+        line = next;
+    }
+    
+    if (mem_total == 0) {
+        printf("Error: Invalid data from /proc/meminfo\n");
+        return -1;
+    }
+    
+    if (mem_used == 0) {
+        if (mem_total >= mem_free) {
+            mem_used = mem_total - mem_free;
+        } else {
+            mem_used = 0;
+        }
+    }
+    
     printf("Memory Usage\n");
     printf("================================================================================\n");
     printf("              Total          Used          Free\n");
-    printf("Physical:     (N/A)          (N/A)          (N/A)\n");
-    printf("              (N/A KB)       (N/A KB)       (N/A KB)\n");
+    printf("Physical:     %10u KB  %10u KB  %10u KB\n", mem_total, mem_used, mem_free);
     printf("\n");
-    printf("Note: This command requires system call support for memory information.\n");
+    printf("Details:\n");
+    if (page_size != 0) {
+        printf("  Page Size:  %u bytes\n", page_size);
+    } else {
+        printf("  Page Size:  (unknown)\n");
+    }
+    printf("================================================================================\n");
     return 0;
 }
 
@@ -786,18 +866,27 @@ static int cmd_reboot(int argc, char **argv) {
     
     printf("Rebooting system...\n");
     
-    // 注意：用户态无法直接重启系统，需要系统调用支持
-    // 这里尝试调用一个可能存在的重启系统调用
-    // 如果不存在，可以显示错误信息
+    int ret = reboot();
+    if (ret < 0) {
+        printf("Error: reboot system call failed (code=%d)\n", ret);
+    }
+    return ret;
+}
+
+/**
+ * poweroff 命令 - 关闭系统
+ */
+static int cmd_poweroff(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
     
-    // 尝试通过系统调用重启（假设有 SYS_REBOOT 系统调用）
-    // 如果没有，可以尝试其他方法，如写入特殊设备文件
+    printf("Powering off system...\n");
     
-    // 暂时显示提示信息
-    printf("Error: Reboot functionality requires system call support.\n");
-    printf("Note: This command requires SYS_REBOOT system call.\n");
-    
-    return -1;
+    int ret = poweroff();
+    if (ret < 0) {
+        printf("Error: poweroff system call failed (code=%d)\n", ret);
+    }
+    return ret;
 }
 
 // ============================================================================

@@ -9,6 +9,7 @@
 #include <lib/klog.h>
 #include <lib/kprintf.h>
 #include <mm/heap.h>
+#include <mm/pmm.h>
 #include <stdarg.h>
 
 /* 前向声明 */
@@ -17,9 +18,52 @@ static fs_node_t *procfs_root_finddir(fs_node_t *node, const char *name);
 static struct dirent *procfs_pid_readdir(fs_node_t *node, uint32_t index);
 static fs_node_t *procfs_pid_finddir(fs_node_t *node, const char *name);
 static uint32_t procfs_status_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
+static uint32_t procfs_meminfo_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 
 /* /proc 根目录节点 */
 static fs_node_t *procfs_root = NULL;
+static fs_node_t *procfs_meminfo_file = NULL;
+static uint32_t procfs_meminfo_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
+    (void)node;
+    
+    if (!buffer || size == 0) {
+        return 0;
+    }
+    
+    pmm_info_t info = pmm_get_info();
+    uint32_t total_kb = (info.total_frames * PAGE_SIZE) / 1024;
+    uint32_t free_kb = (info.free_frames * PAGE_SIZE) / 1024;
+    uint32_t used_kb = (info.used_frames * PAGE_SIZE) / 1024;
+    
+    char meminfo_buf[256];
+    int len = ksnprintf(meminfo_buf, sizeof(meminfo_buf),
+                        "MemTotal:\t%u kB\n"
+                        "MemFree:\t%u kB\n"
+                        "MemUsed:\t%u kB\n"
+                        "PageSize:\t%u bytes\n",
+                        (unsigned int)total_kb,
+                        (unsigned int)free_kb,
+                        (unsigned int)used_kb,
+                        (unsigned int)PAGE_SIZE);
+    
+    if (len < 0 || len >= (int)sizeof(meminfo_buf)) {
+        len = sizeof(meminfo_buf) - 1;
+    }
+    
+    uint32_t file_size = (uint32_t)len;
+    if (offset >= file_size) {
+        return 0;
+    }
+    
+    uint32_t bytes_to_read = size;
+    if (offset + bytes_to_read > file_size) {
+        bytes_to_read = file_size - offset;
+    }
+    
+    memcpy(buffer, meminfo_buf + offset, bytes_to_read);
+    return bytes_to_read;
+}
+
 
 /* 进程目录节点缓存（动态分配） */
 #define MAX_PROC_DIRS 256
@@ -223,8 +267,18 @@ static struct dirent *procfs_root_readdir(fs_node_t *node, uint32_t index) {
         return &dirent;
     }
     
+    /* 返回 meminfo 文件 */
+    if (index == 2) {
+        strcpy(dirent.d_name, "meminfo");
+        dirent.d_ino = 0;
+        dirent.d_reclen = sizeof(struct dirent);
+        dirent.d_off = 3;
+        dirent.d_type = DT_REG;
+        return &dirent;
+    }
+    
     /* 返回进程目录（PID 目录） */
-    uint32_t pid_index = index - 2;
+    uint32_t pid_index = index - 3;
     
     // 遍历所有任务，找到第 pid_index 个有效进程
     uint32_t found_count = 0;
@@ -262,6 +316,11 @@ static fs_node_t *procfs_root_finddir(fs_node_t *node, const char *name) {
     /* 处理 . 和 .. */
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
         return node;  // 返回当前目录节点（procfs_root）
+    }
+    
+    /* meminfo 文件 */
+    if (strcmp(name, "meminfo") == 0) {
+        return procfs_meminfo_file;
     }
     
     /* 尝试解析为 PID */
@@ -354,6 +413,30 @@ fs_node_t *procfs_init(void) {
     procfs_root->mkdir = NULL;   // 不支持创建目录
     procfs_root->unlink = NULL;  // 不支持删除
     procfs_root->ptr = NULL;
+    
+    /* 创建 meminfo 文件节点 */
+    procfs_meminfo_file = (fs_node_t *)kmalloc(sizeof(fs_node_t));
+    if (!procfs_meminfo_file) {
+        LOG_ERROR_MSG("procfs: Failed to allocate meminfo node\n");
+        return procfs_root;
+    }
+    
+    memset(procfs_meminfo_file, 0, sizeof(fs_node_t));
+    strcpy(procfs_meminfo_file->name, "meminfo");
+    procfs_meminfo_file->inode = 0;
+    procfs_meminfo_file->type = FS_FILE;
+    procfs_meminfo_file->size = 256;
+    procfs_meminfo_file->permissions = FS_PERM_READ;
+    procfs_meminfo_file->read = procfs_meminfo_read;
+    procfs_meminfo_file->write = NULL;
+    procfs_meminfo_file->open = NULL;
+    procfs_meminfo_file->close = NULL;
+    procfs_meminfo_file->readdir = NULL;
+    procfs_meminfo_file->finddir = NULL;
+    procfs_meminfo_file->create = NULL;
+    procfs_meminfo_file->mkdir = NULL;
+    procfs_meminfo_file->unlink = NULL;
+    procfs_meminfo_file->ptr = NULL;
     
     LOG_INFO_MSG("procfs: Initialized\n");
     

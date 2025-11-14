@@ -65,6 +65,8 @@ enum {
     SYS_UNAME           = 0x0500,
     SYS_GETRANDOM       = 0x0501,
     SYS_DEBUG_PRINT     = 0x0502,
+    SYS_REBOOT          = 0x0503,
+    SYS_POWEROFF        = 0x0504,
 
     SYS_MAX
 };

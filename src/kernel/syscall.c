@@ -6,6 +6,7 @@
 #include <kernel/syscalls/fs.h>
 #include <kernel/syscalls/process.h>
 #include <kernel/syscalls/time.h>
+#include <kernel/syscalls/system.h>
 #include <kernel/task.h>
 #include <kernel/idt.h>
 #include <kernel/gdt.h>
@@ -179,6 +180,20 @@ static uint32_t sys_time_wrapper(uint32_t *frame, uint32_t p1, uint32_t p2, uint
     return sys_time();
 }
 
+static uint32_t sys_reboot_wrapper(uint32_t *frame, uint32_t p1, uint32_t p2, uint32_t p3,
+                                   uint32_t p4, uint32_t p5) {
+    (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
+    sys_reboot();
+    return 0;
+}
+
+static uint32_t sys_poweroff_wrapper(uint32_t *frame, uint32_t p1, uint32_t p2, uint32_t p3,
+                                     uint32_t p4, uint32_t p5) {
+    (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
+    sys_poweroff();
+    return 0;
+}
+
 uint32_t syscall_dispatcher(uint32_t syscall_num, uint32_t p1, uint32_t p2, 
                             uint32_t p3, uint32_t p4, uint32_t p5, uint32_t *frame) {
     /* 检查系统调用号是否在有效范围内 */
@@ -233,6 +248,10 @@ void syscall_init(void) {
     /* 时间相关 */
     syscall_table[SYS_TIME]        = sys_time_wrapper;
     syscall_table[SYS_NANOSLEEP]   = sys_nanosleep_wrapper;
+    
+    /* 杂项 / 系统控制 */
+    syscall_table[SYS_REBOOT]      = sys_reboot_wrapper;
+    syscall_table[SYS_POWEROFF]    = sys_poweroff_wrapper;
     
     /* 注册 INT 0x80 处理程序 */
     idt_set_gate(0x80, (uint32_t)syscall_handler, GDT_KERNEL_CODE_SEGMENT, IDT_FLAG_PRESENT | IDT_FLAG_RING3 | IDT_FLAG_GATE_TRAP);

@@ -6,6 +6,7 @@
 #include <kernel/version.h>
 #include <kernel/task.h>
 #include <kernel/io.h>
+#include <kernel/system.h>
 
 #include <drivers/vga.h>
 #include <drivers/keyboard.h>
@@ -38,6 +39,7 @@ static int cmd_uptime(int argc, char **argv);
 static int cmd_free(int argc, char **argv);
 static int cmd_ps(int argc, char **argv);
 static int cmd_reboot(int argc, char **argv);
+static int cmd_poweroff(int argc, char **argv);
 static int cmd_exit(int argc, char **argv);
 
 // 文件操作命令
@@ -75,6 +77,7 @@ static const shell_command_t commands[] = {
     
     // 系统控制命令
     {"reboot",   "Reboot the system",                 "reboot",            cmd_reboot},
+    {"poweroff", "Power off the system",              "poweroff",          cmd_poweroff},
     
     // 文件操作命令
     {"ls",       "List directory contents",            "ls [path]",          cmd_ls},
@@ -746,31 +749,22 @@ static int cmd_reboot(int argc, char **argv) {
     kprintf("Rebooting system...\n");
     vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     
-    // 使用键盘控制器重启
-    uint8_t temp;
+    system_reboot();
+    return 0;
+}
+
+/**
+ * poweroff 命令 - 关闭系统
+ */
+static int cmd_poweroff(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
     
-    // 禁用中断
-    __asm__ volatile ("cli");
+    vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+    kprintf("Powering off system...\n");
+    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     
-    // 清空键盘缓冲区
-    do {
-        temp = inb(0x64);
-        if (temp & 0x01) {
-            inb(0x60);
-        }
-    } while (temp & 0x02);
-    
-    // 发送重启命令
-    outb(0x64, 0xFE);
-    
-    // 如果上面的方法失败，使用三重故障
-    __asm__ volatile ("int $0x00");
-    
-    // 永远不会到达这里
-    while (1) {
-        __asm__ volatile ("hlt");
-    }
-    
+    system_poweroff();
     return 0;
 }
 

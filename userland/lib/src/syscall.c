@@ -87,3 +87,11 @@ void print(const char *msg) {
     (void)write(STDOUT_FILENO, msg, (uint32_t)len);
 }
 
+int reboot(void) {
+    return (int)syscall0(SYS_REBOOT);
+}
+
+int poweroff(void) {
+    return (int)syscall0(SYS_POWEROFF);
+}
+
