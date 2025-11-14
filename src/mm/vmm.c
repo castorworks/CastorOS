@@ -56,6 +56,7 @@ static page_table_t* create_page_table(void) {
  * @brief 初始化虚拟内存管理器
  * 
  * 使用引导时创建的页目录，设置CR3寄存器
+ * 扩展高半核映射以覆盖所有可用的物理内存
  */
 void vmm_init(void) {
     current_dir = (page_directory_t*)boot_page_directory;
@@ -66,6 +67,70 @@ void vmm_init(void) {
     __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
     if (cr3 != current_dir_phys)
         __asm__ volatile("mov %0, %%cr3" : : "r"(current_dir_phys));
+    
+    // 扩展高半核映射以覆盖所有可用的物理内存
+    // 引导时已经映射了前8MB（页目录项512-513）
+    // 现在需要扩展到所有可用内存（最多2GB）
+    pmm_info_t pmm_info = pmm_get_info();
+    uint32_t max_phys = pmm_info.total_frames * PAGE_SIZE;
+    
+    // 限制在2GB以内（高半核虚拟地址空间限制）
+    if (max_phys > 0x80000000) {
+        max_phys = 0x80000000;
+    }
+    
+    // 计算需要映射的页目录项数量（每个页目录项映射4MB）
+    // 引导时已经映射了前8MB（索引512-513），从索引514开始
+    uint32_t start_pde = 514;  // 对应虚拟地址 0x80800000
+    uint32_t end_pde = 512 + (max_phys >> 22);  // 每个页目录项映射4MB
+    
+    LOG_DEBUG_MSG("VMM: Extending high-half kernel mapping\n");
+    LOG_DEBUG_MSG("  Physical memory: %u MB\n", max_phys / (1024*1024));
+    LOG_DEBUG_MSG("  Mapping PDEs: %u-%u (virtual: 0x%x-0x%x)\n",
+                 start_pde, end_pde - 1,
+                 start_pde << 22, (end_pde << 22) - 1);
+    
+    // 为每个页目录项创建页表并映射
+    for (uint32_t pde = start_pde; pde < end_pde; pde++) {
+        // 检查页目录项是否已存在
+        if (is_present(current_dir->entries[pde])) {
+            continue;  // 已经映射，跳过
+        }
+        
+        // 分配页表
+        uint32_t table_phys = pmm_alloc_frame();
+        if (!table_phys) {
+            LOG_WARN_MSG("VMM: Failed to allocate page table for PDE %u\n", pde);
+            break;  // 分配失败，停止扩展
+        }
+        
+        page_table_t *table = (page_table_t*)PHYS_TO_VIRT(table_phys);
+        memset(table, 0, sizeof(page_table_t));
+        
+        // 计算这个页表对应的物理地址范围
+        // PDE索引pde对应虚拟地址 pde * 4MB
+        // 对应的物理地址也是 pde * 4MB（高半核恒等映射）
+        uint32_t phys_base = (pde - 512) << 22;  // 物理地址基址
+        
+        // 填充页表项：每个页表项映射一个4KB页
+        for (uint32_t pte = 0; pte < 1024; pte++) {
+            uint32_t phys_addr = phys_base + (pte << 12);
+            
+            // 只映射在可用物理内存范围内的页
+            if (phys_addr < max_phys) {
+                // 设置页表项：Present | Read/Write | Supervisor
+                table->entries[pte] = phys_addr | PAGE_PRESENT | PAGE_WRITE;
+            }
+        }
+        
+        // 设置页目录项：指向页表
+        current_dir->entries[pde] = table_phys | PAGE_PRESENT | PAGE_WRITE;
+    }
+    
+    // 刷新TLB以确保新映射生效
+    vmm_flush_tlb(0);
+    
+    LOG_DEBUG_MSG("VMM: High-half kernel mapping extended\n");
 }
 
 /**

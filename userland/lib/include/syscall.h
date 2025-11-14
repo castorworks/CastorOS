@@ -36,6 +36,7 @@ enum {
     SYS_RENAME          = 0x010A,
     SYS_GETCWD          = 0x010B,
     SYS_CHDIR           = 0x010C,
+    SYS_GETDENTS        = 0x010D,  // 读取目录项（简化版本，与 Linux getdents 接口不同）
 
     // -------------------- 内存管理 (0x02xx) --------------------
     SYS_BRK             = 0x0200,
@@ -126,6 +127,7 @@ int lseek(int fd, int offset, int whence);
 int mkdir(const char *path, uint32_t mode);
 int chdir(const char *path);
 char *getcwd(char *buf, size_t size);
+int getdents(int fd, uint32_t index, struct dirent *dirent);
 size_t strlen_simple(const char *str);
 void print(const char *msg);
 

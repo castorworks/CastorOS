@@ -18,6 +18,9 @@ BUILD_DIR = build
 KERNEL = $(BUILD_DIR)/castor.bin
 DISK_IMAGE = $(BUILD_DIR)/bootable.img
 
+# Shell 文件
+SHELL_ELF = userland/shell/shell.elf
+
 # 源文件
 C_SOURCES = $(wildcard $(SRC_DIR)/drivers/*.c) \
 	$(wildcard $(SRC_DIR)/fs/*.c) \
@@ -44,7 +47,7 @@ OBJECTS = $(ASM_OBJECTS) $(C_OBJECTS)
 # ============================================================================
 
 # 伪目标声明
-.PHONY: all clean run vrun debug compile-db help
+.PHONY: all clean run vrun debug compile-db help shell
 
 all: $(KERNEL)
 
@@ -78,8 +81,12 @@ debug: $(KERNEL)
 debug-silent: $(KERNEL)
 	qemu-system-i386 -kernel $(KERNEL) -serial stdio -s -S -display none
 
+# 编译 Shell
+shell:
+	@$(MAKE) -C userland/shell
+
 # 创建可启动的磁盘镜像
-disk: $(KERNEL)
+disk: $(KERNEL) shell
 	@bash scripts/bootable-img-create.sh
 
 run-disk: disk

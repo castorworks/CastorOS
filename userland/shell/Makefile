@@ -27,14 +27,16 @@ ELF = $(TARGET).elf
 BINARY = $(TARGET).bin
 
 # 默认目标
-all: $(LIBRARY) $(ELF)
+all: lib $(ELF)
 	@echo ""
 	@echo "[OK] Userland shell compiled successfully: $(ELF)"
 	@echo ""
 
 # 构建库
-$(LIBRARY):
+lib:
 	@$(MAKE) -C $(LIB_DIR)
+
+$(LIBRARY): lib
 
 # 编译 C 文件
 %.o: %.c
@@ -56,5 +58,5 @@ clean:
 	rm -f $(OBJECTS) $(ELF) $(BINARY)
 	@echo "[OK] Cleaned userland shell build files"
 
-.PHONY: all clean
+.PHONY: all lib clean
 

@@ -16,8 +16,8 @@
 
 /* 内核栈大小（8KB） */
 #define KERNEL_STACK_SIZE 8192
-/* 用户栈大小（8KB） */
-#define USER_STACK_SIZE 8192
+/* 用户栈大小（8MB） */
+#define USER_STACK_SIZE (8 * 1024 * 1024)
 
 /* 用户空间起始地址（留给用户程序） */
 #define USER_SPACE_START 0x00400000  // 4MB（跳过前 4MB）

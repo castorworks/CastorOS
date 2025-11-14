@@ -108,6 +108,14 @@ int strcasecmp(const char *s1, const char *s2);
 char *strcpy(char *dest, const char *src);
 
 /**
+ * 将源字符串追加到目标字符串的末尾
+ * @param dest 目标字符串（必须足够大以容纳结果）
+ * @param src 源字符串
+ * @return 目标缓冲区指针
+ */
+char *strcat(char *dest, const char *src);
+
+/**
  * 复制最多 n 个字符
  * @param dest 目标缓冲区
  * @param src 源字符串

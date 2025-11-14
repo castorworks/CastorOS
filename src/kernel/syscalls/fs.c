@@ -287,6 +287,111 @@ uint32_t sys_unlink(const char *path) {
 }
 
 /**
+ * 规范化路径，移除 . 和 .. 组件
+ * @param path 输入路径
+ * @param normalized 输出缓冲区
+ * @param size 缓冲区大小
+ * @return 0 成功，-1 失败
+ */
+static int normalize_path(const char *path, char *normalized, size_t size) {
+    if (!path || !normalized || size == 0) {
+        return -1;
+    }
+    
+    // 路径组件栈（最多支持 64 层）
+    const size_t MAX_COMPONENTS = 64;
+    char components[MAX_COMPONENTS][128];
+    size_t component_count = 0;
+    
+    const char *p = path;
+    char current_component[128];
+    size_t comp_len = 0;
+    bool is_absolute = (path[0] == '/');
+    
+    // 解析路径组件
+    while (*p != '\0') {
+        // 跳过连续的 '/'
+        while (*p == '/') {
+            p++;
+        }
+        
+        if (*p == '\0') {
+            break;
+        }
+        
+        // 提取一个组件
+        comp_len = 0;
+        while (*p != '\0' && *p != '/' && comp_len < 127) {
+            current_component[comp_len++] = *p++;
+        }
+        current_component[comp_len] = '\0';
+        
+        // 处理组件
+        if (comp_len == 0) {
+            continue;  // 空组件，跳过
+        } else if (strcmp(current_component, ".") == 0) {
+            // 当前目录，忽略
+            continue;
+        } else if (strcmp(current_component, "..") == 0) {
+            // 父目录
+            if (component_count > 0) {
+                // 有组件可以回退
+                component_count--;
+            }
+            // 绝对路径中，.. 在根目录时保持在根目录（不添加组件）
+        } else {
+            // 普通组件，添加到栈中
+            if (component_count >= MAX_COMPONENTS) {
+                return -1;  // 路径太深
+            }
+            strncpy(components[component_count], current_component, 127);
+            components[component_count][127] = '\0';
+            component_count++;
+        }
+    }
+    
+    // 构建规范化路径
+    size_t pos = 0;
+    
+    // 绝对路径以 '/' 开头
+    if (is_absolute) {
+        if (pos < size - 1) {
+            normalized[pos++] = '/';
+        }
+    }
+    
+    // 添加所有组件
+    for (size_t i = 0; i < component_count; i++) {
+        size_t comp_len = strlen(components[i]);
+        
+        // 添加 '/'（除了第一个组件在绝对路径时）
+        if (pos > 0 && normalized[pos - 1] != '/') {
+            if (pos < size - 1) {
+                normalized[pos++] = '/';
+            }
+        }
+        
+        // 添加组件名
+        for (size_t j = 0; j < comp_len && pos < size - 1; j++) {
+            normalized[pos++] = components[i][j];
+        }
+    }
+    
+    // 如果路径为空，至少要有 '/'
+    if (pos == 0) {
+        if (is_absolute) {
+            normalized[pos++] = '/';
+        } else {
+            normalized[pos++] = '.';
+        }
+    }
+    
+    normalized[pos] = '\0';
+    
+    return 0;
+}
+
+/**
  * sys_chdir - 切换当前工作目录
  */
 uint32_t sys_chdir(const char *path) {
@@ -303,29 +408,66 @@ uint32_t sys_chdir(const char *path) {
     
     LOG_DEBUG_MSG("sys_chdir: path='%s'\n", path);
     
+    // 构建绝对路径：如果是相对路径，则相对于当前工作目录
+    char abs_path[512];
+    if (path[0] == '/') {
+        // 绝对路径，直接使用
+        if (strlen(path) >= sizeof(abs_path)) {
+            LOG_ERROR_MSG("sys_chdir: path too long\n");
+            return (uint32_t)-1;
+        }
+        strcpy(abs_path, path);
+    } else {
+        // 相对路径，相对于当前工作目录
+        uint32_t cwd_len = strlen(current->cwd);
+        uint32_t path_len = strlen(path);
+        
+        if (cwd_len + 1 + path_len >= sizeof(abs_path)) {
+            LOG_ERROR_MSG("sys_chdir: path too long\n");
+            return (uint32_t)-1;
+        }
+        
+        strcpy(abs_path, current->cwd);
+        // 如果当前工作目录不是根目录，添加 '/'
+        if (cwd_len > 1 && abs_path[cwd_len - 1] != '/') {
+            strcat(abs_path, "/");
+        }
+        // 追加路径
+        strcat(abs_path, path);
+    }
+    
+    LOG_DEBUG_MSG("sys_chdir: resolved path='%s'\n", abs_path);
+    
     // 验证目标路径存在且为目录
-    fs_node_t *node = vfs_path_to_node(path);
+    fs_node_t *node = vfs_path_to_node(abs_path);
     if (!node) {
-        LOG_ERROR_MSG("sys_chdir: path '%s' not found\n", path);
+        LOG_ERROR_MSG("sys_chdir: path '%s' not found\n", abs_path);
         return (uint32_t)-1;
     }
     
     if (node->type != FS_DIRECTORY) {
-        LOG_ERROR_MSG("sys_chdir: '%s' is not a directory\n", path);
+        LOG_ERROR_MSG("sys_chdir: '%s' is not a directory\n", abs_path);
         return (uint32_t)-1;
     }
     
-    // 检查路径长度
-    uint32_t path_len = strlen(path);
-    if (path_len >= sizeof(current->cwd)) {
-        LOG_ERROR_MSG("sys_chdir: path too long (%u >= %u)\n", path_len, (uint32_t)sizeof(current->cwd));
+    // 规范化路径，移除 . 和 .. 组件
+    char normalized_path[512];
+    if (normalize_path(abs_path, normalized_path, sizeof(normalized_path)) != 0) {
+        LOG_ERROR_MSG("sys_chdir: failed to normalize path\n");
         return (uint32_t)-1;
     }
     
-    // 更新当前工作目录
-    strcpy(current->cwd, path);
+    // 检查规范化后的路径长度
+    uint32_t normalized_len = strlen(normalized_path);
+    if (normalized_len >= sizeof(current->cwd)) {
+        LOG_ERROR_MSG("sys_chdir: normalized path too long (%u >= %u)\n", normalized_len, (uint32_t)sizeof(current->cwd));
+        return (uint32_t)-1;
+    }
     
-    LOG_DEBUG_MSG("sys_chdir: changed to '%s'\n", path);
+    // 更新当前工作目录（使用规范化后的路径）
+    strcpy(current->cwd, normalized_path);
+    
+    LOG_DEBUG_MSG("sys_chdir: changed to '%s'\n", normalized_path);
     return 0;
 }
 
@@ -362,39 +504,42 @@ uint32_t sys_getcwd(char *buffer, uint32_t size) {
 }
 
 /**
- * sys_readdir - 读取目录项
+ * sys_getdents - 读取目录项（简化版本）
+ * 
+ * 注意：这是简化版本，与 Linux 标准 getdents 接口不同。
+ * Linux 的 getdents 是批量读取多个目录项到缓冲区，而这里按索引读取单个目录项。
  */
-uint32_t sys_readdir(int32_t fd, uint32_t index, void *dirent) {
+uint32_t sys_getdents(int32_t fd, uint32_t index, void *dirent) {
     if (!dirent) {
-        LOG_ERROR_MSG("sys_readdir: dirent is NULL\n");
+        LOG_ERROR_MSG("sys_getdents: dirent is NULL\n");
         return (uint32_t)-1;
     }
     
     task_t *current = task_get_current();
     if (!current || !current->fd_table) {
-        LOG_ERROR_MSG("sys_readdir: no current task or fd_table\n");
+        LOG_ERROR_MSG("sys_getdents: no current task or fd_table\n");
         return (uint32_t)-1;
     }
     
-    LOG_DEBUG_MSG("sys_readdir: fd=%d, index=%u\n", fd, index);
+    LOG_DEBUG_MSG("sys_getdents: fd=%d, index=%u\n", fd, index);
     
     // 获取文件描述符表项
     fd_entry_t *entry = fd_table_get(current->fd_table, fd);
     if (!entry || !entry->node) {
-        LOG_ERROR_MSG("sys_readdir: invalid fd %d\n", fd);
+        LOG_ERROR_MSG("sys_getdents: invalid fd %d\n", fd);
         return (uint32_t)-1;
     }
     
     // 检查是否为目录
     if (entry->node->type != FS_DIRECTORY) {
-        LOG_ERROR_MSG("sys_readdir: fd %d is not a directory\n", fd);
+        LOG_ERROR_MSG("sys_getdents: fd %d is not a directory\n", fd);
         return (uint32_t)-1;
     }
     
     // 读取目录项
     struct dirent *dir_entry = vfs_readdir(entry->node, index);
     if (!dir_entry) {
-        LOG_DEBUG_MSG("sys_readdir: no more entries at index %u\n", index);
+        LOG_DEBUG_MSG("sys_getdents: no more entries at index %u\n", index);
         return (uint32_t)-1;
     }
     
@@ -402,6 +547,6 @@ uint32_t sys_readdir(int32_t fd, uint32_t index, void *dirent) {
     // 注意：这里应该进行用户空间内存检查，简化实现直接复制
     memcpy(dirent, dir_entry, sizeof(struct dirent));
     
-    LOG_DEBUG_MSG("sys_readdir: returned entry '%s'\n", dir_entry->d_name);
+    LOG_DEBUG_MSG("sys_getdents: returned entry '%s'\n", dir_entry->d_name);
     return 0;
 }

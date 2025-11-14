@@ -167,6 +167,17 @@ char *strcpy(char *dest, const char *src) {
     return original_dest;
 }
 
+char *strcat(char *dest, const char *src) {
+    char *original_dest = dest;
+    // 找到目标字符串的末尾
+    while (*dest) {
+        dest++;
+    }
+    // 从末尾开始复制源字符串
+    while ((*dest++ = *src++));
+    return original_dest;
+}
+
 char *strchr(const char *str, int c) {
     while (*str != '\0') {
         if (*str == (char)c) {

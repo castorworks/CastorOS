@@ -116,16 +116,19 @@ uint32_t sys_mkdir(const char *path, uint32_t mode);
 uint32_t sys_unlink(const char *path);
 
 /**
- * sys_readdir - 读取目录项
+ * sys_getdents - 读取目录项（简化版本）
  * @fd: 目录文件描述符
  * @index: 目录项索引
  * @dirent: 用户空间目录项结构指针
+ * 
+ * 注意：这是简化版本，与 Linux 标准 getdents 接口不同。
+ * Linux 的 getdents 是批量读取多个目录项，而这里按索引读取单个目录项。
  * 
  * 返回值：
  *   0: 成功
  *   (uint32_t)-1: 错误或已到目录末尾
  */
-uint32_t sys_readdir(int32_t fd, uint32_t index, void *dirent);
+uint32_t sys_getdents(int32_t fd, uint32_t index, void *dirent);
 
 /**
  * sys_chdir - 切换当前工作目录

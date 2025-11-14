@@ -112,6 +112,29 @@ fs_node_t *vfs_finddir(fs_node_t *node, const char *name) {
         return NULL;
     }
     
+    /* 处理特殊目录条目 '.' - 直接返回当前节点 */
+    if (strcmp(name, ".") == 0) {
+        return node;
+    }
+    
+    /* 处理特殊目录条目 '..' - 让文件系统处理，如果文件系统不支持则回退 */
+    if (strcmp(name, "..") == 0) {
+        /* 首先尝试让文件系统处理 */
+        if (node->finddir) {
+            fs_node_t *parent = node->finddir(node, "..");
+            if (parent) {
+                return parent;
+            }
+        }
+        /* 如果文件系统不支持 '..'，且当前是根目录，返回根目录 */
+        if (node == fs_root) {
+            return fs_root;
+        }
+        /* 对于其他情况，如果文件系统不支持，返回 NULL */
+        /* 注意：这要求文件系统正确实现 '..' 查找 */
+        return NULL;
+    }
+    
     /* 正常查找（挂载点切换在 vfs_path_to_node 中处理） */
     if (!node->finddir) {
         LOG_DEBUG_MSG("VFS: finddir: node has no finddir callback\n");
@@ -188,6 +211,22 @@ fs_node_t *vfs_path_to_node(const char *path) {
                     continue;
                 }
                 
+                /* 处理 '.' - 跳过，保持在当前目录 */
+                if (strcmp(token, ".") == 0) {
+                    continue;
+                }
+                
+                /* 处理 '..' - 转到父目录 */
+                if (strcmp(token, "..") == 0) {
+                    fs_node_t *parent = vfs_finddir(current, "..");
+                    if (!parent) {
+                        LOG_DEBUG_MSG("VFS: path_to_node: failed to find parent for '..' in mounted fs\n");
+                        return NULL;
+                    }
+                    current = parent;
+                    continue;
+                }
+                
                 /* 查找下一个节点 */
                 LOG_DEBUG_MSG("VFS: path_to_node: looking for '%s' in mounted fs\n", token);
                 fs_node_t *next = vfs_finddir(current, token);
@@ -236,6 +275,22 @@ fs_node_t *vfs_path_to_node(const char *path) {
         
         // 如果是空字符串，跳过
         if (token[0] == '\0') {
+            continue;
+        }
+        
+        /* 处理 '.' - 跳过，保持在当前目录 */
+        if (strcmp(token, ".") == 0) {
+            continue;
+        }
+        
+        /* 处理 '..' - 转到父目录 */
+        if (strcmp(token, "..") == 0) {
+            fs_node_t *parent = vfs_finddir(current, "..");
+            if (!parent) {
+                LOG_DEBUG_MSG("VFS: path_to_node: failed to find parent for '..'\n");
+                return NULL;
+            }
+            current = parent;
             continue;
         }
         

@@ -22,4 +22,24 @@ typedef uint32_t size_t;
 typedef int32_t  ssize_t;
 #endif
 
+// 文件类型常量（用于 dirent.d_type）
+#define DT_UNKNOWN       0   // 未知类型
+#define DT_FIFO          1   // 命名管道
+#define DT_CHR           2   // 字符设备
+#define DT_DIR            4   // 目录
+#define DT_BLK           6   // 块设备
+#define DT_REG           8   // 常规文件
+#define DT_LNK           10   // 符号链接
+#define DT_SOCK          12   // 套接字
+
+// 目录项结构（POSIX 标准）
+// 参考：POSIX.1-2008 <dirent.h>
+struct dirent {
+    uint32_t d_ino;         // inode 编号
+    uint32_t d_off;         // 到下一个 dirent 的偏移量（文件系统相关）
+    uint16_t d_reclen;      // 此记录的长度（sizeof(struct dirent)）
+    uint8_t  d_type;        // 文件类型（DT_* 常量）
+    char     d_name[256];    // 文件名（以 null 结尾，最大 255 字符）
+};
+
 #endif /* _USERLAND_LIB_TYPES_H_ */

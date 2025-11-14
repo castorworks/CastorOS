@@ -148,6 +148,12 @@ static uint32_t sys_getcwd_wrapper(uint32_t *frame, uint32_t buffer, uint32_t si
     return sys_getcwd((char *)buffer, size);
 }
 
+static uint32_t sys_getdents_wrapper(uint32_t *frame, uint32_t fd, uint32_t index, uint32_t dirent,
+                                     uint32_t p4, uint32_t p5) {
+    (void)frame; (void)p4; (void)p5;
+    return sys_getdents((int32_t)fd, index, (void *)dirent);
+}
+
 static uint32_t sys_getpid_wrapper(uint32_t *frame, uint32_t p1, uint32_t p2, uint32_t p3,
                                    uint32_t p4, uint32_t p5) {
     (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
@@ -215,6 +221,7 @@ void syscall_init(void) {
     syscall_table[SYS_UNLINK]      = sys_unlink_wrapper; 
     syscall_table[SYS_GETCWD]      = sys_getcwd_wrapper;
     syscall_table[SYS_CHDIR]       = sys_chdir_wrapper;
+    syscall_table[SYS_GETDENTS]    = sys_getdents_wrapper;
     
     /* 时间相关 */
     syscall_table[SYS_NANOSLEEP]   = sys_nanosleep_wrapper;

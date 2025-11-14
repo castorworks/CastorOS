@@ -41,6 +41,7 @@ enum {
     SYS_RENAME          = 0x010A,
     SYS_GETCWD          = 0x010B,
     SYS_CHDIR           = 0x010C,
+    SYS_GETDENTS        = 0x010D,  // 读取目录项（简化版本，与 Linux getdents 接口不同）
 
     // -------------------- 内存管理 (0x02xx) --------------------
     SYS_BRK             = 0x0200,

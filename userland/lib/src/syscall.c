@@ -50,6 +50,10 @@ char *getcwd(char *buf, size_t size) {
     return (ret == -1) ? 0 : buf;
 }
 
+int getdents(int fd, uint32_t index, struct dirent *dirent) {
+    return (int)syscall3(SYS_GETDENTS, (uint32_t)fd, index, (uint32_t)dirent);
+}
+
 size_t strlen_simple(const char *str) {
     if (!str) {
         return 0;
