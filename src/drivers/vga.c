@@ -18,6 +18,17 @@ static int vga_col = 0;
 /* 当前颜色属性 */
 static uint8_t vga_color = 0x0F;  // 默认白色文字，黑色背景
 
+/* ANSI 转义序列解析状态 */
+typedef enum {
+    ANSI_NORMAL,      // 正常模式
+    ANSI_ESCAPE,      // 收到 ESC (0x1B)
+    ANSI_BRACKET,     // 收到 '['
+    ANSI_PARAM        // 解析参数
+} ansi_state_t;
+
+static ansi_state_t ansi_state = ANSI_NORMAL;
+static int ansi_param = 0;  // 当前参数值
+
 /**
  * 创建 VGA 颜色属性字节
  */
@@ -104,6 +115,91 @@ void vga_clear(void) {
 }
 
 void vga_putchar(char c) {
+    // ANSI 转义序列解析
+    if (ansi_state == ANSI_NORMAL) {
+        if (c == '\033' || c == 0x1B) {
+            // 开始 ANSI 转义序列
+            ansi_state = ANSI_ESCAPE;
+            return;
+        }
+    } else if (ansi_state == ANSI_ESCAPE) {
+        if (c == '[') {
+            ansi_state = ANSI_BRACKET;
+            ansi_param = 0;
+            return;
+        } else {
+            // 无效的转义序列，重置状态
+            ansi_state = ANSI_NORMAL;
+        }
+    } else if (ansi_state == ANSI_BRACKET || ansi_state == ANSI_PARAM) {
+        if (c >= '0' && c <= '9') {
+            // 解析数字参数
+            ansi_param = ansi_param * 10 + (c - '0');
+            ansi_state = ANSI_PARAM;
+            return;
+        } else if (c == 'J') {
+            // 清屏命令：\033[2J 或 \033[J
+            if (ansi_param == 2 || ansi_param == 0) {
+                vga_clear();
+            }
+            ansi_state = ANSI_NORMAL;
+            ansi_param = 0;
+            return;
+        } else if (c == 'H') {
+            // 光标定位：\033[H 或 \033[n;mH
+            // 简化处理：只处理 \033[H (移到左上角)
+            if (ansi_param == 0) {
+                vga_row = 0;
+                vga_col = 0;
+                vga_update_cursor();
+            }
+            ansi_state = ANSI_NORMAL;
+            ansi_param = 0;
+            return;
+        } else if (c == 'A') {
+            // 光标上移：\033[nA
+            int n = (ansi_param == 0) ? 1 : ansi_param;
+            vga_row = (vga_row >= n) ? (vga_row - n) : 0;
+            vga_update_cursor();
+            ansi_state = ANSI_NORMAL;
+            ansi_param = 0;
+            return;
+        } else if (c == 'B') {
+            // 光标下移：\033[nB
+            int n = (ansi_param == 0) ? 1 : ansi_param;
+            vga_row = (vga_row + n < VGA_HEIGHT) ? (vga_row + n) : (VGA_HEIGHT - 1);
+            vga_update_cursor();
+            ansi_state = ANSI_NORMAL;
+            ansi_param = 0;
+            return;
+        } else if (c == 'C') {
+            // 光标右移：\033[nC
+            int n = (ansi_param == 0) ? 1 : ansi_param;
+            vga_col = (vga_col + n < VGA_WIDTH) ? (vga_col + n) : (VGA_WIDTH - 1);
+            vga_update_cursor();
+            ansi_state = ANSI_NORMAL;
+            ansi_param = 0;
+            return;
+        } else if (c == 'D') {
+            // 光标左移：\033[nD
+            int n = (ansi_param == 0) ? 1 : ansi_param;
+            vga_col = (vga_col >= n) ? (vga_col - n) : 0;
+            vga_update_cursor();
+            ansi_state = ANSI_NORMAL;
+            ansi_param = 0;
+            return;
+        } else if (c == ';') {
+            // 参数分隔符，忽略（简化处理）
+            ansi_param = 0;
+            return;
+        } else {
+            // 未知命令，重置状态
+            ansi_state = ANSI_NORMAL;
+            ansi_param = 0;
+        }
+    }
+    
+    // 正常字符处理
     if (c == '\n') {
         // 换行符：移到下一行行首
         vga_newline();
