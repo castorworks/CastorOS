@@ -117,17 +117,27 @@ static uint32_t devconsole_read(fs_node_t *node, uint32_t offset,
                                 uint32_t size, uint8_t *buffer) {
     (void)node; (void)offset;
     
-    // 从键盘读取（非阻塞）
+    // 从键盘读取（阻塞模式）
     extern bool keyboard_try_getchar(char *c);
+    extern char keyboard_getchar(void);  // 阻塞读取
     
     uint32_t bytes_read = 0;
     for (uint32_t i = 0; i < size; i++) {
         char c;
-        if (keyboard_try_getchar(&c)) {
+        
+        // 对于第一个字符，使用阻塞读取等待输入
+        if (i == 0) {
+            c = keyboard_getchar();  // 阻塞等待
             buffer[i] = c;
             bytes_read++;
         } else {
-            break;
+            // 后续字符使用非阻塞读取（处理缓冲区中的多个字符）
+            if (keyboard_try_getchar(&c)) {
+                buffer[i] = c;
+                bytes_read++;
+            } else {
+                break;
+            }
         }
     }
     
@@ -150,20 +160,57 @@ static uint32_t devconsole_write(fs_node_t *node, uint32_t offset,
 
 /**
  * 读取 /dev 目录
+ * 
+ * 注意：返回 . 和 .. 以及所有设备
+ * index 0: .
+ * index 1: ..
+ * index 2-N: 设备文件
  */
 static struct dirent *devfs_readdir(fs_node_t *node, uint32_t index) {
     (void)node;
     
-    if (index >= DEVFS_DEVICE_COUNT) {
+    LOG_DEBUG_MSG("devfs: readdir called with index=%u\n", index);
+    
+    static struct dirent dirent;
+    
+    /* 返回 . */
+    if (index == 0) {
+        strcpy(dirent.d_name, ".");
+        dirent.d_ino = 0;
+        dirent.d_reclen = sizeof(struct dirent);
+        dirent.d_off = 1;
+        dirent.d_type = DT_DIR;
+        LOG_DEBUG_MSG("devfs: readdir returning '.'\n");
+        return &dirent;
+    }
+    
+    /* 返回 .. */
+    if (index == 1) {
+        strcpy(dirent.d_name, "..");
+        dirent.d_ino = 0;
+        dirent.d_reclen = sizeof(struct dirent);
+        dirent.d_off = 2;
+        dirent.d_type = DT_DIR;
+        LOG_DEBUG_MSG("devfs: readdir returning '..'\n");
+        return &dirent;
+    }
+    
+    /* 返回设备文件 */
+    uint32_t device_index = index - 2;
+    if (device_index >= DEVFS_DEVICE_COUNT) {
+        LOG_DEBUG_MSG("devfs: readdir index %u out of range (device_index=%u >= %u)\n", 
+                     index, device_index, DEVFS_DEVICE_COUNT);
         return NULL;
     }
     
-    static struct dirent dirent;
-    strcpy(dirent.d_name, devfs_devices[index].name);
-    dirent.d_ino = devfs_devices[index].inode;
+    strcpy(dirent.d_name, devfs_devices[device_index].name);
+    dirent.d_ino = devfs_devices[device_index].inode;
     dirent.d_reclen = sizeof(struct dirent);
     dirent.d_off = index + 1;  // 下一个索引
     dirent.d_type = DT_CHR;  // 字符设备
+    
+    LOG_DEBUG_MSG("devfs: readdir returning device '%s' (index=%u, device_index=%u)\n", 
+                 dirent.d_name, index, device_index);
     
     return &dirent;
 }
@@ -172,8 +219,12 @@ static struct dirent *devfs_readdir(fs_node_t *node, uint32_t index) {
  * 在 /dev 目录中查找设备
  */
 static fs_node_t *devfs_finddir(fs_node_t *node, const char *name) {
-    (void)node;
+    /* 处理 . 和 .. */
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+        return node;  // 返回当前目录节点（devfs_root）
+    }
     
+    /* 查找设备 */
     for (uint32_t i = 0; i < DEVFS_DEVICE_COUNT; i++) {
         if (strcmp(devfs_devices[i].name, name) == 0) {
             return &devfs_devices[i];

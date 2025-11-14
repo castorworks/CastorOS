@@ -18,18 +18,19 @@
 #include <kernel/idt.h>
 #include <kernel/irq.h>
 #include <kernel/isr.h>
+#include <kernel/tss.h>
 #include <kernel/task.h>
 #include <kernel/kernel_shell.h>
 #include <kernel/fs_bootstrap.h>
+#include <kernel/syscall.h>
 
 #include <mm/pmm.h>
 #include <mm/vmm.h>
 #include <mm/heap.h>
 
-#include <tests/test_runner.h>
+#include <kernel/loader.h>
 
-void kernel_task_test1();
-void kernel_task_test2();
+#include <tests/test_runner.h>
 
 // 内核主函数
 void kernel_main(multiboot_info_t* mbi) {
@@ -38,6 +39,9 @@ void kernel_main(multiboot_info_t* mbi) {
     // ========================================================================    
     vga_init(); // 初始化 VGA
     serial_init(); // 初始化串口
+    
+    /* 启用调试日志 */
+    klog_set_level(LOG_DEBUG);
 
     // ========================================================================
     // 启动信息
@@ -57,6 +61,13 @@ void kernel_main(multiboot_info_t* mbi) {
     gdt_init();
     LOG_DEBUG_MSG("  [1.1] GDT initialized\n");
     
+    // 1.2 初始化 TSS（Task State Segment）
+    // TSS 需要在创建用户进程之前初始化，用于特权级切换
+    tss_init(0x80000000, GDT_KERNEL_DATA_SEGMENT);  // 临时内核栈，后续会更新
+    gdt_add_tss_descriptor(tss_get_address(), tss_get_size() - 1);
+    tss_flush(GDT_TSS_SEGMENT);
+    LOG_DEBUG_MSG("  [1.2] TSS initialized\n");
+    
     // ========================================================================
     // 阶段 2: 中断系统（Interrupt System）
     // ========================================================================
@@ -73,6 +84,10 @@ void kernel_main(multiboot_info_t* mbi) {
     // 2.3 初始化 IRQ（Hardware Interrupt Requests - 硬件中断）
     irq_init();
     LOG_DEBUG_MSG("  [2.3] IRQ initialized (Hardware interrupts)\n");
+    
+    // 2.4 初始化系统调用（System Calls）
+    syscall_init();
+    LOG_DEBUG_MSG("  [2.4] System calls initialized\n");
 
     // ========================================================================
     // 阶段 3: 内存管理（Memory Management）
@@ -158,9 +173,6 @@ void kernel_main(multiboot_info_t* mbi) {
     fs_init();
     LOG_DEBUG_MSG("  [5.2] File system initialized\n");
 
-    task_create_kernel_thread(kernel_task_test1, "kernel_task_test1");
-    task_create_kernel_thread(kernel_task_test2, "kernel_task_test2");
-
     // ========================================================================
     // 单元测试
     // ========================================================================
@@ -171,46 +183,28 @@ void kernel_main(multiboot_info_t* mbi) {
     // ========================================================================
     // 阶段 6: 内核 Shell（Kernel Shell）
     // ========================================================================
-    LOG_INFO_MSG("[Stage 6] Starting kernel shell...\n");
+    // LOG_INFO_MSG("[Stage 6] Starting kernel shell...\n");
     
     // 初始化 Shell
-    kernel_shell_init();
-    LOG_DEBUG_MSG("  [6.1] Kernel shell initialized\n");
+    // kernel_shell_init();
+    // LOG_DEBUG_MSG("  [6.1] Kernel shell initialized\n");
     
     /* 内核初始化完成 */
-    LOG_INFO_MSG("Kernel initialization complete\n\n");
+    // LOG_INFO_MSG("Kernel initialization complete\n\n");
     
     // 将 Shell 作为内核线程运行，这样它会出现在进程列表中
-    task_create_kernel_thread(kernel_shell_run, "kernel_shell");
-    LOG_DEBUG_MSG("  [6.2] Kernel shell thread created\n");
+    // task_create_kernel_thread(kernel_shell_run, "kernel_shell");
+    // LOG_DEBUG_MSG("  [6.2] Kernel shell thread created\n");
+
+    // ========================================================================
+    // 阶段 7: 用户 Shell（User Shell）
+    // ========================================================================
+    LOG_INFO_MSG("[Stage 7] Loading user shell...\n");
+    load_user_shell();
     
     // 主线程进入空闲循环（让调度器接管）
     LOG_INFO_MSG("Kernel entering scheduler...\n");
     while (1) {
         __asm__ volatile ("hlt");
     }
-}
-
-void kernel_task_test1() {
-    LOG_INFO_MSG("Kernel task 1 started (PID %u)\n", task_get_current()->pid);
-    
-    for (;;) {
-        task_sleep(100);
-    }
-    
-    // never reach here
-    LOG_INFO_MSG("Kernel task 1 exiting\n");
-    task_exit(0);
-}
-
-void kernel_task_test2() {
-    LOG_INFO_MSG("Kernel task 2 started (PID %u)\n", task_get_current()->pid);
-    
-    for (;;) {
-        task_sleep(100);
-    }
-    
-    // never reach here
-    LOG_INFO_MSG("Kernel task 2 exiting\n");
-    task_exit(0);
 }

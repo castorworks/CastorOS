@@ -4,8 +4,10 @@
 
 #include <kernel/task.h>
 #include <kernel/gdt.h>
+#include <kernel/tss.h>
 #include <kernel/panic.h>
 #include <kernel/interrupt.h>
+#include <kernel/user.h>
 #include <mm/heap.h>
 #include <mm/pmm.h>
 #include <mm/vmm.h>
@@ -13,6 +15,8 @@
 #include <lib/kprintf.h>
 #include <lib/string.h>
 #include <drivers/timer.h>
+#include <fs/vfs.h>
+#include <kernel/syscalls/fs.h>
 
 /* 任务表（静态分配，支持最多 MAX_TASKS 个任务） */
 static task_t task_table[MAX_TASKS];
@@ -31,6 +35,49 @@ static uint32_t next_pid = 1;
 #define DEFAULT_TIME_SLICE 10  // 假设 100Hz 定时器，10 ticks = 100ms
 
 /**
+ * 初始化标准文件描述符（stdin, stdout, stderr）
+ * @param task 目标任务
+ * @return 0 成功，-1 失败
+ */
+static int task_init_standard_fds(task_t *task) {
+    if (!task || !task->fd_table) {
+        LOG_ERROR_MSG("task_init_standard_fds: invalid task or fd_table\n");
+        return -1;
+    }
+    
+    /* 查找 /dev/console 设备 */
+    fs_node_t *console = vfs_path_to_node("/dev/console");
+    if (!console) {
+        LOG_WARN_MSG("task: /dev/console not available, stdio not initialized for PID %u\n", task->pid);
+        return -1;
+    }
+    
+    /* 分配 fd 0 (stdin) - 只读 */
+    int32_t fd = fd_table_alloc(task->fd_table, console, O_RDONLY);
+    if (fd != 0) {
+        LOG_WARN_MSG("task: failed to assign STDIN (fd=%d) for PID %u\n", fd, task->pid);
+        return -1;
+    }
+    
+    /* 分配 fd 1 (stdout) - 只写 */
+    fd = fd_table_alloc(task->fd_table, console, O_WRONLY);
+    if (fd != 1) {
+        LOG_WARN_MSG("task: failed to assign STDOUT (fd=%d) for PID %u\n", fd, task->pid);
+        return -1;
+    }
+    
+    /* 分配 fd 2 (stderr) - 只写 */
+    fd = fd_table_alloc(task->fd_table, console, O_WRONLY);
+    if (fd != 2) {
+        LOG_WARN_MSG("task: failed to assign STDERR (fd=%d) for PID %u\n", fd, task->pid);
+        return -1;
+    }
+    
+    LOG_DEBUG_MSG("task: initialized stdio for PID %u\n", task->pid);
+    return 0;
+}
+
+/**
  * 分配一个空闲的 PCB
  */
 task_t *task_alloc(void) {
@@ -39,6 +86,18 @@ task_t *task_alloc(void) {
             memset(&task_table[i], 0, sizeof(task_t));
             task_table[i].pid = next_pid++;
             task_table[i].state = TASK_READY;
+            
+            /* 分配并初始化文件描述符表 */
+            task_table[i].fd_table = kmalloc(sizeof(fd_table_t));
+            if (task_table[i].fd_table == NULL) {
+                LOG_ERROR_MSG("Failed to allocate fd_table for PID %u\n", task_table[i].pid);
+                return NULL;
+            }
+            fd_table_init(task_table[i].fd_table);
+            
+            /* 初始化当前工作目录为根目录 */
+            strcpy(task_table[i].cwd, "/");
+            
             return &task_table[i];
         }
     }
@@ -49,9 +108,30 @@ task_t *task_alloc(void) {
  * 释放 PCB
  */
 void task_free(task_t *task) {
+    /* 释放文件描述符表 */
+    if (task->fd_table != NULL) {
+        /* 关闭所有打开的文件描述符 */
+        for (int i = 0; i < MAX_FDS; i++) {
+            if (task->fd_table->entries[i].in_use) {
+                fd_table_free(task->fd_table, i);
+            }
+        }
+        /* 释放文件描述符表内存 */
+        kfree(task->fd_table);
+        task->fd_table = NULL;
+    }
+    
     /* 释放内核栈 */
     if (task->kernel_stack_base != 0) {
         kfree((void *)task->kernel_stack_base);
+    }
+    
+    /* 释放用户进程的地址空间 */
+    if (task->is_user_process && task->page_dir_phys != 0) {
+        /* 释放页目录、用户空间页表和所有物理页 */
+        /* 注意：vmm_free_page_directory 现在会释放所有物理页，
+         * 包括用户栈，所以这里不需要手动释放 */
+        vmm_free_page_directory(task->page_dir_phys);
     }
     
     /* 标记为未使用 */
@@ -167,7 +247,7 @@ void task_init(void) {
  * 内核线程退出包装器
  * 当内核线程函数返回时，调用此函数清理资源
  */
-static void kernel_thread_exit_wrapper(void) {
+ static void kernel_thread_exit_wrapper(void) {
     /* 线程函数已返回，正常退出 */
     task_exit(0);
     
@@ -208,21 +288,21 @@ uint32_t task_create_kernel_thread(void (*entry)(void), const char *name) {
     /* 设置栈帧：当 entry 返回时，会返回到 kernel_thread_exit_wrapper 
      * 注意：task_asm.asm 的恢复流程会执行 pop + add esp,4，所以需要两个栈位置
      */
-    uint32_t *stack_ptr = (uint32_t *)(task->kernel_stack);
-    *(--stack_ptr) = (uint32_t)kernel_thread_exit_wrapper;  // 返回地址
-    *(--stack_ptr) = 0;  // 占位符，会被 add esp,4 跳过
-    
-    /* 初始化上下文 */
-    task->context.eip = (uint32_t)entry;
-    task->context.esp = (uint32_t)stack_ptr;
-    task->context.ebp = task->kernel_stack;
-    task->context.eflags = 0x202;  // IF = 1
-    task->context.cs = GDT_KERNEL_CODE_SEGMENT;
-    task->context.ds = GDT_KERNEL_DATA_SEGMENT;
-    task->context.es = GDT_KERNEL_DATA_SEGMENT;
-    task->context.fs = GDT_KERNEL_DATA_SEGMENT;
-    task->context.gs = GDT_KERNEL_DATA_SEGMENT;
-    task->context.ss = GDT_KERNEL_DATA_SEGMENT;
+     uint32_t *stack_ptr = (uint32_t *)(task->kernel_stack);
+     *(--stack_ptr) = (uint32_t)kernel_thread_exit_wrapper;  // 返回地址
+     *(--stack_ptr) = 0;  // 占位符，会被 add esp,4 跳过
+     
+     /* 初始化上下文 */
+     task->context.eip = (uint32_t)entry;
+     task->context.esp = (uint32_t)stack_ptr;
+     task->context.ebp = task->kernel_stack;
+     task->context.eflags = 0x202;  // IF = 1
+     task->context.cs = GDT_KERNEL_CODE_SEGMENT;
+     task->context.ds = GDT_KERNEL_DATA_SEGMENT;
+     task->context.es = GDT_KERNEL_DATA_SEGMENT;
+     task->context.fs = GDT_KERNEL_DATA_SEGMENT;
+     task->context.gs = GDT_KERNEL_DATA_SEGMENT;
+     task->context.ss = GDT_KERNEL_DATA_SEGMENT;
     
     /* 使用内核页目录的物理地址（内核线程共享） */
     task->context.cr3 = task->page_dir_phys;
@@ -235,6 +315,156 @@ uint32_t task_create_kernel_thread(void (*entry)(void), const char *name) {
     ready_queue_add(task);
     
     LOG_DEBUG_MSG("Created kernel thread: %s (PID %u)\n", name, task->pid);
+    
+    return task->pid;
+}
+
+/**
+ * 创建用户进程
+ * 
+ * 注意：当前 vmm 模块仅支持单页目录，因此用户进程也使用内核页目录
+ * 这是一个简化的实现，未来需要扩展 vmm 模块以支持多页目录
+ * 
+ * @param page_dir 保留参数，当前被忽略（为了接口兼容性）
+ */
+uint32_t task_create_user_process(const char *name, uint32_t entry_point, 
+                                   page_directory_t *page_dir __attribute__((unused))) {
+    /* 分配 PCB */
+    task_t *task = task_alloc();
+    if (task == NULL) {
+        LOG_ERROR_MSG("Failed to allocate PCB for user process %s\n", name);
+        return 0;
+    }
+    
+    /* 设置任务名称 */
+    strncpy(task->name, name, sizeof(task->name) - 1);
+    task->name[sizeof(task->name) - 1] = '\0';
+    
+    /* 标记为用户进程 */
+    task->is_user_process = true;
+    
+    /* 创建独立的页目录 */
+    if (page_dir != NULL) {
+        /* 如果提供了页目录，使用它（主要用于 exec） */
+        task->page_dir = page_dir;
+        task->page_dir_phys = VIRT_TO_PHYS((uint32_t)page_dir);
+    } else {
+        /* 创建新的页目录 */
+        task->page_dir_phys = vmm_create_page_directory();
+        if (task->page_dir_phys == 0) {
+            LOG_ERROR_MSG("Failed to create page directory for %s\n", name);
+            task_free(task);
+            return 0;
+        }
+        task->page_dir = (page_directory_t*)PHYS_TO_VIRT(task->page_dir_phys);
+    }
+    
+    /* 分配内核栈（用于处理系统调用和中断） */
+    task->kernel_stack_base = (uint32_t)kmalloc(KERNEL_STACK_SIZE);
+    if (task->kernel_stack_base == 0) {
+        LOG_ERROR_MSG("Failed to allocate kernel stack for %s\n", name);
+        task_free(task);
+        return 0;
+    }
+    task->kernel_stack = task->kernel_stack_base + KERNEL_STACK_SIZE;
+    
+    /* 分配用户栈（从 PMM 分配物理页，映射到进程的独立地址空间） */
+    /* 用户栈位于用户空间顶部 */
+    uint32_t user_stack_virt = USER_SPACE_END - USER_STACK_SIZE;
+    uint32_t num_pages = USER_STACK_SIZE / PAGE_SIZE;
+    
+    /* 分配第一个物理页帧并保存基址 */
+    task->user_stack_base = pmm_alloc_frame();
+    if (task->user_stack_base == 0) {
+        LOG_ERROR_MSG("Failed to allocate user stack for %s\n", name);
+        kfree((void *)task->kernel_stack_base);
+        task_free(task);
+        return 0;
+    }
+    
+    /* 映射第一页到进程的页目录 */
+    if (!vmm_map_page_in_directory(task->page_dir_phys, user_stack_virt, 
+                                    task->user_stack_base,
+                                    PAGE_PRESENT | PAGE_WRITE | PAGE_USER)) {
+        LOG_ERROR_MSG("Failed to map user stack page at %x\n", user_stack_virt);
+        pmm_free_frame(task->user_stack_base);
+        kfree((void *)task->kernel_stack_base);
+        task_free(task);
+        return 0;
+    }
+    
+    /* 分配并映射剩余页 */
+    for (uint32_t i = 1; i < num_pages; i++) {
+        uint32_t frame = pmm_alloc_frame();
+        if (frame == 0) {
+            LOG_ERROR_MSG("Failed to allocate user stack page %u for %s\n", i, name);
+            /* 清理已分配的页 */
+            for (uint32_t j = 0; j < i; j++) {
+                if (j == 0) {
+                    pmm_free_frame(task->user_stack_base);
+                } else {
+                    pmm_free_frame(task->user_stack_base + j * PAGE_SIZE);
+                }
+            }
+            kfree((void *)task->kernel_stack_base);
+            task_free(task);
+            return 0;
+        }
+        
+        if (!vmm_map_page_in_directory(task->page_dir_phys, user_stack_virt + i * PAGE_SIZE, 
+                                        frame, PAGE_PRESENT | PAGE_WRITE | PAGE_USER)) {
+            LOG_ERROR_MSG("Failed to map user stack page at %x\n", user_stack_virt + i * PAGE_SIZE);
+            pmm_free_frame(frame);
+            /* 清理已分配的页 */
+            for (uint32_t j = 0; j < i; j++) {
+                if (j == 0) {
+                    pmm_free_frame(task->user_stack_base);
+                } else {
+                    pmm_free_frame(task->user_stack_base + j * PAGE_SIZE);
+                }
+            }
+            kfree((void *)task->kernel_stack_base);
+            task_free(task);
+            return 0;
+        }
+    }
+    
+    /* 保存用户程序的真实入口点和栈 */
+    task->user_entry = entry_point;
+    task->user_stack = USER_SPACE_END - 4;  // 用户栈顶（虚拟地址）
+    
+    /* 初始化上下文为内核模式（首次运行时会调用 usermode_wrapper） */
+    task->context.eip = get_usermode_wrapper();
+    task->context.esp = task->kernel_stack;
+    task->context.ebp = task->kernel_stack;
+    task->context.eflags = 0x202;  // IF = 1
+    
+    /* 设置段寄存器为内核段 */
+    task->context.cs = GDT_KERNEL_CODE_SEGMENT;
+    task->context.ds = GDT_KERNEL_DATA_SEGMENT;
+    task->context.es = GDT_KERNEL_DATA_SEGMENT;
+    task->context.fs = GDT_KERNEL_DATA_SEGMENT;
+    task->context.gs = GDT_KERNEL_DATA_SEGMENT;
+    task->context.ss = GDT_KERNEL_DATA_SEGMENT;
+    
+    /* 使用进程自己的页目录物理地址 */
+    task->context.cr3 = task->page_dir_phys;
+    
+    /* 设置优先级和时间片 */
+    task->priority = 128;
+    task->time_slice = DEFAULT_TIME_SLICE;
+    
+    /* 初始化标准文件描述符（用户进程需要 stdio） */
+    task_init_standard_fds(task);
+    
+    /* 添加到就绪队列 */
+    ready_queue_add(task);
+    
+    LOG_DEBUG_MSG("Created user process: %s (PID %u, entry=%x)\n", 
+                 name, task->pid, entry_point);
+    LOG_DEBUG_MSG("  User stack: %x -> %x\n", 
+                 task->user_stack_base, user_stack_virt);
+    LOG_DEBUG_MSG("  Kernel stack: %x\n", task->kernel_stack_base);
     
     return task->pid;
 }
@@ -265,7 +495,7 @@ void task_schedule(void) {
     if (current_task == NULL) {
         return;  // 还未初始化
     }
-    
+
     /* 更新当前任务的运行时间统计（切换时统计增量） */
     uint64_t current_tick = timer_get_ticks();
     if (current_task->last_scheduled_tick > 0) {
@@ -315,6 +545,9 @@ void task_schedule(void) {
     /* 切换当前任务 */
     current_task = next_task;
     next_task->state = TASK_RUNNING;
+    
+    /* 更新 TSS 内核栈（用于特权级切换） */
+    tss_set_kernel_stack(next_task->kernel_stack);
     next_task->last_scheduled_tick = current_tick;  // 记录新任务开始运行的时间
     
     /* 切换页目录（如果不同）*/

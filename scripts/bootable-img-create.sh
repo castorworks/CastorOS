@@ -26,6 +26,9 @@ MOUNT_POINT="/tmp/castor_bootable"
 KERNEL_BIN="$PROJECT_ROOT/build/castor.bin"
 GRUB_CFG="$PROJECT_ROOT/grub.cfg"
 
+SHELL_ELF="$PROJECT_ROOT/userland/shell/shell.elf"
+HELLO_ELF="$PROJECT_ROOT/userland/helloworld/hello.elf"
+
 # ============================================================================
 # 函数定义
 # ============================================================================
@@ -139,12 +142,27 @@ install_files() {
     
     # 创建目录结构
     mkdir -p "$MOUNT_POINT/boot/grub"
+    mkdir -p "$MOUNT_POINT/bin"
     
     # 复制内核
     cp "$KERNEL_BIN" "$MOUNT_POINT/boot/castor.bin"
     
     # 复制 GRUB 配置
     cp "$GRUB_CFG" "$MOUNT_POINT/boot/grub/grub.cfg"
+
+    # 复制 shell 程序
+    if [ -f "$SHELL_ELF" ]; then
+        cp "$SHELL_ELF" "$MOUNT_POINT/bin/shell.elf"
+    else
+        warning "Shell program not found: $SHELL_ELF"
+    fi
+
+    # 复制 hello 程序
+    if [ -f "$HELLO_ELF" ]; then
+        cp "$HELLO_ELF" "$MOUNT_POINT/bin/hello.elf"
+    else
+        warning "Hello world program not found: $HELLO_ELF"
+    fi
     
     # 同步到磁盘
     sync
@@ -191,10 +209,10 @@ show_success() {
     echo "  - /boot/castor.bin (kernel)"
     echo "  - /boot/grub/ (bootloader)"
     if [ -f "$SHELL_ELF" ]; then
-        echo "  - /shell.elf (user shell)"
+        echo "  - /bin/shell.elf (shell program)"
     fi
     if [ -f "$HELLO_ELF" ]; then
-        echo "  - /hello.elf (hello world program)"
+        echo "  - /bin/hello.elf (hello world program)"
     fi
     echo ""
     info "Usage:"

@@ -9,9 +9,43 @@
 
 static fs_node_t *fs_root = NULL;
 
+/* 挂载表 - 记录所有挂载点 */
+#define MAX_MOUNTS 32
+#define MAX_MOUNT_PATH 256
+
+typedef struct {
+    char path[MAX_MOUNT_PATH];   /* 挂载点路径（如 "/dev"） */
+    fs_node_t *root;             /* 挂载的文件系统根节点 */
+} vfs_mount_entry_t;
+
+static vfs_mount_entry_t mount_table[MAX_MOUNTS];
+static uint32_t mount_count = 0;
+
 void vfs_init(void) {
     LOG_INFO_MSG("VFS: Initializing virtual file system...\n");
     fs_root = NULL;
+    mount_count = 0;
+}
+
+/* 查询挂载表，根据路径获取挂载的根节点 */
+static fs_node_t *vfs_get_mounted_root_by_path(const char *path) {
+    if (!path) {
+        return NULL;
+    }
+    
+    LOG_DEBUG_MSG("VFS: get_mounted_root_by_path: checking '%s' against %u mounts\n", path, mount_count);
+    
+    for (uint32_t i = 0; i < mount_count; i++) {
+        LOG_DEBUG_MSG("VFS: get_mounted_root_by_path: mount[%u] = {%s, %p}\n", i, 
+                     mount_table[i].path, mount_table[i].root);
+        if (strcmp(mount_table[i].path, path) == 0) {
+            LOG_DEBUG_MSG("VFS: found mounted root for '%s': %p\n", path, mount_table[i].root);
+            return mount_table[i].root;
+        }
+    }
+    
+    LOG_DEBUG_MSG("VFS: no mounted root found for '%s'\n", path);
+    return NULL;
 }
 
 fs_node_t *vfs_get_root(void) {
@@ -57,45 +91,33 @@ void vfs_close(fs_node_t *node) {
 
 struct dirent *vfs_readdir(fs_node_t *node, uint32_t index) {
     if (!node || node->type != FS_DIRECTORY) {
+        LOG_DEBUG_MSG("VFS: readdir: invalid node or not directory\n");
         return NULL;
     }
     
-    // 检查是否是挂载点
-    if (node->ptr != NULL) {
-        // 这是一个挂载点，在挂载的文件系统中读取
-        fs_node_t *mounted = (fs_node_t *)node->ptr;
-        if (mounted->readdir) {
-            return mounted->readdir(mounted, index);
-        }
-        return NULL;
-    }
+    LOG_DEBUG_MSG("VFS: readdir: index=%u, node=%p\n", index, node);
     
-    // 正常读取
+    /* 正常读取（挂载点切换在 vfs_path_to_node 中处理） */
     if (!node->readdir) {
+        LOG_DEBUG_MSG("VFS: readdir: node has no readdir callback\n");
         return NULL;
     }
+    LOG_DEBUG_MSG("VFS: readdir: calling node->readdir\n");
     return node->readdir(node, index);
 }
 
 fs_node_t *vfs_finddir(fs_node_t *node, const char *name) {
     if (!node || node->type != FS_DIRECTORY) {
+        LOG_DEBUG_MSG("VFS: finddir: invalid node or not directory\n");
         return NULL;
     }
     
-    // 检查是否是挂载点
-    if (node->ptr != NULL) {
-        // 这是一个挂载点，在挂载的文件系统中查找
-        fs_node_t *mounted = (fs_node_t *)node->ptr;
-        if (mounted->finddir) {
-            return mounted->finddir(mounted, name);
-        }
-        return NULL;
-    }
-    
-    // 正常查找
+    /* 正常查找（挂载点切换在 vfs_path_to_node 中处理） */
     if (!node->finddir) {
+        LOG_DEBUG_MSG("VFS: finddir: node has no finddir callback\n");
         return NULL;
     }
+    LOG_DEBUG_MSG("VFS: finddir: calling node->finddir for '%s'\n", name);
     return node->finddir(node, name);
 }
 
@@ -105,11 +127,84 @@ fs_node_t *vfs_path_to_node(const char *path) {
         return NULL;
     }
     
+    LOG_DEBUG_MSG("VFS: path_to_node: resolving '%s'\n", path);
+    
     // 处理根目录
     if (strcmp(path, "/") == 0) {
         return fs_root;
     }
     
+    /* 检查是否是挂载点或其子路径 */
+    fs_node_t *mounted = vfs_get_mounted_root_by_path(path);
+    if (mounted != NULL) {
+        LOG_DEBUG_MSG("VFS: path_to_node: '%s' is a mount point, returning root %p\n", path, mounted);
+        return mounted;
+    }
+    
+    /* 检查是否是挂载点的子路径（如 /dev/zero） */
+    for (uint32_t i = 0; i < mount_count; i++) {
+        const char *mount_path = mount_table[i].path;
+        uint32_t mount_len = strlen(mount_path);
+        
+        /* 检查路径是否以挂载点开头，且后面是 / */
+        if (strncmp(path, mount_path, mount_len) == 0 && 
+            (path[mount_len] == '/' || path[mount_len] == '\0')) {
+            
+            LOG_DEBUG_MSG("VFS: path_to_node: '%s' is under mount point '%s'\n", path, mount_path);
+            
+            /* 如果正好是挂载点，返回根 */
+            if (path[mount_len] == '\0') {
+                return mount_table[i].root;
+            }
+            
+            /* 否则，在挂载的根中继续解析剩余路径 */
+            const char *remaining = path + mount_len + 1;  /* 跳过 '/' */
+            LOG_DEBUG_MSG("VFS: path_to_node: resolving '%s' in mounted filesystem\n", remaining);
+            
+            fs_node_t *current = mount_table[i].root;
+            char token[128];
+            uint32_t j = 0;
+            
+            while (*remaining) {
+                /* 提取路径组件 */
+                j = 0;
+                while (*remaining && *remaining != '/' && j < 127) {
+                    token[j++] = *remaining++;
+                }
+                
+                if (*remaining && *remaining != '/') {
+                    LOG_ERROR_MSG("VFS: Path component too long\n");
+                    return NULL;
+                }
+                
+                token[j] = '\0';
+                
+                /* 跳过连续的 '/' */
+                while (*remaining == '/') {
+                    remaining++;
+                }
+                
+                if (token[0] == '\0') {
+                    continue;
+                }
+                
+                /* 查找下一个节点 */
+                LOG_DEBUG_MSG("VFS: path_to_node: looking for '%s' in mounted fs\n", token);
+                fs_node_t *next = vfs_finddir(current, token);
+                if (!next) {
+                    LOG_DEBUG_MSG("VFS: path_to_node: failed to find '%s' in mounted fs\n", token);
+                    return NULL;
+                }
+                
+                current = next;
+            }
+            
+            LOG_DEBUG_MSG("VFS: path_to_node: resolved to %p in mounted fs\n", current);
+            return current;
+        }
+    }
+    
+    /* 正常路径解析（不在任何挂载点下） */
     // 跳过开头的 '/'
     if (path[0] == '/') {
         path++;
@@ -144,19 +239,19 @@ fs_node_t *vfs_path_to_node(const char *path) {
             continue;
         }
         
-        // 查找下一个节点
-        current = vfs_finddir(current, token);
-        if (!current) {
-            return NULL;  // 路径不存在
+        /* 查找下一个节点 */
+        LOG_DEBUG_MSG("VFS: path_to_node: looking for '%s' in %p\n", token, current);
+        fs_node_t *next = vfs_finddir(current, token);
+        if (!next) {
+            LOG_DEBUG_MSG("VFS: path_to_node: failed to find '%s'\n", token);
+            return NULL;  /* 路径不存在 */
         }
         
-        // 检查是否是挂载点
-        if (current->ptr != NULL) {
-            // 这是一个挂载点，切换到挂载的文件系统
-            current = (fs_node_t *)current->ptr;
-        }
+        LOG_DEBUG_MSG("VFS: path_to_node: found '%s' at %p (type=%u)\n", token, next, next->type);
+        current = next;
     }
     
+    LOG_DEBUG_MSG("VFS: path_to_node: resolved to %p\n", current);
     return current;
 }
 
@@ -318,30 +413,46 @@ int vfs_unlink(const char *path) {
 // 挂载文件系统到指定路径
 int vfs_mount(const char *path, fs_node_t *root) {
     if (!path || !root || !fs_root) {
+        LOG_ERROR_MSG("VFS: mount: invalid arguments (path=%p, root=%p, fs_root=%p)\n", path, root, fs_root);
         return -1;
     }
     
-    // 查找挂载点
+    LOG_DEBUG_MSG("VFS: mount: mounting filesystem at '%s' (root=%p)\n", path, root);
+    
+    /* 查找挂载点 */
     fs_node_t *mount_point = vfs_path_to_node(path);
     if (!mount_point) {
         LOG_ERROR_MSG("VFS: Mount point '%s' not found\n", path);
         return -1;
     }
     
+    LOG_DEBUG_MSG("VFS: mount: found mount_point=%p (type=%u)\n", mount_point, mount_point->type);
+    
     if (mount_point->type != FS_DIRECTORY) {
         LOG_ERROR_MSG("VFS: Mount point '%s' is not a directory\n", path);
         return -1;
     }
     
-    // 检查是否已经挂载了文件系统
-    if (mount_point->ptr != NULL) {
+    /* 检查是否已经挂载了文件系统 */
+    if (vfs_get_mounted_root_by_path(path) != NULL) {
         LOG_ERROR_MSG("VFS: Mount point '%s' is already mounted\n", path);
         return -1;
     }
     
-    // 设置挂载点
-    mount_point->ptr = root;
-    LOG_INFO_MSG("VFS: Filesystem mounted at '%s'\n", path);
+    /* 检查挂载表是否满 */
+    if (mount_count >= MAX_MOUNTS) {
+        LOG_ERROR_MSG("VFS: Mount table is full (max %u mounts)\n", MAX_MOUNTS);
+        return -1;
+    }
+    
+    /* 添加到挂载表 */
+    strncpy(mount_table[mount_count].path, path, MAX_MOUNT_PATH - 1);
+    mount_table[mount_count].path[MAX_MOUNT_PATH - 1] = '\0';
+    mount_table[mount_count].root = root;
+    mount_count++;
+    
+    LOG_INFO_MSG("VFS: Filesystem mounted at '%s' (root=%p, total_mounts=%u)\n", 
+                 path, root, mount_count);
     
     return 0;
 }
