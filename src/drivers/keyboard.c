@@ -248,6 +248,15 @@ static void keyboard_callback(registers_t *regs) {
     } else if (modifiers.caps_lock && ascii >= 'A' && ascii <= 'Z') {
         ascii += 32;  // 转为小写（Shift + Caps Lock）
     }
+
+    /* 处理 Ctrl 组合键 -> 生成控制字符 */
+    if (modifiers.ctrl) {
+        if (ascii >= 'a' && ascii <= 'z') {
+            ascii = (ascii - 'a') + 1;  // ^a = 0x01 ... ^z = 0x1A
+        } else if (ascii >= 'A' && ascii <= 'Z') {
+            ascii = (ascii - 'A') + 1;
+        }
+    }
     
     /* 触发普通按键事件 */
     if (ascii != 0 || !is_release) {

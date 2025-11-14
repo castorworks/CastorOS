@@ -10,11 +10,15 @@
 // 常量定义
 // ============================================================================
 
-#define SHELL_MAX_INPUT_LENGTH  256
-#define SHELL_MAX_ARGS          16
-#define SHELL_MAX_PATH_LENGTH   256
-#define SHELL_PROMPT            "CastorOS> "
-#define SHELL_VERSION           "0.0.9"
+#define SHELL_MAX_INPUT_LENGTH      256
+#define SHELL_MAX_ARGS              16
+#define SHELL_MAX_PATH_LENGTH       256
+#define SHELL_PROMPT                "root@CastorOS:~$ "
+#define SHELL_VERSION               "0.0.9"
+#define SHELL_CAT_ZERO_PREVIEW      4096
+#define SHELL_CTRL_C                0x03
+#define SHELL_CTRL_L                0x0C
+#define SHELL_INPUT_INTERRUPTED    (-2)
 
 // 文件打开标志（需要与内核一致）
 #define O_RDONLY    0x0000
@@ -64,7 +68,19 @@ static int shell_read_line(char *buffer, size_t size) {
         int ret = read(STDIN_FILENO, &c, 1);
         if (ret <= 0) break;
         
-        if (c == '\n') {
+        if ((unsigned char)c == SHELL_CTRL_C) {
+            buffer[0] = '\0';
+            i = 0;
+            print("^C\n");
+            return SHELL_INPUT_INTERRUPTED;
+        } else if ((unsigned char)c == SHELL_CTRL_L) {
+            print("\033[2J\033[H");
+            print(SHELL_PROMPT);
+            if (i > 0) {
+                write(STDOUT_FILENO, buffer, i);
+            }
+            continue;
+        } else if (c == '\n') {
             buffer[i] = '\0';
             print("\n");
             return (int)i;
@@ -878,10 +894,20 @@ static int cmd_cat(int argc, char **argv) {
     // 读取并显示文件内容
     char buffer[512];
     int bytes_read;
+    int is_dev_zero = (strcmp(abs_path, "/dev/zero") == 0);
+    int is_dev_console = (strcmp(abs_path, "/dev/console") == 0);
+    size_t zero_bytes_previewed = 0;
+    int reached_zero_limit = 0;
+    int interrupted = 0;
     
     while ((bytes_read = read(fd, buffer, sizeof(buffer))) > 0) {
         // 输出内容（只输出可打印字符）
         for (int i = 0; i < bytes_read; i++) {
+            if (is_dev_console && (unsigned char)buffer[i] == SHELL_CTRL_C) {
+                interrupted = 1;
+                break;
+            }
+            
             if (buffer[i] >= 32 && buffer[i] <= 126) {
                 printf("%c", buffer[i]);
             } else if (buffer[i] == '\n') {
@@ -890,9 +916,28 @@ static int cmd_cat(int argc, char **argv) {
                 printf("    ");  // Tab 转换为空格
             }
         }
+
+        if (interrupted) {
+            break;
+        }
+
+        if (is_dev_zero) {
+            if (zero_bytes_previewed + (size_t)bytes_read >= SHELL_CAT_ZERO_PREVIEW) {
+                reached_zero_limit = 1;
+                break;
+            }
+            zero_bytes_previewed += (size_t)bytes_read;
+        }
     }
     
-    printf("\n");
+    if (interrupted) {
+        printf("\n[cat] Interrupted by Ctrl+C\n");
+    } else if (is_dev_zero && reached_zero_limit) {
+        printf("\n[cat] /dev/zero produces infinite zero bytes. Stopped after %u bytes to keep the shell responsive.\n",
+               (unsigned)SHELL_CAT_ZERO_PREVIEW);
+    } else {
+        printf("\n");
+    }
     close(fd);
     return 0;
 }
@@ -1140,7 +1185,10 @@ static void shell_run(void) {
         
         // 读取输入
         memset(shell_state.input_buffer, 0, SHELL_MAX_INPUT_LENGTH);
-        shell_read_line(shell_state.input_buffer, SHELL_MAX_INPUT_LENGTH);
+        int read_status = shell_read_line(shell_state.input_buffer, SHELL_MAX_INPUT_LENGTH);
+        if (read_status == SHELL_INPUT_INTERRUPTED) {
+            continue;
+        }
         
         // 解析命令
         if (shell_parse_command(shell_state.input_buffer, 
