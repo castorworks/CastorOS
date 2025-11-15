@@ -311,6 +311,9 @@ void vmm_free_page_directory(uint32_t dir_phys) {
     
     page_directory_t *dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
     
+    uint32_t freed_pages = 0;
+    uint32_t freed_tables = 0;
+    
     // 只释放用户空间页表（0-511）
     // 内核空间页表（512-1023）是共享的，不释放
     for (uint32_t i = 0; i < 512; i++) {
@@ -323,13 +326,18 @@ void vmm_free_page_directory(uint32_t dir_phys) {
                 if (is_present(table->entries[j])) {
                     uint32_t frame = get_frame(table->entries[j]);
                     pmm_free_frame(frame);
+                    freed_pages++;
                 }
             }
             
             // 释放页表本身
             pmm_free_frame(table_phys);
+            freed_tables++;
         }
     }
+    
+    LOG_DEBUG_MSG("vmm_free_page_directory: freed %u pages, %u tables, 1 directory\n", 
+                  freed_pages, freed_tables);
     
     // 释放页目录本身
     pmm_free_frame(dir_phys);
@@ -392,4 +400,51 @@ bool vmm_map_page_in_directory(uint32_t dir_phys, uint32_t virt,
     }
     
     return true;
+}
+
+uint32_t vmm_unmap_page_in_directory(uint32_t dir_phys, uint32_t virt) {
+    if (virt & (PAGE_SIZE - 1)) {
+        return 0;
+    }
+
+    page_directory_t *dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
+    uint32_t pd = pde_idx(virt);
+    uint32_t pt = pte_idx(virt);
+
+    pde_t *pde = &dir->entries[pd];
+    if (!is_present(*pde)) {
+        return 0;
+    }
+
+    page_table_t *table = (page_table_t*)PHYS_TO_VIRT(get_frame(*pde));
+    uint32_t old_entry = table->entries[pt];
+    if (!is_present(old_entry)) {
+        return 0;
+    }
+
+    table->entries[pt] = 0;
+
+    // 检查页表是否为空（所有条目都为0）
+    bool empty = true;
+    for (uint32_t i = 0; i < 1024; i++) {
+        if (is_present(table->entries[i])) {
+            empty = false;
+            break;
+        }
+    }
+
+    if (empty) {
+        uint32_t table_frame = get_frame(*pde);
+        pmm_free_frame(table_frame);
+        *pde = 0;
+        LOG_DEBUG_MSG("  Page table at PDE %u (frame=%x) is empty, freed\n", pd, table_frame);
+    } else {
+        LOG_DEBUG_MSG("  Page table at PDE %u still has entries\n", pd);
+    }
+
+    if (dir_phys == current_dir_phys) {
+        vmm_flush_tlb(virt);
+    }
+
+    return get_frame(old_entry);
 }

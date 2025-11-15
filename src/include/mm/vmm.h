@@ -114,5 +114,6 @@ void vmm_switch_page_directory(uint32_t dir_phys);
  */
 bool vmm_map_page_in_directory(uint32_t dir_phys, uint32_t virt, 
                                 uint32_t phys, uint32_t flags);
+uint32_t vmm_unmap_page_in_directory(uint32_t dir_phys, uint32_t virt);
 
 #endif // _MM_VMM_H_

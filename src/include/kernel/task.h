@@ -4,6 +4,7 @@
 #include <types.h>
 #include <mm/vmm.h>
 #include <kernel/fd_table.h>
+#include <kernel/isr.h>
 
 /**
  * 进程管理
@@ -66,6 +67,7 @@ typedef struct task {
     
     uint32_t priority;            // 优先级（0-255，数字越大优先级越高）
     uint32_t time_slice;          // 时间片（剩余 ticks）
+    bool need_resched;            // 是否需要在中断退出时调度
     uint64_t total_runtime;       // 总运行时间（ticks）
     uint64_t last_scheduled_tick; // 上次被调度的时间戳（ticks）
     
@@ -171,11 +173,23 @@ void task_block(void *channel);
 void task_timer_tick(void);
 
 /**
- * 切换到指定任务（汇编实现）
- * @param current 当前任务 PCB 地址
- * @param next 下一个任务 PCB 地址
+ * IRQ 公共出口尝试触发调度
+ * 在发送 EOI 之后调用，regs 为当前中断寄存器快照
  */
-extern void task_switch(task_t *current, task_t *next);
+void schedule_from_irq(registers_t *regs);
+
+/**
+ * 切换 CPU 上下文（仅用于内核态任务）
+ * @param prev 当前任务的上下文
+ * @param next 下一个任务的上下文
+ */
+extern void task_switch(cpu_context_t *prev, cpu_context_t *next);
+
+/**
+ * 分配并映射用户栈
+ * @return true 成功，false 失败并已清理
+ */
+bool task_setup_user_stack(task_t *task);
 
 /**
  * 分配一个空闲的 PCB

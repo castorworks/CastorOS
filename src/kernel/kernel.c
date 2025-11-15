@@ -41,7 +41,7 @@ void kernel_main(multiboot_info_t* mbi) {
     serial_init(); // 初始化串口
     
     /* 启用调试日志 */
-    klog_set_level(LOG_INFO);
+    klog_set_level(LOG_DEBUG);
 
     // ========================================================================
     // 启动信息
@@ -176,9 +176,9 @@ void kernel_main(multiboot_info_t* mbi) {
     // ========================================================================
     // 单元测试
     // ========================================================================
-    // LOG_INFO_MSG("Running test suite...\n");
-    // run_all_tests();
-    // kprintf("\n");
+    LOG_INFO_MSG("Running test suite...\n");
+    run_all_tests();
+    kprintf("\n");
 
     // ========================================================================
     // 阶段 6: 内核 Shell（Kernel Shell）

@@ -16,6 +16,8 @@ global isr24, isr25, isr26, isr27, isr28, isr29, isr30, isr31
 
 ; 导入 C 处理函数
 extern isr_handler
+extern interrupt_enter
+extern interrupt_exit
 
 ; ISR 宏：无错误码
 ; 某些异常不会压入错误码，需要手动压入 0 以保持栈平衡
@@ -88,10 +90,16 @@ isr_common_stub:
     mov fs, ax
     mov gs, ax
     
+    ; 标记进入中断上下文
+    call interrupt_enter
+    
     ; 调用 C 处理函数
     push esp                ; 传递栈指针（指向 registers_t 结构）
     call isr_handler
     add esp, 4              ; 清理参数
+    
+    ; 标记离开中断上下文
+    call interrupt_exit
     
     ; 恢复数据段选择子
     pop eax

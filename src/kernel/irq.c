@@ -6,6 +6,7 @@
 #include <kernel/idt.h>
 #include <kernel/gdt.h>
 #include <kernel/io.h>
+#include <kernel/task.h>
 #include <lib/klog.h>
 
 /* PIC 端口 */
@@ -110,6 +111,9 @@ void irq_handler(registers_t *regs) {
 
     /* 发送 EOI 信号 */
     pic_send_eoi(irq);
+
+    /* EOI 之后再尝试触发调度，避免阻塞 PIC */
+    schedule_from_irq(regs);
 }
 
 /**

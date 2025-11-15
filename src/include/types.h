@@ -15,6 +15,8 @@ typedef signed long long   int64_t;
 typedef uint32_t size_t;
 typedef int32_t  ssize_t;
 
+#define UINT32_MAX ((uint32_t)0xFFFFFFFF)
+
 #ifndef _TIME_T_DEFINED
 #define _TIME_T_DEFINED
 typedef uint32_t time_t;

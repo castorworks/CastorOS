@@ -163,8 +163,14 @@ void _assert_ne_str(const char* expected, const char* actual,
 #define ASSERT_EQ_U(expected, actual) \
     _assert_eq_uint((uint32_t)(expected), (uint32_t)(actual), __FILE__, __LINE__)
 
+#define ASSERT_EQ_UINT(expected, actual) \
+    _assert_eq_uint((uint32_t)(expected), (uint32_t)(actual), __FILE__, __LINE__)
+
 // 断言两个无符号整数不相等
 #define ASSERT_NE_U(expected, actual) \
+    _assert_ne_uint((uint32_t)(expected), (uint32_t)(actual), __FILE__, __LINE__)
+
+#define ASSERT_NE_UINT(expected, actual) \
     _assert_ne_uint((uint32_t)(expected), (uint32_t)(actual), __FILE__, __LINE__)
 
 // 断言两个指针相等

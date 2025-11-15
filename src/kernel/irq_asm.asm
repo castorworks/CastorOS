@@ -13,6 +13,8 @@ global irq8, irq9, irq10, irq11, irq12, irq13, irq14, irq15
 
 ; 导入 C 处理函数
 extern irq_handler
+extern interrupt_enter
+extern interrupt_exit
 
 ; IRQ 宏
 ; IRQ 不会压入错误码，需要手动压入 0
@@ -60,10 +62,16 @@ irq_common_stub:
     mov fs, ax
     mov gs, ax
     
+    ; 标记进入中断上下文
+    call interrupt_enter
+    
     ; 调用 C 处理函数
     push esp
     call irq_handler
     add esp, 4
+    
+    ; 标记离开中断上下文
+    call interrupt_exit
     
     ; 恢复数据段选择子
     pop eax

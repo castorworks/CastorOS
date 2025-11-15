@@ -37,6 +37,78 @@ static uint32_t next_pid = 1;
 /* 默认时间片（单位：timer ticks） */
 #define DEFAULT_TIME_SLICE 10  // 假设 100Hz 定时器，10 ticks = 100ms
 
+typedef struct switch_frame {
+    uint32_t ebp;
+    uint32_t ebx;
+    uint32_t esi;
+    uint32_t edi;
+    uint32_t ret;
+} switch_frame_t;
+
+__attribute__((weak)) bool task_should_fail_stack_page(uint32_t page_index) {
+    (void)page_index;
+    return false;
+}
+
+static inline bool context_is_user(const cpu_context_t *ctx) {
+    return (ctx->cs & 0x3) == 0x3;
+}
+
+static void save_regs_to_context(registers_t *regs, cpu_context_t *ctx) {
+    if (!regs || !ctx) {
+        return;
+    }
+
+    ctx->eax = regs->eax;
+    ctx->ebx = regs->ebx;
+    ctx->ecx = regs->ecx;
+    ctx->edx = regs->edx;
+    ctx->esi = regs->esi;
+    ctx->edi = regs->edi;
+    ctx->ebp = regs->ebp;
+    ctx->eip = regs->eip;
+    ctx->eflags = regs->eflags;
+    ctx->cs = (uint16_t)regs->cs;
+    ctx->ds = (uint16_t)regs->ds;
+    ctx->es = ctx->ds;
+    ctx->fs = ctx->ds;
+    ctx->gs = ctx->ds;
+    ctx->ss = (uint16_t)regs->ss;
+
+    if ((regs->cs & 0x3) == 0x3) {
+        ctx->esp = regs->useresp;
+    } else {
+        ctx->esp = regs->esp;
+        ctx->ss = GDT_KERNEL_DATA_SEGMENT;
+    }
+}
+
+static void load_context_to_regs(const cpu_context_t *ctx, registers_t *regs) {
+    if (!ctx || !regs) {
+        return;
+    }
+
+    regs->eax = ctx->eax;
+    regs->ebx = ctx->ebx;
+    regs->ecx = ctx->ecx;
+    regs->edx = ctx->edx;
+    regs->esi = ctx->esi;
+    regs->edi = ctx->edi;
+    regs->ebp = ctx->ebp;
+    regs->eip = ctx->eip;
+    regs->eflags = ctx->eflags;
+    regs->cs = ctx->cs;
+    regs->ds = ctx->ds;
+
+    if (context_is_user(ctx)) {
+        regs->useresp = ctx->esp;
+        regs->ss = ctx->ss;
+    } else {
+        regs->esp = ctx->esp;
+        regs->ss = GDT_KERNEL_DATA_SEGMENT;
+    }
+}
+
 /**
  * 初始化标准文件描述符（stdin, stdout, stderr）
  * @param task 目标任务
@@ -104,6 +176,65 @@ static void task_reap_zombies(void) {
                       task->name, task->pid);
         task_free(task);
     }
+}
+
+bool task_setup_user_stack(task_t *task) {
+    if (!task || task->page_dir_phys == 0) {
+        return false;
+    }
+
+    uint32_t user_stack_virt = USER_SPACE_END - USER_STACK_SIZE;
+    uint32_t num_pages = USER_STACK_SIZE / PAGE_SIZE;
+    uint32_t allocated_pages = 0;
+    uint32_t first_frame = 0;
+
+    for (uint32_t i = 0; i < num_pages; i++) {
+        if (task_should_fail_stack_page(i)) {
+            LOG_WARN_MSG("Simulated stack allocation failure at page %u\n", i);
+            goto fail;
+        }
+
+        uint32_t frame = pmm_alloc_frame();
+        if (frame == 0) {
+            LOG_ERROR_MSG("Failed to allocate user stack page %u\n", i);
+            goto fail;
+        }
+
+        if (allocated_pages == 0) {
+            first_frame = frame;
+        }
+
+        uint32_t virt = user_stack_virt + i * PAGE_SIZE;
+        if (!vmm_map_page_in_directory(task->page_dir_phys, virt, frame,
+                                       PAGE_PRESENT | PAGE_WRITE | PAGE_USER)) {
+            LOG_ERROR_MSG("Failed to map user stack page at %x\n", virt);
+            pmm_free_frame(frame);
+            goto fail;
+        }
+
+        allocated_pages++;
+    }
+
+    task->user_stack_base = first_frame;
+    task->user_stack = USER_SPACE_END - 4;
+    return true;
+
+fail:
+    // 从后往前释放，确保最后一页被释放时页表变空，页表帧会被自动释放
+    LOG_DEBUG_MSG("Stack setup failed, cleaning up %u allocated pages\n", allocated_pages);
+    for (int32_t j = (int32_t)allocated_pages - 1; j >= 0; j--) {
+        uint32_t virt = user_stack_virt + (uint32_t)j * PAGE_SIZE;
+        uint32_t frame = vmm_unmap_page_in_directory(task->page_dir_phys, virt);
+        if (frame != 0) {
+            pmm_free_frame(frame);
+            LOG_DEBUG_MSG("  Freed page %d at virt=%x, frame=%x\n", j, virt, frame);
+        } else {
+            LOG_WARN_MSG("  Page %d at virt=%x returned no frame!\n", j, virt);
+        }
+    }
+    task->user_stack_base = 0;
+    task->user_stack = 0;
+    return false;
 }
 
 /**
@@ -398,70 +529,14 @@ uint32_t task_create_user_process(const char *name, uint32_t entry_point,
     }
     task->kernel_stack = task->kernel_stack_base + KERNEL_STACK_SIZE;
     
-    /* 分配用户栈（从 PMM 分配物理页，映射到进程的独立地址空间） */
-    /* 用户栈位于用户空间顶部 */
-    uint32_t user_stack_virt = USER_SPACE_END - USER_STACK_SIZE;
-    uint32_t num_pages = USER_STACK_SIZE / PAGE_SIZE;
-    
-    /* 分配第一个物理页帧并保存基址 */
-    task->user_stack_base = pmm_alloc_frame();
-    if (task->user_stack_base == 0) {
-        LOG_ERROR_MSG("Failed to allocate user stack for %s\n", name);
-        kfree((void *)task->kernel_stack_base);
+    if (!task_setup_user_stack(task)) {
+        LOG_ERROR_MSG("Failed to setup user stack for %s\n", name);
         task_free(task);
         return 0;
-    }
-    
-    /* 映射第一页到进程的页目录 */
-    if (!vmm_map_page_in_directory(task->page_dir_phys, user_stack_virt, 
-                                    task->user_stack_base,
-                                    PAGE_PRESENT | PAGE_WRITE | PAGE_USER)) {
-        LOG_ERROR_MSG("Failed to map user stack page at %x\n", user_stack_virt);
-        pmm_free_frame(task->user_stack_base);
-        kfree((void *)task->kernel_stack_base);
-        task_free(task);
-        return 0;
-    }
-    
-    /* 分配并映射剩余页 */
-    for (uint32_t i = 1; i < num_pages; i++) {
-        uint32_t frame = pmm_alloc_frame();
-        if (frame == 0) {
-            LOG_ERROR_MSG("Failed to allocate user stack page %u for %s\n", i, name);
-            /* 清理已分配的页 */
-            for (uint32_t j = 0; j < i; j++) {
-                if (j == 0) {
-                    pmm_free_frame(task->user_stack_base);
-                } else {
-                    pmm_free_frame(task->user_stack_base + j * PAGE_SIZE);
-                }
-            }
-            kfree((void *)task->kernel_stack_base);
-            task_free(task);
-            return 0;
-        }
-        
-        if (!vmm_map_page_in_directory(task->page_dir_phys, user_stack_virt + i * PAGE_SIZE, 
-                                        frame, PAGE_PRESENT | PAGE_WRITE | PAGE_USER)) {
-            LOG_ERROR_MSG("Failed to map user stack page at %x\n", user_stack_virt + i * PAGE_SIZE);
-            pmm_free_frame(frame);
-            /* 清理已分配的页 */
-            for (uint32_t j = 0; j < i; j++) {
-                if (j == 0) {
-                    pmm_free_frame(task->user_stack_base);
-                } else {
-                    pmm_free_frame(task->user_stack_base + j * PAGE_SIZE);
-                }
-            }
-            kfree((void *)task->kernel_stack_base);
-            task_free(task);
-            return 0;
-        }
     }
     
     /* 保存用户程序的真实入口点和栈 */
     task->user_entry = entry_point;
-    task->user_stack = USER_SPACE_END - 4;  // 用户栈顶（虚拟地址）
     
     /* 初始化上下文为内核模式（首次运行时会调用 usermode_wrapper） */
     task->context.eip = get_usermode_wrapper();
@@ -492,8 +567,8 @@ uint32_t task_create_user_process(const char *name, uint32_t entry_point,
     
     LOG_DEBUG_MSG("Created user process: %s (PID %u, entry=%x)\n", 
                  name, task->pid, entry_point);
-    LOG_DEBUG_MSG("  User stack: %x -> %x\n", 
-                 task->user_stack_base, user_stack_virt);
+    LOG_DEBUG_MSG("  User stack base frame: %x, top virt=%x\n", 
+                 task->user_stack_base, USER_SPACE_END);
     LOG_DEBUG_MSG("  Kernel stack: %x\n", task->kernel_stack_base);
     
     return task->pid;
@@ -518,13 +593,22 @@ task_t *task_get_by_pid(uint32_t pid) {
     return NULL;
 }
 
+static void task_schedule_internal(bool from_interrupt, registers_t *regs);
+
 /**
  * 调度器（选择下一个任务）
  * 
- * 注意：此函数会禁用中断以保护关键区域
- * 如果调用者已经禁用了中断，此函数仍会正常工作
+ * 注意：常规调用路径禁止在中断上下文中使用
  */
 void task_schedule(void) {
+    task_schedule_internal(false, NULL);
+}
+
+static void task_schedule_internal(bool from_interrupt, registers_t *regs) {
+    if (!from_interrupt) {
+        ASSERT(!in_interrupt());
+    }
+
     /* 禁用中断以保护调度器的关键区域 */
     bool prev_state = interrupts_disable();
     
@@ -532,6 +616,15 @@ void task_schedule(void) {
         interrupts_restore(prev_state);
         return;  // 还未初始化
     }
+
+    if (from_interrupt) {
+        ASSERT(regs != NULL);
+        save_regs_to_context(regs, &current_task->context);
+        current_task->context.cr3 = current_task->page_dir_phys;
+    }
+
+    /* 清除当前任务的调度标记 */
+    current_task->need_resched = false;
 
     /* 仅在当前任务不是终止状态时，安全地回收僵尸任务 */
     if (current_task->state != TASK_TERMINATED) {
@@ -609,20 +702,14 @@ void task_schedule(void) {
         vmm_switch_page_directory(next_task->page_dir_phys);
     }
     
-    /* 注意：在调用 task_switch 之前不恢复中断
-     * task_switch 会切换到新任务，新任务会从自己的上下文恢复 EFLAGS
-     * 如果新任务需要中断，它的 EFLAGS 中 IF 位会被设置
-     * 如果当前在中断上下文中，prev_state 为 false，新任务也不会启用中断
-     */
+    if (from_interrupt) {
+        load_context_to_regs(&next_task->context, regs);
+        interrupts_restore(prev_state);
+        return;
+    }
     
-    /* 执行上下文切换（汇编实现）
-     * 注意：task_switch 不会返回（直接跳转到新任务）
-     * 如果由于某种原因返回了，恢复中断状态
-     */
-    task_switch(prev_task, next_task);
-    
-    /* 如果 task_switch 返回（不应该发生），恢复中断状态 */
     interrupts_restore(prev_state);
+    task_switch(&prev_task->context, &next_task->context);
 }
 
 /**
@@ -718,8 +805,24 @@ void task_timer_tick(void) {
         current_task->time_slice--;
     }
     
-    /* 时间片用完，触发调度 */
+    /* 时间片用完，标记需要调度，由中断退出路径处理 */
     if (current_task->time_slice == 0) {
-        task_schedule();
+        current_task->need_resched = true;
     }
+}
+
+/**
+ * IRQ 公共出口尝试触发调度
+ * pic_send_eoi() 之后调用，避免阻塞 EOI
+ */
+void schedule_from_irq(registers_t *regs) {
+    if (current_task == NULL || regs == NULL) {
+        return;
+    }
+
+    if (!current_task->need_resched) {
+        return;
+    }
+
+    task_schedule_internal(true, regs);
 }
