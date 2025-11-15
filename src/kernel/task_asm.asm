@@ -160,40 +160,51 @@ task_switch:
     ; 切换到内核任务（Ring 0）- 直接恢复
     ; ========================================================================
 .kernel_task:
-    ; 恢复段寄存器
-    mov ax, [edi + 54]      ; ss
-    mov ss, ax
-    mov ax, [edi + 46]      ; ds
-    mov ds, ax
-    mov ax, [edi + 48]      ; es
-    mov es, ax
-    mov ax, [edi + 50]      ; fs
-    mov fs, ax
-    mov ax, [edi + 52]      ; gs
-    mov gs, ax
+    ; 在恢复栈之前，先保存 EIP 和原始 edx
+    mov edx, [edi + 32]     ; edx = next->context.eip（临时保存 EIP）
+    mov eax, [edi + 12]     ; eax = next->context.edx（保存原始 edx，此时 edi 还是指针）
     
-    ; 恢复栈指针
+    ; 恢复段寄存器（先恢复数据段）
+    mov cx, [edi + 46]      ; cx = ds（使用 cx 避免破坏 eax）
+    mov ds, cx
+    mov cx, [edi + 48]      ; cx = es
+    mov es, cx
+    mov cx, [edi + 50]      ; cx = fs
+    mov fs, cx
+    mov cx, [edi + 52]      ; cx = gs
+    mov gs, cx
+    
+    ; 恢复栈指针（必须在恢复 SS 之前）
     mov esp, [edi + 28]
+    
+    ; 恢复栈段（必须在恢复 ESP 之后）
+    mov cx, [edi + 54]      ; cx = ss
+    mov ss, cx
     
     ; 恢复 EFLAGS
     push dword [edi + 36]
     popfd
     
-    ; 恢复通用寄存器（除了 eax，用于跳转）
-    mov ebx, [edi + 4]
-    mov ecx, [edi + 8]
-    mov edx, [edi + 12]
-    mov esi, [edi + 16]
-    mov ebp, [edi + 24]
-    mov eax, [edi + 32]     ; eax = next->context.eip
-    push eax                ; 压入返回地址
+    ; 恢复通用寄存器（除了 edx 和 edi，它们需要特殊处理）
+    mov ebx, [edi + 4]      ; ebx
+    mov ecx, [edi + 8]      ; ecx
+    mov esi, [edi + 16]     ; esi
+    mov ebp, [edi + 24]     ; ebp
     
-    mov eax, [edi + 0]      ; 恢复 eax
-    mov edi, [edi + 20]     ; 恢复 edi（最后）
+    ; 将 EIP 写入栈顶（替换返回地址或占位符）
+    ; 对于首次运行的任务，栈顶是占位符 0，会被替换为 EIP
+    ; 对于被切换回来的任务，栈顶是调用 task_switch 的返回地址，会被替换为任务的 EIP
+    mov [esp], edx          ; 将 EIP 写入栈顶
     
-    ; 弹出栈上的 ebx
-    pop ebx                 ; 清理栈（这个 ebx 实际上是我们压入的 eip）
-    add esp, 4              ; 跳过原来保存的 ebx
+    ; 将原始 edx 压入栈（保存，稍后恢复）
+    push eax                ; push 原始 edx（eax 中保存的值）
     
-    ; 跳转到下一个任务
-    jmp ebx                 ; 跳转到 next->context.eip
+    ; 恢复 eax 和 edi
+    mov eax, [edi + 0]      ; eax
+    mov edi, [edi + 20]     ; edi（最后恢复，因为之前用它作为指针）
+    
+    ; 恢复 edx（从栈中弹出）
+    pop edx                 ; 恢复原始 edx
+    
+    ; 跳转到下一个任务（ret 会从栈顶读取 EIP 并跳转）
+    ret

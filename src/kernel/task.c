@@ -315,15 +315,16 @@ uint32_t task_create_kernel_thread(void (*entry)(void), const char *name) {
     task->kernel_stack = task->kernel_stack_base + KERNEL_STACK_SIZE;
     
     /* 设置栈帧：当 entry 返回时，会返回到 kernel_thread_exit_wrapper 
-     * 注意：task_asm.asm 的恢复流程会执行 pop + add esp,4，所以需要两个栈位置
+     * 注意：task_asm.asm 的恢复流程会将 EIP 写入栈顶，然后 ret
+     * 所以栈顶需要是占位符（会被替换为 EIP），下一个位置是返回地址
      */
      uint32_t *stack_ptr = (uint32_t *)(task->kernel_stack);
-     *(--stack_ptr) = (uint32_t)kernel_thread_exit_wrapper;  // 返回地址
-     *(--stack_ptr) = 0;  // 占位符，会被 add esp,4 跳过
+     *(--stack_ptr) = (uint32_t)kernel_thread_exit_wrapper;  // 返回地址（entry 返回时会跳转到这里）
+     *(--stack_ptr) = 0;  // 占位符，会被 task_switch 替换为 EIP
      
      /* 初始化上下文 */
-     task->context.eip = (uint32_t)entry;
-     task->context.esp = (uint32_t)stack_ptr;
+     task->context.eip = (uint32_t)entry;  // 首次运行时的入口点
+     task->context.esp = (uint32_t)stack_ptr;  // 栈顶是占位符 0
      task->context.ebp = task->kernel_stack;
      task->context.eflags = 0x202;  // IF = 1
      task->context.cs = GDT_KERNEL_CODE_SEGMENT;
@@ -519,9 +520,16 @@ task_t *task_get_by_pid(uint32_t pid) {
 
 /**
  * 调度器（选择下一个任务）
+ * 
+ * 注意：此函数会禁用中断以保护关键区域
+ * 如果调用者已经禁用了中断，此函数仍会正常工作
  */
 void task_schedule(void) {
+    /* 禁用中断以保护调度器的关键区域 */
+    bool prev_state = interrupts_disable();
+    
     if (current_task == NULL) {
+        interrupts_restore(prev_state);
         return;  // 还未初始化
     }
 
@@ -581,6 +589,7 @@ void task_schedule(void) {
     if (next_task == current_task) {
         next_task->state = TASK_RUNNING;
         next_task->last_scheduled_tick = current_tick;  // 更新时间戳
+        interrupts_restore(prev_state);
         return;
     }
     
@@ -600,17 +609,34 @@ void task_schedule(void) {
         vmm_switch_page_directory(next_task->page_dir_phys);
     }
     
-    /* 执行上下文切换（汇编实现） */
+    /* 注意：在调用 task_switch 之前不恢复中断
+     * task_switch 会切换到新任务，新任务会从自己的上下文恢复 EFLAGS
+     * 如果新任务需要中断，它的 EFLAGS 中 IF 位会被设置
+     * 如果当前在中断上下文中，prev_state 为 false，新任务也不会启用中断
+     */
+    
+    /* 执行上下文切换（汇编实现）
+     * 注意：task_switch 不会返回（直接跳转到新任务）
+     * 如果由于某种原因返回了，恢复中断状态
+     */
     task_switch(prev_task, next_task);
+    
+    /* 如果 task_switch 返回（不应该发生），恢复中断状态 */
+    interrupts_restore(prev_state);
 }
 
 /**
  * 主动让出 CPU
+ * 
+ * 注意：task_schedule() 内部已经禁用中断保护
+ * 此函数不需要额外禁用中断，但如果调用者需要确保原子性，可以自己禁用
  */
 void task_yield(void) {
-    bool prev_state = interrupts_disable();
+    /* task_schedule() 内部会禁用中断保护关键区域
+     * 如果 task_schedule() 执行了任务切换，不会返回
+     * 如果没有切换（同一个任务），会恢复中断状态
+     */
     task_schedule();
-    interrupts_restore(prev_state);
 }
 
 /**
