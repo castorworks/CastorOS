@@ -51,8 +51,8 @@ struct gdt_ptr {
 /* 段选择子 */
 #define GDT_KERNEL_CODE_SEGMENT 0x08  // 内核代码段选择子（索引 1）
 #define GDT_KERNEL_DATA_SEGMENT 0x10  // 内核数据段选择子（索引 2）
-#define GDT_USER_CODE_SEGMENT   0x18  // 用户代码段选择子（索引 3）
-#define GDT_USER_DATA_SEGMENT   0x20  // 用户数据段选择子（索引 4）
+#define GDT_USER_CODE_SEGMENT   0x1B  // 用户代码段选择子（索引 3，RPL 3）
+#define GDT_USER_DATA_SEGMENT   0x23  // 用户数据段选择子（索引 4，RPL 3）
 #define GDT_TSS_SEGMENT         0x28  // TSS 段选择子（索引 5）
 
 /**
