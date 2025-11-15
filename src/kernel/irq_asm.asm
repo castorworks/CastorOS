@@ -78,6 +78,5 @@ irq_common_stub:
     ; 清理错误码和中断号
     add esp, 8
     
-    ; 中断返回（IRET 会根据 CS.RPL 自动处理特权级切换）
-    sti
+    ; 中断返回（IRET 会根据 CS.RPL 自动处理特权级切换并恢复 IF）
     iret

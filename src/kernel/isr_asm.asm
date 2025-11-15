@@ -108,6 +108,5 @@ isr_common_stub:
     
     ; 恢复 CS, EIP, EFLAGS（Ring 0）
     ; 或 CS, EIP, EFLAGS, ESP, SS（Ring 3→Ring 0）
-    ; CPU 会根据栈上的 CS.RPL 自动判断
-    sti                     ; 重新启用中断
+    ; CPU 会根据栈上的 CS.RPL 自动判断，并自行恢复 IF
     iret                    ; 中断返回
