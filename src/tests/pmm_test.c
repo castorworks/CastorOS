@@ -111,9 +111,7 @@ TEST_CASE(test_pmm_free_invalid_frame) {
     ASSERT_EQ_U(info_after.free_frames, info_before.free_frames);
 }
 
-TEST_CASE(test_pmm_free_double_free) {
-    pmm_info_t info_before = pmm_get_info();
-    
+TEST_CASE(test_pmm_free_double_free) {    
     // 分配一个页帧
     uint32_t frame = pmm_alloc_frame();
     ASSERT_NE_U(frame, 0);

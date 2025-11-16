@@ -4,7 +4,6 @@
 
 #include <kernel/task.h>
 #include <kernel/gdt.h>
-#include <kernel/tss.h>
 #include <kernel/panic.h>
 #include <kernel/interrupt.h>
 #include <kernel/user.h>

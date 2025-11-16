@@ -72,6 +72,7 @@ typedef struct task {
     uint64_t last_scheduled_tick; // 上次被调度的时间戳（ticks）
     
     struct task *next;            // 链表指针（用于就绪队列等）
+    struct task *parent;          // 父进程指针
     
     uint32_t exit_code;           // 退出码
     

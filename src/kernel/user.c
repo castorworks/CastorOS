@@ -4,7 +4,6 @@
 
 #include <kernel/user.h>
 #include <kernel/task.h>
-#include <kernel/tss.h>
 #include <kernel/gdt.h>
 #include <mm/vmm.h>
 #include <lib/klog.h>

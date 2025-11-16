@@ -18,7 +18,6 @@
 #include <kernel/idt.h>
 #include <kernel/irq.h>
 #include <kernel/isr.h>
-#include <kernel/tss.h>
 #include <kernel/task.h>
 #include <kernel/kernel_shell.h>
 #include <kernel/fs_bootstrap.h>
@@ -31,6 +30,9 @@
 #include <kernel/loader.h>
 
 #include <tests/test_runner.h>
+
+// 声明引导栈顶地址（定义在 boot.asm）
+extern uint32_t stack_top;
 
 // 内核主函数
 void kernel_main(multiboot_info_t* mbi) {
@@ -57,16 +59,13 @@ void kernel_main(multiboot_info_t* mbi) {
     // ========================================================================
     LOG_INFO_MSG("[Stage 1] Initializing CPU architecture...\n");
     
-    // 1.1 初始化 GDT（Global Descriptor Table）
-    gdt_init();
-    LOG_DEBUG_MSG("  [1.1] GDT initialized\n");
-    
-    // 1.2 初始化 TSS（Task State Segment）
-    // TSS 需要在创建用户进程之前初始化，用于特权级切换
-    tss_init(0x80000000, GDT_KERNEL_DATA_SEGMENT);  // 临时内核栈，后续会更新
-    gdt_add_tss_descriptor(tss_get_address(), tss_get_size() - 1);
-    tss_flush(GDT_TSS_SEGMENT);
-    LOG_DEBUG_MSG("  [1.2] TSS initialized\n");
+    /* 使用内核引导栈作为临时内核栈（位于 BSS 段，安全可靠） */
+    uint32_t temp_kernel_stack = (uint32_t)&stack_top;
+    uint16_t kernel_ss = GDT_KERNEL_DATA_SEGMENT; /* 一般为 0x10 */
+
+    gdt_init_all_with_tss(temp_kernel_stack, kernel_ss);
+
+    LOG_DEBUG_MSG("  [1.1] GDT and TSS installed\n");
     
     // ========================================================================
     // 阶段 2: 中断系统（Interrupt System）
