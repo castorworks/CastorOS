@@ -21,7 +21,7 @@
 #define USER_STACK_SIZE (8 * 1024 * 1024)
 
 /* 用户空间起始地址（留给用户程序） */
-#define USER_SPACE_START 0x00400000  // 4MB（跳过前 4MB）
+#define USER_SPACE_START 0x10000000  // 256MB（跳过前 256MB）
 #define USER_SPACE_END   0x80000000  // 2GB（内核基址）
 
 /* 进程状态 */
@@ -72,9 +72,6 @@ typedef struct task {
     uint64_t last_scheduled_tick; // 上次被调度的时间戳（ticks）
     
     struct task *next;            // 链表指针（用于就绪队列等）
-    struct task *parent;          // 父进程
-    struct task *child;           // 第一个子进程
-    struct task *sibling;         // 兄弟进程
     
     uint32_t exit_code;           // 退出码
     

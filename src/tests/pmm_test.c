@@ -9,6 +9,7 @@
 #include <tests/ktest.h>
 #include <tests/pmm_test.h>
 #include <mm/pmm.h>
+#include <lib/kprintf.h>
 #include <types.h>
 
 // ============================================================================
@@ -110,6 +111,83 @@ TEST_CASE(test_pmm_free_invalid_frame) {
     ASSERT_EQ_U(info_after.free_frames, info_before.free_frames);
 }
 
+TEST_CASE(test_pmm_free_double_free) {
+    pmm_info_t info_before = pmm_get_info();
+    
+    // 分配一个页帧
+    uint32_t frame = pmm_alloc_frame();
+    ASSERT_NE_U(frame, 0);
+    
+    // 第一次释放
+    pmm_free_frame(frame);
+    pmm_info_t info_after_first_free = pmm_get_info();
+    
+    // 第二次释放相同页帧（double free，应该被忽略）
+    pmm_free_frame(frame);
+    pmm_info_t info_after_second_free = pmm_get_info();
+    
+    // 第二次释放不应该改变状态
+    ASSERT_EQ_U(info_after_second_free.free_frames, info_after_first_free.free_frames);
+    ASSERT_EQ_U(info_after_second_free.used_frames, info_after_first_free.used_frames);
+}
+
+TEST_CASE(test_pmm_free_out_of_bounds) {
+    pmm_info_t info_before = pmm_get_info();
+    
+    // 尝试释放超出范围的页帧（应该被忽略）
+    // 使用一个非常大的地址
+    pmm_free_frame(0x7FFFF000);  // 接近2GB边界
+    
+    pmm_info_t info_after = pmm_get_info();
+    // 信息应该不变
+    ASSERT_EQ_U(info_after.free_frames, info_before.free_frames);
+}
+
+TEST_CASE(test_pmm_alloc_until_low_memory) {
+    // 测试分配大量内存（但不完全耗尽）
+    #define LARGE_ALLOC_COUNT 200
+    uint32_t frames[LARGE_ALLOC_COUNT];
+    int allocated = 0;
+    
+    pmm_info_t info_before = pmm_get_info();
+    
+    // 分配大量页帧
+    for (int i = 0; i < LARGE_ALLOC_COUNT; i++) {
+        frames[i] = pmm_alloc_frame();
+        if (frames[i] == 0) {
+            // 如果分配失败，记录已分配的数量
+            break;
+        }
+        allocated++;
+    }
+    
+    // 应该至少能分配一些页帧
+    ASSERT_TRUE(allocated > 0);
+    
+    pmm_info_t info_after_alloc = pmm_get_info();
+    // 空闲页帧应该减少
+    ASSERT_TRUE(info_after_alloc.free_frames < info_before.free_frames);
+    
+    // 释放所有分配的页帧
+    for (int i = 0; i < allocated; i++) {
+        pmm_free_frame(frames[i]);
+    }
+    
+    pmm_info_t info_after_free = pmm_get_info();
+    // 应该恢复到接近原始状态（允许较大误差，因为其他子系统也会分配内存）
+    // 容忍 ±150 个页帧的差异（约 600KB），这是合理的系统开销
+    // 在测试套件运行期间，堆分配器、VMM等子系统会占用一些页帧
+    int32_t diff = (int32_t)info_after_free.free_frames - (int32_t)info_before.free_frames;
+    
+    // 打印调试信息（仅在超出容差时）
+    if (diff < -150 || diff > 150) {
+        kprintf("  Debug: allocated=%d, before=%u, after=%u, diff=%d\n",
+                allocated, info_before.free_frames, info_after_free.free_frames, diff);
+    }
+    
+    ASSERT_TRUE(diff >= -150 && diff <= 150);
+}
+
 // ============================================================================
 // 测试用例：pmm_get_info - 信息查询
 // ============================================================================
@@ -122,6 +200,20 @@ TEST_CASE(test_pmm_get_info_basic) {
     
     // 总页帧 = 空闲页帧 + 已使用页帧
     ASSERT_EQ_U(info.total_frames, info.free_frames + info.used_frames);
+}
+
+TEST_CASE(test_pmm_get_bitmap_end) {
+    // 获取位图结束地址
+    uint32_t bitmap_end = pmm_get_bitmap_end();
+    
+    // 应该非零
+    ASSERT_NE_U(bitmap_end, 0);
+    
+    // 应该是页对齐的
+    ASSERT_EQ_U(bitmap_end & (PAGE_SIZE - 1), 0);
+    
+    // 应该在内核空间（高半核）
+    ASSERT_TRUE(bitmap_end >= 0x80000000);
 }
 
 TEST_CASE(test_pmm_get_info_after_operations) {
@@ -216,16 +308,20 @@ TEST_SUITE(pmm_free_tests) {
     RUN_TEST(test_pmm_free_frame_basic);
     RUN_TEST(test_pmm_free_frame_reuse);
     RUN_TEST(test_pmm_free_invalid_frame);
+    RUN_TEST(test_pmm_free_double_free);
+    RUN_TEST(test_pmm_free_out_of_bounds);
 }
 
 TEST_SUITE(pmm_info_tests) {
     RUN_TEST(test_pmm_get_info_basic);
     RUN_TEST(test_pmm_get_info_after_operations);
+    RUN_TEST(test_pmm_get_bitmap_end);
 }
 
 TEST_SUITE(pmm_stress_tests) {
     RUN_TEST(test_pmm_stress_alloc_free);
     RUN_TEST(test_pmm_interleaved_alloc_free);
+    RUN_TEST(test_pmm_alloc_until_low_memory);
 }
 
 // ============================================================================

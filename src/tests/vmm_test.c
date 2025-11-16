@@ -14,9 +14,9 @@
 #include <types.h>
 
 // 测试用虚拟地址（用户空间范围）
-#define TEST_VIRT_ADDR1  0x40000000
-#define TEST_VIRT_ADDR2  0x40001000
-#define TEST_VIRT_ADDR3  0x50000000
+#define TEST_VIRT_ADDR1  0x10000000
+#define TEST_VIRT_ADDR2  0x10001000
+#define TEST_VIRT_ADDR3  0x20000000
 
 // ============================================================================
 // 测试用例：vmm_map_page - 页面映射
@@ -138,6 +138,174 @@ TEST_CASE(test_vmm_unmap_page_double) {
     
     // 清理
     pmm_free_frame(frame);
+}
+
+TEST_CASE(test_vmm_unmap_page_alignment) {
+    // 尝试取消映射非对齐地址（应该被忽略）
+    vmm_unmap_page(TEST_VIRT_ADDR1 + 0x456);
+    // 如果没有崩溃就是成功
+}
+
+// ============================================================================
+// 测试用例：vmm_unmap_page_in_directory - 在指定页目录中取消映射
+// ============================================================================
+
+TEST_CASE(test_vmm_unmap_page_in_directory_basic) {
+    // 创建新页目录
+    uint32_t dir = vmm_create_page_directory();
+    ASSERT_NE_U(dir, 0);
+    
+    // 分配物理页帧
+    uint32_t frame = pmm_alloc_frame();
+    ASSERT_NE_U(frame, 0);
+    
+    // 在新页目录中映射
+    ASSERT_TRUE(vmm_map_page_in_directory(dir, TEST_VIRT_ADDR1, frame,
+                                          PAGE_PRESENT | PAGE_WRITE));
+    
+    // 取消映射
+    uint32_t unmapped_frame = vmm_unmap_page_in_directory(dir, TEST_VIRT_ADDR1);
+    ASSERT_EQ_U(unmapped_frame, frame);
+    
+    // 清理
+    vmm_free_page_directory(dir);
+    pmm_free_frame(frame);
+}
+
+TEST_CASE(test_vmm_unmap_page_in_directory_nonexistent) {
+    uint32_t dir = vmm_create_page_directory();
+    ASSERT_NE_U(dir, 0);
+    
+    // 尝试取消映射一个未映射的页面（应该返回0）
+    uint32_t result = vmm_unmap_page_in_directory(dir, TEST_VIRT_ADDR1);
+    ASSERT_EQ_U(result, 0);
+    
+    // 清理
+    vmm_free_page_directory(dir);
+}
+
+TEST_CASE(test_vmm_unmap_page_in_directory_alignment) {
+    uint32_t dir = vmm_create_page_directory();
+    ASSERT_NE_U(dir, 0);
+    
+    // 尝试取消映射非对齐地址（应该返回0）
+    uint32_t result = vmm_unmap_page_in_directory(dir, TEST_VIRT_ADDR1 + 0x123);
+    ASSERT_EQ_U(result, 0);
+    
+    // 清理
+    vmm_free_page_directory(dir);
+}
+
+// ============================================================================
+// 测试用例：vmm_map_page - 重复映射和覆盖
+// ============================================================================
+
+TEST_CASE(test_vmm_map_page_remap) {
+    uint32_t frame1 = pmm_alloc_frame();
+    uint32_t frame2 = pmm_alloc_frame();
+    ASSERT_NE_U(frame1, 0);
+    ASSERT_NE_U(frame2, 0);
+    
+    // 第一次映射
+    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, frame1, 
+                             PAGE_PRESENT | PAGE_WRITE));
+    uint32_t *ptr = (uint32_t*)TEST_VIRT_ADDR1;
+    *ptr = 0x11111111;
+    ASSERT_EQ_U(*ptr, 0x11111111);
+    
+    // 重新映射到不同的物理页
+    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, frame2, 
+                             PAGE_PRESENT | PAGE_WRITE));
+    
+    // 现在应该映射到 frame2（内容应该不同）
+    // frame2 是新分配的，已经被清零
+    ASSERT_EQ_U(*ptr, 0x00000000);
+    
+    // 写入新数据
+    *ptr = 0x22222222;
+    ASSERT_EQ_U(*ptr, 0x22222222);
+    
+    // 清理
+    vmm_unmap_page(TEST_VIRT_ADDR1);
+    pmm_free_frame(frame1);
+    pmm_free_frame(frame2);
+}
+
+TEST_CASE(test_vmm_map_page_different_flags) {
+    uint32_t frame = pmm_alloc_frame();
+    ASSERT_NE_U(frame, 0);
+    
+    // 首先映射为只读（实际上x86的supervisor模式总是可写的）
+    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, frame, PAGE_PRESENT));
+    
+    // 重新映射为可写
+    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, frame, 
+                             PAGE_PRESENT | PAGE_WRITE));
+    
+    // 应该能写入
+    uint32_t *ptr = (uint32_t*)TEST_VIRT_ADDR1;
+    *ptr = 0xABCDEF12;
+    ASSERT_EQ_U(*ptr, 0xABCDEF12);
+    
+    // 清理
+    vmm_unmap_page(TEST_VIRT_ADDR1);
+    pmm_free_frame(frame);
+}
+
+// ============================================================================
+// 测试用例：vmm_flush_tlb - TLB刷新
+// ============================================================================
+
+TEST_CASE(test_vmm_flush_tlb_single_page) {
+    uint32_t frame = pmm_alloc_frame();
+    ASSERT_NE_U(frame, 0);
+    
+    // 映射页面
+    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, frame, 
+                             PAGE_PRESENT | PAGE_WRITE));
+    
+    // 写入数据
+    *(uint32_t*)TEST_VIRT_ADDR1 = 0xDEADBEEF;
+    
+    // 刷新单个页面的TLB
+    vmm_flush_tlb(TEST_VIRT_ADDR1);
+    
+    // 应该仍然能访问
+    ASSERT_EQ_U(*(uint32_t*)TEST_VIRT_ADDR1, 0xDEADBEEF);
+    
+    // 清理
+    vmm_unmap_page(TEST_VIRT_ADDR1);
+    pmm_free_frame(frame);
+}
+
+TEST_CASE(test_vmm_flush_tlb_full) {
+    uint32_t frame1 = pmm_alloc_frame();
+    uint32_t frame2 = pmm_alloc_frame();
+    ASSERT_NE_U(frame1, 0);
+    ASSERT_NE_U(frame2, 0);
+    
+    // 映射多个页面
+    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, frame1, 
+                             PAGE_PRESENT | PAGE_WRITE));
+    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR2, frame2, 
+                             PAGE_PRESENT | PAGE_WRITE));
+    
+    // 写入数据
+    *(uint32_t*)TEST_VIRT_ADDR1 = 0x11111111;
+    *(uint32_t*)TEST_VIRT_ADDR2 = 0x22222222;
+    
+    // 刷新整个TLB（传入0）
+    vmm_flush_tlb(0);
+    
+    // 应该仍然能访问
+    ASSERT_EQ_U(*(uint32_t*)TEST_VIRT_ADDR1, 0x11111111);
+    ASSERT_EQ_U(*(uint32_t*)TEST_VIRT_ADDR2, 0x22222222);
+    
+    // 清理
+    vmm_unmap_page(TEST_VIRT_ADDR1);
+    vmm_unmap_page(TEST_VIRT_ADDR2);
+    pmm_free_frame(frame1);
+    pmm_free_frame(frame2);
 }
 
 // ============================================================================
@@ -286,6 +454,126 @@ TEST_CASE(test_vmm_clone_page_directory_basic) {
     pmm_free_frame(frame);
 }
 
+TEST_CASE(test_vmm_clone_page_directory_data_isolation) {
+    uint32_t original_dir = vmm_get_page_directory();
+    
+    // 创建源页目录
+    uint32_t src_dir = vmm_create_page_directory();
+    ASSERT_NE_U(src_dir, 0);
+    
+    // 在源页目录中映射并写入数据
+    uint32_t frame = pmm_alloc_frame();
+    ASSERT_NE_U(frame, 0);
+    ASSERT_TRUE(vmm_map_page_in_directory(src_dir, TEST_VIRT_ADDR1, frame,
+                                          PAGE_PRESENT | PAGE_WRITE));
+    
+    // 切换到源页目录并写入数据
+    vmm_switch_page_directory(src_dir);
+    uint32_t *ptr = (uint32_t*)TEST_VIRT_ADDR1;
+    *ptr = 0xAAAAAAAA;
+    *(ptr + 1) = 0xBBBBBBBB;
+    
+    // 克隆页目录（深拷贝）
+    uint32_t clone_dir = vmm_clone_page_directory(src_dir);
+    ASSERT_NE_U(clone_dir, 0);
+    
+    // 切换到克隆的页目录
+    vmm_switch_page_directory(clone_dir);
+    
+    // 验证克隆的数据与源相同
+    ASSERT_EQ_U(*ptr, 0xAAAAAAAA);
+    ASSERT_EQ_U(*(ptr + 1), 0xBBBBBBBB);
+    
+    // 修改克隆页目录中的数据
+    *ptr = 0x11111111;
+    *(ptr + 1) = 0x22222222;
+    
+    // 切换回源页目录
+    vmm_switch_page_directory(src_dir);
+    
+    // 验证源页目录的数据未被修改（数据隔离）
+    ASSERT_EQ_U(*ptr, 0xAAAAAAAA);
+    ASSERT_EQ_U(*(ptr + 1), 0xBBBBBBBB);
+    
+    // 恢复原页目录
+    vmm_switch_page_directory(original_dir);
+    
+    // 清理
+    vmm_free_page_directory(src_dir);
+    vmm_free_page_directory(clone_dir);
+    pmm_free_frame(frame);
+}
+
+TEST_CASE(test_vmm_clone_page_directory_empty) {
+    // 克隆一个空的页目录（只有内核映射）
+    uint32_t empty_dir = vmm_create_page_directory();
+    ASSERT_NE_U(empty_dir, 0);
+    
+    uint32_t clone_dir = vmm_clone_page_directory(empty_dir);
+    ASSERT_NE_U(clone_dir, 0);
+    ASSERT_NE_U(clone_dir, empty_dir);
+    
+    // 清理
+    vmm_free_page_directory(empty_dir);
+    vmm_free_page_directory(clone_dir);
+}
+
+// ============================================================================
+// 测试用例：vmm_free_page_directory - 释放页目录
+// ============================================================================
+
+TEST_CASE(test_vmm_free_page_directory_with_mappings) {
+    pmm_info_t info_before = pmm_get_info();
+    
+    // 创建页目录
+    uint32_t dir = vmm_create_page_directory();
+    ASSERT_NE_U(dir, 0);
+    
+    // 在页目录中映射多个页面
+    uint32_t frames[5];
+    for (int i = 0; i < 5; i++) {
+        frames[i] = pmm_alloc_frame();
+        ASSERT_NE_U(frames[i], 0);
+        ASSERT_TRUE(vmm_map_page_in_directory(dir, TEST_VIRT_ADDR1 + i * PAGE_SIZE, 
+                                              frames[i], PAGE_PRESENT | PAGE_WRITE));
+    }
+    
+    pmm_info_t info_after_alloc = pmm_get_info();
+    // 应该至少分配了6个页帧（1个页目录 + 至少1个页表 + 5个数据页）
+    ASSERT_TRUE(info_after_alloc.free_frames <= info_before.free_frames - 6);
+    
+    // 释放页目录（应该同时释放所有页表和映射的页）
+    vmm_free_page_directory(dir);
+    
+    pmm_info_t info_after_free = pmm_get_info();
+    // 所有页帧应该被释放（允许小误差）
+    int32_t diff = (int32_t)info_after_free.free_frames - (int32_t)info_before.free_frames;
+    ASSERT_TRUE(diff >= -5 && diff <= 5);
+    
+    // 注意：这里不需要单独释放 frames，因为 vmm_free_page_directory 会处理
+}
+
+TEST_CASE(test_vmm_free_page_directory_null) {
+    // 释放NULL页目录（应该无害）
+    vmm_free_page_directory(0);
+}
+
+TEST_CASE(test_vmm_free_page_directory_empty) {
+    pmm_info_t info_before = pmm_get_info();
+    
+    // 创建空页目录
+    uint32_t dir = vmm_create_page_directory();
+    ASSERT_NE_U(dir, 0);
+    
+    // 立即释放
+    vmm_free_page_directory(dir);
+    
+    pmm_info_t info_after = pmm_get_info();
+    // 应该只释放页目录本身（1个页帧）
+    int32_t diff = (int32_t)info_after.free_frames - (int32_t)info_before.free_frames;
+    ASSERT_TRUE(diff >= -2 && diff <= 2);
+}
+
 // ============================================================================
 // 测试用例：综合测试
 // ============================================================================
@@ -308,6 +596,38 @@ TEST_CASE(test_vmm_comprehensive) {
     pmm_free_frame(frame);
 }
 
+TEST_CASE(test_vmm_multiple_page_tables) {
+    uint32_t dir = vmm_create_page_directory();
+    ASSERT_NE_U(dir, 0);
+    
+    // 映射到不同的页目录项范围（需要多个页表）
+    uint32_t addr1 = 0x00000000;  // PDE 0
+    uint32_t addr2 = 0x00400000;  // PDE 1 (4MB边界)
+    uint32_t addr3 = 0x00800000;  // PDE 2 (8MB边界)
+    
+    uint32_t frame1 = pmm_alloc_frame();
+    uint32_t frame2 = pmm_alloc_frame();
+    uint32_t frame3 = pmm_alloc_frame();
+    
+    ASSERT_NE_U(frame1, 0);
+    ASSERT_NE_U(frame2, 0);
+    ASSERT_NE_U(frame3, 0);
+    
+    // 映射到不同的页表
+    ASSERT_TRUE(vmm_map_page_in_directory(dir, addr1, frame1, 
+                                          PAGE_PRESENT | PAGE_WRITE));
+    ASSERT_TRUE(vmm_map_page_in_directory(dir, addr2, frame2, 
+                                          PAGE_PRESENT | PAGE_WRITE));
+    ASSERT_TRUE(vmm_map_page_in_directory(dir, addr3, frame3, 
+                                          PAGE_PRESENT | PAGE_WRITE));
+    
+    // 清理
+    vmm_free_page_directory(dir);
+    pmm_free_frame(frame1);
+    pmm_free_frame(frame2);
+    pmm_free_frame(frame3);
+}
+
 // ============================================================================
 // 测试套件定义
 // ============================================================================
@@ -317,11 +637,17 @@ TEST_SUITE(vmm_map_tests) {
     RUN_TEST(test_vmm_map_page_multiple);
     RUN_TEST(test_vmm_map_page_alignment);
     RUN_TEST(test_vmm_map_page_flags);
+    RUN_TEST(test_vmm_map_page_remap);
+    RUN_TEST(test_vmm_map_page_different_flags);
 }
 
 TEST_SUITE(vmm_unmap_tests) {
     RUN_TEST(test_vmm_unmap_page_basic);
     RUN_TEST(test_vmm_unmap_page_double);
+    RUN_TEST(test_vmm_unmap_page_alignment);
+    RUN_TEST(test_vmm_unmap_page_in_directory_basic);
+    RUN_TEST(test_vmm_unmap_page_in_directory_nonexistent);
+    RUN_TEST(test_vmm_unmap_page_in_directory_alignment);
 }
 
 TEST_SUITE(vmm_directory_tests) {
@@ -332,10 +658,21 @@ TEST_SUITE(vmm_directory_tests) {
     RUN_TEST(test_vmm_get_page_directory);
     RUN_TEST(test_vmm_switch_page_directory);
     RUN_TEST(test_vmm_clone_page_directory_basic);
+    RUN_TEST(test_vmm_clone_page_directory_data_isolation);
+    RUN_TEST(test_vmm_clone_page_directory_empty);
+    RUN_TEST(test_vmm_free_page_directory_with_mappings);
+    RUN_TEST(test_vmm_free_page_directory_null);
+    RUN_TEST(test_vmm_free_page_directory_empty);
+}
+
+TEST_SUITE(vmm_tlb_tests) {
+    RUN_TEST(test_vmm_flush_tlb_single_page);
+    RUN_TEST(test_vmm_flush_tlb_full);
 }
 
 TEST_SUITE(vmm_comprehensive_tests) {
     RUN_TEST(test_vmm_comprehensive);
+    RUN_TEST(test_vmm_multiple_page_tables);
 }
 
 // ============================================================================
@@ -349,6 +686,7 @@ void run_vmm_tests(void) {
     // 运行所有测试套件
     RUN_SUITE(vmm_map_tests);
     RUN_SUITE(vmm_unmap_tests);
+    RUN_SUITE(vmm_tlb_tests);
     RUN_SUITE(vmm_directory_tests);
     RUN_SUITE(vmm_comprehensive_tests);
     

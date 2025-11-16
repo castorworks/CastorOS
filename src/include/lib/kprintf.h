@@ -27,7 +27,16 @@
  *   0 - 零填充标志，例如 %08x 表示 8 位宽度零填充的十六进制数
  *   宽度 - 指定最小字段宽度，例如 %5d 表示至少 5 字符宽度
  *   ll - 长度修饰符，用于 64 位整数
+ * 
+ * 输出目标：
+ *   - kprintf/kputchar/kprint: 同时输出到串口和 VGA（默认，向后兼容）
+ *   - kprintf_serial/kputchar_serial/kprint_serial: 仅输出到串口
+ *   - kprintf_vga/kputchar_vga/kprint_vga: 仅输出到 VGA
  */
+
+/* ============================================================================
+ * 同时输出到串口和 VGA（向后兼容）
+ * ============================================================================ */
 
 /**
  * 格式化输出到串口和 VGA
@@ -50,10 +59,70 @@ void vkprintf(const char *fmt, va_list args);
 void kprint(const char *msg);
 
 /**
- * 输出单个字符
+ * 输出单个字符（同时输出到串口和 VGA）
  * @param c 要输出的字符
  */
 void kputchar(char c);
+
+/* ============================================================================
+ * 仅输出到串口
+ * ============================================================================ */
+
+/**
+ * 格式化输出到串口
+ * @param fmt 格式字符串
+ * @param ... 可变参数
+ */
+void kprintf_serial(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
+/**
+ * 格式化输出到串口（va_list 版本）
+ * @param fmt 格式字符串
+ * @param args 可变参数列表
+ */
+void vkprintf_serial(const char *fmt, va_list args);
+
+/**
+ * 输出字符串到串口
+ * @param msg 要输出的字符串
+ */
+void kprint_serial(const char *msg);
+
+/**
+ * 输出单个字符到串口
+ * @param c 要输出的字符
+ */
+void kputchar_serial(char c);
+
+/* ============================================================================
+ * 仅输出到 VGA
+ * ============================================================================ */
+
+/**
+ * 格式化输出到 VGA
+ * @param fmt 格式字符串
+ * @param ... 可变参数
+ */
+void kprintf_vga(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
+/**
+ * 格式化输出到 VGA（va_list 版本）
+ * @param fmt 格式字符串
+ * @param args 可变参数列表
+ */
+void vkprintf_vga(const char *fmt, va_list args);
+
+/**
+ * 输出字符串到 VGA
+ * @param msg 要输出的字符串
+ */
+void kprint_vga(const char *msg);
+
+/**
+ * 输出单个字符到 VGA
+ * @param c 要输出的字符
+ */
+void kputchar_vga(char c);
 
 /**
  * 格式化输出到字符串缓冲区

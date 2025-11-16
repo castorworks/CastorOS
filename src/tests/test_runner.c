@@ -53,8 +53,8 @@ static const test_entry_t test_suite[] = {
     // 内存管理测试
     // TEST_ENTRY("Physical Memory Manager Tests", run_pmm_tests),
     // TEST_ENTRY("Virtual Memory Manager Tests", run_vmm_tests),
-    TEST_ENTRY("Task Manager Tests", run_task_tests),
     // TEST_ENTRY("Heap Allocator Tests", run_heap_tests),
+    TEST_ENTRY("Task Manager Tests", run_task_tests),
     
     // ========== 在下方添加新的测试 ==========
     // TEST_ENTRY("Synchronization Primitive Tests", run_sync_tests),

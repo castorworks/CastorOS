@@ -204,6 +204,10 @@ void kernel_main(multiboot_info_t* mbi) {
     
     // 主线程进入空闲循环（让调度器接管）
     LOG_INFO_MSG("Kernel entering scheduler...\n");
+    
+    // 触发首次调度，切换到用户进程
+    task_schedule();
+    
     while (1) {
         __asm__ volatile ("hlt");
     }

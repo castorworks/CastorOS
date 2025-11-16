@@ -1,6 +1,5 @@
 #include <lib/klog.h>
 #include <lib/kprintf.h>
-#include <drivers/vga.h>
 #include <drivers/serial.h>
 #include <stdarg.h>
 
@@ -21,50 +20,35 @@ void klog(log_level_t level, const char *fmt, ...) {
         return;
     }
     
-    // 保存当前 VGA 颜色
-    uint8_t old_color = vga_get_color();
-    
     // 根据等级选择颜色和前缀
     const char *prefix;
-    vga_color_t fg_color;
     
     switch (level) {
         case LOG_DEBUG:
             prefix = "[DEBUG] ";
-            fg_color = VGA_COLOR_DARK_GREY;
             break;
         case LOG_INFO:
             prefix = "[INFO]  ";
-            fg_color = VGA_COLOR_WHITE;
             break;
         case LOG_WARN:
             prefix = "[WARN]  ";
-            fg_color = VGA_COLOR_YELLOW;
             break;
         case LOG_ERROR:
             prefix = "[ERROR] ";
-            fg_color = VGA_COLOR_LIGHT_RED;
             break;
         default:
             prefix = "[????]  ";
-            fg_color = VGA_COLOR_WHITE;
             break;
     }
     
-    // 打印前缀（带颜色）
-    serial_print(prefix);
-    vga_set_color(fg_color, VGA_COLOR_BLACK);
-    vga_print(prefix);
+    // 打印前缀
+    // Serial: 不带颜色，直接输出
+    kprint_serial(prefix);
     
-    // 恢复颜色并打印消息
-    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    
-    // 使用 vkprintf 进行格式化输出
+    // 格式化输出消息
+    // Serial: 不带颜色，直接输出
     va_list args;
     va_start(args, fmt);
-    vkprintf(fmt, args);
-    va_end(args);
-    
-    // 恢复原始颜色
-    vga_set_color(old_color & 0x0F, (old_color >> 4) & 0x0F);
+    vkprintf_serial(fmt, args);
+    va_end(args);    
 }
