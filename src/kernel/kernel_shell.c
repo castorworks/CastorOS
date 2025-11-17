@@ -677,7 +677,7 @@ static int cmd_ps(int argc, char **argv) {
                 task->name,
                 state_str,
                 task->priority,
-                task->total_runtime * 10);  // 转换为毫秒
+                task->runtime_ms);  // 运行时间（毫秒）
     }
     
     return 0;

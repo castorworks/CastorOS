@@ -911,12 +911,35 @@ static int cmd_exec(int argc, char **argv) {
     }
     
     if (pid == 0) {
+        // 子进程：执行程序
         int ret = exec(abs_path);
         printf("Error: exec failed for '%s' (code=%d)\n", abs_path, ret);
         exit(-1);
     }
     
+    // 父进程：等待子进程完成
     printf("Started process PID %d: %s\n", pid, abs_path);
+    
+    // 使用 waitpid 等待子进程退出
+    int status = 0;
+    int waited_pid = waitpid(pid, &status, 0);
+    
+    if (waited_pid < 0) {
+        printf("Error: waitpid failed\n");
+        return -1;
+    }
+    
+    // 解析退出状态
+    if (WIFEXITED(status)) {
+        int exit_code = WEXITSTATUS(status);
+        printf("Process %d exited with code %d\n", pid, exit_code);
+    } else if (WIFSIGNALED(status)) {
+        int signal = WTERMSIG(status);
+        printf("Process %d terminated by signal %d\n", pid, signal);
+    } else {
+        printf("Process %d completed with status %d\n", pid, status);
+    }
+    
     return 0;
 }
 
@@ -1415,6 +1438,8 @@ static void shell_run(void) {
 // ============================================================================
 
 void _start(void) {
+    // 移除直接 I/O 操作的测试，避免权限问题
+    // 直接启动 shell
     shell_init();
     shell_run();
     exit(0);

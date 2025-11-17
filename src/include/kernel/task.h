@@ -1,227 +1,341 @@
+/**
+ * @file task.h
+ * @brief 任务管理 - 进程和线程控制
+ * 
+ * 实现多任务调度、进程管理、上下文切换等核心功能
+ */
+
 #ifndef _KERNEL_TASK_H_
 #define _KERNEL_TASK_H_
 
 #include <types.h>
 #include <mm/vmm.h>
 #include <kernel/fd_table.h>
-#include <kernel/isr.h>
 
-/**
- * 进程管理
- * 
- * 实现多任务支持，包括进程创建、销毁、调度等
- */
+/* ============================================================================
+ * 常量定义
+ * ========================================================================== */
 
-/* 最大进程数 */
+/** @brief 最大任务数量 */
 #define MAX_TASKS 256
 
-/* 内核栈大小（8KB） */
-#define KERNEL_STACK_SIZE 8192
-/* 用户栈大小（8MB） */
+/** @brief 内核栈大小（8KB） */
+#define KERNEL_STACK_SIZE (8 * 1024)
+
+/** @brief 用户栈大小（8MB） */
 #define USER_STACK_SIZE (8 * 1024 * 1024)
 
-/* 用户空间起始地址（留给用户程序） */
-#define USER_SPACE_START 0x10000000  // 256MB（跳过前 256MB）
-#define USER_SPACE_END   0x80000000  // 2GB（内核基址）
+/** @brief 用户空间结束地址（内核空间起始地址） */
+#define USER_SPACE_END 0x80000000
 
-/* 进程状态 */
-typedef enum {
-    TASK_UNUSED = 0,    // 未使用（PCB 空闲）
-    TASK_READY,         // 就绪（等待调度）
-    TASK_RUNNING,       // 运行中
-    TASK_BLOCKED,       // 阻塞（等待事件）
-    TASK_TERMINATED     // 已终止（等待回收）
-} task_state_t;
+/** @brief 默认时间片（10ms） */
+#define DEFAULT_TIME_SLICE 10
 
-/* CPU 上下文（用于上下文切换） */
-typedef struct {
-    /* 通用寄存器 */
-    uint32_t eax, ebx, ecx, edx;  // 通用寄存器
-    uint32_t esi, edi, ebp;       // 索引和基址寄存器
-    uint32_t esp;                 // 栈指针
-    uint32_t eip;                 // 指令指针
-    uint32_t eflags;              // 标志寄存器
-    uint32_t cr3;                 // 页目录基址寄存器
-    uint16_t cs, ds, es, fs, gs, ss;  // 段寄存器
-} __attribute__((packed)) cpu_context_t;
+/** @brief 默认优先级 */
+#define DEFAULT_PRIORITY 10
 
-/* 进程控制块（PCB） */
-typedef struct task {
-    uint32_t pid;                 // 进程 ID
-    char name[32];                // 进程名称
-    task_state_t state;           // 进程状态
-    
-    cpu_context_t context;        // CPU 上下文
-    
-    uint32_t kernel_stack;        // 内核栈顶地址
-    uint32_t kernel_stack_base;   // 内核栈底地址
+/** @brief 工作目录路径最大长度 */
+#define MAX_CWD_LENGTH 256
 
-    uint32_t user_stack;          // 用户栈顶地址
-    uint32_t user_stack_base;     // 用户栈底地址
-    uint32_t user_entry;          // 用户程序入口点（仅用户进程）
-    
-    page_directory_t *page_dir;   // 页目录（虚拟地址）
-    uint32_t page_dir_phys;       // 页目录（物理地址，用于加载到 CR3）
-
-    bool is_user_process;         // 是否为用户进程
-    
-    uint32_t priority;            // 优先级（0-255，数字越大优先级越高）
-    uint32_t time_slice;          // 时间片（剩余 ticks）
-    bool need_resched;            // 是否需要在中断退出时调度
-    uint64_t total_runtime;       // 总运行时间（ticks）
-    uint64_t last_scheduled_tick; // 上次被调度的时间戳（ticks）
-    
-    struct task *next;            // 链表指针（用于就绪队列等）
-    struct task *parent;          // 父进程指针
-    
-    uint32_t exit_code;           // 退出码
-    
-    void *wait_channel;           // 等待通道（用于阻塞）
-    
-    fd_table_t *fd_table;         // 文件描述符表
-    char cwd[256];                // 当前工作目录
-} task_t;
+/* ============================================================================
+ * 数据结构定义
+ * ========================================================================== */
 
 /**
- * 初始化任务管理系统
+ * @brief 任务状态枚举
+ */
+typedef enum {
+    TASK_UNUSED = 0,      ///< 未使用（空闲 PCB 槽位）
+    TASK_READY,           ///< 就绪状态（等待调度）
+    TASK_RUNNING,         ///< 运行状态（正在执行）
+    TASK_BLOCKED,         ///< 阻塞状态（等待事件）
+    TASK_ZOMBIE,          ///< 僵尸状态（已退出，等待父进程回收）
+    TASK_TERMINATED       ///< 终止状态（已退出）
+} task_state_t;
+
+/**
+ * @brief CPU 上下文结构
+ * 
+ * 保存任务切换时需要保存/恢复的所有 CPU 寄存器
+ */
+typedef struct {
+    /* 段寄存器 */
+    uint16_t gs, _gs_padding;
+    uint16_t fs, _fs_padding;
+    uint16_t es, _es_padding;
+    uint16_t ds, _ds_padding;
+    
+    /* 通用寄存器（按 PUSHA 顺序） */
+    uint32_t edi;
+    uint32_t esi;
+    uint32_t ebp;
+    uint32_t esp_dummy;  // PUSHA 会压入 ESP，但我们不使用它
+    uint32_t ebx;
+    uint32_t edx;
+    uint32_t ecx;
+    uint32_t eax;
+    
+    /* 特殊寄存器 */
+    uint32_t eip;        ///< 指令指针
+    uint16_t cs, _cs_padding;
+    uint32_t eflags;     ///< 标志寄存器
+    
+    /* 用户态栈指针（Ring 3 时使用） */
+    uint32_t esp;        ///< 栈指针
+    uint16_t ss, _ss_padding;
+    
+    /* 页目录基址寄存器 */
+    uint32_t cr3;        ///< 页目录物理地址
+} __attribute__((packed)) cpu_context_t;
+
+/**
+ * @brief 任务控制块（TCB/PCB）
+ * 
+ * 进程控制块，包含进程的所有状态信息
+ */
+typedef struct task {
+    /* 基本信息 */
+    uint32_t pid;                    ///< 进程 ID
+    char name[32];                   ///< 进程名称
+    task_state_t state;              ///< 任务状态
+    
+    /* 调度信息 */
+    uint32_t priority;               ///< 优先级（数值越小优先级越高）
+    uint32_t time_slice;             ///< 时间片（毫秒）
+    uint64_t runtime_ms;             ///< 累计运行时间（毫秒）
+    uint64_t sleep_until_ms;         ///< 睡眠截止时间（0 表示不睡眠）
+    
+    /* CPU 上下文 */
+    cpu_context_t context;           ///< CPU 寄存器状态
+    
+    /* 内核栈 */
+    uint32_t kernel_stack_base;      ///< 内核栈基址（低地址）
+    uint32_t kernel_stack;           ///< 内核栈顶指针（高地址）
+    
+    /* 用户空间（仅用户进程） */
+    bool is_user_process;            ///< 是否为用户进程
+    uint32_t user_entry;             ///< 用户程序入口点
+    uint32_t user_stack_base;        ///< 用户栈基址（低地址）
+    uint32_t user_stack;             ///< 用户栈顶指针（高地址）
+    
+    /* 内存管理 */
+    uint32_t page_dir_phys;          ///< 页目录物理地址
+    page_directory_t *page_dir;      ///< 页目录虚拟地址
+    
+    /* 文件系统 */
+    fd_table_t *fd_table;            ///< 文件描述符表
+    char cwd[MAX_CWD_LENGTH];        ///< 当前工作目录
+    
+    /* 进程关系 */
+    struct task *parent;             ///< 父进程
+    
+    /* 退出信息 */
+    uint32_t exit_code;              ///< 退出码
+    bool exit_signaled;              ///< 是否通过信号终止
+    uint32_t exit_signal;            ///< 终止信号号（如果 exit_signaled 为 true）
+    
+    /* 等待队列 */
+    struct task *waiting_parent;     ///< 正在等待此进程的父进程
+    
+    /* 链表指针（用于就绪队列） */
+    struct task *next;               ///< 下一个任务（链表）
+    struct task *prev;               ///< 上一个任务（链表）
+} task_t;
+
+/* ============================================================================
+ * 全局变量声明
+ * ========================================================================== */
+
+/** @brief 任务控制块池（在 task.c 中定义） */
+extern task_t task_pool[MAX_TASKS];
+
+/* ============================================================================
+ * 核心函数声明
+ * ========================================================================== */
+
+/**
+ * @brief 初始化任务管理系统
+ * 
+ * 创建 idle 任务，初始化调度器
  */
 void task_init(void);
 
 /**
- * 创建内核线程
- * @param entry 入口函数
+ * @brief 创建内核线程
+ * 
+ * @param entry 线程入口函数
  * @param name 线程名称
- * @return 进程 PID，失败返回 0
+ * @return 成功返回 PID，失败返回 0
  */
 uint32_t task_create_kernel_thread(void (*entry)(void), const char *name);
 
 /**
- * 创建用户进程
+ * @brief 创建用户进程
+ * 
  * @param name 进程名称
- * @param entry_point 用户程序入口地址
- * @param page_dir 保留参数（当前被忽略，为了接口兼容性）
- * @return 进程 PID，失败返回 0
+ * @param entry_point 用户程序入口点
+ * @param page_dir 页目录
+ * @return 成功返回 PID，失败返回 0
+ */
+uint32_t task_create_user_process(const char *name, uint32_t entry_point,
+                                   page_directory_t *page_dir);
+
+/**
+ * @brief 退出当前任务
  * 
- * 注意：当前 vmm 模块仅支持单页目录，所有任务共享内核页目录
- */
-uint32_t task_create_user_process(const char *name, uint32_t entry_point, 
-    page_directory_t *page_dir);
-
-/**
- * 进入用户模式
- * @param entry_point 用户程序入口地址
- * @param user_stack 用户栈顶地址
- * 
- * 注意：此函数不会返回（直接跳转到用户态）
- */
-void task_enter_usermode(uint32_t entry_point, uint32_t user_stack) __attribute__((noreturn));
-
-/**
- * 获取当前任务
- * @return 当前任务的 PCB 指针
- */
-task_t *task_get_current(void);
-
-/**
- * 根据 PID 获取任务
- * @param pid 进程 ID
- * @return 任务的 PCB 指针，如果未找到返回 NULL
- */
-task_t *task_get_by_pid(uint32_t pid);
-
-/**
- * 调度器（选择下一个任务）
- * 从就绪队列中选择下一个任务
- */
-void task_schedule(void);
-
-/**
- * 主动让出 CPU（系统调用）
- */
-void task_yield(void);
-
-/**
- * 退出当前任务（系统调用）
  * @param exit_code 退出码
+ * @note 此函数不会返回
  */
 void task_exit(uint32_t exit_code) __attribute__((noreturn));
 
 /**
- * 睡眠指定毫秒数（系统调用）
+ * @brief 主动让出 CPU（切换到其他任务）
+ */
+void task_yield(void);
+
+/**
+ * @brief 任务睡眠指定时间
+ * 
  * @param ms 睡眠时间（毫秒）
  */
 void task_sleep(uint32_t ms);
 
 /**
- * 唤醒等待特定通道的所有任务
- * @param channel 等待通道
+ * @brief 阻塞当前任务
+ * 
+ * @param wait_object 等待对象指针（用于调试）
  */
-void task_wakeup(void *channel);
+void task_block(void *wait_object);
 
 /**
- * 阻塞当前任务，等待通道
- * @param channel 等待通道
+ * @brief 唤醒等待在指定对象上的一个任务
+ * 
+ * @param wait_object 等待对象指针（用于调试）
  */
-void task_block(void *channel);
+void task_wakeup(void *wait_object);
 
 /**
- * 定时器回调（由 PIT 中断调用）
- * 更新时间片，触发调度
+ * @brief 从中断上下文调度
+ * 
+ * @param regs 中断寄存器状态
+ */
+void schedule_from_irq(void *regs);
+
+/**
+ * @brief 获取当前正在运行的任务
+ * 
+ * @return 当前任务指针，如果没有则返回 NULL
+ */
+task_t* task_get_current(void);
+
+/**
+ * @brief 根据 PID 查找任务
+ * 
+ * @param pid 进程 ID
+ * @return 任务指针，如果未找到则返回 NULL
+ */
+task_t* task_get_by_pid(uint32_t pid);
+
+/**
+ * @brief 任务调度器
+ * 
+ * 选择下一个任务并切换上下文
+ * 通常由定时器中断或主动让出时调用
+ */
+void task_schedule(void);
+
+/**
+ * @brief 定时器中断处理
+ * 
+ * 更新任务运行时间，处理睡眠任务，触发调度
+ * 由定时器驱动调用
  */
 void task_timer_tick(void);
 
-/**
- * IRQ 公共出口尝试触发调度
- * 在发送 EOI 之后调用，regs 为当前中断寄存器快照
- */
-void schedule_from_irq(registers_t *regs);
+/* ============================================================================
+ * 辅助函数
+ * ========================================================================== */
 
 /**
- * 切换 CPU 上下文（仅用于内核态任务）
- * @param prev 当前任务的上下文
- * @param next 下一个任务的上下文
+ * @brief 分配一个空闲的任务控制块
+ * 
+ * @return 任务指针，如果没有空闲 PCB 则返回 NULL
  */
-extern void task_switch(cpu_context_t *prev, cpu_context_t *next);
+task_t* task_alloc(void);
 
 /**
- * 分配并映射用户栈
- * @return true 成功，false 失败并已清理
- */
-bool task_setup_user_stack(task_t *task);
-
-/**
- * 分配一个空闲的 PCB
- * @return PCB 指针，失败返回 NULL
- * 注意：这是内部函数，供 fork() 等系统调用使用
- */
-task_t *task_alloc(void);
-
-/**
- * 释放 PCB
- * @param task 任务 PCB 指针
- * 注意：这是内部函数，供系统调用使用
+ * @brief 释放任务控制块
+ * 
+ * @param task 任务指针
  */
 void task_free(task_t *task);
 
 /**
- * 将任务添加到就绪队列
- * @param task 任务 PCB 指针
- * 注意：这是内部函数，供 fork() 等系统调用使用
+ * @brief 设置用户栈
+ * 
+ * 为用户进程分配并映射用户栈空间
+ * 
+ * @param task 任务指针
+ * @return 成功返回 true，失败返回 false
+ */
+bool task_setup_user_stack(task_t *task);
+
+/**
+ * @brief 将任务添加到就绪队列
+ * 
+ * @param task 任务指针
  */
 void ready_queue_add(task_t *task);
 
 /**
- * 获取 usermode wrapper 地址
- * @return wrapper 函数地址
+ * @brief 从就绪队列移除任务
+ * 
+ * @param task 任务指针
  */
-uint32_t get_usermode_wrapper(void);
+void ready_queue_remove(task_t *task);
 
 /**
- * 遍历所有任务（用于系统调用）
- * @param callback 回调函数，对每个任务调用 callback(task, user_data)
- * @param user_data 传递给回调函数的用户数据
- * @return 遍历的任务数
+ * @brief 打印所有任务信息（用于调试）
  */
-uint32_t task_for_each(void (*callback)(task_t *task, void *user_data), void *user_data);
+void task_print_all(void);
+
+/**
+ * @brief 获取系统中的任务数量
+ * 
+ * @return 活动任务数量
+ */
+uint32_t task_get_count(void);
+
+/* ============================================================================
+ * 汇编函数声明（在 task_asm.asm 中实现）
+ * ========================================================================== */
+
+/**
+ * @brief 执行上下文切换
+ * 
+ * @param old_ctx 保存旧任务上下文的地址
+ * @param new_ctx 新任务上下文的地址
+ */
+extern void task_switch_context(cpu_context_t **old_ctx, cpu_context_t *new_ctx);
+
+/**
+ * @brief 首次进入任务（用于内核线程）
+ * 
+ * 用于第一次启动内核线程
+ */
+extern void task_enter_kernel_thread(void);
+
+/* ============================================================================
+ * 测试辅助函数（仅在测试模式下使用）
+ * ========================================================================== */
+
+/**
+ * @brief 检查是否应该使栈页分配失败（用于测试）
+ * 
+ * @param page_index 页索引
+ * @return 如果应该失败返回 true
+ */
+bool task_should_fail_stack_page(uint32_t page_index);
 
 #endif // _KERNEL_TASK_H_
+

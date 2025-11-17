@@ -13,6 +13,7 @@
 #include <kernel/fd_table.h>
 #include <kernel/gdt.h>
 #include <kernel/interrupt.h>
+#include <kernel/user.h>
 #include <fs/vfs.h>
 #include <mm/vmm.h>
 #include <mm/heap.h>
@@ -51,10 +52,13 @@ void sys_exit(uint32_t code) {
  * 系统调用包装器会调用 sys_fork_with_frame
  */
 uint32_t sys_fork(uint32_t *frame) {
+    // 禁用中断，保证 fork 过程的原子性
+    bool prev_state = interrupts_disable();
     
     task_t *parent = task_get_current();
     if (!parent) {
         LOG_ERROR_MSG("sys_fork: No current task\n");
+        interrupts_restore(prev_state);
         return (uint32_t)-1;
     }
     
@@ -63,6 +67,7 @@ uint32_t sys_fork(uint32_t *frame) {
     // 只有用户进程才能 fork
     if (!parent->is_user_process) {
         LOG_ERROR_MSG("sys_fork: Cannot fork kernel thread\n");
+        interrupts_restore(prev_state);
         return (uint32_t)-1;
     }
     
@@ -93,6 +98,7 @@ uint32_t sys_fork(uint32_t *frame) {
     task_t *child = task_alloc();
     if (!child) {
         LOG_ERROR_MSG("sys_fork: Failed to allocate PCB\n");
+        interrupts_restore(prev_state);
         return (uint32_t)-12;
     }
     
@@ -102,11 +108,12 @@ uint32_t sys_fork(uint32_t *frame) {
     child->priority = parent->priority;
     child->time_slice = DEFAULT_TIME_SLICE;
     
-    // 克隆页目录（浅拷贝，共享物理页）
+    // 克隆页目录（深拷贝，完全复制物理页）
     child->page_dir_phys = vmm_clone_page_directory(parent->page_dir_phys);
     if (!child->page_dir_phys) {
         LOG_ERROR_MSG("sys_fork: Failed to clone page directory\n");
         task_free(child);
+        interrupts_restore(prev_state);
         return (uint32_t)-12;
     }
     child->page_dir = (page_directory_t*)PHYS_TO_VIRT(child->page_dir_phys);
@@ -117,6 +124,7 @@ uint32_t sys_fork(uint32_t *frame) {
         LOG_ERROR_MSG("sys_fork: Failed to allocate kernel stack\n");
         vmm_free_page_directory(child->page_dir_phys);
         task_free(child);
+        interrupts_restore(prev_state);
         return (uint32_t)-12;
     }
     child->kernel_stack = child->kernel_stack_base + KERNEL_STACK_SIZE;
@@ -140,23 +148,42 @@ uint32_t sys_fork(uint32_t *frame) {
     child->context.ebp = user_ebp;
     child->context.esp = user_esp;  // 使用父进程当前的用户栈指针
     child->context.eip = user_eip;  // 从 fork() 调用返回处继续
-    child->context.eflags = user_eflags;
+    
+    // 清理 EFLAGS 中的敏感位，防止权限提升
+    // 保留：CF, PF, AF, ZF, SF, OF, DF, IF
+    // 清除：IOPL, NT, RF, VM, AC, VIF, VIP, ID
+    child->context.eflags = (user_eflags & 0x00000CD5) | 0x00000202;  // IF=1
+    
     child->context.cr3 = child->page_dir_phys;
     
-    // 复制段寄存器
-    child->context.cs = (uint16_t)user_cs;
-    child->context.ss = (uint16_t)user_ss;
-    child->context.ds = (uint16_t)user_ds;
-    child->context.es = (uint16_t)user_ds;  // 通常 ES = DS
-    child->context.fs = (uint16_t)user_ds;  // 通常 FS = DS
-    child->context.gs = (uint16_t)user_ds;  // 通常 GS = DS
+    // 复制段寄存器（强制使用 Ring 3 段，防止权限提升）
+    // 不信任用户提供的段选择子，强制设置为用户态段
+    child->context.cs = 0x1B;  // 用户代码段（Ring 3）
+    child->context.ss = 0x23;  // 用户栈段（Ring 3）
+    child->context.ds = 0x23;  // 用户数据段（Ring 3）
+    child->context.es = 0x23;
+    child->context.fs = 0x23;
+    child->context.gs = 0x23;
     
-    // 复制文件描述符表
+    // 分配并复制文件描述符表
     if (parent->fd_table) {
-        if (fd_table_copy(parent->fd_table, child->fd_table) != 0) {
-            LOG_ERROR_MSG("sys_fork: failed to copy fd_table\n");
+        child->fd_table = (fd_table_t*)kmalloc(sizeof(fd_table_t));
+        if (!child->fd_table) {
+            LOG_ERROR_MSG("sys_fork: Failed to allocate fd_table\n");
+            kfree((void*)child->kernel_stack_base);
             vmm_free_page_directory(child->page_dir_phys);
             task_free(child);
+            interrupts_restore(prev_state);
+            return (uint32_t)-12;
+        }
+        
+        if (fd_table_copy(parent->fd_table, child->fd_table) != 0) {
+            LOG_ERROR_MSG("sys_fork: failed to copy fd_table\n");
+            kfree(child->fd_table);
+            kfree((void*)child->kernel_stack_base);
+            vmm_free_page_directory(child->page_dir_phys);
+            task_free(child);
+            interrupts_restore(prev_state);
             return (uint32_t)-1;
         }
     }
@@ -173,14 +200,21 @@ uint32_t sys_fork(uint32_t *frame) {
     
     LOG_INFO_MSG("sys_fork: Created child PID %u\n", child->pid);
     
+    // 恢复中断状态
+    interrupts_restore(prev_state);
+    
     // 父进程返回子进程 PID
     return child->pid;
 }
 
 /**
  * sys_execve - 执行新程序（替换当前进程）
+ * 
+ * @param frame 系统调用栈帧指针
+ * @param path  程序路径
+ * @return 成功则不返回，失败返回 -1
  */
-uint32_t sys_execve(const char *path) {
+uint32_t sys_execve(uint32_t *frame, const char *path) {
     if (!path) {
         LOG_ERROR_MSG("sys_execve: path is NULL\n");
         return (uint32_t)-1;
@@ -306,11 +340,48 @@ uint32_t sys_execve(const char *path) {
     current->context.eflags = 0x202;  // 中断使能
     current->context.cr3 = current->page_dir_phys;
     
-    // 直接进入用户模式执行新程序
-    // 注意：这个函数不会返回
-    task_enter_usermode(entry_point, current->user_stack);
+    // ============================================================================
+    // 关键修复：修改系统调用栈帧，让 iret 返回到新程序的入口点
+    // ============================================================================
+    // 
+    // 系统调用栈帧布局（从 syscall_asm.asm）：
+    //   frame[0] = DS
+    //   frame[1] = EAX (返回值)
+    //   frame[2] = EBX
+    //   frame[3] = ECX
+    //   frame[4] = EDX
+    //   frame[5] = ESI
+    //   frame[6] = EDI
+    //   frame[7] = EBP
+    //   
+    // 在 frame 之后（更高地址），CPU 自动压入的 IRET 栈帧：
+    //   frame[8] = EIP  (用户返回地址)
+    //   frame[9] = CS   (代码段)
+    //   frame[10] = EFLAGS
+    //   frame[11] = ESP (用户栈指针)
+    //   frame[12] = SS  (栈段)
+    //
+    // 我们需要修改这些值，让系统调用返回时跳转到新程序
     
-    // 永远不会执行到这里
+    if (frame) {
+        // 修改用户段寄存器（syscall_handler 会在返回前恢复这些）
+        frame[0] = 0x23;   // DS = 用户数据段
+        
+        // 修改 IRET 栈帧
+        frame[8] = entry_point;        // EIP = 新程序入口点
+        frame[9] = 0x1B;               // CS = 用户代码段 (Ring 3)
+        frame[10] = 0x202;             // EFLAGS = 中断使能
+        frame[11] = current->user_stack;  // ESP = 用户栈顶
+        frame[12] = 0x23;              // SS = 用户栈段 (Ring 3)
+        
+        LOG_DEBUG_MSG("sys_execve: modified syscall frame to return to 0x%x\n", entry_point);
+    } else {
+        // 如果没有 frame（不应该发生），使用原来的方法
+        LOG_WARN_MSG("sys_execve: no frame provided, using fallback method\n");
+        task_enter_usermode(entry_point, current->user_stack);
+    }
+    
+    // 返回 0，让系统调用正常返回（通过 iret 到新程序）
     return 0;
 }
 
@@ -450,4 +521,110 @@ uint32_t sys_kill(uint32_t pid, uint32_t signal) {
     LOG_DEBUG_MSG("sys_kill: process %u marked as terminated\n", pid);
     
     return 0;
+}
+
+/**
+ * sys_waitpid - 等待子进程退出
+ * 
+ * @param pid     要等待的进程 PID（-1 表示任意子进程，>0 表示特定进程）
+ * @param wstatus 退出状态存储地址（可为 NULL）
+ * @param options 等待选项（WNOHANG = 非阻塞）
+ * @return 成功返回子进程 PID，没有子进程返回 (uint32_t)-1，WNOHANG 时无退出子进程返回 0
+ */
+uint32_t sys_waitpid(int32_t pid, uint32_t *wstatus, uint32_t options) {
+    task_t *current = task_get_current();
+    if (!current) {
+        LOG_ERROR_MSG("sys_waitpid: no current task\n");
+        return (uint32_t)-1;
+    }
+    
+    bool non_blocking = (options & WNOHANG) != 0;
+    
+    LOG_DEBUG_MSG("sys_waitpid: PID %u waiting for child PID %d (options=%u)\n", 
+                  current->pid, pid, options);
+    
+    // 循环等待，直到找到退出的子进程
+    while (true) {
+        bool prev_state = interrupts_disable();
+        
+        // 查找符合条件的子进程
+        task_t *found_child = NULL;
+        bool has_children = false;
+        
+        // 遍历所有任务，查找子进程
+        for (uint32_t i = 0; i < MAX_TASKS; i++) {
+            task_t *task = &task_pool[i];
+            
+            // 跳过未使用的任务
+            if (task->state == TASK_UNUSED) {
+                continue;
+            }
+            
+            // 检查是否为当前进程的子进程
+            if (task->parent != current) {
+                continue;
+            }
+            
+            has_children = true;
+            
+            // 检查 PID 是否匹配
+            if (pid > 0 && (int32_t)task->pid != pid) {
+                continue;  // 不是我们要等待的特定进程
+            }
+            
+            // 检查是否为僵尸进程（已退出）
+            if (task->state == TASK_ZOMBIE) {
+                found_child = task;
+                break;
+            }
+        }
+        
+        // 如果找到了退出的子进程
+        if (found_child) {
+            uint32_t child_pid = found_child->pid;
+            uint32_t status = 0;
+            
+            // 构造退出状态
+            if (found_child->exit_signaled) {
+                // 被信号终止：低 8 位 = 信号号
+                status = found_child->exit_signal & 0xFF;
+            } else {
+                // 正常退出：低 8 位 = 0，高 8 位 = 退出码
+                status = (found_child->exit_code & 0xFF) << 8;
+            }
+            
+            // 将状态写回用户空间（如果提供了地址）
+            if (wstatus != NULL) {
+                *wstatus = status;
+            }
+            
+            LOG_DEBUG_MSG("sys_waitpid: found zombie child PID %u, status=%u\n", 
+                         child_pid, status);
+            
+            // 回收子进程资源
+            task_free(found_child);
+            
+            interrupts_restore(prev_state);
+            return child_pid;
+        }
+        
+        interrupts_restore(prev_state);
+        
+        // 如果没有任何子进程，返回错误
+        if (!has_children) {
+            LOG_DEBUG_MSG("sys_waitpid: no children to wait for\n");
+            return (uint32_t)-1;
+        }
+        
+        // 如果是非阻塞模式且没有退出的子进程，返回 0
+        if (non_blocking) {
+            LOG_DEBUG_MSG("sys_waitpid: WNOHANG and no exited children\n");
+            return 0;
+        }
+        
+        // 阻塞等待：让出 CPU，稍后重试
+        // 这里使用简单的轮询 + yield 策略
+        // 更好的实现应该让进程进入 BLOCKED 状态，并在子进程退出时唤醒
+        task_yield();
+    }
 }

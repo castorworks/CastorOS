@@ -60,4 +60,16 @@ struct dirent {
     char     d_name[256];    // 文件名（以 null 结尾，最大 255 字符）
 };
 
+// waitpid() 选项
+#define WNOHANG    1  // 非阻塞等待：如果没有子进程退出，立即返回
+#define WUNTRACED  2  // 也报告已停止的子进程状态（暂未实现）
+
+// 进程退出状态宏
+// 这些宏用于解析 wait/waitpid 返回的 status 值
+#define WIFEXITED(status)    (((status) & 0xFF) == 0)                  // 进程正常退出
+#define WEXITSTATUS(status)  (((status) >> 8) & 0xFF)                  // 获取退出码
+#define WIFSIGNALED(status)  (((status) & 0xFF) != 0)                  // 进程被信号终止
+#define WTERMSIG(status)     ((status) & 0x7F)                         // 获取终止信号
+#define WCOREDUMP(status)    (((status) & 0x80) != 0)                  // 是否产生 core dump（暂未实现）
+
 #endif /* _USERLAND_LIB_TYPES_H_ */

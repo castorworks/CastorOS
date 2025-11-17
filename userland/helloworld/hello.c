@@ -4,11 +4,28 @@
 #include <syscall.h>
 #include <time.h>
 
+// 简单的字符串输出函数（使用系统调用）
+void puts(const char *str) {
+    int i = 0;
+    while (str[i]) {
+        syscall3(SYS_WRITE, 1, (uint32_t)&str[i], 1);
+        i++;
+    }
+}
+
 // 主函数
 void _start(void) {
-    while (1) {
-        // print("Hello, World!\n");
-        sleep(1);
-    }
+    puts("Hello from hello.elf!\n");
+    puts("Sleeping for 3 seconds...\n");
+    
+    // Sleep 3 次，每次 1 秒
+    sleep(1);
+    puts("1 second passed\n");
+    sleep(1);
+    puts("2 seconds passed\n");
+    sleep(1);
+    puts("3 seconds passed\n");
+    
+    puts("Goodbye!\n");
     exit(0);
 }

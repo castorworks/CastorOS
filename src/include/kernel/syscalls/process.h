@@ -22,10 +22,11 @@ uint32_t sys_fork(uint32_t *frame);
 
 /**
  * sys_execve - 执行新程序（替换当前进程）
- * @param path 程序路径
- * @return 成功则不返回（进程被替换），失败返回 -1
+ * @param frame 系统调用栈帧指针
+ * @param path  程序路径
+ * @return 成功则返回 0（通过修改 frame 返回到新程序），失败返回 -1
  */
-uint32_t sys_execve(const char *path);
+uint32_t sys_execve(uint32_t *frame, const char *path);
 
 /**
  * sys_getpid - 获取当前进程 PID
@@ -54,5 +55,14 @@ uint32_t sys_nanosleep(const struct timespec *req, struct timespec *rem);
  * @return 0 成功，(uint32_t)-1 失败
  */
 uint32_t sys_kill(uint32_t pid, uint32_t signal);
+
+/**
+ * sys_waitpid - 等待子进程退出
+ * @param pid     要等待的进程 PID（-1 表示任意子进程）
+ * @param wstatus 退出状态存储地址（可为 NULL）
+ * @param options 等待选项（如 WNOHANG）
+ * @return 成功返回子进程 PID，失败返回 (uint32_t)-1
+ */
+uint32_t sys_waitpid(int32_t pid, uint32_t *wstatus, uint32_t options);
 
 #endif // _KERNEL_SYSCALLS_PROCESS_H_

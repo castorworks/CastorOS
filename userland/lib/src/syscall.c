@@ -17,6 +17,15 @@ int exec(const char *path) {
     return (int)syscall1(SYS_EXECVE, (uint32_t)path);
 }
 
+int waitpid(int pid, int *wstatus, int options) {
+    return (int)syscall3(SYS_WAITPID, (uint32_t)pid, (uint32_t)wstatus, (uint32_t)options);
+}
+
+int wait(int *wstatus) {
+    // wait() 等价于 waitpid(-1, wstatus, 0)
+    return waitpid(-1, wstatus, 0);
+}
+
 int open(const char *path, int flags, uint32_t mode) {
     return (int)syscall3(SYS_OPEN, (uint32_t)path, (uint32_t)flags, mode);
 }

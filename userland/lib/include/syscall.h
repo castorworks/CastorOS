@@ -121,6 +121,8 @@ static inline __maybe_unused uint32_t syscall4(uint32_t num, uint32_t arg0,
 void exit(int code);
 int fork(void);
 int exec(const char *path);
+int waitpid(int pid, int *wstatus, int options);
+int wait(int *wstatus);
 int open(const char *path, int flags, uint32_t mode);
 int close(int fd);
 int read(int fd, void *buf, uint32_t count);

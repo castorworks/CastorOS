@@ -65,7 +65,6 @@ static uint32_t sys_fork_wrapper(uint32_t *frame, uint32_t p1, uint32_t p2, uint
  */
 static uint32_t sys_execve_wrapper(uint32_t *frame, uint32_t path_addr, uint32_t argv, uint32_t envp, 
                                  uint32_t p4, uint32_t p5) {
-    (void)frame;
     (void)argv; (void)envp; (void)p4; (void)p5;
     
     const char *user_path = (const char *)path_addr;
@@ -85,7 +84,8 @@ static uint32_t sys_execve_wrapper(uint32_t *frame, uint32_t path_addr, uint32_t
     }
     path[sizeof(path) - 1] = '\0';
     
-    return sys_execve(path);
+    // 传递 frame 指针给 sys_execve
+    return sys_execve(frame, path);
 }
 
 /**
@@ -202,6 +202,12 @@ static uint32_t sys_kill_wrapper(uint32_t *frame, uint32_t pid, uint32_t signal,
     return sys_kill(pid, signal);
 }
 
+static uint32_t sys_waitpid_wrapper(uint32_t *frame, uint32_t pid, uint32_t wstatus_ptr,
+                                    uint32_t options, uint32_t p4, uint32_t p5) {
+    (void)frame; (void)p4; (void)p5;
+    return sys_waitpid((int32_t)pid, (uint32_t *)wstatus_ptr, options);
+}
+
 uint32_t syscall_dispatcher(uint32_t syscall_num, uint32_t p1, uint32_t p2, 
                             uint32_t p3, uint32_t p4, uint32_t p5, uint32_t *frame) {
     /* 检查系统调用号是否在有效范围内 */
@@ -237,7 +243,8 @@ void syscall_init(void) {
     /* 进程生命周期 */
     syscall_table[SYS_EXIT]        = sys_exit_wrapper;   
     syscall_table[SYS_FORK]        = sys_fork_wrapper;   
-    syscall_table[SYS_EXECVE]      = sys_execve_wrapper;   
+    syscall_table[SYS_EXECVE]      = sys_execve_wrapper;
+    syscall_table[SYS_WAITPID]     = sys_waitpid_wrapper;
     syscall_table[SYS_GETPID]      = sys_getpid_wrapper;
     syscall_table[SYS_SCHED_YIELD] = sys_yield_wrapper;
     

@@ -7,6 +7,7 @@
  * 禁用中断
  * @return 之前的中断标志状态
  */
+static inline bool interrupts_disable(void) __attribute__((unused));
 static inline bool interrupts_disable(void) {
     uint32_t eflags;
     __asm__ volatile("pushf; pop %0" : "=r"(eflags));
@@ -17,6 +18,7 @@ static inline bool interrupts_disable(void) {
 /**
  * 启用中断
  */
+static inline void interrupts_enable(void) __attribute__((unused));
 static inline void interrupts_enable(void) {
     __asm__ volatile("sti");
 }
@@ -25,6 +27,7 @@ static inline void interrupts_enable(void) {
  * 恢复中断状态
  * @param state 之前保存的状态
  */
+static inline void interrupts_restore(bool state) __attribute__((unused));
 static inline void interrupts_restore(bool state) {
     if (state) {
         interrupts_enable();

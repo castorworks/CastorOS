@@ -116,7 +116,7 @@ static uint32_t procfs_status_read(fs_node_t *node, uint32_t offset, uint32_t si
         (unsigned int)task->pid,
         task->parent ? (unsigned int)task->parent->pid : 0,
         (unsigned int)task->priority,
-        (unsigned long long)(task->total_runtime * 10));  // 转换为毫秒
+        (unsigned long long)task->runtime_ms);  // 运行时间（毫秒）
     
     if (len < 0 || len >= (int)sizeof(status_buf)) {
         len = sizeof(status_buf) - 1;
