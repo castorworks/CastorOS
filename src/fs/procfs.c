@@ -81,7 +81,8 @@ static const char *get_task_state_string(task_state_t state) {
         case TASK_READY:      return "R";  // Running/Ready
         case TASK_RUNNING:   return "R";  // Running
         case TASK_BLOCKED:   return "S";  // Sleeping
-        case TASK_TERMINATED: return "Z"; // Zombie
+        case TASK_ZOMBIE:    return "Z";  // Zombie (waiting for parent)
+        case TASK_TERMINATED: return "T"; // Terminated (orphan process)
         default:             return "?";  // Unknown
     }
 }

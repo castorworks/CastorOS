@@ -484,6 +484,13 @@ uint32_t sys_kill(uint32_t pid, uint32_t signal) {
         return (uint32_t)-1;
     }
     
+    // 如果进程已经是僵尸状态，说明它已经退出了，不需要再 kill
+    // 只是返回成功（kill 一个已经死亡的进程被认为是成功的）
+    if (target->state == TASK_ZOMBIE) {
+        LOG_DEBUG_MSG("sys_kill: process %u is already zombie\n", pid);
+        return 0;
+    }
+    
     // 简化实现：所有信号都直接终止进程
     // 未来可以扩展为：
     // - SIGTERM: 设置终止标志，让进程优雅退出
@@ -509,16 +516,83 @@ uint32_t sys_kill(uint32_t pid, uint32_t signal) {
         return 0;  // 已经终止，返回成功
     }
     
-    // 安全地修改进程状态
-    target->state = TASK_TERMINATED;
+    // 设置退出信息
     target->exit_code = 128 + signal;  // 标准退出码：128 + 信号号
+    target->exit_signaled = true;
+    target->exit_signal = signal;
+    
+    // 处理目标进程的所有子进程
+    // 遍历任务池，查找目标进程的子进程
+    for (uint32_t i = 0; i < MAX_TASKS; i++) {
+        task_t *task = task_get_by_pid(i);
+        if (!task || task->state == TASK_UNUSED) {
+            continue;
+        }
+        
+        // 检查是否为目标进程的子进程
+        if (task->parent == target) {
+            if (task->state == TASK_ZOMBIE) {
+                // 僵尸子进程：直接清理（没有父进程来回收了）
+                LOG_DEBUG_MSG("sys_kill: cleaning up zombie child %u of process %u\n", 
+                             task->pid, target->pid);
+                // 直接释放资源，因为僵尸进程不在就绪队列中
+                task_free(task);
+            } else {
+                // 运行中的子进程：变成孤儿进程
+                LOG_DEBUG_MSG("sys_kill: orphaning child %u of process %u\n", 
+                             task->pid, target->pid);
+                task->parent = NULL;
+            }
+        }
+    }
     
     // 如果目标进程在就绪队列中，需要移除它
-    // 这里简化处理，让调度器在下次调度时自动处理
+    if (target->state == TASK_READY) {
+        ready_queue_remove(target);
+        LOG_DEBUG_MSG("sys_kill: removed process %u from ready queue\n", pid);
+    }
     
-    interrupts_restore(prev_state);
+    // 根据是否有父进程，决定进程状态
+    // 如果有父进程，变成僵尸进程等待父进程回收
+    // 否则直接终止（孤儿进程）
     
-    LOG_DEBUG_MSG("sys_kill: process %u marked as terminated\n", pid);
+    // 调试日志：显示父进程信息
+    if (target->parent) {
+        LOG_DEBUG_MSG("sys_kill: process %u has parent PID %u (state=%d)\n", 
+                     target->pid, target->parent->pid, target->parent->state);
+    } else {
+        LOG_DEBUG_MSG("sys_kill: process %u has NO parent\n", target->pid);
+    }
+    
+    if (target->parent && target->parent->state != TASK_UNUSED) {
+        target->state = TASK_ZOMBIE;
+        LOG_DEBUG_MSG("sys_kill: process %u becomes zombie, waiting for parent %u\n", 
+                     target->pid, target->parent->pid);
+        
+        interrupts_restore(prev_state);
+        LOG_DEBUG_MSG("sys_kill: process %u marked as zombie\n", pid);
+    } else {
+        // 没有父进程的进程，直接清理
+        // 注意：如果目标进程是当前进程（自己 kill 自己），不能立即清理
+        // 但这种情况很少见，应该使用 exit() 而不是 kill(自己)
+        if (target->parent) {
+            LOG_WARN_MSG("sys_kill: process %u parent is UNUSED, treating as orphan\n", pid);
+        }
+        
+        if (target == current) {
+            // 进程 kill 自己，标记为 TERMINATED，让调度器清理
+            target->state = TASK_TERMINATED;
+            interrupts_restore(prev_state);
+            LOG_DEBUG_MSG("sys_kill: process %u killed itself\n", pid);
+        } else {
+            // kill 其他没有父进程的进程，可以安全地立即清理
+            LOG_DEBUG_MSG("sys_kill: process %u has no valid parent, freeing immediately\n", 
+                         target->pid);
+            task_free(target);
+            interrupts_restore(prev_state);
+            LOG_DEBUG_MSG("sys_kill: process %u freed\n", pid);
+        }
+    }
     
     return 0;
 }

@@ -530,6 +530,7 @@ static int cmd_reboot(int argc, char **argv);
 static int cmd_poweroff(int argc, char **argv);
 static int cmd_exec(int argc, char **argv);
 static int cmd_kill(int argc, char **argv);
+static int cmd_wait(int argc, char **argv);
 
 // 文件操作命令
 static int cmd_ls(int argc, char **argv);
@@ -580,6 +581,7 @@ static const shell_command_t commands[] = {
     {"ps",       "List running processes",         "ps",                cmd_ps},
     {"exec",     "Execute a user program",         "exec <path> [&]",   cmd_exec},
     {"kill",     "Send signal to process",         "kill [-signal] <pid>", cmd_kill},
+    {"wait",     "Wait for child process",         "wait <pid>",        cmd_wait},
     
     // 系统控制命令
     {"reboot",   "Reboot the system",              "reboot",            cmd_reboot},
@@ -1215,6 +1217,70 @@ static int cmd_kill(int argc, char **argv) {
     else if (signal == SIGHUP) signal_name = "SIGHUP";
     
     printf("Sent signal %s (%d) to process %d\n", signal_name, signal, pid);
+    return 0;
+}
+
+/**
+ * wait 命令 - 等待子进程退出并回收资源
+ * 
+ * 用法：
+ *   wait <pid>     等待指定 PID 的子进程
+ * 
+ * 示例：
+ *   wait 2         等待 PID 2 的子进程退出
+ */
+static int cmd_wait(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Error: Usage: wait <pid>\n");
+        printf("  Example: wait 2\n");
+        return -1;
+    }
+    
+    // 解析 PID
+    int pid = 0;
+    const char *pid_str = argv[1];
+    const char *p = pid_str;
+    while (*p >= '0' && *p <= '9') {
+        pid = pid * 10 + (*p - '0');
+        p++;
+    }
+    
+    if (*p != '\0' || pid <= 0) {
+        printf("Error: Invalid PID '%s'\n", pid_str);
+        return -1;
+    }
+    
+    printf("Waiting for process %d to exit...\n", pid);
+    
+    // 调用 waitpid 等待子进程退出
+    int status = 0;
+    int result = waitpid(pid, &status, 0);
+    
+    if (result < 0) {
+        printf("Error: waitpid failed (code=%d)\n", result);
+        printf("  Possible reasons:\n");
+        printf("    - Process %d is not a child of this shell\n", pid);
+        printf("    - Process %d does not exist\n", pid);
+        return -1;
+    }
+    
+    // 解析退出状态
+    if (WIFEXITED(status)) {
+        int exit_code = WEXITSTATUS(status);
+        printf("Process %d exited with code %d\n", pid, exit_code);
+    } else if (WIFSIGNALED(status)) {
+        int signal = WTERMSIG(status);
+        const char *signal_name = "UNKNOWN";
+        if (signal == SIGTERM) signal_name = "SIGTERM";
+        else if (signal == SIGKILL) signal_name = "SIGKILL";
+        else if (signal == SIGINT) signal_name = "SIGINT";
+        else if (signal == SIGHUP) signal_name = "SIGHUP";
+        
+        printf("Process %d terminated by signal %s (%d)\n", pid, signal_name, signal);
+    } else {
+        printf("Process %d status changed (status=0x%x)\n", pid, status);
+    }
+    
     return 0;
 }
 

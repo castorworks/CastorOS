@@ -731,6 +731,34 @@ void task_exit(uint32_t exit_code) {
     current_task->exit_code = exit_code;
     current_task->exit_signaled = false;
     
+    // 处理所有子进程
+    // 遍历任务池，查找当前进程的子进程
+    for (uint32_t i = 0; i < MAX_TASKS; i++) {
+        task_t *task = &task_pool[i];
+        
+        // 跳过未使用的任务
+        if (task->state == TASK_UNUSED) {
+            continue;
+        }
+        
+        // 检查是否为当前进程的子进程
+        if (task->parent == current_task) {
+            if (task->state == TASK_ZOMBIE) {
+                // 僵尸子进程：直接清理（没有父进程来回收了）
+                LOG_DEBUG_MSG("Task %u: cleaning up zombie child %u\n", 
+                             current_task->pid, task->pid);
+                // 直接释放资源，因为僵尸进程不在就绪队列中，不会被调度
+                task_free(task);
+            } else {
+                // 运行中的子进程：变成孤儿进程
+                // 当它们退出时会自动清理（因为没有父进程）
+                LOG_DEBUG_MSG("Task %u: orphaning child %u\n", 
+                             current_task->pid, task->pid);
+                task->parent = NULL;
+            }
+        }
+    }
+    
     // 如果有父进程，变成僵尸进程等待父进程回收
     // 否则直接终止（孤儿进程）
     if (current_task->parent && current_task->parent->state != TASK_UNUSED) {
