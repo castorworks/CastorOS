@@ -14,8 +14,9 @@
 #define SHELL_MAX_INPUT_LENGTH      256
 #define SHELL_MAX_ARGS              16
 #define SHELL_MAX_PATH_LENGTH       256
+#define SHELL_MAX_HISTORY           50
 #define SHELL_PROMPT                "root@CastorOS:~$ "
-#define SHELL_VERSION               "0.0.9"
+#define SHELL_VERSION               "0.1.2"
 #define SHELL_CAT_ZERO_PREVIEW      4096
 #define SHELL_CTRL_C                0x03
 #define SHELL_CTRL_L                0x0C
@@ -51,6 +52,11 @@ typedef struct {
     char *argv[SHELL_MAX_ARGS];
     char cwd[SHELL_MAX_PATH_LENGTH];
     int running;
+    // 历史记录
+    char history[SHELL_MAX_HISTORY][SHELL_MAX_INPUT_LENGTH];
+    int history_count;      // 当前历史记录数量
+    int history_index;      // 当前浏览的历史索引（-1 表示不在浏览历史）
+    char temp_buffer[SHELL_MAX_INPUT_LENGTH];  // 临时缓冲区，用于保存当前输入
 } shell_state_t;
 
 typedef struct {
@@ -66,10 +72,37 @@ typedef struct {
 
 static shell_state_t shell_state;
 
+// 辅助函数：清除当前行并重新显示
+static void shell_redraw_line(const char *buffer, size_t len, size_t old_len) {
+    // 如果新内容比旧内容短，需要清除多余的字符
+    // 先用退格删除所有旧内容
+    for (size_t j = 0; j < old_len; j++) {
+        print("\b");
+    }
+    
+    // 用空格覆盖旧内容
+    for (size_t j = 0; j < old_len; j++) {
+        print(" ");
+    }
+    
+    // 再次退格到起始位置
+    for (size_t j = 0; j < old_len; j++) {
+        print("\b");
+    }
+    
+    // 显示新内容
+    if (len > 0) {
+        write(STDOUT_FILENO, buffer, len);
+    }
+}
+
 // 从 stdin 读取一行
 static int shell_read_line(char *buffer, size_t size) {
     size_t i = 0;
     char c;
+    
+    // 重置历史索引
+    shell_state.history_index = -1;
     
     while (i < size - 1) {
         int ret = read(STDIN_FILENO, &c, 1);
@@ -96,9 +129,84 @@ static int shell_read_line(char *buffer, size_t size) {
                 i--;
                 print("\b \b");  // 回显退格
             }
+        } else if ((unsigned char)c == 0x1B) {  // ESC 键，可能是方向键
+            // 读取下一个字符
+            char c2;
+            ret = read(STDIN_FILENO, &c2, 1);
+            if (ret <= 0 || c2 != '[') {
+                continue;  // 不是方向键序列
+            }
+            
+            // 读取方向键
+            char c3;
+            ret = read(STDIN_FILENO, &c3, 1);
+            if (ret <= 0) continue;
+            
+            if (c3 == 'A') {  // 上键
+                // 第一次按上键时，保存当前输入
+                if (shell_state.history_index == -1) {
+                    memcpy(shell_state.temp_buffer, buffer, i);
+                    shell_state.temp_buffer[i] = '\0';
+                }
+                
+                // 向前浏览历史
+                if (shell_state.history_count > 0) {
+                    size_t old_len = i;  // 保存旧长度
+                    
+                    if (shell_state.history_index == -1) {
+                        shell_state.history_index = shell_state.history_count - 1;
+                    } else if (shell_state.history_index > 0) {
+                        shell_state.history_index--;
+                    }
+                    
+                    // 复制历史记录到缓冲区
+                    const char *hist = shell_state.history[shell_state.history_index];
+                    i = 0;
+                    while (hist[i] != '\0' && i < size - 1) {
+                        buffer[i] = hist[i];
+                        i++;
+                    }
+                    buffer[i] = '\0';
+                    
+                    // 重新显示行
+                    shell_redraw_line(buffer, i, old_len);
+                }
+            } else if (c3 == 'B') {  // 下键
+                if (shell_state.history_index != -1) {
+                    size_t old_len = i;  // 保存旧长度
+                    
+                    shell_state.history_index++;
+                    
+                    if (shell_state.history_index >= shell_state.history_count) {
+                        // 恢复临时缓冲区的内容
+                        shell_state.history_index = -1;
+                        i = 0;
+                        while (shell_state.temp_buffer[i] != '\0' && i < size - 1) {
+                            buffer[i] = shell_state.temp_buffer[i];
+                            i++;
+                        }
+                        buffer[i] = '\0';
+                    } else {
+                        // 复制历史记录到缓冲区
+                        const char *hist = shell_state.history[shell_state.history_index];
+                        i = 0;
+                        while (hist[i] != '\0' && i < size - 1) {
+                            buffer[i] = hist[i];
+                            i++;
+                        }
+                        buffer[i] = '\0';
+                    }
+                    
+                    // 重新显示行
+                    shell_redraw_line(buffer, i, old_len);
+                }
+            }
+            continue;
         } else if (c >= 32 && c <= 126) {  // 可打印字符
             buffer[i++] = c;
             write(STDOUT_FILENO, &c, 1);  // 回显
+            // 如果用户在浏览历史时输入新字符，退出历史模式
+            shell_state.history_index = -1;
         }
     }
     
@@ -365,6 +473,43 @@ static void __attribute__((unused)) format_memory_size(uint32_t bytes, char *buf
 }
 
 // ============================================================================
+// 历史记录函数
+// ============================================================================
+
+/**
+ * 添加命令到历史记录
+ */
+static void shell_add_history(const char *line) {
+    // 忽略空行
+    if (!line || line[0] == '\0') {
+        return;
+    }
+    
+    // 忽略与上一条相同的命令
+    if (shell_state.history_count > 0) {
+        int last_idx = shell_state.history_count - 1;
+        if (strcmp(shell_state.history[last_idx], line) == 0) {
+            return;
+        }
+    }
+    
+    // 如果历史记录已满，移除最旧的记录
+    if (shell_state.history_count >= SHELL_MAX_HISTORY) {
+        // 将所有历史记录向前移动一位
+        for (int i = 0; i < SHELL_MAX_HISTORY - 1; i++) {
+            strcpy(shell_state.history[i], shell_state.history[i + 1]);
+        }
+        shell_state.history_count = SHELL_MAX_HISTORY - 1;
+    }
+    
+    // 添加新的历史记录
+    strncpy(shell_state.history[shell_state.history_count], line, 
+            SHELL_MAX_INPUT_LENGTH - 1);
+    shell_state.history[shell_state.history_count][SHELL_MAX_INPUT_LENGTH - 1] = '\0';
+    shell_state.history_count++;
+}
+
+// ============================================================================
 // 内建命令声明
 // ============================================================================
 
@@ -375,6 +520,7 @@ static int cmd_exit(int argc, char **argv);
 static int cmd_pwd(int argc, char **argv);
 static int cmd_cd(int argc, char **argv);
 static int cmd_clear(int argc, char **argv);
+static int cmd_history(int argc, char **argv);
 
 // 系统信息命令
 static int cmd_uptime(int argc, char **argv);
@@ -422,6 +568,7 @@ static const shell_command_t commands[] = {
     {"version",  "Show shell version",             "version",           cmd_version},
     {"clear",    "Clear screen",                   "clear",             cmd_clear},
     {"exit",     "Exit shell",                     "exit",              cmd_exit},
+    {"history",  "Show command history",           "history",           cmd_history},
     
     // 运行时间
     {"uptime",   "Show system uptime",             "uptime",            cmd_uptime},
@@ -431,7 +578,7 @@ static const shell_command_t commands[] = {
     
     // 进程管理命令
     {"ps",       "List running processes",         "ps",                cmd_ps},
-    {"exec",     "Execute a user program",         "exec <path>",       cmd_exec},
+    {"exec",     "Execute a user program",         "exec <path> [&]",   cmd_exec},
     {"kill",     "Send signal to process",         "kill [-signal] <pid>", cmd_kill},
     
     // 系统控制命令
@@ -510,6 +657,26 @@ static int cmd_clear(int argc, char **argv) {
     (void)argv;
     // 使用 ANSI 转义序列清屏（如果终端支持）
     print("\033[2J\033[H");
+    return 0;
+}
+
+static int cmd_history(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    
+    if (shell_state.history_count == 0) {
+        printf("No command history.\n");
+        return 0;
+    }
+    
+    printf("Command History:\n");
+    printf("================================================================================\n");
+    for (int i = 0; i < shell_state.history_count; i++) {
+        printf("%4d  %s\n", i + 1, shell_state.history[i]);
+    }
+    printf("================================================================================\n");
+    printf("Total: %d command(s)\n", shell_state.history_count);
+    printf("Tip: Use UP/DOWN arrow keys to browse history\n");
     return 0;
 }
 
@@ -883,15 +1050,26 @@ static int cmd_poweroff(int argc, char **argv) {
 
 /**
  * exec 命令 - 执行 ELF 程序
+ * 用法: exec <path> [&]
+ * 如果最后一个参数是 &，则在后台运行（不等待进程结束）
  */
 static int cmd_exec(int argc, char **argv) {
     if (argc < 2) {
-        printf("Error: Usage: exec <path>\n");
+        printf("Error: Usage: exec <path> [&]\n");
+        printf("  Add '&' to run in background\n");
         return -1;
     }
     
+    // 检查是否要在后台运行
+    int background = 0;
+    int path_arg_index = 1;
+    
+    if (argc >= 3 && strcmp(argv[argc - 1], "&") == 0) {
+        background = 1;
+    }
+    
     char abs_path[SHELL_MAX_PATH_LENGTH];
-    if (shell_resolve_path(argv[1], abs_path, sizeof(abs_path)) != 0) {
+    if (shell_resolve_path(argv[path_arg_index], abs_path, sizeof(abs_path)) != 0) {
         printf("Error: Invalid path\n");
         return -1;
     }
@@ -917,30 +1095,38 @@ static int cmd_exec(int argc, char **argv) {
         exit(-1);
     }
     
-    // 父进程：等待子进程完成
-    printf("Started process PID %d: %s\n", pid, abs_path);
-    
-    // 使用 waitpid 等待子进程退出
-    int status = 0;
-    int waited_pid = waitpid(pid, &status, 0);
-    
-    if (waited_pid < 0) {
-        printf("Error: waitpid failed\n");
-        return -1;
-    }
-    
-    // 解析退出状态
-    if (WIFEXITED(status)) {
-        int exit_code = WEXITSTATUS(status);
-        printf("Process %d exited with code %d\n", pid, exit_code);
-    } else if (WIFSIGNALED(status)) {
-        int signal = WTERMSIG(status);
-        printf("Process %d terminated by signal %d\n", pid, signal);
+    // 父进程
+    if (background) {
+        // 后台运行：不等待子进程
+        printf("Started background process PID %d: %s\n", pid, abs_path);
+        printf("Use 'ps' to check status, 'kill %d' to terminate\n", pid);
+        return 0;
     } else {
-        printf("Process %d completed with status %d\n", pid, status);
+        // 前台运行：等待子进程完成
+        printf("Started process PID %d: %s\n", pid, abs_path);
+        
+        // 使用 waitpid 等待子进程退出
+        int status = 0;
+        int waited_pid = waitpid(pid, &status, 0);
+        
+        if (waited_pid < 0) {
+            printf("Error: waitpid failed\n");
+            return -1;
+        }
+        
+        // 解析退出状态
+        if (WIFEXITED(status)) {
+            int exit_code = WEXITSTATUS(status);
+            printf("Process %d exited with code %d\n", pid, exit_code);
+        } else if (WIFSIGNALED(status)) {
+            int signal = WTERMSIG(status);
+            printf("Process %d terminated by signal %d\n", pid, signal);
+        } else {
+            printf("Process %d completed with status %d\n", pid, status);
+        }
+        
+        return 0;
     }
-    
-    return 0;
 }
 
 /**
@@ -1390,6 +1576,8 @@ static void shell_init(void) {
     memset(&shell_state, 0, sizeof(shell_state_t));
     shell_state.running = 1;
     strcpy(shell_state.cwd, "/");
+    shell_state.history_count = 0;
+    shell_state.history_index = -1;
 }
 
 static void shell_print_welcome(void) {
@@ -1427,6 +1615,10 @@ static void shell_run(void) {
                                 &shell_state.argc, 
                                 shell_state.argv) == 0) {
             if (shell_state.argc > 0) {
+                // 添加到历史记录
+                shell_add_history(shell_state.input_buffer);
+                
+                // 执行命令
                 shell_execute_command(shell_state.argc, shell_state.argv);
             }
         }

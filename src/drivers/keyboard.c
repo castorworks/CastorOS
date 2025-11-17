@@ -228,6 +228,26 @@ static void keyboard_callback(registers_t *regs) {
             trigger_key_event(scancode, 0, keycode, 
                             is_release ? KEY_EVENT_RELEASE : KEY_EVENT_PRESS, 
                             true);
+            
+            /* 对于按下事件，生成 ANSI 转义序列到缓冲区 */
+            if (!is_release) {
+                /* 生成 ANSI 转义序列: ESC [ X */
+                buffer_put(0x1B);  // ESC
+                buffer_put('[');
+                
+                switch (keycode) {
+                    case KEY_UP:     buffer_put('A'); break;
+                    case KEY_DOWN:   buffer_put('B'); break;
+                    case KEY_RIGHT:  buffer_put('C'); break;
+                    case KEY_LEFT:   buffer_put('D'); break;
+                    case KEY_HOME:   buffer_put('H'); break;
+                    case KEY_END:    buffer_put('F'); break;
+                    case KEY_PGUP:   buffer_put('5'); buffer_put('~'); break;
+                    case KEY_PGDN:   buffer_put('6'); buffer_put('~'); break;
+                    case KEY_INSERT: buffer_put('2'); buffer_put('~'); break;
+                    case KEY_DELETE: buffer_put('3'); buffer_put('~'); break;
+                }
+            }
         }
         is_extended = false;
         return;

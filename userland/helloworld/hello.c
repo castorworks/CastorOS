@@ -16,15 +16,12 @@ void puts(const char *str) {
 // 主函数
 void _start(void) {
     puts("Hello from hello.elf!\n");
-    puts("Sleeping for 3 seconds...\n");
     
     // Sleep 3 次，每次 1 秒
-    sleep(1);
-    puts("1 second passed\n");
-    sleep(1);
-    puts("2 seconds passed\n");
-    sleep(1);
-    puts("3 seconds passed\n");
+    for (int i = 0; i < 60; i++) {
+        sleep(1);
+        puts("1 second passed\n");
+    }
     
     puts("Goodbye!\n");
     exit(0);
