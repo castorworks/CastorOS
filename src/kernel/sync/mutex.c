@@ -50,31 +50,46 @@ void mutex_lock(mutex_t *mutex) {
         return;
     }
 
+    task_t *current = mutex_current_task();
+    if (current == NULL) {
+        return;
+    }
+
     while (1) {
         bool irq_state = interrupts_disable();
-        task_t *current = mutex_current_task();
 
         spinlock_lock(&mutex->lock);
 
+        // 检查互斥锁是否可用
         if (!mutex->locked) {
             mutex->locked = true;
-            mutex->owner_pid = current ? current->pid : 0;
+            mutex->owner_pid = current->pid;
             mutex->recursion = 1;
             spinlock_unlock(&mutex->lock);
             interrupts_restore(irq_state);
             return;
         }
 
-        if (current != NULL && mutex->owner_pid == current->pid) {
+        // 检查是否是递归锁定（同一任务再次获取）
+        if (mutex->owner_pid == current->pid) {
             mutex->recursion++;
             spinlock_unlock(&mutex->lock);
             interrupts_restore(irq_state);
             return;
         }
 
+        // 无法获取，在持有锁的情况下设置任务状态为阻塞
+        // 这样可以防止 Lost Wakeup
+        current->state = TASK_BLOCKED;
+        
         spinlock_unlock(&mutex->lock);
-        task_block(mutex);
+        
+        // 现在可以安全地调度到其他任务了
+        task_schedule();
+        
         interrupts_restore(irq_state);
+        
+        // 被唤醒后重新尝试
     }
 }
 

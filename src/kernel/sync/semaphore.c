@@ -2,6 +2,8 @@
 #include <kernel/interrupt.h>
 #include <kernel/task.h>
 
+#define INT32_MAX ((int32_t)0x7FFFFFFF)
+
 void semaphore_init(semaphore_t *sem, int32_t initial_count) {
     if (sem == NULL) {
         return;
@@ -24,20 +26,35 @@ void semaphore_wait(semaphore_t *sem) {
         return;
     }
 
+    task_t *current = task_get_current();
+    if (current == NULL) {
+        return;
+    }
+
     while (1) {
         bool irq_state = interrupts_disable();
 
         spinlock_lock(&sem->lock);
-        bool acquired = semaphore_try_consume(sem);
-        spinlock_unlock(&sem->lock);
-
-        if (acquired) {
+        
+        // 尝试获取信号量
+        if (semaphore_try_consume(sem)) {
+            spinlock_unlock(&sem->lock);
             interrupts_restore(irq_state);
             return;
         }
 
-        task_block(sem);
+        // 无法获取，在持有锁的情况下设置任务状态为阻塞
+        // 这样可以防止 Lost Wakeup
+        current->state = TASK_BLOCKED;
+        
+        spinlock_unlock(&sem->lock);
+        
+        // 现在可以安全地调度到其他任务了
+        task_schedule();
+        
         interrupts_restore(irq_state);
+        
+        // 被唤醒后重新尝试
     }
 }
 
@@ -65,7 +82,12 @@ void semaphore_signal(semaphore_t *sem) {
     bool irq_state = interrupts_disable();
 
     spinlock_lock(&sem->lock);
-    sem->count++;
+    
+    // 防止整数溢出
+    if (sem->count < INT32_MAX) {
+        sem->count++;
+    }
+    
     spinlock_unlock(&sem->lock);
 
     task_wakeup(sem);

@@ -40,8 +40,8 @@ void spinlock_unlock(spinlock_t *lock) {
     if (lock == NULL) {
         return;
     }
-    __asm__ volatile("" ::: "memory");
-    lock->value = SPINLOCK_UNLOCKED;
+    // 使用原子交换操作确保多核可见性
+    atomic_xchg(&lock->value, SPINLOCK_UNLOCKED);
 }
 
 bool spinlock_is_locked(const spinlock_t *lock) {
@@ -52,12 +52,15 @@ bool spinlock_is_locked(const spinlock_t *lock) {
 }
 
 void spinlock_lock_irqsave(spinlock_t *lock, bool *irq_state) {
+    if (lock == NULL) {
+        if (irq_state != NULL) {
+            *irq_state = false;
+        }
+        return;
+    }
     bool prev = interrupts_disable();
     if (irq_state != NULL) {
         *irq_state = prev;
-    }
-    if (lock == NULL) {
-        return;
     }
     spinlock_lock(lock);
 }
