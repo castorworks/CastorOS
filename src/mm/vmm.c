@@ -9,10 +9,12 @@
 #include <mm/pmm.h>
 #include <lib/klog.h>
 #include <lib/string.h>
+#include <kernel/sync/spinlock.h>
 
 static page_directory_t *current_dir = NULL;  ///< 当前页目录虚拟地址
 static uint32_t current_dir_phys = 0;          ///< 当前页目录物理地址
 extern uint32_t boot_page_directory[];         ///< 引导时的页目录
+static spinlock_t vmm_lock;                    ///< VMM 自旋锁，保护页表操作
 
 /**
  * @brief 获取页目录索引
@@ -59,6 +61,9 @@ static page_table_t* create_page_table(void) {
  * 扩展高半核映射以覆盖所有可用的物理内存
  */
 void vmm_init(void) {
+    // 初始化 VMM 自旋锁
+    spinlock_init(&vmm_lock);
+    
     current_dir = (page_directory_t*)boot_page_directory;
     current_dir_phys = VIRT_TO_PHYS((uint32_t)current_dir);
     
@@ -144,6 +149,9 @@ bool vmm_map_page(uint32_t virt, uint32_t phys, uint32_t flags) {
     // 检查页对齐
     if ((virt | phys) & (PAGE_SIZE-1)) return false;
     
+    bool irq_state;
+    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    
     uint32_t pd = pde_idx(virt);  // 页目录索引
     uint32_t pt = pte_idx(virt);  // 页表索引
     
@@ -153,7 +161,10 @@ bool vmm_map_page(uint32_t virt, uint32_t phys, uint32_t flags) {
     // 如果页表不存在，创建新页表
     if (!is_present(*pde)) {
         table = create_page_table();
-        if (!table) return false;
+        if (!table) {
+            spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+            return false;
+        }
         *pde = VIRT_TO_PHYS((uint32_t)table) | PAGE_PRESENT | PAGE_WRITE | PAGE_USER;
     } else {
         table = (page_table_t*)PHYS_TO_VIRT(get_frame(*pde));
@@ -162,6 +173,8 @@ bool vmm_map_page(uint32_t virt, uint32_t phys, uint32_t flags) {
     // 设置页表项
     table->entries[pt] = phys | flags;
     vmm_flush_tlb(virt);
+    
+    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
     return true;
 }
 
@@ -173,14 +186,22 @@ void vmm_unmap_page(uint32_t virt) {
     // 检查页对齐
     if (virt & (PAGE_SIZE-1)) return;
     
+    bool irq_state;
+    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    
     pde_t *pde = &current_dir->entries[pde_idx(virt)];
     // 如果页表不存在，直接返回
-    if (!is_present(*pde)) return;
+    if (!is_present(*pde)) {
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        return;
+    }
     
     // 清除页表项
     page_table_t *table = (page_table_t*)PHYS_TO_VIRT(get_frame(*pde));
     table->entries[pte_idx(virt)] = 0;
     vmm_flush_tlb(virt);
+    
+    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
 }
 
 /**
@@ -216,6 +237,9 @@ uint32_t vmm_create_page_directory(void) {
     uint32_t dir_phys = pmm_alloc_frame();
     if (!dir_phys) return 0;
     
+    bool irq_state;
+    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    
     // 获取虚拟地址访问
     page_directory_t *new_dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
     
@@ -228,6 +252,7 @@ uint32_t vmm_create_page_directory(void) {
         new_dir->entries[i] = current_dir->entries[i];
     }
     
+    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
     return dir_phys;
 }
 
@@ -240,6 +265,9 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
     // 分配新页目录
     uint32_t new_dir_phys = pmm_alloc_frame();
     if (!new_dir_phys) return 0;
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&vmm_lock, &irq_state);
     
     page_directory_t *src_dir = (page_directory_t*)PHYS_TO_VIRT(src_dir_phys);
     page_directory_t *new_dir = (page_directory_t*)PHYS_TO_VIRT(new_dir_phys);
@@ -259,6 +287,7 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
             uint32_t new_table_phys = pmm_alloc_frame();
             if (!new_table_phys) {
                 // 分配失败，清理已分配的资源
+                spinlock_unlock_irqrestore(&vmm_lock, irq_state);
                 vmm_free_page_directory(new_dir_phys);
                 return 0;
             }
@@ -277,6 +306,7 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
                     if (!new_frame) {
                         // 分配失败，清理
                         pmm_free_frame(new_table_phys);
+                        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
                         vmm_free_page_directory(new_dir_phys);
                         return 0;
                     }
@@ -297,6 +327,7 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
         }
     }
     
+    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
     return new_dir_phys;
 }
 
@@ -308,6 +339,9 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
  */
 void vmm_free_page_directory(uint32_t dir_phys) {
     if (!dir_phys) return;
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&vmm_lock, &irq_state);
     
     page_directory_t *dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
     
@@ -341,6 +375,8 @@ void vmm_free_page_directory(uint32_t dir_phys) {
     
     // 释放页目录本身
     pmm_free_frame(dir_phys);
+    
+    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
 }
 
 /**
@@ -350,11 +386,16 @@ void vmm_free_page_directory(uint32_t dir_phys) {
 void vmm_switch_page_directory(uint32_t dir_phys) {
     if (!dir_phys) return;
     
+    bool irq_state;
+    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    
     current_dir_phys = dir_phys;
     current_dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
     
     // 加载到 CR3 寄存器
     __asm__ volatile("mov %0, %%cr3" : : "r"(dir_phys) : "memory");
+    
+    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
 }
 
 /**
@@ -370,6 +411,9 @@ bool vmm_map_page_in_directory(uint32_t dir_phys, uint32_t virt,
     // 检查页对齐
     if ((virt | phys) & (PAGE_SIZE-1)) return false;
     
+    bool irq_state;
+    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    
     page_directory_t *dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
     
     uint32_t pd = pde_idx(virt);
@@ -381,7 +425,10 @@ bool vmm_map_page_in_directory(uint32_t dir_phys, uint32_t virt,
     // 如果页表不存在，创建新页表
     if (!is_present(*pde)) {
         uint32_t table_phys = pmm_alloc_frame();
-        if (!table_phys) return false;
+        if (!table_phys) {
+            spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+            return false;
+        }
         
         table = (page_table_t*)PHYS_TO_VIRT(table_phys);
         memset(table, 0, sizeof(page_table_t));
@@ -399,6 +446,7 @@ bool vmm_map_page_in_directory(uint32_t dir_phys, uint32_t virt,
         vmm_flush_tlb(virt);
     }
     
+    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
     return true;
 }
 
@@ -407,18 +455,23 @@ uint32_t vmm_unmap_page_in_directory(uint32_t dir_phys, uint32_t virt) {
         return 0;
     }
 
+    bool irq_state;
+    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+
     page_directory_t *dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
     uint32_t pd = pde_idx(virt);
     uint32_t pt = pte_idx(virt);
 
     pde_t *pde = &dir->entries[pd];
     if (!is_present(*pde)) {
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
         return 0;
     }
 
     page_table_t *table = (page_table_t*)PHYS_TO_VIRT(get_frame(*pde));
     uint32_t old_entry = table->entries[pt];
     if (!is_present(old_entry)) {
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
         return 0;
     }
 
@@ -446,5 +499,7 @@ uint32_t vmm_unmap_page_in_directory(uint32_t dir_phys, uint32_t virt) {
         vmm_flush_tlb(virt);
     }
 
-    return get_frame(old_entry);
+    uint32_t result = get_frame(old_entry);
+    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+    return result;
 }
