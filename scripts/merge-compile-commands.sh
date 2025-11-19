@@ -7,6 +7,26 @@ OUTPUT_FILE="$PROJECT_ROOT/compile_commands.json"
 
 echo "Generating compilation database..."
 
+# Detect number of CPU cores and compilation database tool (macOS/Linux compatible)
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS: Use compiledb instead of bear (better cross-compiler support)
+    NCPU=$(sysctl -n hw.ncpu)
+    IS_MACOS=true
+    # Check if compiledb is available
+    if ! command -v compiledb &> /dev/null; then
+        echo "Warning: compiledb not found. Install with: pip3 install compiledb"
+        echo "Falling back to bear (may not work with cross-compilers)..."
+        USE_COMPILEDB=false
+    else
+        USE_COMPILEDB=true
+    fi
+else
+    # Linux: Use bear
+    NCPU=$(nproc)
+    IS_MACOS=false
+    USE_COMPILEDB=false
+fi
+
 # Temporary file to store all JSON entries
 TEMP_FILE=$(mktemp)
 echo "[" > "$TEMP_FILE"
@@ -27,7 +47,16 @@ extract_entries() {
 echo "[1/3] Generating kernel compilation database..."
 cd "$PROJECT_ROOT"
 make clean >/dev/null 2>&1 || true
-bear make -j$(nproc) 2>&1 | grep -v "warning:" | grep -v "^make" || true
+if [ "$USE_COMPILEDB" = true ]; then
+    # Use compiledb (parses make output)
+    compiledb -o "$OUTPUT_FILE" make -j$NCPU 2>&1 | grep -v "warning:" | grep -v "^make" || true
+elif [ "$IS_MACOS" = true ]; then
+    # Fallback to bear on macOS
+    bear --output "$OUTPUT_FILE" -- make -j$NCPU 2>&1 | grep -v "warning:" | grep -v "^make" || true
+else
+    # Use bear on Linux
+    bear make -j$NCPU 2>&1 | grep -v "warning:" | grep -v "^make" || true
+fi
 
 if [ -f "$OUTPUT_FILE" ]; then
     ENTRIES=$(extract_entries "$OUTPUT_FILE")
@@ -41,9 +70,15 @@ fi
 echo "[2/3] Generating shell compilation database..."
 cd "$PROJECT_ROOT/userland/shell"
 make clean >/dev/null 2>&1 || true
-bear make 2>&1 | grep -v "warning:" | grep -v "^make" || true
 
 SHELL_COMPILE_COMMANDS="$PROJECT_ROOT/userland/shell/compile_commands.json"
+if [ "$USE_COMPILEDB" = true ]; then
+    compiledb -o "$SHELL_COMPILE_COMMANDS" make 2>&1 | grep -v "warning:" | grep -v "^make" || true
+elif [ "$IS_MACOS" = true ]; then
+    bear --output "$SHELL_COMPILE_COMMANDS" -- make 2>&1 | grep -v "warning:" | grep -v "^make" || true
+else
+    bear make 2>&1 | grep -v "warning:" | grep -v "^make" || true
+fi
 if [ -f "$SHELL_COMPILE_COMMANDS" ]; then
     ENTRIES=$(extract_entries "$SHELL_COMPILE_COMMANDS")
     if [ -n "$ENTRIES" ]; then
@@ -61,9 +96,15 @@ if [ -d "$PROJECT_ROOT/userland/helloworld" ] && [ -f "$PROJECT_ROOT/userland/he
     echo "[3/3] Generating helloworld compilation database..."
     cd "$PROJECT_ROOT/userland/helloworld"
     make clean >/dev/null 2>&1 || true
-    bear make 2>&1 | grep -v "warning:" | grep -v "^make" || true
     
     UDP_COMPILE_COMMANDS="$PROJECT_ROOT/userland/helloworld/compile_commands.json"
+    if [ "$USE_COMPILEDB" = true ]; then
+        compiledb -o "$UDP_COMPILE_COMMANDS" make 2>&1 | grep -v "warning:" | grep -v "^make" || true
+    elif [ "$IS_MACOS" = true ]; then
+        bear --output "$UDP_COMPILE_COMMANDS" -- make 2>&1 | grep -v "warning:" | grep -v "^make" || true
+    else
+        bear make 2>&1 | grep -v "warning:" | grep -v "^make" || true
+    fi
     if [ -f "$UDP_COMPILE_COMMANDS" ]; then
         ENTRIES=$(extract_entries "$UDP_COMPILE_COMMANDS")
         if [ -n "$ENTRIES" ]; then
