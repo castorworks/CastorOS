@@ -98,15 +98,20 @@ void mutex_unlock(mutex_t *mutex) {
         return;
     }
 
-    bool irq_state = interrupts_disable();
     task_t *current = mutex_current_task();
+    // 如果任务系统还未初始化，直接返回（与 mutex_lock 保持一致）
+    if (current == NULL) {
+        return;
+    }
+
+    bool irq_state = interrupts_disable();
     bool should_wakeup = false;
 
     spinlock_lock(&mutex->lock);
 
     if (!mutex->locked) {
         LOG_WARN_MSG("mutex_unlock: unlock called on unlocked mutex\n");
-    } else if (current == NULL || mutex->owner_pid != current->pid) {
+    } else if (mutex->owner_pid != current->pid) {
         LOG_WARN_MSG("mutex_unlock: current task is not the owner (owner=%u)\n",
                      mutex->owner_pid);
     } else {
