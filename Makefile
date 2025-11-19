@@ -43,6 +43,14 @@ ASM_OBJECTS = $(patsubst $(SRC_DIR)/%.asm, $(BUILD_DIR)/%.o, $(ASM_SOURCES))
 # 所有目标文件
 OBJECTS = $(ASM_OBJECTS) $(C_OBJECTS)
 
+# 操作系统检测
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+	CREATE_SCRIPT = scripts/bootable-img-create-macos.sh
+else
+	CREATE_SCRIPT = scripts/bootable-img-create.sh
+endif
+
 # ============================================================================
 # 内核
 # ============================================================================
@@ -88,7 +96,7 @@ shell:
 
 # 创建可启动的磁盘镜像
 disk: $(KERNEL) shell
-	@bash scripts/bootable-img-create.sh
+	@bash $(CREATE_SCRIPT)
 
 run-disk: disk
 	qemu-system-i386 -hda $(DISK_IMAGE) -serial stdio
