@@ -187,13 +187,46 @@ uint32_t sys_write(int32_t fd, const void *buf, uint32_t count) {
         entry->offset = entry->node->size;
     }
     
-    // 写入数据
-    uint32_t bytes_written = vfs_write(entry->node, entry->offset, count, (uint8_t *)buf);
+    // 重要：将用户空间缓冲区复制到内核空间
+    // 避免在VFS/设备驱动中直接访问用户空间指针
+    // 
+    // 注意：不能在栈上分配大缓冲区（内核栈只有8KB）
+    // 使用小缓冲区或动态分配
+    #define MAX_WRITE_SIZE 512  // 每次最多写512字节（避免栈溢出）
+    uint8_t kernel_buf[MAX_WRITE_SIZE];
+    uint32_t total_written = 0;
     
-    // 更新文件偏移量
-    entry->offset += bytes_written;
+    while (total_written < count) {
+        uint32_t chunk_size = count - total_written;
+        if (chunk_size > MAX_WRITE_SIZE) {
+            chunk_size = MAX_WRITE_SIZE;
+        }
+        
+        // 复制用户空间数据到内核缓冲区
+        const uint8_t *user_ptr = (const uint8_t *)buf + total_written;
+        for (uint32_t i = 0; i < chunk_size; i++) {
+            kernel_buf[i] = user_ptr[i];
+        }
+
+        // 写入数据（使用内核缓冲区）
+        uint32_t bytes_written = vfs_write(entry->node, entry->offset, chunk_size, kernel_buf);
+        
+        if (bytes_written == 0) {
+            LOG_WARN_MSG("sys_write: vfs_write returned 0, breaking\n");
+            break;  // 写入失败或已满
+        }
+        
+        // 更新偏移量和计数
+        entry->offset += bytes_written;
+        total_written += bytes_written;
+        
+        if (bytes_written < chunk_size) {
+            LOG_WARN_MSG("sys_write: partial write %u/%u, breaking\n", bytes_written, chunk_size);
+            break;  // 部分写入，停止
+        }
+    }
     
-    return bytes_written;
+    return total_written;
 }
 
 /**

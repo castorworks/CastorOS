@@ -6,6 +6,7 @@
 #include <kernel/interrupt.h>
 #include <kernel/gdt.h>
 #include <kernel/fd_table.h>
+#include <kernel/sync/spinlock.h>
 #include <mm/heap.h>
 #include <mm/vmm.h>
 #include <mm/pmm.h>
@@ -42,6 +43,9 @@ static task_t *idle_task = NULL;
 /** @brief 调度器是否已初始化 */
 static bool scheduler_initialized = false;
 
+/** @brief 任务管理全局锁 - 保护任务池、就绪队列和 PID 分配 */
+static spinlock_t task_lock;
+
 /* ============================================================================
  * 辅助函数：就绪队列操作
  * ========================================================================== */
@@ -64,7 +68,8 @@ void ready_queue_add(task_t *task) {
         return;
     }
     
-    bool prev_state = interrupts_disable();
+    bool irq_state;
+    spinlock_lock_irqsave(&task_lock, &irq_state);
     
     task->next = NULL;
     task->prev = ready_queue_tail;
@@ -77,7 +82,7 @@ void ready_queue_add(task_t *task) {
     
     ready_queue_tail = task;
     
-    interrupts_restore(prev_state);
+    spinlock_unlock_irqrestore(&task_lock, irq_state);
 }
 
 /**
@@ -88,7 +93,8 @@ void ready_queue_remove(task_t *task) {
         return;
     }
     
-    bool prev_state = interrupts_disable();
+    bool irq_state;
+    spinlock_lock_irqsave(&task_lock, &irq_state);
     
     if (task->prev) {
         task->prev->next = task->next;
@@ -105,7 +111,7 @@ void ready_queue_remove(task_t *task) {
     task->next = NULL;
     task->prev = NULL;
     
-    interrupts_restore(prev_state);
+    spinlock_unlock_irqrestore(&task_lock, irq_state);
 }
 
 /**
@@ -114,7 +120,8 @@ void ready_queue_remove(task_t *task) {
  * @return 下一个就绪任务，如果队列为空返回 NULL
  */
 static task_t* ready_queue_pop(void) {
-    bool prev_state = interrupts_disable();
+    bool irq_state;
+    spinlock_lock_irqsave(&task_lock, &irq_state);
     
     task_t *task = ready_queue_head;
     if (task) {
@@ -129,7 +136,7 @@ static task_t* ready_queue_pop(void) {
         task->prev = NULL;
     }
     
-    interrupts_restore(prev_state);
+    spinlock_unlock_irqrestore(&task_lock, irq_state);
     return task;
 }
 
@@ -141,7 +148,8 @@ static task_t* ready_queue_pop(void) {
  * @brief 分配一个空闲的任务控制块
  */
 task_t* task_alloc(void) {
-    bool prev_state = interrupts_disable();
+    bool irq_state;
+    spinlock_lock_irqsave(&task_lock, &irq_state);
     
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         if (task_pool[i].state == TASK_UNUSED) {
@@ -152,12 +160,12 @@ task_t* task_alloc(void) {
             task_pool[i].time_slice = DEFAULT_TIME_SLICE;
             active_task_count++;
             
-            interrupts_restore(prev_state);
+            spinlock_unlock_irqrestore(&task_lock, irq_state);
             return &task_pool[i];
         }
     }
     
-    interrupts_restore(prev_state);
+    spinlock_unlock_irqrestore(&task_lock, irq_state);
     LOG_ERROR_MSG("task_alloc: No free PCB available (max: %d)\n", MAX_TASKS);
     return NULL;
 }
@@ -170,43 +178,49 @@ void task_free(task_t *task) {
         return;
     }
     
-    bool prev_state = interrupts_disable();
+    // 注意：不能在持有 spinlock 时调用可能阻塞的函数（kfree、vmm_free_page_directory）
+    // 所以先在锁外释放资源，最后在锁内清理 PCB
     
-    // 释放内核栈
-    if (task->kernel_stack_base) {
-        kfree((void*)task->kernel_stack_base);
-        task->kernel_stack_base = 0;
+    uint32_t kernel_stack_base = task->kernel_stack_base;
+    bool is_user = task->is_user_process;
+    uint32_t page_dir_phys = task->page_dir_phys;
+    
+    // 释放内核栈（在锁外执行）
+    if (kernel_stack_base) {
+        kfree((void*)kernel_stack_base);
     }
     
-    // 释放页目录（仅用户进程）
-    if (task->is_user_process && task->page_dir_phys) {
-        vmm_free_page_directory(task->page_dir_phys);
-        task->page_dir_phys = 0;
+    // 释放页目录（在锁外执行，仅用户进程）
+    if (is_user && page_dir_phys) {
+        vmm_free_page_directory(page_dir_phys);
     }
     
-    // 清空 PCB
+    // 在锁内清空 PCB
+    bool irq_state;
+    spinlock_lock_irqsave(&task_lock, &irq_state);
+    
     memset(task, 0, sizeof(task_t));
     task->state = TASK_UNUSED;
-    
     active_task_count--;
     
-    interrupts_restore(prev_state);
+    spinlock_unlock_irqrestore(&task_lock, irq_state);
 }
 
 /**
  * @brief 根据 PID 查找任务
  */
 task_t* task_get_by_pid(uint32_t pid) {
-    bool prev_state = interrupts_disable();
+    bool irq_state;
+    spinlock_lock_irqsave(&task_lock, &irq_state);
     
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         if (task_pool[i].state != TASK_UNUSED && task_pool[i].pid == pid) {
-            interrupts_restore(prev_state);
+            spinlock_unlock_irqrestore(&task_lock, irq_state);
             return &task_pool[i];
         }
     }
     
-    interrupts_restore(prev_state);
+    spinlock_unlock_irqrestore(&task_lock, irq_state);
     return NULL;
 }
 
@@ -221,7 +235,11 @@ task_t* task_get_current(void) {
  * @brief 获取活动任务数量
  */
 uint32_t task_get_count(void) {
-    return active_task_count;
+    bool irq_state;
+    spinlock_lock_irqsave(&task_lock, &irq_state);
+    uint32_t count = active_task_count;
+    spinlock_unlock_irqrestore(&task_lock, irq_state);
+    return count;
 }
 
 /* ============================================================================
@@ -679,6 +697,13 @@ void task_timer_tick(void) {
     // 检查睡眠任务是否应该唤醒
     uint64_t current_time_ms = timer_get_uptime_ms();
     
+    // 收集需要唤醒的任务（避免在持有锁时调用 ready_queue_add）
+    task_t *tasks_to_wake[MAX_TASKS];
+    uint32_t wake_count = 0;
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&task_lock, &irq_state);
+    
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         task_t *task = &task_pool[i];
         
@@ -686,11 +711,18 @@ void task_timer_tick(void) {
             if (current_time_ms >= task->sleep_until_ms) {
                 task->sleep_until_ms = 0;
                 task->state = TASK_READY;
-                ready_queue_add(task);
+                tasks_to_wake[wake_count++] = task;
                 
                 LOG_DEBUG_MSG("Task %u (%s) woke up\n", task->pid, task->name);
             }
         }
+    }
+    
+    spinlock_unlock_irqrestore(&task_lock, irq_state);
+    
+    // 在锁外将任务添加到就绪队列
+    for (uint32_t i = 0; i < wake_count; i++) {
+        ready_queue_add(tasks_to_wake[i]);
     }
     
     // 时间片轮转调度
@@ -733,6 +765,12 @@ void task_exit(uint32_t exit_code) {
     
     // 处理所有子进程
     // 遍历任务池，查找当前进程的子进程
+    task_t *zombie_children[MAX_TASKS];
+    uint32_t zombie_count = 0;
+    
+    bool irq_state_child;
+    spinlock_lock_irqsave(&task_lock, &irq_state_child);
+    
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         task_t *task = &task_pool[i];
         
@@ -744,11 +782,10 @@ void task_exit(uint32_t exit_code) {
         // 检查是否为当前进程的子进程
         if (task->parent == current_task) {
             if (task->state == TASK_ZOMBIE) {
-                // 僵尸子进程：直接清理（没有父进程来回收了）
+                // 僵尸子进程：收集起来稍后清理
                 LOG_DEBUG_MSG("Task %u: cleaning up zombie child %u\n", 
                              current_task->pid, task->pid);
-                // 直接释放资源，因为僵尸进程不在就绪队列中，不会被调度
-                task_free(task);
+                zombie_children[zombie_count++] = task;
             } else {
                 // 运行中的子进程：变成孤儿进程
                 // 当它们退出时会自动清理（因为没有父进程）
@@ -757,6 +794,13 @@ void task_exit(uint32_t exit_code) {
                 task->parent = NULL;
             }
         }
+    }
+    
+    spinlock_unlock_irqrestore(&task_lock, irq_state_child);
+    
+    // 在锁外清理僵尸子进程
+    for (uint32_t i = 0; i < zombie_count; i++) {
+        task_free(zombie_children[i]);
     }
     
     // 如果有父进程，变成僵尸进程等待父进程回收
@@ -848,7 +892,10 @@ void task_block(void *wait_object) {
 void task_wakeup(void *wait_object) {
     (void)wait_object;  // 暂不使用
     
-    bool prev_state = interrupts_disable();
+    task_t *task_to_wake = NULL;
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&task_lock, &irq_state);
     
     // 简化实现：唤醒第一个阻塞的任务
     // 完整实现应该维护每个等待对象的等待队列
@@ -857,14 +904,18 @@ void task_wakeup(void *wait_object) {
         
         if (task->state == TASK_BLOCKED && task->sleep_until_ms == 0) {
             task->state = TASK_READY;
-            ready_queue_add(task);
-            
+            task_to_wake = task;
             LOG_DEBUG_MSG("Task %u (%s) woken up\n", task->pid, task->name);
             break;  // 只唤醒一个任务
         }
     }
     
-    interrupts_restore(prev_state);
+    spinlock_unlock_irqrestore(&task_lock, irq_state);
+    
+    // 在锁外添加到就绪队列
+    if (task_to_wake) {
+        ready_queue_add(task_to_wake);
+    }
 }
 
 /**
@@ -896,6 +947,9 @@ void schedule_from_irq(void *regs) {
  */
 void task_init(void) {
     LOG_INFO_MSG("Initializing task management...\n");
+    
+    // 初始化任务管理锁
+    spinlock_init(&task_lock);
     
     // 清空任务池
     memset(task_pool, 0, sizeof(task_pool));
@@ -938,7 +992,8 @@ void task_print_all(void) {
     kprintf("PID  State     Priority  Runtime(ms)  Name\n");
     kprintf("---  --------  --------  -----------  ----\n");
     
-    bool prev_state = interrupts_disable();
+    bool irq_state;
+    spinlock_lock_irqsave(&task_lock, &irq_state);
     
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         task_t *task = &task_pool[i];
@@ -963,6 +1018,6 @@ void task_print_all(void) {
     
     kprintf("\nActive tasks: %u / %u\n", active_task_count, MAX_TASKS);
     
-    interrupts_restore(prev_state);
+    spinlock_unlock_irqrestore(&task_lock, irq_state);
 }
 

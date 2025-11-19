@@ -18,8 +18,12 @@ void _start(void) {
     puts("Hello from hello.elf!\n");
     
     // Sleep 3 次，每次 1 秒
-    for (int i = 0; i < 60; i++) {
-        sleep(1);
+    for (int i = 0; i < 200; i++) {
+        struct timespec req = {
+            .tv_sec = 0,
+            .tv_nsec = 10,
+        };
+        nanosleep(&req, NULL);
         puts("1 second passed\n");
     }
     

@@ -94,8 +94,12 @@ debug-silent: $(KERNEL)
 shell:
 	@$(MAKE) -C userland/shell
 
+# 编译 Hello World
+hello:
+	@$(MAKE) -C userland/helloworld
+
 # 创建可启动的磁盘镜像
-disk: $(KERNEL) shell
+disk: $(KERNEL) shell hello
 	@bash $(CREATE_SCRIPT)
 
 run-disk: disk
