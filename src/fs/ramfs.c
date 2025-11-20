@@ -7,6 +7,7 @@
 #include <lib/string.h>
 #include <lib/klog.h>
 #include <mm/heap.h>
+#include <kernel/sync/spinlock.h>
 
 // ramfs 文件数据结构
 typedef struct ramfs_file {
@@ -30,6 +31,9 @@ typedef struct ramfs_dir {
 
 // 全局 inode 计数器
 static uint32_t next_inode = 1;
+
+// inode 分配锁（保护 next_inode 的并发访问）
+static spinlock_t inode_alloc_lock;
 
 // ============================================================================
 // 内部辅助函数
@@ -321,7 +325,12 @@ static int ramfs_create_file(fs_node_t *node, const char *name) {
     memset(new_node, 0, sizeof(fs_node_t));
     strncpy(new_node->name, name, 127);
     new_node->name[127] = '\0';
+    
+    // 分配 inode（原子操作）
+    spinlock_lock(&inode_alloc_lock);
     new_node->inode = next_inode++;
+    spinlock_unlock(&inode_alloc_lock);
+    
     new_node->type = FS_FILE;
     new_node->size = 0;
     new_node->permissions = FS_PERM_READ | FS_PERM_WRITE;
@@ -382,7 +391,12 @@ static int ramfs_mkdir(fs_node_t *node, const char *name, uint32_t permissions) 
     memset(new_node, 0, sizeof(fs_node_t));
     strncpy(new_node->name, name, 127);
     new_node->name[127] = '\0';
+    
+    // 分配 inode（原子操作）
+    spinlock_lock(&inode_alloc_lock);
     new_node->inode = next_inode++;
+    spinlock_unlock(&inode_alloc_lock);
+    
     new_node->type = FS_DIRECTORY;
     new_node->size = 0;
     new_node->permissions = permissions;
@@ -490,7 +504,12 @@ fs_node_t *ramfs_create(const char *name) {
     memset(root, 0, sizeof(fs_node_t));
     strncpy(root->name, name ? name : "/", 127);
     root->name[127] = '\0';
+    
+    // 分配 inode（原子操作）
+    spinlock_lock(&inode_alloc_lock);
     root->inode = next_inode++;
+    spinlock_unlock(&inode_alloc_lock);
+    
     root->type = FS_DIRECTORY;
     root->size = 0;
     root->permissions = FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC;
@@ -511,6 +530,9 @@ fs_node_t *ramfs_create(const char *name) {
  */
 fs_node_t *ramfs_init(void) {
     LOG_INFO_MSG("RAMFS: Initializing RAM filesystem...\n");
+    
+    // 初始化 inode 分配锁
+    spinlock_init(&inode_alloc_lock);
     
     fs_node_t *root = ramfs_create("/");
     if (!root) {

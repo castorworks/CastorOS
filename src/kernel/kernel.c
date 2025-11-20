@@ -180,26 +180,22 @@ void kernel_main(multiboot_info_t* mbi) {
     kprintf("\n");
 
     // ========================================================================
-    // 阶段 6: 内核 Shell（Kernel Shell）
+    // 阶段 6: Shell（Shell）
     // ========================================================================
-    // LOG_INFO_MSG("[Stage 6] Starting kernel shell...\n");
-    
-    // 初始化 Shell
-    // kernel_shell_init();
-    // LOG_DEBUG_MSG("  [6.1] Kernel shell initialized\n");
-    
-    /* 内核初始化完成 */
-    // LOG_INFO_MSG("Kernel initialization complete\n\n");
-    
-    // 将 Shell 作为内核线程运行，这样它会出现在进程列表中
-    // task_create_kernel_thread(kernel_shell_run, "kernel_shell");
-    // LOG_DEBUG_MSG("  [6.2] Kernel shell thread created\n");
+    LOG_INFO_MSG("[Stage 6] Starting Shell...\n");
 
-    // ========================================================================
-    // 阶段 7: 用户 Shell（User Shell）
-    // ========================================================================
-    LOG_INFO_MSG("[Stage 7] Loading user shell...\n");
-    load_user_shell();
+    LOG_INFO_MSG("  [6.1] Loading user shell...\n");
+    bool ok = load_user_shell();
+    if (!ok) {
+        LOG_ERROR_MSG("Failed to load user shell, trying to initialize kernel shell...\n");
+
+        // 初始化 Shell
+        kernel_shell_init();
+        LOG_DEBUG_MSG("  [6.2] Kernel shell initialized\n");
+        
+        // 将 Shell 作为内核线程运行，这样它会出现在进程列表中
+        task_create_kernel_thread(kernel_shell_run, "kernel_shell");
+    }
     
     // 主线程进入空闲循环（让调度器接管）
     LOG_INFO_MSG("Kernel entering scheduler...\n");

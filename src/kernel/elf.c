@@ -73,8 +73,7 @@ uint32_t elf_get_entry(const void *elf_data) {
 /**
  * 加载 ELF 文件到指定页目录
  */
-bool elf_load(const void *elf_data, uint32_t size, 
-              page_directory_t *page_dir, uint32_t *entry_point) {
+bool elf_load(const void *elf_data, uint32_t size, page_directory_t *page_dir, uint32_t *entry_point) {
     if (!elf_data || !page_dir || !entry_point) {
         LOG_ERROR_MSG("ELF: Invalid parameters\n");
         return false;
