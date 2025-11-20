@@ -8,6 +8,7 @@
 #include <lib/klog.h>
 #include <mm/heap.h>
 #include <kernel/sync/spinlock.h>
+#include <kernel/sync/mutex.h>
 
 // ramfs 文件数据结构
 typedef struct ramfs_file {
@@ -27,6 +28,7 @@ typedef struct ramfs_dirent {
 typedef struct ramfs_dir {
     ramfs_dirent_t *entries;  // 目录项链表
     uint32_t count;           // 目录项数量
+    mutex_t lock;             // 目录锁（保护目录操作）
 } ramfs_dir_t;
 
 // 全局 inode 计数器
@@ -217,6 +219,9 @@ static struct dirent *ramfs_readdir(fs_node_t *node, uint32_t index) {
         return NULL;
     }
     
+    // 加锁保护目录读取
+    mutex_lock(&dir->lock);
+    
     // 遍历到指定索引
     ramfs_dirent_t *current = dir->entries;
     uint32_t i = 0;
@@ -227,6 +232,7 @@ static struct dirent *ramfs_readdir(fs_node_t *node, uint32_t index) {
     }
     
     if (!current) {
+        mutex_unlock(&dir->lock);
         return NULL;  // 索引超出范围
     }
     
@@ -265,6 +271,7 @@ static struct dirent *ramfs_readdir(fs_node_t *node, uint32_t index) {
             break;
     }
     
+    mutex_unlock(&dir->lock);
     return &dent;
 }
 
@@ -281,8 +288,13 @@ static fs_node_t *ramfs_finddir(fs_node_t *node, const char *name) {
         return NULL;
     }
     
+    // 加锁保护目录查找
+    mutex_lock(&dir->lock);
     ramfs_dirent_t *entry = ramfs_find_entry(dir, name);
-    return entry ? entry->node : NULL;
+    fs_node_t *result = entry ? entry->node : NULL;
+    mutex_unlock(&dir->lock);
+    
+    return result;
 }
 
 /**
@@ -298,14 +310,19 @@ static int ramfs_create_file(fs_node_t *node, const char *name) {
         return -1;
     }
     
+    // 加锁保护目录修改
+    mutex_lock(&dir->lock);
+    
     // 检查文件是否已存在
     if (ramfs_find_entry(dir, name)) {
+        mutex_unlock(&dir->lock);
         return -1;
     }
     
     // 创建新文件节点
     fs_node_t *new_node = (fs_node_t *)kmalloc(sizeof(fs_node_t));
     if (!new_node) {
+        mutex_unlock(&dir->lock);
         return -1;
     }
     
@@ -313,6 +330,7 @@ static int ramfs_create_file(fs_node_t *node, const char *name) {
     ramfs_file_t *file = (ramfs_file_t *)kmalloc(sizeof(ramfs_file_t));
     if (!file) {
         kfree(new_node);
+        mutex_unlock(&dir->lock);
         return -1;
     }
     
@@ -346,9 +364,11 @@ static int ramfs_create_file(fs_node_t *node, const char *name) {
     if (ramfs_add_entry(dir, name, new_node) != 0) {
         kfree(file);
         kfree(new_node);
+        mutex_unlock(&dir->lock);
         return -1;
     }
     
+    mutex_unlock(&dir->lock);
     return 0;
 }
 
@@ -365,14 +385,19 @@ static int ramfs_mkdir(fs_node_t *node, const char *name, uint32_t permissions) 
         return -1;
     }
     
+    // 加锁保护父目录修改
+    mutex_lock(&parent_dir->lock);
+    
     // 检查目录是否已存在
     if (ramfs_find_entry(parent_dir, name)) {
+        mutex_unlock(&parent_dir->lock);
         return -1;
     }
     
     // 创建新目录节点
     fs_node_t *new_node = (fs_node_t *)kmalloc(sizeof(fs_node_t));
     if (!new_node) {
+        mutex_unlock(&parent_dir->lock);
         return -1;
     }
     
@@ -380,12 +405,14 @@ static int ramfs_mkdir(fs_node_t *node, const char *name, uint32_t permissions) 
     ramfs_dir_t *new_dir = (ramfs_dir_t *)kmalloc(sizeof(ramfs_dir_t));
     if (!new_dir) {
         kfree(new_node);
+        mutex_unlock(&parent_dir->lock);
         return -1;
     }
     
     // 初始化目录数据
     new_dir->entries = NULL;
     new_dir->count = 0;
+    mutex_init(&new_dir->lock);  // 初始化新目录的锁
     
     // 初始化目录节点
     memset(new_node, 0, sizeof(fs_node_t));
@@ -413,9 +440,11 @@ static int ramfs_mkdir(fs_node_t *node, const char *name, uint32_t permissions) 
     if (ramfs_add_entry(parent_dir, name, new_node) != 0) {
         kfree(new_dir);
         kfree(new_node);
+        mutex_unlock(&parent_dir->lock);
         return -1;
     }
     
+    mutex_unlock(&parent_dir->lock);
     return 0;
 }
 
@@ -432,9 +461,13 @@ static int ramfs_unlink(fs_node_t *node, const char *name) {
         return -1;
     }
     
+    // 加锁保护父目录修改
+    mutex_lock(&dir->lock);
+    
     // 查找要删除的条目
     ramfs_dirent_t *entry = ramfs_find_entry(dir, name);
     if (!entry) {
+        mutex_unlock(&dir->lock);
         return -1;  // 文件不存在
     }
     
@@ -444,6 +477,7 @@ static int ramfs_unlink(fs_node_t *node, const char *name) {
     if (target->type == FS_DIRECTORY) {
         ramfs_dir_t *target_dir = (ramfs_dir_t *)target->impl;
         if (target_dir && target_dir->count > 0) {
+            mutex_unlock(&dir->lock);
             return -1;  // 目录不为空
         }
         
@@ -470,6 +504,7 @@ static int ramfs_unlink(fs_node_t *node, const char *name) {
     // 释放节点
     kfree(target);
     
+    mutex_unlock(&dir->lock);
     return 0;
 }
 
@@ -499,6 +534,7 @@ fs_node_t *ramfs_create(const char *name) {
     // 初始化根目录数据
     root_dir->entries = NULL;
     root_dir->count = 0;
+    mutex_init(&root_dir->lock);  // 初始化根目录的锁
     
     // 初始化根目录节点
     memset(root, 0, sizeof(fs_node_t));
