@@ -1676,14 +1676,16 @@ static void shell_run(void) {
             continue;
         }
         
+        // 先添加到历史记录（在解析之前，因为解析会修改 buffer）
+        if (shell_state.input_buffer[0] != '\0') {
+            shell_add_history(shell_state.input_buffer);
+        }
+        
         // 解析命令
         if (shell_parse_command(shell_state.input_buffer, 
                                 &shell_state.argc, 
                                 shell_state.argv) == 0) {
             if (shell_state.argc > 0) {
-                // 添加到历史记录
-                shell_add_history(shell_state.input_buffer);
-                
                 // 执行命令
                 shell_execute_command(shell_state.argc, shell_state.argv);
             }

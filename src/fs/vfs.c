@@ -6,6 +6,7 @@
 #include <lib/string.h>
 #include <lib/klog.h>
 #include <mm/heap.h>
+#include <kernel/sync/mutex.h>
 
 static fs_node_t *fs_root = NULL;
 
@@ -21,10 +22,15 @@ typedef struct {
 static vfs_mount_entry_t mount_table[MAX_MOUNTS];
 static uint32_t mount_count = 0;
 
+/* VFS 挂载表互斥锁 - 保护 mount_table 和 mount_count */
+static mutex_t vfs_mount_mutex;
+
 void vfs_init(void) {
     LOG_INFO_MSG("VFS: Initializing virtual file system...\n");
     fs_root = NULL;
     mount_count = 0;
+    mutex_init(&vfs_mount_mutex);
+    LOG_INFO_MSG("VFS: Mount table mutex initialized\n");
 }
 
 /* 查询挂载表，根据路径获取挂载的根节点 */
@@ -35,15 +41,20 @@ static fs_node_t *vfs_get_mounted_root_by_path(const char *path) {
     
     LOG_DEBUG_MSG("VFS: get_mounted_root_by_path: checking '%s' against %u mounts\n", path, mount_count);
     
+    mutex_lock(&vfs_mount_mutex);
+    
     for (uint32_t i = 0; i < mount_count; i++) {
         LOG_DEBUG_MSG("VFS: get_mounted_root_by_path: mount[%u] = {%s, %p}\n", i, 
                      mount_table[i].path, mount_table[i].root);
         if (strcmp(mount_table[i].path, path) == 0) {
             LOG_DEBUG_MSG("VFS: found mounted root for '%s': %p\n", path, mount_table[i].root);
-            return mount_table[i].root;
+            fs_node_t *result = mount_table[i].root;
+            mutex_unlock(&vfs_mount_mutex);
+            return result;
         }
     }
     
+    mutex_unlock(&vfs_mount_mutex);
     LOG_DEBUG_MSG("VFS: no mounted root found for '%s'\n", path);
     return NULL;
 }
@@ -165,6 +176,7 @@ fs_node_t *vfs_path_to_node(const char *path) {
     }
     
     /* 检查是否是挂载点的子路径（如 /dev/zero） */
+    mutex_lock(&vfs_mount_mutex);
     for (uint32_t i = 0; i < mount_count; i++) {
         const char *mount_path = mount_table[i].path;
         uint32_t mount_len = strlen(mount_path);
@@ -239,9 +251,11 @@ fs_node_t *vfs_path_to_node(const char *path) {
             }
             
             LOG_DEBUG_MSG("VFS: path_to_node: resolved to %p in mounted fs\n", current);
+            mutex_unlock(&vfs_mount_mutex);
             return current;
         }
     }
+    mutex_unlock(&vfs_mount_mutex);
     
     /* 正常路径解析（不在任何挂载点下） */
     // 跳过开头的 '/'
@@ -488,14 +502,27 @@ int vfs_mount(const char *path, fs_node_t *root) {
         return -1;
     }
     
+    /* 获取挂载表锁，保护后续的检查和修改操作 */
+    mutex_lock(&vfs_mount_mutex);
+    
     /* 检查是否已经挂载了文件系统 */
-    if (vfs_get_mounted_root_by_path(path) != NULL) {
+    bool already_mounted = false;
+    for (uint32_t i = 0; i < mount_count; i++) {
+        if (strcmp(mount_table[i].path, path) == 0) {
+            already_mounted = true;
+            break;
+        }
+    }
+    
+    if (already_mounted) {
+        mutex_unlock(&vfs_mount_mutex);
         LOG_ERROR_MSG("VFS: Mount point '%s' is already mounted\n", path);
         return -1;
     }
     
     /* 检查挂载表是否满 */
     if (mount_count >= MAX_MOUNTS) {
+        mutex_unlock(&vfs_mount_mutex);
         LOG_ERROR_MSG("VFS: Mount table is full (max %u mounts)\n", MAX_MOUNTS);
         return -1;
     }
@@ -505,6 +532,8 @@ int vfs_mount(const char *path, fs_node_t *root) {
     mount_table[mount_count].path[MAX_MOUNT_PATH - 1] = '\0';
     mount_table[mount_count].root = root;
     mount_count++;
+    
+    mutex_unlock(&vfs_mount_mutex);
     
     LOG_INFO_MSG("VFS: Filesystem mounted at '%s' (root=%p, total_mounts=%u)\n", 
                  path, root, mount_count);
