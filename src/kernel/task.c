@@ -190,6 +190,11 @@ void task_free(task_t *task) {
         kfree((void*)kernel_stack_base);
     }
     
+    // 释放文件描述符表
+    if (task->fd_table) {
+        kfree(task->fd_table);
+    }
+    
     // 释放页目录（在锁外执行，仅用户进程）
     if (is_user && page_dir_phys) {
         vmm_free_page_directory(page_dir_phys);

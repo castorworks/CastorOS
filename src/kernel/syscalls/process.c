@@ -269,15 +269,59 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
         return (uint32_t)-1;
     }
     
-    // 加载 ELF 到当前进程的页目录
-    if (!elf_load(elf_data, file_size, current->page_dir, &entry_point)) {
+    // ============================================================================
+    // 创建新的地址空间
+    // 必须使用新的页目录，否则直接在旧页目录上加载会导致：
+    // 1. 覆盖旧映射时泄露物理页
+    // 2. 失败时无法回滚
+    // ============================================================================
+    
+    uint32_t new_dir_phys = vmm_create_page_directory();
+    if (!new_dir_phys) {
+        LOG_ERROR_MSG("sys_execve: failed to create new page directory\n");
+        kfree(elf_data);
+        return (uint32_t)-1;
+    }
+    page_directory_t *new_dir = (page_directory_t*)PHYS_TO_VIRT(new_dir_phys);
+    
+    // 保存旧的页目录信息，用于回滚或释放
+    page_directory_t *old_dir = current->page_dir;
+    uint32_t old_dir_phys = current->page_dir_phys;
+    
+    // 加载 ELF 到新页目录
+    if (!elf_load(elf_data, file_size, new_dir, &entry_point)) {
         LOG_ERROR_MSG("sys_execve: failed to load ELF '%s'\n", path);
+        vmm_free_page_directory(new_dir_phys);
         kfree(elf_data);
         return (uint32_t)-1;
     }
     
-    // 释放 ELF 数据
+    // 释放 ELF 数据（已经加载到新页目录的物理页中了）
     kfree(elf_data);
+    
+    // 临时更新进程的页目录指针，以便 task_setup_user_stack 操作新目录
+    current->page_dir = new_dir;
+    current->page_dir_phys = new_dir_phys;
+    
+    // 在新页目录中设置用户栈
+    if (!task_setup_user_stack(current)) {
+        LOG_ERROR_MSG("sys_execve: failed to setup user stack\n");
+        // 回滚
+        current->page_dir = old_dir;
+        current->page_dir_phys = old_dir_phys;
+        vmm_free_page_directory(new_dir_phys);
+        return (uint32_t)-1;
+    }
+    
+    // ============================================================================
+    // 切换到新地址空间
+    // ============================================================================
+    
+    vmm_switch_page_directory(new_dir_phys);
+    
+    // 释放旧页目录及其映射的所有用户空间物理页
+    // 这解决了 exec 覆盖映射导致的内存泄露问题
+    vmm_free_page_directory(old_dir_phys);
     
     // 初始化标准文件描述符（如果还没有初始化）
     // 这对于 fork + exec 模式很重要：
@@ -339,11 +383,6 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
     current->context.esp = current->user_stack;
     current->context.eflags = 0x202;  // 中断使能
     current->context.cr3 = current->page_dir_phys;
-    
-    // ============================================================================
-    // 关键修复：立即切换到新页目录，确保返回用户态时使用新的地址空间
-    // ============================================================================
-    vmm_switch_page_directory(current->page_dir_phys);
     
     // ============================================================================
     // 关键修复：修改系统调用栈帧，让 iret 返回到新程序的入口点
@@ -628,7 +667,7 @@ uint32_t sys_waitpid(int32_t pid, uint32_t *wstatus, uint32_t options) {
         
         // 查找符合条件的子进程
         task_t *found_child = NULL;
-        bool has_children = false;
+        bool has_waited_child = false;
         
         // 遍历所有任务，查找子进程
         for (uint32_t i = 0; i < MAX_TASKS; i++) {
@@ -644,12 +683,13 @@ uint32_t sys_waitpid(int32_t pid, uint32_t *wstatus, uint32_t options) {
                 continue;
             }
             
-            has_children = true;
-            
             // 检查 PID 是否匹配
             if (pid > 0 && (int32_t)task->pid != pid) {
                 continue;  // 不是我们要等待的特定进程
             }
+            
+            // 找到了符合条件的子进程（无论状态如何）
+            has_waited_child = true;
             
             // 检查是否为僵尸进程（已退出）
             if (task->state == TASK_ZOMBIE) {
@@ -689,9 +729,9 @@ uint32_t sys_waitpid(int32_t pid, uint32_t *wstatus, uint32_t options) {
         
         interrupts_restore(prev_state);
         
-        // 如果没有任何子进程，返回错误
-        if (!has_children) {
-            LOG_DEBUG_MSG("sys_waitpid: no children to wait for\n");
+        // 如果没有符合条件的子进程（指定的进程不存在或不是子进程），返回错误
+        if (!has_waited_child) {
+            LOG_DEBUG_MSG("sys_waitpid: child PID %d not found or not a child\n", pid);
             return (uint32_t)-1;
         }
         
