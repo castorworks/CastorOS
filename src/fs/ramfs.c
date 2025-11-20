@@ -15,6 +15,7 @@ typedef struct ramfs_file {
     uint8_t *data;        // 文件数据
     uint32_t size;        // 文件大小
     uint32_t capacity;    // 已分配容量
+    mutex_t lock;         // 文件锁（保护文件数据）
 } ramfs_file_t;
 
 // ramfs 目录项
@@ -116,12 +117,21 @@ static uint32_t ramfs_read(fs_node_t *node, uint32_t offset, uint32_t size, uint
     }
     
     ramfs_file_t *file = (ramfs_file_t *)node->impl;
-    if (!file || !file->data) {
+    if (!file) {
+        return 0;
+    }
+    
+    // 加锁保护文件读取
+    mutex_lock(&file->lock);
+    
+    if (!file->data) {
+        mutex_unlock(&file->lock);
         return 0;
     }
     
     // 检查偏移量
     if (offset >= file->size) {
+        mutex_unlock(&file->lock);
         return 0;
     }
     
@@ -133,6 +143,8 @@ static uint32_t ramfs_read(fs_node_t *node, uint32_t offset, uint32_t size, uint
     
     // 复制数据
     memcpy(buffer, file->data + offset, to_read);
+    
+    mutex_unlock(&file->lock);
     return to_read;
 }
 
@@ -149,6 +161,9 @@ static uint32_t ramfs_write(fs_node_t *node, uint32_t offset, uint32_t size, uin
         return 0;
     }
     
+    // 加锁保护文件写入
+    mutex_lock(&file->lock);
+    
     // 计算需要的总大小
     uint32_t new_size = offset + size;
     
@@ -160,6 +175,7 @@ static uint32_t ramfs_write(fs_node_t *node, uint32_t offset, uint32_t size, uin
         // 重新分配内存
         uint8_t *new_data = (uint8_t *)kmalloc(new_capacity);
         if (!new_data) {
+            mutex_unlock(&file->lock);
             return 0;  // 内存不足
         }
         
@@ -186,6 +202,7 @@ static uint32_t ramfs_write(fs_node_t *node, uint32_t offset, uint32_t size, uin
         node->size = new_size;
     }
     
+    mutex_unlock(&file->lock);
     return size;
 }
 
@@ -338,6 +355,7 @@ static int ramfs_create_file(fs_node_t *node, const char *name) {
     file->data = NULL;
     file->size = 0;
     file->capacity = 0;
+    mutex_init(&file->lock);  // 初始化文件锁
     
     // 初始化文件节点
     memset(new_node, 0, sizeof(fs_node_t));
