@@ -28,12 +28,14 @@ boot_page_directory:
     ; 页目录第 1-511 项：未映射
     times (KERNEL_PAGE_NUMBER - 1) dd 0
     
-    ; 页目录第 512-513 项：映射 0x80000000-0x80800000（高半核映射 8MB）
+    ; 页目录第 512-515 项：映射 0x80000000-0x81000000（高半核映射 16MB）
     dd (boot_page_table1 - KERNEL_VIRTUAL_BASE) + 0x003  ; 0-4MB
     dd (boot_page_table2 - KERNEL_VIRTUAL_BASE) + 0x003  ; 4-8MB
+    dd (boot_page_table3 - KERNEL_VIRTUAL_BASE) + 0x003  ; 8-12MB
+    dd (boot_page_table4 - KERNEL_VIRTUAL_BASE) + 0x003  ; 12-16MB
     
-    ; 页目录第 514-1023 项：未映射
-    times (1024 - KERNEL_PAGE_NUMBER - 2) dd 0
+    ; 页目录第 516-1023 项：未映射
+    times (1024 - KERNEL_PAGE_NUMBER - 4) dd 0
 
 ; 引导页表 1：映射物理内存 0-4MB
 ; 每个页表项映射一个 4KB 页
@@ -55,6 +57,22 @@ boot_page_table2:
         %assign i i+1
     %endrep
 
+; 引导页表 3：映射物理内存 8MB-12MB
+boot_page_table3:
+    %assign i 2048
+    %rep 1024
+        dd (i << 12) | 0x003
+        %assign i i+1
+    %endrep
+
+; 引导页表 4：映射物理内存 12MB-16MB
+boot_page_table4:
+    %assign i 3072
+    %rep 1024
+        dd (i << 12) | 0x003
+        %assign i i+1
+    %endrep
+
 section .text
 align 4
 
@@ -62,6 +80,8 @@ global _start
 global boot_page_directory
 global boot_page_table1
 global boot_page_table2
+global boot_page_table3
+global boot_page_table4
 global stack_bottom
 global stack_top
 extern kernel_main

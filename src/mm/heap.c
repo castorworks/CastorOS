@@ -12,14 +12,14 @@
 #include <lib/kprintf.h>
 #include <lib/string.h>
 #include <kernel/panic.h>
-#include <kernel/sync/mutex.h>
+#include <kernel/sync/spinlock.h>
 
 static uint32_t heap_start;        ///< 堆起始地址
 static uint32_t heap_end;          ///< 堆当前结束地址
 static uint32_t heap_max;          ///< 堆最大地址
 static heap_block_t *first_block = NULL;  ///< 第一个内存块指针
 static heap_block_t *last_block = NULL;   ///< 最后一个内存块指针
-static mutex_t heap_mutex;         ///< 堆互斥锁，保护堆的内部状态
+static spinlock_t heap_lock;       ///< 堆自旋锁，保护堆的内部状态
 
 /**
  * @brief 扩展堆空间
@@ -101,8 +101,8 @@ void heap_init(uint32_t start, uint32_t size) {
     heap_start = heap_end = PAGE_ALIGN_UP(start);
     heap_max = heap_start + size;
     
-    // 初始化堆互斥锁
-    mutex_init(&heap_mutex);
+    // 初始化堆自旋锁
+    spinlock_init(&heap_lock);
     
     // 分配第一页作为初始堆空间
     if (!expand(PAGE_SIZE)) PANIC("Heap init failed");
@@ -126,7 +126,8 @@ void heap_init(uint32_t start, uint32_t size) {
 void* kmalloc(size_t size) {
     if (!size) return NULL;
     
-    mutex_lock(&heap_mutex);
+    bool irq_state;
+    spinlock_lock_irqsave(&heap_lock, &irq_state);
     
     // 对齐到4字节边界
     size = (size + 3) & ~3;
@@ -137,7 +138,7 @@ void* kmalloc(size_t size) {
             b->is_free = false;
             split(b, size);
             void *ptr = (void*)((uint32_t)b + sizeof(heap_block_t));
-            mutex_unlock(&heap_mutex);
+            spinlock_unlock_irqrestore(&heap_lock, irq_state);
             return ptr;
         }
     }
@@ -145,7 +146,7 @@ void* kmalloc(size_t size) {
     // 没有找到空闲块，扩展堆空间
     uint32_t old = heap_end;
     if (!expand(size + sizeof(heap_block_t))) {
-        mutex_unlock(&heap_mutex);
+        spinlock_unlock_irqrestore(&heap_lock, irq_state);
         return NULL;
     }
     
@@ -164,7 +165,7 @@ void* kmalloc(size_t size) {
     last_block = new;
     
     void *ptr = (void*)((uint32_t)new + sizeof(heap_block_t));
-    mutex_unlock(&heap_mutex);
+    spinlock_unlock_irqrestore(&heap_lock, irq_state);
     return ptr;
 }
 
@@ -177,19 +178,20 @@ void* kmalloc(size_t size) {
 void kfree(void* ptr) {
     if (!ptr) return;
     
-    mutex_lock(&heap_mutex);
+    bool irq_state;
+    spinlock_lock_irqsave(&heap_lock, &irq_state);
     
     // 获取块头指针
     heap_block_t *b = (heap_block_t*)((uint32_t)ptr - sizeof(heap_block_t));
     // 验证魔数
     if (b->magic != HEAP_MAGIC) {
-        mutex_unlock(&heap_mutex);
+        spinlock_unlock_irqrestore(&heap_lock, irq_state);
         return;
     }
     b->is_free = true;
     coalesce(b);
     
-    mutex_unlock(&heap_mutex);
+    spinlock_unlock_irqrestore(&heap_lock, irq_state);
 }
 
 /**
@@ -205,24 +207,25 @@ void* krealloc(void* ptr, size_t size) {
     if (!ptr) return kmalloc(size);
     if (!size) { kfree(ptr); return NULL; }
     
-    mutex_lock(&heap_mutex);
+    bool irq_state;
+    spinlock_lock_irqsave(&heap_lock, &irq_state);
     
     heap_block_t *b = (heap_block_t*)((uint32_t)ptr - sizeof(heap_block_t));
     if (b->magic != HEAP_MAGIC) {
-        mutex_unlock(&heap_mutex);
+        spinlock_unlock_irqrestore(&heap_lock, irq_state);
         return NULL;
     }
     
     // 如果新大小小于等于原大小，直接返回
     if (size <= b->size) {
-        mutex_unlock(&heap_mutex);
+        spinlock_unlock_irqrestore(&heap_lock, irq_state);
         return ptr;
     }
     
     // 保存旧大小用于复制
     size_t old_size = b->size;
     
-    mutex_unlock(&heap_mutex);
+    spinlock_unlock_irqrestore(&heap_lock, irq_state);
     
     // 分配新内存并复制数据（kmalloc/kfree 会自己获取锁）
     void* new = kmalloc(size);
@@ -256,7 +259,8 @@ void* kcalloc(size_t num, size_t size) {
  * 统计并打印堆的总大小、已使用和空闲内存
  */
 void heap_print_info(void) {
-    mutex_lock(&heap_mutex);
+    bool irq_state;
+    spinlock_lock_irqsave(&heap_lock, &irq_state);
     
     size_t total = heap_end - heap_start;
     size_t used = 0, free = 0;
@@ -267,7 +271,7 @@ void heap_print_info(void) {
         else used += b->size;
     }
     
-    mutex_unlock(&heap_mutex);
+    spinlock_unlock_irqrestore(&heap_lock, irq_state);
     
     kprintf("\n===================================== Heap =====================================\n");
     kprintf("Total: %u KB\n", total/1024);

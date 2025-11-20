@@ -10,11 +10,14 @@
 #include <lib/kprintf.h>
 #include <lib/string.h>
 #include <kernel/panic.h>
+#include <kernel/sync/spinlock.h>
 
 static uint32_t *frame_bitmap = NULL;  ///< 页帧位图
 static uint32_t bitmap_size = 0;       ///< 位图大小（32位字数量）
 static uint32_t total_frames = 0;      ///< 总页帧数
 static pmm_info_t pmm_info = {0};      ///< 物理内存信息
+static uint32_t last_free_index = 0;   ///< 上次分配的空闲页帧索引（优化搜索）
+static spinlock_t pmm_lock;            ///< PMM 自旋锁
 extern uint32_t _kernel_end;           ///< 内核结束地址
 
 /**
@@ -47,17 +50,38 @@ static inline bool test_frame(uint32_t idx) {
  * @return 成功返回页帧索引，失败返回 -1
  */
 static int32_t find_free_frame(void) {
-    // 遍历位图查找第一个空闲位
-    for (uint32_t i = 0; i < bitmap_size; i++) {
+    // 从上次分配的位置开始搜索，优化性能
+    for (uint32_t i = last_free_index; i < bitmap_size; i++) {
         if (frame_bitmap[i] != 0xFFFFFFFF) {
             for (uint32_t bit = 0; bit < 32; bit++) {
                 if (!(frame_bitmap[i] & (1 << bit))) {
                     uint32_t idx = i * 32 + bit;
-                    if (idx < total_frames) return idx;
+                    if (idx < total_frames) {
+                        last_free_index = i; // 更新搜索游标
+                        return idx;
+                    }
                 }
             }
         }
     }
+    
+    // 如果后面没有找到，从头开始搜索
+    if (last_free_index > 0) {
+        for (uint32_t i = 0; i < last_free_index; i++) {
+            if (frame_bitmap[i] != 0xFFFFFFFF) {
+                for (uint32_t bit = 0; bit < 32; bit++) {
+                    if (!(frame_bitmap[i] & (1 << bit))) {
+                        uint32_t idx = i * 32 + bit;
+                        if (idx < total_frames) {
+                            last_free_index = i;
+                            return idx;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
     return -1;
 }
 
@@ -105,6 +129,9 @@ void pmm_init(multiboot_info_t *mbi) {
     total_frames = max_addr / PAGE_SIZE;
     pmm_info.total_frames = total_frames;
     
+    // 初始化 PMM 锁
+    spinlock_init(&pmm_lock);
+    
     // 初始化位图（默认所有页帧已使用）
     uint32_t bitmap_bytes = PAGE_ALIGN_UP((total_frames + 7) / 8);
     frame_bitmap = (uint32_t*)PAGE_ALIGN_UP((uint32_t)&_kernel_end);
@@ -142,6 +169,22 @@ void pmm_init(multiboot_info_t *mbi) {
         mmap = (multiboot_memory_map_t*)((uint32_t)mmap + mmap->size + 4);
     }
     
+    // 处理 Multiboot 模块（如 initrd），标记为已使用
+    if (mbi->flags & MULTIBOOT_INFO_MODS && mbi->mods_count > 0) {
+        multiboot_module_t *mod = (multiboot_module_t*)PHYS_TO_VIRT(mbi->mods_addr);
+        for (uint32_t i = 0; i < mbi->mods_count; i++) {
+            uint32_t start_frame = PAGE_ALIGN_DOWN(mod[i].mod_start) / PAGE_SIZE;
+            uint32_t end_frame = PAGE_ALIGN_UP(mod[i].mod_end) / PAGE_SIZE;
+            
+            for (uint32_t f = start_frame; f < end_frame; f++) {
+                if (f < total_frames && !test_frame(f)) {
+                    set_frame(f);
+                    pmm_info.free_frames--;
+                }
+            }
+        }
+    }
+
     pmm_info.used_frames = total_frames - pmm_info.free_frames;
     pmm_print_info();
 }
@@ -153,8 +196,14 @@ void pmm_init(multiboot_info_t *mbi) {
  * 分配后会清零页帧内容
  */
 uint32_t pmm_alloc_frame(void) {
+    bool irq_state;
+    spinlock_lock_irqsave(&pmm_lock, &irq_state);
+
     int32_t idx = find_free_frame();
-    if (idx < 0) return 0;
+    if (idx < 0) {
+        spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+        return 0;
+    }
     
     set_frame(idx);
     pmm_info.free_frames--;
@@ -169,11 +218,14 @@ uint32_t pmm_alloc_frame(void) {
         clear_frame(idx);
         pmm_info.free_frames++;
         pmm_info.used_frames--;
+        spinlock_unlock_irqrestore(&pmm_lock, irq_state);
         return 0;
     }
     
     // 清零页帧内容
     memset((void*)PHYS_TO_VIRT(addr), 0, PAGE_SIZE);
+    
+    spinlock_unlock_irqrestore(&pmm_lock, irq_state);
     return addr;
 }
 
@@ -187,12 +239,26 @@ void pmm_free_frame(uint32_t frame) {
     // 检查页对齐
     if (frame & (PAGE_SIZE-1)) return;
     uint32_t idx = frame / PAGE_SIZE;
+
+    bool irq_state;
+    spinlock_lock_irqsave(&pmm_lock, &irq_state);
+
     // 检查有效性和状态
-    if (idx >= total_frames || !test_frame(idx)) return;
+    if (idx >= total_frames || !test_frame(idx)) {
+        spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+        return;
+    }
     
     clear_frame(idx);
     pmm_info.free_frames++;
     pmm_info.used_frames--;
+    
+    // 更新搜索游标，如果有更小的空闲帧
+    if (idx < last_free_index) {
+        last_free_index = idx;
+    }
+    
+    spinlock_unlock_irqrestore(&pmm_lock, irq_state);
 }
 
 /**

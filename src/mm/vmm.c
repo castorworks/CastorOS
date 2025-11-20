@@ -87,7 +87,9 @@ void vmm_init(void) {
     // 计算需要映射的页目录项数量（每个页目录项映射4MB）
     // 引导时已经映射了前8MB（索引512-513），从索引514开始
     uint32_t start_pde = 514;  // 对应虚拟地址 0x80800000
-    uint32_t end_pde = 512 + (max_phys >> 22);  // 每个页目录项映射4MB
+    // 修复：使用向上取整，确保覆盖所有物理内存。如果 max_phys 不是 4MB 对齐，
+    // 向下取整会导致末尾的内存无法被映射。
+    uint32_t end_pde = 512 + ((max_phys + 0x3FFFFF) >> 22); 
     
     LOG_DEBUG_MSG("VMM: Extending high-half kernel mapping\n");
     LOG_DEBUG_MSG("  Physical memory: %u MB\n", max_phys / (1024*1024));
@@ -165,7 +167,16 @@ bool vmm_map_page(uint32_t virt, uint32_t phys, uint32_t flags) {
             spinlock_unlock_irqrestore(&vmm_lock, irq_state);
             return false;
         }
-        *pde = VIRT_TO_PHYS((uint32_t)table) | PAGE_PRESENT | PAGE_WRITE | PAGE_USER;
+        
+        // 创建页表时，权限应该根据目标虚拟地址决定
+        // 如果是内核空间（>= 0x80000000），则不应设置 PAGE_USER
+        // 否则（用户空间），通常需要 PAGE_USER 允许用户进程访问其内容
+        uint32_t pde_flags = PAGE_PRESENT | PAGE_WRITE;
+        if (virt < KERNEL_VIRTUAL_BASE) {
+            pde_flags |= PAGE_USER;
+        }
+        
+        *pde = VIRT_TO_PHYS((uint32_t)table) | pde_flags;
     } else {
         table = (page_table_t*)PHYS_TO_VIRT(get_frame(*pde));
     }
@@ -304,8 +315,15 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
                     // 分配新的物理页
                     uint32_t new_frame = pmm_alloc_frame();
                     if (!new_frame) {
-                        // 分配失败，清理
+                        // 分配失败，清理当前页表中已分配的页
+                        for (uint32_t k = 0; k < j; k++) {
+                            if (is_present(new_table->entries[k])) {
+                                pmm_free_frame(get_frame(new_table->entries[k]));
+                            }
+                        }
+                        // 释放页表本身
                         pmm_free_frame(new_table_phys);
+                        
                         spinlock_unlock_irqrestore(&vmm_lock, irq_state);
                         vmm_free_page_directory(new_dir_phys);
                         return 0;
@@ -433,7 +451,13 @@ bool vmm_map_page_in_directory(uint32_t dir_phys, uint32_t virt,
         table = (page_table_t*)PHYS_TO_VIRT(table_phys);
         memset(table, 0, sizeof(page_table_t));
         
-        *pde = table_phys | PAGE_PRESENT | PAGE_WRITE | PAGE_USER;
+        // 权限逻辑同上：如果是内核空间地址，不加 PAGE_USER
+        uint32_t pde_flags = PAGE_PRESENT | PAGE_WRITE;
+        if (virt < KERNEL_VIRTUAL_BASE) {
+            pde_flags |= PAGE_USER;
+        }
+
+        *pde = table_phys | pde_flags;
     } else {
         table = (page_table_t*)PHYS_TO_VIRT(get_frame(*pde));
     }
