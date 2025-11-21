@@ -30,21 +30,39 @@ static uint32_t procfs_meminfo_read(fs_node_t *node, uint32_t offset, uint32_t s
         return 0;
     }
     
-    pmm_info_t info = pmm_get_info();
-    uint32_t total_kb = (info.total_frames * PAGE_SIZE) / 1024;
-    uint32_t free_kb = (info.free_frames * PAGE_SIZE) / 1024;
-    uint32_t used_kb = (info.used_frames * PAGE_SIZE) / 1024;
+    pmm_info_t pmm_info = pmm_get_info();
+    uint32_t total_kb = (pmm_info.total_frames * PAGE_SIZE) / 1024;
+    uint32_t free_kb = (pmm_info.free_frames * PAGE_SIZE) / 1024;
+    uint32_t used_kb = (pmm_info.used_frames * PAGE_SIZE) / 1024;
     
-    char meminfo_buf[256];
+    // 获取堆统计信息
+    heap_info_t heap_info;
+    int heap_ret = heap_get_info(&heap_info);
+    uint32_t heap_total_kb = 0;
+    uint32_t heap_used_kb = 0;
+    uint32_t heap_free_kb = 0;
+    if (heap_ret == 0) {
+        heap_total_kb = (uint32_t)(heap_info.total / 1024);
+        heap_used_kb = (uint32_t)(heap_info.used / 1024);
+        heap_free_kb = (uint32_t)(heap_info.free / 1024);
+    }
+    
+    char meminfo_buf[512];
     int len = ksnprintf(meminfo_buf, sizeof(meminfo_buf),
                         "MemTotal:\t%u kB\n"
                         "MemFree:\t%u kB\n"
                         "MemUsed:\t%u kB\n"
-                        "PageSize:\t%u bytes\n",
+                        "PageSize:\t%u bytes\n"
+                        "HeapTotal:\t%u kB\n"
+                        "HeapUsed:\t%u kB\n"
+                        "HeapFree:\t%u kB\n",
                         (unsigned int)total_kb,
                         (unsigned int)free_kb,
                         (unsigned int)used_kb,
-                        (unsigned int)PAGE_SIZE);
+                        (unsigned int)PAGE_SIZE,
+                        (unsigned int)heap_total_kb,
+                        (unsigned int)heap_used_kb,
+                        (unsigned int)heap_free_kb);
     
     if (len < 0 || len >= (int)sizeof(meminfo_buf)) {
         len = sizeof(meminfo_buf) - 1;
@@ -426,7 +444,7 @@ fs_node_t *procfs_init(void) {
     strcpy(procfs_meminfo_file->name, "meminfo");
     procfs_meminfo_file->inode = 0;
     procfs_meminfo_file->type = FS_FILE;
-    procfs_meminfo_file->size = 256;
+    procfs_meminfo_file->size = 512;
     procfs_meminfo_file->permissions = FS_PERM_READ;
     procfs_meminfo_file->read = procfs_meminfo_read;
     procfs_meminfo_file->write = NULL;

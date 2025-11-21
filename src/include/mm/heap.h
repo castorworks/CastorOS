@@ -63,6 +63,25 @@ void* krealloc(void* ptr, size_t size);
 void* kcalloc(size_t num, size_t size);
 
 /**
+ * @brief 堆统计信息结构体
+ */
+typedef struct {
+    size_t total;       ///< 堆总大小（字节）
+    size_t used;        ///< 已使用大小（字节）
+    size_t free;        ///< 空闲大小（字节）
+    size_t max;         ///< 堆最大大小（字节）
+    uint32_t block_count;  ///< 总块数
+    uint32_t free_block_count;  ///< 空闲块数
+} heap_info_t;
+
+/**
+ * @brief 获取堆使用统计信息
+ * @param info 输出参数，用于存储堆统计信息
+ * @return 成功返回 0，失败返回 -1
+ */
+int heap_get_info(heap_info_t *info);
+
+/**
  * @brief 打印堆使用信息
  */
 void heap_print_info(void);

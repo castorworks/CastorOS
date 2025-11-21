@@ -30,12 +30,37 @@ static bool expand(size_t size) {
     size_t pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
     if (heap_end + pages * PAGE_SIZE > heap_max) return false;
     
+    uint32_t old_heap_end = heap_end;
+    uint32_t current_dir_phys = vmm_get_page_directory();
+    
     // 分配物理页并映射到虚拟地址空间
     for (size_t i = 0; i < pages; i++) {
         uint32_t frame = pmm_alloc_frame();
-        if (!frame || !vmm_map_page(heap_end + i * PAGE_SIZE, frame, 
-            PAGE_PRESENT | PAGE_WRITE)) {
-            if (frame) pmm_free_frame(frame);
+        if (!frame) {
+            // 分配失败：清理已分配的页
+            LOG_ERROR_MSG("heap: expand failed at page %zu/%zu (out of physical memory)\n", 
+                         i + 1, pages);
+            for (size_t j = 0; j < i; j++) {
+                uint32_t virt = old_heap_end + j * PAGE_SIZE;
+                uint32_t phys = vmm_unmap_page_in_directory(current_dir_phys, virt);
+                if (phys) {
+                    pmm_free_frame(phys);
+                }
+            }
+            return false;
+        }
+        
+        if (!vmm_map_page(heap_end + i * PAGE_SIZE, frame, PAGE_PRESENT | PAGE_WRITE)) {
+            // 映射失败：清理已分配的页
+            LOG_ERROR_MSG("heap: expand failed at mapping page %zu/%zu\n", i + 1, pages);
+            pmm_free_frame(frame);
+            for (size_t j = 0; j < i; j++) {
+                uint32_t virt = old_heap_end + j * PAGE_SIZE;
+                uint32_t phys = vmm_unmap_page_in_directory(current_dir_phys, virt);
+                if (phys) {
+                    pmm_free_frame(phys);
+                }
+            }
             return false;
         }
     }
@@ -254,28 +279,75 @@ void* kcalloc(size_t num, size_t size) {
 }
 
 /**
- * @brief 打印堆使用信息
- * 
- * 统计并打印堆的总大小、已使用和空闲内存
+ * @brief 获取堆使用统计信息
+ * @param info 输出参数，用于存储堆统计信息
+ * @return 成功返回 0，失败返回 -1
  */
-void heap_print_info(void) {
+int heap_get_info(heap_info_t *info) {
+    if (!info) {
+        return -1;
+    }
+    
     bool irq_state;
     spinlock_lock_irqsave(&heap_lock, &irq_state);
     
     size_t total = heap_end - heap_start;
     size_t used = 0, free = 0;
+    size_t used_metadata = 0, free_metadata = 0;  // 元数据大小
+    uint32_t block_count = 0;
+    uint32_t free_block_count = 0;
+    uint32_t used_block_count = 0;
     
     // 遍历所有块统计使用情况
     for (heap_block_t *b = first_block; b; b = b->next) {
-        if (b->is_free) free += b->size;
-        else used += b->size;
+        block_count++;
+        size_t metadata_size = sizeof(heap_block_t);
+        
+        if (b->is_free) {
+            free += b->size;
+            free_metadata += metadata_size;
+            free_block_count++;
+        } else {
+            used += b->size;
+            used_metadata += metadata_size;
+            used_block_count++;
+        }
     }
+    
+    // total 应该等于 used + free + 所有元数据
+    // 但为了兼容性，我们只报告数据部分
+    size_t metadata_total = block_count * sizeof(heap_block_t);
     
     spinlock_unlock_irqrestore(&heap_lock, irq_state);
     
+    info->total = total;
+    // 注意：total = used数据 + free数据 + 所有元数据 + 未分配的剩余空间
+    // used 包含已使用块的数据和元数据
+    // free 包含空闲块的数据（元数据已计入 used_metadata 或 free_metadata）
+    info->used = used + used_metadata;  // 包含已使用块的数据和元数据
+    info->free = free + free_metadata;  // 包含空闲块的数据和元数据
+    info->max = heap_max - heap_start;
+    info->block_count = block_count;
+    info->free_block_count = free_block_count;
+    
+    return 0;
+}
+
+/**
+ * @brief 打印堆使用信息
+ * 
+ * 统计并打印堆的总大小、已使用和空闲内存
+ */
+void heap_print_info(void) {
+    heap_info_t info;
+    if (heap_get_info(&info) != 0) {
+        kprintf("Error: Failed to get heap info\n");
+        return;
+    }
+    
     kprintf("\n===================================== Heap =====================================\n");
-    kprintf("Total: %u KB\n", total/1024);
-    kprintf("Used:  %u KB\n", used/1024);
-    kprintf("Free:  %u KB\n", free/1024);
+    kprintf("Total: %u KB\n", info.total/1024);
+    kprintf("Used:  %u KB\n", info.used/1024);
+    kprintf("Free:  %u KB\n", info.free/1024);
     kprintf("================================================================================\n\n");
 }

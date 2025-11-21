@@ -756,7 +756,7 @@ static int cmd_free(int argc, char **argv) {
         return -1;
     }
     
-    char buffer[256];
+    char buffer[512];
     int bytes_read = read(fd, buffer, sizeof(buffer) - 1);
     close(fd);
     
@@ -770,6 +770,9 @@ static int cmd_free(int argc, char **argv) {
     uint32_t mem_free = 0;
     uint32_t mem_used = 0;
     uint32_t page_size = 0;
+    uint32_t heap_total = 0;
+    uint32_t heap_used = 0;
+    uint32_t heap_free = 0;
     
     char *line = buffer;
     while (line && *line) {
@@ -787,6 +790,12 @@ static int cmd_free(int argc, char **argv) {
             mem_used = shell_parse_meminfo_value(line);
         } else if (strncmp(line, "PageSize:", 9) == 0) {
             page_size = shell_parse_meminfo_value(line);
+        } else if (strncmp(line, "HeapTotal:", 10) == 0) {
+            heap_total = shell_parse_meminfo_value(line);
+        } else if (strncmp(line, "HeapUsed:", 9) == 0) {
+            heap_used = shell_parse_meminfo_value(line);
+        } else if (strncmp(line, "HeapFree:", 9) == 0) {
+            heap_free = shell_parse_meminfo_value(line);
         }
         
         if (!next) {
@@ -812,6 +821,35 @@ static int cmd_free(int argc, char **argv) {
     printf("================================================================================\n");
     printf("              Total          Used          Free\n");
     printf("Physical:     %10u KB  %10u KB  %10u KB\n", mem_total, mem_used, mem_free);
+    
+    // 显示堆内存信息（如果可用）
+    if (heap_total > 0) {
+        printf("Heap:         %10u KB  %10u KB  %10u KB\n", heap_total, heap_used, heap_free);
+        
+        // 计算堆使用率
+        uint32_t heap_usage_percent = 0;
+        if (heap_total > 0) {
+            heap_usage_percent = (heap_used * 100) / heap_total;
+        }
+        
+        // 显示详细的堆信息
+        printf("\n");
+        printf("Heap Details:\n");
+        printf("  Total Heap:  %u KB\n", heap_total);
+        printf("  Used Heap:   %u KB (%u%%)\n", heap_used, heap_usage_percent);
+        printf("  Free Heap:   %u KB\n", heap_free);
+        
+        // 注意：堆一旦扩展不会自动收缩，这是正常的
+        // used 高可能是因为：
+        // 1. 堆扩展后不会收缩（正常行为）
+        // 2. 有内存碎片
+        // 3. 还有其他进程/内核数据结构在使用内存
+        uint32_t heap_wasted = heap_total - heap_used - heap_free;
+        if (heap_wasted > 0) {
+            printf("  Note: %u KB unaccounted (likely metadata overhead)\n", heap_wasted);
+        }
+    }
+    
     printf("\n");
     printf("Details:\n");
     if (page_size != 0) {
