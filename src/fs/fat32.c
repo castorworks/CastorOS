@@ -1476,6 +1476,7 @@ static fs_node_t *fat32_dir_finddir(fs_node_t *node, const char *name) {
     new_node->inode = cluster;
     new_node->size = lookup->entry.file_size;
     new_node->permissions = FS_PERM_READ | FS_PERM_WRITE;
+    new_node->flags = FS_NODE_FLAG_ALLOCATED;  // 标记为动态分配的节点
     
     if (lookup->entry.attributes & FAT32_ATTR_DIRECTORY) {
         new_node->type = FS_DIRECTORY;

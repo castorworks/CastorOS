@@ -61,8 +61,12 @@ int32_t fd_table_free(fd_table_t *table, int32_t fd) {
     }
     
     // 关闭文件
-    if (table->entries[fd].node && table->entries[fd].node->close) {
-        vfs_close(table->entries[fd].node);
+    if (table->entries[fd].node) {
+        if (table->entries[fd].node->close) {
+            vfs_close(table->entries[fd].node);
+        }
+        // 释放动态分配的节点
+        vfs_release_node(table->entries[fd].node);
     }
     
     table->entries[fd].node = NULL;

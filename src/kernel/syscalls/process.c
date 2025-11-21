@@ -240,6 +240,7 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
     void *elf_data = kmalloc(file_size);
     if (!elf_data) {
         LOG_ERROR_MSG("sys_execve: failed to allocate memory for ELF file\n");
+        vfs_release_node(file);  // 释放节点
         return (uint32_t)-1;
     }
     
@@ -251,6 +252,7 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
         LOG_ERROR_MSG("sys_execve: failed to read ELF file (read %u, expected %u)\n", 
                       bytes_read, file_size);
         kfree(elf_data);
+        vfs_release_node(file);  // 释放节点
         return (uint32_t)-1;
     }
     
@@ -258,6 +260,7 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
     if (!elf_validate_header(elf_data)) {
         LOG_ERROR_MSG("sys_execve: invalid ELF file '%s'\n", path);
         kfree(elf_data);
+        vfs_release_node(file);  // 释放节点
         return (uint32_t)-1;
     }
     
@@ -266,8 +269,12 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
     if (entry_point == 0) {
         LOG_ERROR_MSG("sys_execve: failed to get entry point from '%s'\n", path);
         kfree(elf_data);
+        vfs_release_node(file);  // 释放节点
         return (uint32_t)-1;
     }
+    
+    // 文件已读取完毕，释放节点
+    vfs_release_node(file);
     
     // ============================================================================
     // 创建新的地址空间

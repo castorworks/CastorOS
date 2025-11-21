@@ -100,6 +100,22 @@ void vfs_close(fs_node_t *node) {
     }
 }
 
+void vfs_release_node(fs_node_t *node) {
+    if (!node) {
+        return;
+    }
+    
+    // 只释放动态分配的节点
+    if (node->flags & FS_NODE_FLAG_ALLOCATED) {
+        // 释放实现相关的数据（如 fat32_file_t）
+        if (node->impl) {
+            kfree((void *)node->impl);
+        }
+        // 释放节点本身
+        kfree(node);
+    }
+}
+
 struct dirent *vfs_readdir(fs_node_t *node, uint32_t index) {
     if (!node || node->type != FS_DIRECTORY) {
         LOG_DEBUG_MSG("VFS: readdir: invalid node or not directory\n");
@@ -189,6 +205,7 @@ fs_node_t *vfs_path_to_node(const char *path) {
             
             /* 如果正好是挂载点，返回根 */
             if (path[mount_len] == '\0') {
+                mutex_unlock(&vfs_mount_mutex);
                 return mount_table[i].root;
             }
             
@@ -209,6 +226,8 @@ fs_node_t *vfs_path_to_node(const char *path) {
                 
                 if (*remaining && *remaining != '/') {
                     LOG_ERROR_MSG("VFS: Path component too long\n");
+                    vfs_release_node(current);  // 释放中间节点
+                    mutex_unlock(&vfs_mount_mutex);
                     return NULL;
                 }
                 
@@ -233,7 +252,13 @@ fs_node_t *vfs_path_to_node(const char *path) {
                     fs_node_t *parent = vfs_finddir(current, "..");
                     if (!parent) {
                         LOG_DEBUG_MSG("VFS: path_to_node: failed to find parent for '..' in mounted fs\n");
+                        vfs_release_node(current);  // 释放中间节点
+                        mutex_unlock(&vfs_mount_mutex);
                         return NULL;
+                    }
+                    // 释放旧的 current（如果它是动态分配的且不是根）
+                    if (current != mount_table[i].root) {
+                        vfs_release_node(current);
                     }
                     current = parent;
                     continue;
@@ -244,9 +269,18 @@ fs_node_t *vfs_path_to_node(const char *path) {
                 fs_node_t *next = vfs_finddir(current, token);
                 if (!next) {
                     LOG_DEBUG_MSG("VFS: path_to_node: failed to find '%s' in mounted fs\n", token);
+                    // 释放中间节点
+                    if (current != mount_table[i].root) {
+                        vfs_release_node(current);
+                    }
+                    mutex_unlock(&vfs_mount_mutex);
                     return NULL;
                 }
                 
+                // 释放旧的 current（如果它是动态分配的且不是根）
+                if (current != mount_table[i].root) {
+                    vfs_release_node(current);
+                }
                 current = next;
             }
             
@@ -277,6 +311,10 @@ fs_node_t *vfs_path_to_node(const char *path) {
         // 检查路径组件是否过长
         if (*path && *path != '/') {
             LOG_ERROR_MSG("VFS: Path component too long\n");
+            // 释放中间节点
+            if (current != fs_root) {
+                vfs_release_node(current);
+            }
             return NULL;
         }
         
@@ -302,7 +340,15 @@ fs_node_t *vfs_path_to_node(const char *path) {
             fs_node_t *parent = vfs_finddir(current, "..");
             if (!parent) {
                 LOG_DEBUG_MSG("VFS: path_to_node: failed to find parent for '..'\n");
+                // 释放中间节点
+                if (current != fs_root) {
+                    vfs_release_node(current);
+                }
                 return NULL;
+            }
+            // 释放旧的 current（如果它是动态分配的且不是根）
+            if (current != fs_root) {
+                vfs_release_node(current);
             }
             current = parent;
             continue;
@@ -313,10 +359,18 @@ fs_node_t *vfs_path_to_node(const char *path) {
         fs_node_t *next = vfs_finddir(current, token);
         if (!next) {
             LOG_DEBUG_MSG("VFS: path_to_node: failed to find '%s'\n", token);
+            // 释放中间节点
+            if (current != fs_root) {
+                vfs_release_node(current);
+            }
             return NULL;  /* 路径不存在 */
         }
         
         LOG_DEBUG_MSG("VFS: path_to_node: found '%s' at %p (type=%u)\n", token, next, next->type);
+        // 释放旧的 current（如果它是动态分配的且不是根）
+        if (current != fs_root) {
+            vfs_release_node(current);
+        }
         current = next;
     }
     

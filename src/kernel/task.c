@@ -192,6 +192,13 @@ void task_free(task_t *task) {
     
     // 释放文件描述符表
     if (task->fd_table) {
+        // 先关闭所有打开的文件描述符
+        for (int i = 0; i < MAX_FDS; i++) {
+            if (task->fd_table->entries[i].in_use) {
+                fd_table_free(task->fd_table, i);
+            }
+        }
+        // 再释放文件描述符表本身
         kfree(task->fd_table);
     }
     

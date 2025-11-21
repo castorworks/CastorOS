@@ -24,6 +24,9 @@ typedef enum {
 #define FS_PERM_WRITE   0x2
 #define FS_PERM_EXEC    0x1
 
+// 文件节点标志（用于 flags 字段）
+#define FS_NODE_FLAG_ALLOCATED  0x80000000  // 节点是动态分配的，需要释放
+
 /* 前向声明 */
 struct fs_node;
 
@@ -118,6 +121,13 @@ void vfs_open(fs_node_t *node, uint32_t flags);
  * @param node 文件节点
  */
 void vfs_close(fs_node_t *node);
+
+/**
+ * 释放文件节点
+ * 如果节点是动态分配的（flags & FS_NODE_FLAG_ALLOCATED），则释放它
+ * @param node 文件节点
+ */
+void vfs_release_node(fs_node_t *node);
 
 /**
  * 读取目录项
