@@ -68,6 +68,7 @@ uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
     if (fd < 0) {
         LOG_ERROR_MSG("sys_open: failed to allocate fd for '%s'\n", path);
         vfs_close(node);
+        vfs_release_node(node);  // 释放节点
         return (uint32_t)-1;
     }
     
@@ -480,8 +481,12 @@ uint32_t sys_chdir(const char *path) {
     
     if (node->type != FS_DIRECTORY) {
         LOG_ERROR_MSG("sys_chdir: '%s' is not a directory\n", abs_path);
+        vfs_release_node(node);  // 释放节点
         return (uint32_t)-1;
     }
+    
+    // 节点已验证，释放它（我们只需要验证路径，不需要保留节点）
+    vfs_release_node(node);
     
     // 规范化路径，移除 . 和 .. 组件
     char normalized_path[512];

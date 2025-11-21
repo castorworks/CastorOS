@@ -27,6 +27,7 @@ bool load_user_shell(void) {
     // 检查文件大小
     if (shell_file->size == 0 || shell_file->size > 16 * 1024 * 1024) {
         LOG_ERROR_MSG("Invalid shell file size: %u\n", shell_file->size);
+        vfs_release_node(shell_file);  // 释放节点
         return false;
     }
     
@@ -34,6 +35,7 @@ bool load_user_shell(void) {
     uint8_t *elf_data = (uint8_t *)kmalloc(shell_file->size);
     if (!elf_data) {
         LOG_ERROR_MSG("Failed to allocate memory for shell\n");
+        vfs_release_node(shell_file);  // 释放节点
         return false;
     }
     
@@ -42,8 +44,12 @@ bool load_user_shell(void) {
         LOG_ERROR_MSG("Failed to read shell file (got %u/%u bytes)\n", 
                      read_bytes, shell_file->size);
         kfree(elf_data);
+        vfs_release_node(shell_file);  // 释放节点
         return false;
     }
+    
+    // 文件已读取，立即释放节点
+    vfs_release_node(shell_file);
     
     // 验证 ELF 头
     if (!elf_validate_header(elf_data)) {

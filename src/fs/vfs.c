@@ -417,15 +417,19 @@ int vfs_create(const char *path) {
     // 查找父目录
     fs_node_t *parent = vfs_path_to_node(parent_path);
     if (!parent || parent->type != FS_DIRECTORY) {
+        vfs_release_node(parent);  // 释放节点（即使为NULL也安全）
         return -1;
     }
     
     // 调用父目录的 create 操作
     if (!parent->create) {
+        vfs_release_node(parent);  // 释放节点
         return -1;
     }
     
-    return parent->create(parent, file_name);
+    int result = parent->create(parent, file_name);
+    vfs_release_node(parent);  // 释放节点
+    return result;
 }
 
 // 创建目录
@@ -467,15 +471,19 @@ int vfs_mkdir(const char *path, uint32_t permissions) {
     // 查找父目录
     fs_node_t *parent = vfs_path_to_node(parent_path);
     if (!parent || parent->type != FS_DIRECTORY) {
+        vfs_release_node(parent);  // 释放节点
         return -1;
     }
     
     // 调用父目录的 mkdir 操作
     if (!parent->mkdir) {
+        vfs_release_node(parent);  // 释放节点
         return -1;
     }
     
-    return parent->mkdir(parent, dir_name, permissions);
+    int result = parent->mkdir(parent, dir_name, permissions);
+    vfs_release_node(parent);  // 释放节点
+    return result;
 }
 
 // 删除文件或目录
@@ -522,15 +530,19 @@ int vfs_unlink(const char *path) {
     // 查找父目录
     fs_node_t *parent = vfs_path_to_node(parent_path);
     if (!parent || parent->type != FS_DIRECTORY) {
+        vfs_release_node(parent);  // 释放节点
         return -1;
     }
     
     // 调用父目录的 unlink 操作
     if (!parent->unlink) {
+        vfs_release_node(parent);  // 释放节点
         return -1;
     }
     
-    return parent->unlink(parent, file_name);
+    int result = parent->unlink(parent, file_name);
+    vfs_release_node(parent);  // 释放节点
+    return result;
 }
 
 // 挂载文件系统到指定路径
@@ -553,8 +565,12 @@ int vfs_mount(const char *path, fs_node_t *root) {
     
     if (mount_point->type != FS_DIRECTORY) {
         LOG_ERROR_MSG("VFS: Mount point '%s' is not a directory\n", path);
+        vfs_release_node(mount_point);  // 释放节点
         return -1;
     }
+    
+    // 验证完成，释放挂载点节点（我们只需要验证路径，不需要保留节点）
+    vfs_release_node(mount_point);
     
     /* 获取挂载表锁，保护后续的检查和修改操作 */
     mutex_lock(&vfs_mount_mutex);

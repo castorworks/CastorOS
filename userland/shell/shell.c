@@ -1704,6 +1704,15 @@ static void shell_run(void) {
     shell_print_welcome();
     
     while (shell_state.running) {
+        // 清理所有已退出的僵尸子进程（非阻塞）
+        // 这会自动回收后台进程的资源
+        int status;
+        int zombie_pid;
+        while ((zombie_pid = waitpid(-1, &status, WNOHANG)) > 0) {
+            // 静默清理，不打印消息（除非想通知用户）
+            // printf("[Background process %d exited]\n", zombie_pid);
+        }
+        
         // 显示提示符
         print(SHELL_PROMPT);
         

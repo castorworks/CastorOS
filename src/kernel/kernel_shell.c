@@ -765,6 +765,7 @@ static int cmd_ls(int argc, char **argv) {
         vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: '%s' is not a directory\n", path);
         vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        vfs_release_node(dir);  // 释放节点
         return -1;
     }
     
@@ -789,6 +790,7 @@ static int cmd_ls(int argc, char **argv) {
             if (node) {
                 vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
                 kprintf("%-20s %u bytes\n", entry->d_name, node->size);
+                vfs_release_node(node);  // 释放节点
             } else {
                 vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
                 kprintf("%-20s\n", entry->d_name);
@@ -813,6 +815,7 @@ static int cmd_ls(int argc, char **argv) {
                     vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
                     kprintf("%-20s %u bytes\n", entry->d_name, node->size);
                 }
+                vfs_release_node(node);  // 释放节点
             } else {
                 vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
                 kprintf("%-20s\n", entry->d_name);
@@ -826,6 +829,7 @@ static int cmd_ls(int argc, char **argv) {
     }
     
     vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    vfs_release_node(dir);  // 释放目录节点
     return 0;
 }
 
@@ -862,6 +866,7 @@ static int cmd_cat(int argc, char **argv) {
         vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: '%s' is not a readable file or device\n", abs_path);
         vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        vfs_release_node(file);  // 释放节点
         return -1;
     }
     
@@ -929,6 +934,7 @@ static int cmd_cat(int argc, char **argv) {
     
     // 关闭文件
     vfs_close(file);
+    vfs_release_node(file);  // 释放节点
     
     return 0;
 }
@@ -996,8 +1002,11 @@ static int cmd_rm(int argc, char **argv) {
         vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: '%s' is not a file (use rmdir for directories)\n", abs_path);
         vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        vfs_release_node(file);  // 释放节点
         return -1;
     }
+    
+    vfs_release_node(file);  // 验证完成，释放节点
     
     // 删除文件
     if (vfs_unlink(abs_path) != 0) {
@@ -1082,6 +1091,7 @@ static int cmd_rmdir(int argc, char **argv) {
         vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: '%s' is not a directory\n", abs_path);
         vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        vfs_release_node(dir);  // 释放节点
         return -1;
     }
     
@@ -1091,8 +1101,11 @@ static int cmd_rmdir(int argc, char **argv) {
         vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Directory '%s' is not empty\n", abs_path);
         vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        vfs_release_node(dir);  // 释放节点
         return -1;
     }
+    
+    vfs_release_node(dir);  // 验证完成，释放节点
     
     // 删除目录
     if (vfs_unlink(abs_path) != 0) {
@@ -1151,8 +1164,11 @@ static int cmd_cd(int argc, char **argv) {
         vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: '%s' is not a directory\n", abs_path);
         vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        vfs_release_node(dir);  // 释放节点
         return -1;
     }
+    
+    vfs_release_node(dir);  // 验证完成，释放节点
     
     // 更新当前工作目录
     strncpy(shell_state.cwd, abs_path, SHELL_MAX_PATH_LENGTH - 1);
@@ -1207,6 +1223,7 @@ static int cmd_write(int argc, char **argv) {
         vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: '%s' is not a writable file or device\n", abs_path);
         vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        vfs_release_node(file);  // 释放节点
         return -1;
     }
     
@@ -1227,6 +1244,7 @@ static int cmd_write(int argc, char **argv) {
         vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Out of memory\n");
         vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        vfs_release_node(file);  // 释放节点
         return -1;
     }
     
@@ -1260,9 +1278,11 @@ static int cmd_write(int argc, char **argv) {
         kprintf("Error: Failed to write all data to file '%s'\n", abs_path);
         kprintf("Written: %u bytes, Expected: %u bytes\n", written, (uint32_t)pos);
         vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        vfs_release_node(file);  // 释放节点
         return -1;
     }
     
     kprintf("Written %u bytes to '%s'\n", written, abs_path);
+    vfs_release_node(file);  // 释放节点
     return 0;
 }
