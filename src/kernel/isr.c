@@ -105,11 +105,19 @@ void isr_handler(registers_t *regs) {
     }
 }
 
+#include <mm/vmm.h>
+
 /**
  * 页错误处理函数（异常 #14）
  */
  static void page_fault_handler(registers_t *regs) {
     uint32_t faulting_address = get_cr2();
+    
+    // 尝试处理内核空间缺页（同步页目录）
+    if (vmm_handle_kernel_page_fault(faulting_address)) {
+        return;
+    }
+
     page_fault_info_t pf_info = parse_page_fault_error(regs->err_code);
     
     // 检查中断来源

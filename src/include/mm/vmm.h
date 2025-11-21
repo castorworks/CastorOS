@@ -116,4 +116,11 @@ bool vmm_map_page_in_directory(uint32_t dir_phys, uint32_t virt,
                                 uint32_t phys, uint32_t flags);
 uint32_t vmm_unmap_page_in_directory(uint32_t dir_phys, uint32_t virt);
 
+/**
+ * @brief 处理内核空间缺页异常（同步内核页目录）
+ * @param addr 缺页地址
+ * @return 是否成功处理（如果成功，不需要 panic）
+ */
+bool vmm_handle_kernel_page_fault(uint32_t addr);
+
 #endif // _MM_VMM_H_

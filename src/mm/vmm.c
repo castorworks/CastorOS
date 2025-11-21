@@ -140,6 +140,40 @@ void vmm_init(void) {
     LOG_DEBUG_MSG("VMM: High-half kernel mapping extended\n");
 }
 
+
+// 声明引导页目录（作为内核主页目录参考）
+extern uint32_t boot_page_directory[];
+
+/**
+ * @brief 处理内核空间缺页异常（同步内核页目录）
+ * @param addr 缺页地址
+ * @return 是否成功处理
+ */
+bool vmm_handle_kernel_page_fault(uint32_t addr) {
+    // 必须是内核空间地址
+    if (addr < KERNEL_VIRTUAL_BASE) return false;
+    
+    uint32_t pd_idx = addr >> 22;
+    page_directory_t *k_dir = (page_directory_t *)boot_page_directory;
+    
+    // 检查主内核页目录中是否存在该映射
+    // 注意：我们检查 PDE 是否存在 (Present 位)
+    if (k_dir->entries[pd_idx] & PAGE_PRESENT) {
+        // 将条目复制到当前页目录
+        current_dir->entries[pd_idx] = k_dir->entries[pd_idx];
+        
+        // 刷新 TLB，确保 CPU 看到新的映射
+        // 虽然 Intel 手册说修改 PDE 后需要刷新 TLB，但有些实现可能缓存了 PDE
+        // 对于缺页处理，invlpg 通常足够，但这里我们修改了 PDE，安全起见可以刷新整个 TLB
+        // 不过针对特定地址的 invlpg 应该也足以让 CPU 重新遍历页表结构
+        vmm_flush_tlb(addr);
+        
+        return true;
+    }
+    
+    return false;
+}
+
 /**
  * @brief 映射虚拟页到物理页
  * @param virt 虚拟地址（页对齐）
@@ -176,7 +210,15 @@ bool vmm_map_page(uint32_t virt, uint32_t phys, uint32_t flags) {
             pde_flags |= PAGE_USER;
         }
         
-        *pde = VIRT_TO_PHYS((uint32_t)table) | pde_flags;
+        uint32_t new_pde = VIRT_TO_PHYS((uint32_t)table) | pde_flags;
+        *pde = new_pde;
+        
+        // 关键修复：如果是内核空间的新页表，必须同步到主内核页目录 (boot_page_directory)
+        // 这样其他进程可以通过 page fault handler 同步这个新映射
+        if (virt >= KERNEL_VIRTUAL_BASE) {
+            page_directory_t *k_dir = (page_directory_t *)boot_page_directory;
+            k_dir->entries[pd] = new_pde;
+        }
     } else {
         table = (page_table_t*)PHYS_TO_VIRT(get_frame(*pde));
     }
@@ -258,9 +300,11 @@ uint32_t vmm_create_page_directory(void) {
     memset(new_dir, 0, sizeof(page_directory_t));
     
     // 复制内核空间映射（512-1023，即 0x80000000-0xFFFFFFFF）
-    // 内核空间在所有进程中共享，直接复制页目录项即可
+    // 关键修改：从主内核页目录 (boot_page_directory) 复制，而不是从当前页目录复制
+    // 这确保新进程总是获得最完整、最新的内核映射
+    page_directory_t *master_dir = (page_directory_t *)boot_page_directory;
     for (uint32_t i = 512; i < 1024; i++) {
-        new_dir->entries[i] = current_dir->entries[i];
+        new_dir->entries[i] = master_dir->entries[i];
     }
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
