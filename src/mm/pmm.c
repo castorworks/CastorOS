@@ -133,7 +133,8 @@ void pmm_init(multiboot_info_t *mbi) {
     spinlock_init(&pmm_lock);
     
     // 初始化位图（默认所有页帧已使用）
-    uint32_t bitmap_bytes = PAGE_ALIGN_UP((total_frames + 7) / 8);
+    // 每个 uint32_t 有 32 位，所以需要的字节数是 (total_frames + 31) / 32 * 4
+    uint32_t bitmap_bytes = PAGE_ALIGN_UP((total_frames + 31) / 32 * 4);
     frame_bitmap = (uint32_t*)PAGE_ALIGN_UP((uint32_t)&_kernel_end);
     bitmap_size = bitmap_bytes / 4;
     memset(frame_bitmap, 0xFF, bitmap_bytes);
@@ -254,8 +255,10 @@ void pmm_free_frame(uint32_t frame) {
     pmm_info.used_frames--;
     
     // 更新搜索游标，如果有更小的空闲帧
-    if (idx < last_free_index) {
-        last_free_index = idx;
+    // last_free_index 是位图数组索引（uint32_t 索引），不是页帧索引
+    uint32_t bitmap_idx = idx / 32;
+    if (bitmap_idx < last_free_index) {
+        last_free_index = bitmap_idx;
     }
     
     spinlock_unlock_irqrestore(&pmm_lock, irq_state);
@@ -276,7 +279,8 @@ pmm_info_t pmm_get_info(void) {
  * 用于确定堆的起始地址，避免堆与位图重叠
  */
 uint32_t pmm_get_bitmap_end(void) {
-    uint32_t bitmap_bytes = PAGE_ALIGN_UP((total_frames + 7) / 8);
+    // 每个 uint32_t 有 32 位，所以需要的字节数是 (total_frames + 31) / 32 * 4
+    uint32_t bitmap_bytes = PAGE_ALIGN_UP((total_frames + 31) / 32 * 4);
     return PAGE_ALIGN_UP((uint32_t)frame_bitmap + bitmap_bytes);
 }
 
