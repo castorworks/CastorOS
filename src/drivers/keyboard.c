@@ -307,6 +307,12 @@ void keyboard_init(void) {
     buffer_write_pos = 0;
     memset(keyboard_buffer, 0, KEYBOARD_BUFFER_SIZE);
     
+    /* 清空 PS/2 控制器硬件输出缓冲区 */
+    /* 如果在初始化前有按键残留，不读取会导致控制器不发送新的中断 */
+    while (inb(KEYBOARD_STATUS_PORT) & KEYBOARD_STATUS_OUTPUT_FULL) {
+        inb(KEYBOARD_DATA_PORT);
+    }
+    
     /* 注册 IRQ 1 处理函数 */
     irq_register_handler(1, keyboard_callback);
     
