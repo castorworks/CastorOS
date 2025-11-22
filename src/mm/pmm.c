@@ -96,6 +96,7 @@ void pmm_init(multiboot_info_t *mbi) {
         PANIC("No memory map");
     
     memset(&pmm_info, 0, sizeof(pmm_info_t));
+    uint32_t kernel_start = 0x100000;  // 1MB，内核加载位置
     uint32_t kernel_end = PAGE_ALIGN_UP(VIRT_TO_PHYS((uint32_t)&_kernel_end));
     
     // 计算总内存大小
@@ -187,6 +188,16 @@ void pmm_init(multiboot_info_t *mbi) {
     }
 
     pmm_info.used_frames = total_frames - pmm_info.free_frames;
+    
+    // 计算内核占用的页帧数（从 1MB 到 kernel_end）
+    pmm_info.kernel_frames = (kernel_end - kernel_start) / PAGE_SIZE;
+    
+    // 计算位图占用的页帧数（使用之前已定义的 bitmap_phys_start）
+    pmm_info.bitmap_frames = (bitmap_end - bitmap_phys_start) / PAGE_SIZE;
+    
+    // 保留页帧数 = 内核 + 位图
+    pmm_info.reserved_frames = pmm_info.kernel_frames + pmm_info.bitmap_frames;
+    
     pmm_print_info();
 }
 

@@ -432,6 +432,23 @@ static int shell_kill(int pid, int signal) {
 // ============================================================================
 
 /**
+ * 输出到屏幕和串口（用于重要信息）
+ * 这个函数会将输出同时发送到 STDOUT（VGA）和 /dev/serial（串口）
+ */
+static void print_tee(const char *msg) {
+    // 输出到 STDOUT（屏幕）
+    print(msg);
+    
+    // 同时输出到串口
+    int serial_fd = open("/dev/serial", O_WRONLY, 0);
+    if (serial_fd >= 0) {
+        size_t len = strlen(msg);
+        write(serial_fd, msg, (uint32_t)len);
+        close(serial_fd);
+    }
+}
+
+/**
  * 格式化时间（毫秒转为天/时/分/秒）
  */
 static void format_uptime(uint32_t ms, char *buffer, size_t size) {
@@ -744,7 +761,8 @@ static int cmd_uptime(int argc, char **argv) {
 }
 
 /**
- * free 命令 - 显示内存使用情况
+ * free 命令 - 显示内存使用情况（紧凑格式）
+ * 输出同时发送到屏幕和串口
  */
 static int cmd_free(int argc, char **argv) {
     (void)argc;
@@ -752,27 +770,26 @@ static int cmd_free(int argc, char **argv) {
     
     int fd = open("/proc/meminfo", O_RDONLY, 0);
     if (fd < 0) {
-        printf("Error: Failed to open /proc/meminfo\n");
+        print_tee("Error: Failed to open /proc/meminfo\n");
         return -1;
     }
     
-    char buffer[512];
+    char buffer[1024];
     int bytes_read = read(fd, buffer, sizeof(buffer) - 1);
     close(fd);
     
     if (bytes_read <= 0) {
-        printf("Error: Failed to read /proc/meminfo\n");
+        print_tee("Error: Failed to read /proc/meminfo\n");
         return -1;
     }
     buffer[bytes_read] = '\0';
     
-    uint32_t mem_total = 0;
-    uint32_t mem_free = 0;
-    uint32_t mem_used = 0;
-    uint32_t page_size = 0;
-    uint32_t heap_total = 0;
-    uint32_t heap_used = 0;
-    uint32_t heap_free = 0;
+    // 解析所有字段
+    uint32_t mem_total = 0, mem_free = 0, mem_used = 0, mem_reserved = 0;
+    uint32_t mem_kernel = 0, mem_bitmap = 0;
+    uint32_t page_size = 0, page_total = 0, page_free = 0, page_used = 0;
+    uint32_t heap_total = 0, heap_used = 0, heap_free = 0;
+    uint32_t heap_blocks = 0, heap_used_blocks = 0, heap_free_blocks = 0;
     
     char *line = buffer;
     while (line && *line) {
@@ -788,14 +805,32 @@ static int cmd_free(int argc, char **argv) {
             mem_free = shell_parse_meminfo_value(line);
         } else if (strncmp(line, "MemUsed:", 8) == 0) {
             mem_used = shell_parse_meminfo_value(line);
+        } else if (strncmp(line, "MemReserved:", 12) == 0) {
+            mem_reserved = shell_parse_meminfo_value(line);
+        } else if (strncmp(line, "MemKernel:", 10) == 0) {
+            mem_kernel = shell_parse_meminfo_value(line);
+        } else if (strncmp(line, "MemBitmap:", 10) == 0) {
+            mem_bitmap = shell_parse_meminfo_value(line);
         } else if (strncmp(line, "PageSize:", 9) == 0) {
             page_size = shell_parse_meminfo_value(line);
+        } else if (strncmp(line, "PageTotal:", 10) == 0) {
+            page_total = shell_parse_meminfo_value(line);
+        } else if (strncmp(line, "PageFree:", 9) == 0) {
+            page_free = shell_parse_meminfo_value(line);
+        } else if (strncmp(line, "PageUsed:", 9) == 0) {
+            page_used = shell_parse_meminfo_value(line);
         } else if (strncmp(line, "HeapTotal:", 10) == 0) {
             heap_total = shell_parse_meminfo_value(line);
         } else if (strncmp(line, "HeapUsed:", 9) == 0) {
             heap_used = shell_parse_meminfo_value(line);
         } else if (strncmp(line, "HeapFree:", 9) == 0) {
             heap_free = shell_parse_meminfo_value(line);
+        } else if (strncmp(line, "HeapBlocks:", 11) == 0) {
+            heap_blocks = shell_parse_meminfo_value(line);
+        } else if (strncmp(line, "HeapUsedBlocks:", 15) == 0) {
+            heap_used_blocks = shell_parse_meminfo_value(line);
+        } else if (strncmp(line, "HeapFreeBlocks:", 15) == 0) {
+            heap_free_blocks = shell_parse_meminfo_value(line);
         }
         
         if (!next) {
@@ -805,59 +840,61 @@ static int cmd_free(int argc, char **argv) {
     }
     
     if (mem_total == 0) {
-        printf("Error: Invalid data from /proc/meminfo\n");
+        print_tee("Error: Invalid data from /proc/meminfo\n");
         return -1;
     }
     
-    if (mem_used == 0) {
-        if (mem_total >= mem_free) {
-            mem_used = mem_total - mem_free;
-        } else {
-            mem_used = 0;
-        }
+    // 计算使用率
+    uint32_t mem_usage_percent = (mem_used * 100) / mem_total;
+    uint32_t heap_usage_percent = heap_total > 0 ? (heap_used * 100) / heap_total : 0;
+    
+    // 计算碎片率（如果有多个空闲块，说明有碎片）
+    uint32_t frag_percent = 0;
+    if (heap_blocks > 0 && heap_free_blocks > 1) {
+        // 简单估算：空闲块越多，碎片越严重
+        frag_percent = (heap_free_blocks * 100) / heap_blocks;
+        if (frag_percent > 50) frag_percent = 50;  // 最多显示 50%
     }
     
-    printf("Memory Usage\n");
-    printf("================================================================================\n");
-    printf("              Total          Used          Free\n");
-    printf("Physical:     %10u KB  %10u KB  %10u KB\n", mem_total, mem_used, mem_free);
+    // 紧凑格式输出（严格控制在 10 行以内）
+    // 使用 print_tee 同时输出到屏幕和串口
+    char line_buf[256];
     
-    // 显示堆内存信息（如果可用）
+    print_tee("Memory Usage\n");
+    print_tee("================================================================================\n");
+    print_tee("               Total        Used        Free    Reserved  Usage\n");
+    
+    snprintf(line_buf, sizeof(line_buf), 
+             "Physical  %7u KB  %7u KB  %7u KB   %6u KB   %3u%%\n", 
+             mem_total, mem_used, mem_free, mem_reserved, mem_usage_percent);
+    print_tee(line_buf);
+    
     if (heap_total > 0) {
-        printf("Heap:         %10u KB  %10u KB  %10u KB\n", heap_total, heap_used, heap_free);
-        
-        // 计算堆使用率
-        uint32_t heap_usage_percent = 0;
-        if (heap_total > 0) {
-            heap_usage_percent = (heap_used * 100) / heap_total;
-        }
-        
-        // 显示详细的堆信息
-        printf("\n");
-        printf("Heap Details:\n");
-        printf("  Total Heap:  %u KB\n", heap_total);
-        printf("  Used Heap:   %u KB (%u%%)\n", heap_used, heap_usage_percent);
-        printf("  Free Heap:   %u KB\n", heap_free);
-        
-        // 注意：堆一旦扩展不会自动收缩，这是正常的
-        // used 高可能是因为：
-        // 1. 堆扩展后不会收缩（正常行为）
-        // 2. 有内存碎片
-        // 3. 还有其他进程/内核数据结构在使用内存
-        uint32_t heap_wasted = heap_total - heap_used - heap_free;
-        if (heap_wasted > 0) {
-            printf("  Note: %u KB unaccounted (likely metadata overhead)\n", heap_wasted);
-        }
+        snprintf(line_buf, sizeof(line_buf),
+                 "Heap      %7u KB  %7u KB  %7u KB        - KB   %3u%%\n",
+                 heap_total, heap_used, heap_free, heap_usage_percent);
+        print_tee(line_buf);
     }
     
-    printf("\n");
-    printf("Details:\n");
-    if (page_size != 0) {
-        printf("  Page Size:  %u bytes\n", page_size);
-    } else {
-        printf("  Page Size:  (unknown)\n");
+    print_tee("--------------------------------------------------------------------------------\n");
+    
+    snprintf(line_buf, sizeof(line_buf),
+             "Pages: %u total, %u used, %u free (%u bytes/page)\n",
+             page_total, page_used, page_free, page_size);
+    print_tee(line_buf);
+    
+    snprintf(line_buf, sizeof(line_buf),
+             "Kernel: %u KB  |  Bitmap: %u KB\n", mem_kernel, mem_bitmap);
+    print_tee(line_buf);
+    
+    if (heap_blocks > 0) {
+        snprintf(line_buf, sizeof(line_buf),
+                 "Heap: %u blocks (%u used, %u free)  |  Fragmentation: %u%%\n",
+                 heap_blocks, heap_used_blocks, heap_free_blocks, frag_percent);
+        print_tee(line_buf);
     }
-    printf("================================================================================\n");
+    
+    print_tee("================================================================================\n");
     return 0;
 }
 

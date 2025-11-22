@@ -15,9 +15,12 @@
  * @brief 物理内存信息结构
  */
 typedef struct {
-    uint32_t total_frames;  ///< 总页帧数
-    uint32_t free_frames;   ///< 空闲页帧数
-    uint32_t used_frames;   ///< 已使用页帧数
+    uint32_t total_frames;     ///< 总页帧数
+    uint32_t free_frames;      ///< 空闲页帧数
+    uint32_t used_frames;      ///< 已使用页帧数
+    uint32_t reserved_frames;  ///< 保留页帧数（内核+位图）
+    uint32_t kernel_frames;    ///< 内核占用页帧数
+    uint32_t bitmap_frames;    ///< 位图占用页帧数
 } pmm_info_t;
 
 /**

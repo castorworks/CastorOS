@@ -34,6 +34,9 @@ static uint32_t procfs_meminfo_read(fs_node_t *node, uint32_t offset, uint32_t s
     uint32_t total_kb = (pmm_info.total_frames * PAGE_SIZE) / 1024;
     uint32_t free_kb = (pmm_info.free_frames * PAGE_SIZE) / 1024;
     uint32_t used_kb = (pmm_info.used_frames * PAGE_SIZE) / 1024;
+    uint32_t reserved_kb = (pmm_info.reserved_frames * PAGE_SIZE) / 1024;
+    uint32_t kernel_kb = (pmm_info.kernel_frames * PAGE_SIZE) / 1024;
+    uint32_t bitmap_kb = (pmm_info.bitmap_frames * PAGE_SIZE) / 1024;
     
     // 获取堆统计信息
     heap_info_t heap_info;
@@ -41,28 +44,56 @@ static uint32_t procfs_meminfo_read(fs_node_t *node, uint32_t offset, uint32_t s
     uint32_t heap_total_kb = 0;
     uint32_t heap_used_kb = 0;
     uint32_t heap_free_kb = 0;
+    uint32_t heap_max_kb = 0;
+    uint32_t heap_blocks = 0;
+    uint32_t heap_free_blocks = 0;
+    uint32_t heap_used_blocks = 0;
     if (heap_ret == 0) {
         heap_total_kb = (uint32_t)(heap_info.total / 1024);
         heap_used_kb = (uint32_t)(heap_info.used / 1024);
         heap_free_kb = (uint32_t)(heap_info.free / 1024);
+        heap_max_kb = (uint32_t)(heap_info.max / 1024);
+        heap_blocks = heap_info.block_count;
+        heap_free_blocks = heap_info.free_block_count;
+        heap_used_blocks = heap_blocks - heap_free_blocks;
     }
     
-    char meminfo_buf[512];
+    char meminfo_buf[1024];
     int len = ksnprintf(meminfo_buf, sizeof(meminfo_buf),
                         "MemTotal:\t%u kB\n"
                         "MemFree:\t%u kB\n"
                         "MemUsed:\t%u kB\n"
+                        "MemReserved:\t%u kB\n"
+                        "MemKernel:\t%u kB\n"
+                        "MemBitmap:\t%u kB\n"
                         "PageSize:\t%u bytes\n"
+                        "PageTotal:\t%u\n"
+                        "PageFree:\t%u\n"
+                        "PageUsed:\t%u\n"
                         "HeapTotal:\t%u kB\n"
                         "HeapUsed:\t%u kB\n"
-                        "HeapFree:\t%u kB\n",
+                        "HeapFree:\t%u kB\n"
+                        "HeapMax:\t%u kB\n"
+                        "HeapBlocks:\t%u\n"
+                        "HeapUsedBlocks:\t%u\n"
+                        "HeapFreeBlocks:\t%u\n",
                         (unsigned int)total_kb,
                         (unsigned int)free_kb,
                         (unsigned int)used_kb,
+                        (unsigned int)reserved_kb,
+                        (unsigned int)kernel_kb,
+                        (unsigned int)bitmap_kb,
                         (unsigned int)PAGE_SIZE,
+                        (unsigned int)pmm_info.total_frames,
+                        (unsigned int)pmm_info.free_frames,
+                        (unsigned int)pmm_info.used_frames,
                         (unsigned int)heap_total_kb,
                         (unsigned int)heap_used_kb,
-                        (unsigned int)heap_free_kb);
+                        (unsigned int)heap_free_kb,
+                        (unsigned int)heap_max_kb,
+                        (unsigned int)heap_blocks,
+                        (unsigned int)heap_used_blocks,
+                        (unsigned int)heap_free_blocks);
     
     if (len < 0 || len >= (int)sizeof(meminfo_buf)) {
         len = sizeof(meminfo_buf) - 1;
