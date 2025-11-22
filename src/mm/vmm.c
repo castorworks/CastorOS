@@ -347,7 +347,20 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
                 return 0;
             }
             
-            page_table_t *src_table = (page_table_t*)PHYS_TO_VIRT(get_frame(src_dir->entries[i]));
+            // 【安全检查】验证源页表的物理地址有效性
+            uint32_t src_table_phys = get_frame(src_dir->entries[i]);
+            if (src_table_phys >= 0x80000000 || src_table_phys == 0) {
+                LOG_ERROR_MSG("vmm_clone: Invalid src_table_phys 0x%x at PDE %u (PDE entry=0x%x)\n",
+                             src_table_phys, i, src_dir->entries[i]);
+                // 释放刚分配的页表
+                pmm_free_frame(new_table_phys);
+                // 清理已分配的资源
+                spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+                vmm_free_page_directory(new_dir_phys);
+                return 0;
+            }
+            
+            page_table_t *src_table = (page_table_t*)PHYS_TO_VIRT(src_table_phys);
             page_table_t *new_table = (page_table_t*)PHYS_TO_VIRT(new_table_phys);
             
             // 【调试】记录克隆的源页表
@@ -362,6 +375,25 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
             // 逐页复制（深拷贝物理页，而不是共享）
             for (uint32_t j = 0; j < 1024; j++) {
                 if (is_present(src_table->entries[j])) {
+                    // 【安全检查】验证源页帧的物理地址有效性
+                    uint32_t src_frame = get_frame(src_table->entries[j]);
+                    if (src_frame >= 0x80000000 || src_frame == 0) {
+                        LOG_ERROR_MSG("vmm_clone: Invalid src_frame 0x%x at PDE %u PTE %u (PTE entry=0x%x)\n",
+                                     src_frame, i, j, src_table->entries[j]);
+                        // 清理当前页表中已分配的页
+                        for (uint32_t k = 0; k < j; k++) {
+                            if (is_present(new_table->entries[k])) {
+                                pmm_free_frame(get_frame(new_table->entries[k]));
+                            }
+                        }
+                        // 释放页表本身
+                        pmm_free_frame(new_table_phys);
+                        
+                        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+                        vmm_free_page_directory(new_dir_phys);
+                        return 0;
+                    }
+                    
                     // 分配新的物理页
                     uint32_t new_frame = pmm_alloc_frame();
                     if (!new_frame) {
@@ -380,7 +412,6 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
                     }
                     
                     // 复制页面内容
-                    uint32_t src_frame = get_frame(src_table->entries[j]);
                     void *src_virt = (void*)PHYS_TO_VIRT(src_frame);
                     void *dst_virt = (void*)PHYS_TO_VIRT(new_frame);
                     memcpy(dst_virt, src_virt, PAGE_SIZE);
