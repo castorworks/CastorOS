@@ -350,6 +350,12 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
             page_table_t *src_table = (page_table_t*)PHYS_TO_VIRT(get_frame(src_dir->entries[i]));
             page_table_t *new_table = (page_table_t*)PHYS_TO_VIRT(new_table_phys);
             
+            // 【调试】记录克隆的源页表
+            if (i >= 510) {
+                LOG_DEBUG_MSG("vmm_clone: PDE %u: src_table_phys=0x%x, new_table_phys=0x%x\n",
+                             i, get_frame(src_dir->entries[i]), new_table_phys);
+            }
+            
             // 清空新页表
             memset(new_table, 0, sizeof(page_table_t));
             
@@ -410,6 +416,11 @@ void vmm_free_page_directory(uint32_t dir_phys) {
     uint32_t freed_pages = 0;
     uint32_t freed_tables = 0;
     
+    // 获取当前的内存使用量
+    pmm_info_t info_start = pmm_get_info();
+    
+    // LOG_DEBUG_MSG("vmm_free_page_directory: dir_phys=0x%x\n", dir_phys);
+    
     // 只释放用户空间页表（0-511）
     // 内核空间页表（512-1023）是共享的，不释放
     for (uint32_t i = 0; i < 512; i++) {
@@ -417,13 +428,38 @@ void vmm_free_page_directory(uint32_t dir_phys) {
             uint32_t table_phys = get_frame(dir->entries[i]);
             page_table_t *table = (page_table_t*)PHYS_TO_VIRT(table_phys);
             
+            uint32_t pages_in_table = 0;
+            
             // 释放页表中的所有物理页
             for (uint32_t j = 0; j < 1024; j++) {
                 if (is_present(table->entries[j])) {
                     uint32_t frame = get_frame(table->entries[j]);
+                    
+                    // 【安全检查】验证物理地址的合理性 (必须是 4KB 对齐且 < 2GB)
+                    if (frame & 0xFFF) {
+                        LOG_WARN_MSG("vmm_free_page_directory: PDE %u PTE %u has misaligned frame 0x%x\n",
+                                    i, j, frame);
+                        freed_pages++;  // 计数但不释放
+                        pages_in_table++;
+                        continue;
+                    }
+                    if (frame >= 0x80000000) {
+                        LOG_WARN_MSG("vmm_free_page_directory: PDE %u PTE %u has invalid frame 0x%x (>= 2GB)\n",
+                                    i, j, frame);
+                        freed_pages++;
+                        pages_in_table++;
+                        continue;
+                    }
+                    
                     pmm_free_frame(frame);
                     freed_pages++;
+                    pages_in_table++;
                 }
+            }
+            
+            // 如果这是栈所在的区域（PDE 510/511），打印详细信息
+            if (i >= 510) {
+                LOG_INFO_MSG("vmm_free_page_directory: PDE %u has %u pages\n", i, pages_in_table);
             }
             
             // 释放页表本身
@@ -432,11 +468,13 @@ void vmm_free_page_directory(uint32_t dir_phys) {
         }
     }
     
-    LOG_DEBUG_MSG("vmm_free_page_directory: freed %u pages, %u tables, 1 directory\n", 
-                  freed_pages, freed_tables);
-    
     // 释放页目录本身
     pmm_free_frame(dir_phys);
+    
+    pmm_info_t info_end = pmm_get_info();
+    LOG_INFO_MSG("vmm_free_page_directory: freed %u pages (PMM: %u -> %u, diff %d), %u tables, 1 directory\n", 
+                  freed_pages, info_start.used_frames, info_end.used_frames, 
+                  (int)info_start.used_frames - (int)info_end.used_frames, freed_tables);
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
 }

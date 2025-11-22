@@ -25,7 +25,17 @@ extern uint32_t _kernel_end;           ///< 内核结束地址
  * @param idx 页帧索引
  */
 static inline void set_frame(uint32_t idx) {
-    frame_bitmap[idx/32] |= (1 << (idx%32));
+    uint32_t bitmap_idx = idx / 32;
+    uint32_t bit_idx = idx % 32;
+    
+    // 【调试】边界检查
+    if (bitmap_idx >= bitmap_size) {
+        LOG_ERROR_MSG("PMM: set_frame(%u): bitmap_idx %u >= bitmap_size %u!\n",
+                     idx, bitmap_idx, bitmap_size);
+        return;
+    }
+    
+    frame_bitmap[bitmap_idx] |= (1U << bit_idx);  // 使用 1U 避免有符号整数溢出
 }
 
 /**
@@ -33,7 +43,7 @@ static inline void set_frame(uint32_t idx) {
  * @param idx 页帧索引
  */
 static inline void clear_frame(uint32_t idx) {
-    frame_bitmap[idx/32] &= ~(1 << (idx%32));
+    frame_bitmap[idx/32] &= ~(1U << (idx%32));  // 使用 1U 避免有符号整数溢出
 }
 
 /**
@@ -42,7 +52,17 @@ static inline void clear_frame(uint32_t idx) {
  * @return 已使用返回 true，空闲返回 false
  */
 static inline bool test_frame(uint32_t idx) {
-    return frame_bitmap[idx/32] & (1 << (idx%32));
+    uint32_t bitmap_idx = idx / 32;
+    uint32_t bit_idx = idx % 32;
+    
+    // 【调试】边界检查
+    if (bitmap_idx >= bitmap_size) {
+        LOG_ERROR_MSG("PMM: test_frame(%u): bitmap_idx %u >= bitmap_size %u!\n",
+                     idx, bitmap_idx, bitmap_size);
+        return false;  // 越界索引,认为是空闲
+    }
+    
+    return (frame_bitmap[bitmap_idx] & (1U << bit_idx)) != 0;  // 使用 1U 避免有符号整数溢出
 }
 
 /**
@@ -217,9 +237,30 @@ uint32_t pmm_alloc_frame(void) {
         return 0;
     }
     
+    // 【安全检查】确保找到的帧确实是空闲的
+    if (test_frame(idx)) {
+        LOG_ERROR_MSG("PMM: CRITICAL: find_free_frame returned used frame %d!\n", idx);
+        spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+        return 0;
+    }
+    
     set_frame(idx);
     pmm_info.free_frames--;
     pmm_info.used_frames++;
+    
+    // 【安全检查】验证 set_frame 是否生效
+    if (!test_frame(idx)) {
+        uint32_t bitmap_idx = idx / 32;
+        LOG_ERROR_MSG("PMM: CRITICAL: set_frame(%d) failed! Frame still shows as free!\n", idx);
+        LOG_ERROR_MSG("  idx=%u, bitmap_idx=%u, bitmap_size=%u, total_frames=%u\n",
+                     idx, bitmap_idx, bitmap_size, total_frames);
+        LOG_ERROR_MSG("  frame_bitmap=%p, frame_bitmap[%u]=0x%x\n",
+                     frame_bitmap, bitmap_idx, bitmap_idx < bitmap_size ? frame_bitmap[bitmap_idx] : 0);
+        pmm_info.free_frames++;
+        pmm_info.used_frames--;
+        spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+        return 0;
+    }
     
     uint32_t addr = idx * PAGE_SIZE;
     
@@ -256,7 +297,17 @@ void pmm_free_frame(uint32_t frame) {
     spinlock_lock_irqsave(&pmm_lock, &irq_state);
 
     // 检查有效性和状态
-    if (idx >= total_frames || !test_frame(idx)) {
+    if (idx >= total_frames) {
+        spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+        return;
+    }
+    
+    if (!test_frame(idx)) {
+        // 仅在可能是有效内存区域时发出警告
+        // 忽略低端内存（可能被 BIOS/VGA 使用）
+        if (frame > 0x100000) {
+            LOG_WARN_MSG("PMM: Double free or freeing unused frame 0x%x (idx %u)\n", frame, idx);
+        }
         spinlock_unlock_irqrestore(&pmm_lock, irq_state);
         return;
     }
