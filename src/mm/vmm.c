@@ -559,12 +559,17 @@ uint32_t vmm_unmap_page_in_directory(uint32_t dir_phys, uint32_t virt) {
         pmm_free_frame(table_frame);
         *pde = 0;
         LOG_DEBUG_MSG("  Page table at PDE %u (frame=%x) is empty, freed\n", pd, table_frame);
+        
+        // 如果页表被释放，需要刷新整个 TLB，因为 PDE 变了
+        if (dir_phys == current_dir_phys) {
+            vmm_flush_tlb(0);
+        }
     } else {
         LOG_DEBUG_MSG("  Page table at PDE %u still has entries\n", pd);
-    }
-
-    if (dir_phys == current_dir_phys) {
-        vmm_flush_tlb(virt);
+        // 只有当页表没有被释放时，才只需要刷新单个页面的 TLB
+        if (dir_phys == current_dir_phys) {
+            vmm_flush_tlb(virt);
+        }
     }
 
     uint32_t result = get_frame(old_entry);

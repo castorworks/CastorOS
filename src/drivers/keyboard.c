@@ -12,8 +12,8 @@
 
 /* 键盘缓冲区 */
 static char keyboard_buffer[KEYBOARD_BUFFER_SIZE];
-static size_t buffer_read_pos = 0;
-static size_t buffer_write_pos = 0;
+static volatile size_t buffer_read_pos = 0;
+static volatile size_t buffer_write_pos = 0;
 
 /* 修饰键状态 */
 static keyboard_modifiers_t modifiers = {
