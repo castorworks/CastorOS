@@ -371,6 +371,7 @@ static int ramfs_create_file(fs_node_t *node, const char *name) {
     new_node->size = 0;
     new_node->permissions = FS_PERM_READ | FS_PERM_WRITE;
     new_node->impl = (uint32_t)file;
+    new_node->ref_count = 0;  // 初始化引用计数
     
     // 设置操作函数
     new_node->read = ramfs_read;
@@ -446,6 +447,7 @@ static int ramfs_mkdir(fs_node_t *node, const char *name, uint32_t permissions) 
     new_node->size = 0;
     new_node->permissions = permissions;
     new_node->impl = (uint32_t)new_dir;
+    new_node->ref_count = 0;  // 初始化引用计数
     
     // 设置操作函数
     new_node->readdir = ramfs_readdir;
@@ -568,6 +570,7 @@ fs_node_t *ramfs_create(const char *name) {
     root->size = 0;
     root->permissions = FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC;
     root->impl = (uint32_t)root_dir;
+    root->ref_count = 0;  // 初始化引用计数
     
     // 设置操作函数
     root->readdir = ramfs_readdir;

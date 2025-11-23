@@ -251,6 +251,7 @@ fs_node_t *devfs_init(void) {
     devfs_devices[0].uid = 0;
     devfs_devices[0].gid = 0;
     devfs_devices[0].flags = 0;
+    devfs_devices[0].ref_count = 0;  // 初始化引用计数
     devfs_devices[0].read = devnull_read;
     devfs_devices[0].write = devnull_write;
     devfs_devices[0].open = NULL;
@@ -271,6 +272,7 @@ fs_node_t *devfs_init(void) {
     devfs_devices[1].uid = 0;
     devfs_devices[1].gid = 0;
     devfs_devices[1].flags = 0;
+    devfs_devices[1].ref_count = 0;  // 初始化引用计数
     devfs_devices[1].read = devzero_read;
     devfs_devices[1].write = devzero_write;
     devfs_devices[1].open = NULL;
@@ -291,6 +293,7 @@ fs_node_t *devfs_init(void) {
     devfs_devices[2].uid = 0;
     devfs_devices[2].gid = 0;
     devfs_devices[2].flags = 0;
+    devfs_devices[2].ref_count = 0;  // 初始化引用计数
     devfs_devices[2].read = devserial_read;
     devfs_devices[2].write = devserial_write;
     devfs_devices[2].open = NULL;
@@ -311,6 +314,7 @@ fs_node_t *devfs_init(void) {
     devfs_devices[3].uid = 0;
     devfs_devices[3].gid = 0;
     devfs_devices[3].flags = 0;
+    devfs_devices[3].ref_count = 0;  // 初始化引用计数
     devfs_devices[3].read = devconsole_read;
     devfs_devices[3].write = devconsole_write;
     devfs_devices[3].open = NULL;
@@ -338,6 +342,7 @@ fs_node_t *devfs_init(void) {
     devfs_root->uid = 0;
     devfs_root->gid = 0;
     devfs_root->flags = 0;
+    devfs_root->ref_count = 0;  // 初始化引用计数
     devfs_root->read = NULL;
     devfs_root->write = NULL;
     devfs_root->open = NULL;

@@ -31,6 +31,10 @@ int32_t fd_table_alloc(fd_table_t *table, fs_node_t *node, int32_t flags) {
             table->entries[i].offset = 0;
             table->entries[i].flags = flags;
             table->entries[i].in_use = true;
+            
+            // 增加节点引用计数
+            vfs_ref_node(node);
+            
             return i;
         }
     }
@@ -88,6 +92,11 @@ int32_t fd_table_copy(fd_table_t *src, fd_table_t *dst) {
             dst->entries[i].offset = src->entries[i].offset;
             dst->entries[i].flags = src->entries[i].flags;
             dst->entries[i].in_use = true;
+            
+            // 关键修复：增加引用计数，因为现在有两个fd指向同一个节点
+            if (dst->entries[i].node) {
+                vfs_ref_node(dst->entries[i].node);
+            }
         } else {
             dst->entries[i].in_use = false;
         }

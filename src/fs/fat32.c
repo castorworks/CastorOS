@@ -1477,6 +1477,7 @@ static fs_node_t *fat32_dir_finddir(fs_node_t *node, const char *name) {
     new_node->size = lookup->entry.file_size;
     new_node->permissions = FS_PERM_READ | FS_PERM_WRITE;
     new_node->flags = FS_NODE_FLAG_ALLOCATED;  // 标记为动态分配的节点
+    new_node->ref_count = 0;  // 初始化引用计数
     
     if (lookup->entry.attributes & FAT32_ATTR_DIRECTORY) {
         new_node->type = FS_DIRECTORY;
@@ -1646,6 +1647,7 @@ fs_node_t *fat32_init(blockdev_t *dev) {
     root->type = FS_DIRECTORY;
     root->size = 0;
     root->permissions = FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC;
+    root->ref_count = 0;  // 初始化引用计数
     root->readdir = fat32_dir_readdir;
     root->finddir = fat32_dir_finddir;
     root->create = fat32_dir_create;

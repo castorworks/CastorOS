@@ -341,21 +341,29 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
             // 初始化标准文件描述符
             fs_node_t *console = vfs_path_to_node("/dev/console");
             if (console) {
-                // 分配 fd 0, 1, 2
+                // 注意：fd_table_alloc 会自动增加引用计数
+                // 所以我们可以安全地为多个 fd 使用同一个节点
+                
+                // 分配 fd 0 (stdin)
                 int32_t fd = fd_table_alloc(current->fd_table, console, O_RDONLY);
                 if (fd != 0) {
                     LOG_WARN_MSG("sys_execve: failed to assign STDIN (fd=%d)\n", fd);
                 }
                 
+                // 分配 fd 1 (stdout) - fd_table_alloc 会增加引用计数
                 fd = fd_table_alloc(current->fd_table, console, O_WRONLY);
                 if (fd != 1) {
                     LOG_WARN_MSG("sys_execve: failed to assign STDOUT (fd=%d)\n", fd);
                 }
                 
+                // 分配 fd 2 (stderr) - fd_table_alloc 会增加引用计数
                 fd = fd_table_alloc(current->fd_table, console, O_WRONLY);
                 if (fd != 2) {
                     LOG_WARN_MSG("sys_execve: failed to assign STDERR (fd=%d)\n", fd);
                 }
+                
+                // 注意：console 节点现在的引用计数为 3（每个 fd 一次）
+                // 当所有 fd 关闭时，引用计数会降到 0，节点才会被释放
             } else {
                 LOG_WARN_MSG("sys_execve: /dev/console not available, stdio not initialized\n");
             }

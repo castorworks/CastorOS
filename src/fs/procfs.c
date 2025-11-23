@@ -406,6 +406,7 @@ static fs_node_t *procfs_root_finddir(fs_node_t *node, const char *name) {
                 pid_dir->size = 0;
                 pid_dir->permissions = FS_PERM_READ | FS_PERM_EXEC;
                 pid_dir->impl = (uint32_t)pid;  // 存储 PID
+                pid_dir->ref_count = 0;  // 初始化引用计数
                 pid_dir->read = NULL;
                 pid_dir->write = NULL;
                 pid_dir->open = NULL;
@@ -453,6 +454,7 @@ fs_node_t *procfs_init(void) {
     procfs_root->uid = 0;
     procfs_root->gid = 0;
     procfs_root->flags = 0;
+    procfs_root->ref_count = 0;  // 初始化引用计数
     procfs_root->read = NULL;
     procfs_root->write = NULL;
     procfs_root->open = NULL;
@@ -477,6 +479,7 @@ fs_node_t *procfs_init(void) {
     procfs_meminfo_file->type = FS_FILE;
     procfs_meminfo_file->size = 512;
     procfs_meminfo_file->permissions = FS_PERM_READ;
+    procfs_meminfo_file->ref_count = 0;  // 初始化引用计数
     procfs_meminfo_file->read = procfs_meminfo_read;
     procfs_meminfo_file->write = NULL;
     procfs_meminfo_file->open = NULL;

@@ -100,13 +100,31 @@ void vfs_close(fs_node_t *node) {
     }
 }
 
+void vfs_ref_node(fs_node_t *node) {
+    if (!node) {
+        return;
+    }
+    
+    node->ref_count++;
+    LOG_DEBUG_MSG("vfs_ref_node: %s ref_count=%u\n", node->name, node->ref_count);
+}
+
 void vfs_release_node(fs_node_t *node) {
     if (!node) {
         return;
     }
     
-    // 只释放动态分配的节点
-    if (node->flags & FS_NODE_FLAG_ALLOCATED) {
+    // 减少引用计数
+    if (node->ref_count > 0) {
+        node->ref_count--;
+        LOG_DEBUG_MSG("vfs_release_node: %s ref_count=%u\n", node->name, node->ref_count);
+    } else {
+        LOG_WARN_MSG("vfs_release_node: %s already has ref_count=0\n", node->name);
+    }
+    
+    // 只有当引用计数为 0 且是动态分配的节点时才释放
+    if (node->ref_count == 0 && (node->flags & FS_NODE_FLAG_ALLOCATED)) {
+        LOG_INFO_MSG("vfs_release_node: freeing node %s\n", node->name);
         // 释放实现相关的数据（如 fat32_file_t）
         if (node->impl) {
             kfree((void *)node->impl);

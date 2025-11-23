@@ -55,6 +55,7 @@ typedef struct fs_node {
     uint32_t gid;                // 组 ID
     uint32_t flags;              // 标志位
     uint32_t impl;               // 实现相关数据（指针）
+    uint32_t ref_count;          // 引用计数（用于资源管理）
     
     // 文件操作函数
     read_type_t read;
@@ -123,8 +124,14 @@ void vfs_open(fs_node_t *node, uint32_t flags);
 void vfs_close(fs_node_t *node);
 
 /**
- * 释放文件节点
- * 如果节点是动态分配的（flags & FS_NODE_FLAG_ALLOCATED），则释放它
+ * 增加文件节点引用计数
+ * @param node 文件节点
+ */
+void vfs_ref_node(fs_node_t *node);
+
+/**
+ * 减少文件节点引用计数并在计数为0时释放
+ * 如果节点是动态分配的（flags & FS_NODE_FLAG_ALLOCATED）且引用计数为0，则释放它
  * @param node 文件节点
  */
 void vfs_release_node(fs_node_t *node);
