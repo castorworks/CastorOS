@@ -270,6 +270,7 @@ static fs_node_t *procfs_pid_finddir(fs_node_t *node, const char *name) {
             status_file->size = 512;  // 估计大小
             status_file->permissions = FS_PERM_READ;
             status_file->impl = (uint32_t)pid;  // 存储 PID
+            status_file->ref_count = 0;  // 初始化引用计数
             status_file->read = procfs_status_read;
             status_file->write = NULL;
             status_file->open = NULL;
