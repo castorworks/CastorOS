@@ -15,6 +15,11 @@
 #include <lib/string.h>
 #include <drivers/timer.h>
 
+// 辅助函数：检查页目录项是否存在
+static inline bool is_present(uint32_t pde) { return pde & 0x1; }
+// 辅助函数：从页目录项中提取物理地址
+static inline uint32_t get_frame(uint32_t pde) { return pde & 0xFFFFF000; }
+
 /* ============================================================================
  * 全局变量
  * ========================================================================== */
@@ -45,6 +50,9 @@ static bool scheduler_initialized = false;
 
 /** @brief 任务管理全局锁 - 保护任务池、就绪队列和 PID 分配 */
 static spinlock_t task_lock;
+
+/** @brief 待清理的 terminated 任务（用于延迟清理） */
+static task_t *pending_cleanup_task = NULL;
 
 /* ============================================================================
  * 辅助函数：就绪队列操作
@@ -532,6 +540,8 @@ uint32_t task_create_user_process(const char *name, uint32_t entry_point,
         fd_table_alloc(task->fd_table, console, 0); // stdin (fd 0)
         fd_table_alloc(task->fd_table, console, 0); // stdout (fd 1)
         fd_table_alloc(task->fd_table, console, 0); // stderr (fd 2)
+        // 关键修复：释放初始引用（fd_table_alloc 已经增加了 3 次引用计数）
+        vfs_release_node(console);
         LOG_DEBUG_MSG("  Opened stdin/stdout/stderr for process\n");
     } else {
         LOG_WARN_MSG("  Failed to open /dev/console for stdio\n");
@@ -645,18 +655,65 @@ void task_schedule(void) {
     
     bool prev_state = interrupts_disable();
     
+    // 【关键修复】先清理上一次延迟的 terminated 任务
+    // 现在我们已经在新任务的栈上了，可以安全地释放旧任务的资源
+    if (pending_cleanup_task) {
+        task_t *task_to_cleanup = pending_cleanup_task;
+        pending_cleanup_task = NULL;  // 清空待清理指针
+        
+        LOG_INFO_MSG("Cleaning up terminated task %u (%s)\n", 
+                     task_to_cleanup->pid, task_to_cleanup->name);
+        
+        // 保存需要释放的资源信息（在 task_free 会清空 PCB）
+        uint32_t kernel_stack_base = task_to_cleanup->kernel_stack_base;
+        bool is_user = task_to_cleanup->is_user_process;
+        uint32_t page_dir_phys = task_to_cleanup->page_dir_phys;
+        fd_table_t *fd_table = task_to_cleanup->fd_table;
+        
+        // 先在锁内清空 PCB
+        bool irq_state_cleanup;
+        spinlock_lock_irqsave(&task_lock, &irq_state_cleanup);
+        memset(task_to_cleanup, 0, sizeof(task_t));
+        task_to_cleanup->state = TASK_UNUSED;
+        active_task_count--;
+        spinlock_unlock_irqrestore(&task_lock, irq_state_cleanup);
+        
+        // 然后在锁外释放资源（避免死锁）
+        if (kernel_stack_base) {
+            kfree((void*)kernel_stack_base);
+        }
+        
+        if (fd_table) {
+            // 关闭所有打开的文件描述符
+            for (int i = 0; i < MAX_FDS; i++) {
+                if (fd_table->entries[i].in_use) {
+                    fd_table_free(fd_table, i);
+                }
+            }
+            kfree(fd_table);
+        }
+        
+        if (is_user && page_dir_phys) {
+            vmm_free_page_directory(page_dir_phys);  // ✅ 释放页目录
+        }
+        
+        LOG_DEBUG_MSG("Terminated task cleanup complete\n");
+    }
+    
     // 保存当前任务
     task_t *prev_task = current_task;
     
+    // 检查是否需要清理 prev_task（但不要立即清理，避免时序问题）
+    bool should_free_prev_task = false;
+    if (prev_task && prev_task != idle_task && prev_task->state == TASK_TERMINATED) {
+        should_free_prev_task = true;
+        LOG_DEBUG_MSG("Marking terminated task %u (%s) for cleanup\n", 
+                     prev_task->pid, prev_task->name);
+    }
     
-    // 处理当前任务
+    // 处理当前任务（除了 TERMINATED，已经标记延迟清理）
     if (prev_task && prev_task != idle_task) {
-        if (prev_task->state == TASK_TERMINATED) {
-            // 清理已终止的任务资源（孤儿进程或已被回收的进程）
-            LOG_DEBUG_MSG("Cleaning up terminated task %u (%s)\n", 
-                         prev_task->pid, prev_task->name);
-            task_free(prev_task);
-        } else if (prev_task->state == TASK_ZOMBIE) {
+        if (prev_task->state == TASK_ZOMBIE) {
             // 僵尸进程：不调度，也不清理，等待父进程回收
             LOG_DEBUG_MSG("Task %u (%s) is zombie, waiting for parent\n", 
                          prev_task->pid, prev_task->name);
@@ -685,10 +742,46 @@ void task_schedule(void) {
         tss_set_kernel_stack(next_task->kernel_stack);
     }
     
+    // 关键修复：在上下文切换前，先同步 VMM 的 current_dir_phys
+    // task_switch_context 会直接修改 CR3，但不会更新 current_dir_phys
+    // 我们必须在切换前就更新，因为切换后不能再调用任何函数
+    if (prev_task != next_task && next_task->is_user_process) {
+        vmm_sync_current_dir(next_task->page_dir_phys);
+        
+        // 【调试】如果是切换到 Shell，验证其页目录完整性
+        if (next_task->pid == 1) {
+            page_directory_t *shell_dir = next_task->page_dir;
+            if (is_present(shell_dir->entries[1])) {
+                uint32_t phys = get_frame(shell_dir->entries[1]);
+                if (phys == 0 || phys >= 0x80000000) {
+                    LOG_ERROR_MSG("Shell PDE[1] corrupted BEFORE switching to it!\n");
+                    LOG_ERROR_MSG("  PDE[0]=%x, PDE[1]=%x, PDE[2]=%x, PDE[3]=%x\n",
+                                 shell_dir->entries[0], shell_dir->entries[1],
+                                 shell_dir->entries[2], shell_dir->entries[3]);
+                }
+            }
+        }
+    }
+    
     // 执行上下文切换
+    // 注意：切换后不能调用任何函数，因为栈已经切换了
     if (prev_task != next_task) {
         cpu_context_t *old_ctx_ptr = prev_task ? &prev_task->context : NULL;
+        
+        // 如果需要释放 prev_task，必须在切换前处理
+        // 但我们不能在切换前释放，因为还在使用 prev_task 的栈和上下文
+        // 解决方案：标记为待清理，下次调度时清理（那时已在新栈上）
+        if (should_free_prev_task) {
+            // ✅ 将任务标记为待清理，下次调度时会在新栈上安全清理
+            pending_cleanup_task = prev_task;
+            LOG_DEBUG_MSG("Task %u (%s) marked for deferred cleanup\n",
+                        prev_task->pid, prev_task->name);
+        }
+        
         task_switch_context(&old_ctx_ptr, &next_task->context);
+        
+        // 注意：永远不会执行到这里（task_switch_context 不会返回到这里）
+        // 下一次进入这个函数时，已经是在新任务的上下文中了
     }
     
     interrupts_restore(prev_state);

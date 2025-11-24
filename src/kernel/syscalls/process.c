@@ -20,6 +20,11 @@
 #include <lib/klog.h>
 #include <lib/string.h>
 
+// 辅助函数：检查页目录项是否存在
+static inline bool is_present(uint32_t pde) { return pde & 0x1; }
+// 辅助函数：从页目录项中提取物理地址
+static inline uint32_t get_frame(uint32_t pde) { return pde & 0xFFFFF000; }
+
 /* 默认时间片（与 task.c 保持一致） */
 #define DEFAULT_TIME_SLICE 10
 
@@ -93,6 +98,26 @@ uint32_t sys_fork(uint32_t *frame) {
     LOG_DEBUG_MSG("  EIP=%x ESP=%x EBP=%x\n", user_eip, user_esp, user_ebp);
     LOG_DEBUG_MSG("  CS=%x SS=%x DS=%x EFLAGS=%x\n", 
                   user_cs, user_ss, user_ds, user_eflags);
+    
+    // 【安全检查】验证父进程页目录的完整性（仅检查前几个 PDE）
+    page_directory_t *parent_dir = parent->page_dir;
+    for (uint32_t i = 0; i < 10; i++) {
+        if (is_present(parent_dir->entries[i])) {
+            uint32_t phys = get_frame(parent_dir->entries[i]);
+            if (phys == 0 || phys >= 0x80000000) {
+                LOG_ERROR_MSG("sys_fork: Parent PDE[%u] corrupted: 0x%x (phys=0x%x)\n", 
+                             i, parent_dir->entries[i], phys);
+                LOG_ERROR_MSG("  Parent: PID=%u, name=%s, page_dir=%p, page_dir_phys=0x%x\n",
+                             parent->pid, parent->name, parent_dir, parent->page_dir_phys);
+                // 打印更多 PDE 以帮助诊断
+                LOG_ERROR_MSG("  PDE[0]=%x, PDE[1]=%x, PDE[2]=%x, PDE[3]=%x\n",
+                             parent_dir->entries[0], parent_dir->entries[1],
+                             parent_dir->entries[2], parent_dir->entries[3]);
+                interrupts_restore(prev_state);
+                return (uint32_t)-1;
+            }
+        }
+    }
     
     // 分配子进程 PCB
     task_t *child = task_alloc();
@@ -362,7 +387,11 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
                     LOG_WARN_MSG("sys_execve: failed to assign STDERR (fd=%d)\n", fd);
                 }
                 
-                // 注意：console 节点现在的引用计数为 3（每个 fd 一次）
+                // 关键修复：释放 vfs_path_to_node 的初始引用
+                // 三个 fd_table_alloc 调用已经增加了引用计数（每个 fd 一次）
+                // 现在释放初始引用，console 的 ref_count = 3（每个 fd 一个）
+                vfs_release_node(console);
+                
                 // 当所有 fd 关闭时，引用计数会降到 0，节点才会被释放
             } else {
                 LOG_WARN_MSG("sys_execve: /dev/console not available, stdio not initialized\n");

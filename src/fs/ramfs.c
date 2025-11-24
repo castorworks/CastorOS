@@ -311,6 +311,11 @@ static fs_node_t *ramfs_finddir(fs_node_t *node, const char *name) {
     fs_node_t *result = entry ? entry->node : NULL;
     mutex_unlock(&dir->lock);
     
+    // 增加引用计数
+    if (result) {
+        vfs_ref_node(result);
+    }
+    
     return result;
 }
 

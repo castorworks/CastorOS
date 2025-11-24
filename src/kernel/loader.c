@@ -66,6 +66,8 @@ bool load_user_shell(void) {
         return false;
     }
     
+    LOG_INFO_MSG("Shell: Created page directory at phys 0x%x\n", page_dir_phys);
+    
     page_directory_t *page_dir = (page_directory_t*)PHYS_TO_VIRT(page_dir_phys);
     
     // 加载 ELF

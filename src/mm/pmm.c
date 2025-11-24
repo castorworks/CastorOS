@@ -275,6 +275,12 @@ uint32_t pmm_alloc_frame(void) {
         return 0;
     }
     
+    // 【诊断日志】记录页目录区域的分配
+    if (addr >= 0x00190000 && addr < 0x001b0000) {
+        LOG_WARN_MSG("PMM: Allocated frame 0x%x in page directory danger zone (0x190000-0x1b0000)\n", addr);
+        LOG_WARN_MSG("  PMM state: used=%u, free=%u\n", pmm_info.used_frames, pmm_info.free_frames);
+    }
+    
     // 清零页帧内容
     memset((void*)PHYS_TO_VIRT(addr), 0, PAGE_SIZE);
     
@@ -315,6 +321,11 @@ void pmm_free_frame(uint32_t frame) {
     clear_frame(idx);
     pmm_info.free_frames++;
     pmm_info.used_frames--;
+    
+    // 【诊断日志】记录页目录区域的释放
+    if (frame >= 0x00190000 && frame < 0x001b0000) {
+        LOG_WARN_MSG("PMM: Freed frame 0x%x in page directory danger zone\n", frame);
+    }
     
     // 更新搜索游标，如果有更小的空闲帧
     // last_free_index 是位图数组索引（uint32_t 索引），不是页帧索引

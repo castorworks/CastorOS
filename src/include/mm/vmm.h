@@ -99,6 +99,12 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys);
 void vmm_free_page_directory(uint32_t dir_phys);
 
 /**
+ * @brief 同步 VMM 的 current_dir_phys（不切换 CR3）
+ * @param dir_phys 当前页目录的物理地址
+ */
+void vmm_sync_current_dir(uint32_t dir_phys);
+
+/**
  * @brief 切换到指定的页目录
  * @param dir_phys 页目录的物理地址
  */

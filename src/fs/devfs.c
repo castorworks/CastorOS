@@ -221,12 +221,16 @@ static struct dirent *devfs_readdir(fs_node_t *node, uint32_t index) {
 static fs_node_t *devfs_finddir(fs_node_t *node, const char *name) {
     /* 处理 . 和 .. */
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+        // 增加引用计数（根节点是静态的，不会被释放，但需要计数管理）
+        vfs_ref_node(node);
         return node;  // 返回当前目录节点（devfs_root）
     }
     
     /* 查找设备 */
     for (uint32_t i = 0; i < DEVFS_DEVICE_COUNT; i++) {
         if (strcmp(devfs_devices[i].name, name) == 0) {
+            // 增加引用计数（静态节点也需要引用计数管理）
+            vfs_ref_node(&devfs_devices[i]);
             return &devfs_devices[i];
         }
     }

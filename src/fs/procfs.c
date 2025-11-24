@@ -242,6 +242,8 @@ static fs_node_t *procfs_pid_finddir(fs_node_t *node, const char *name) {
     
     /* 处理 . 和 .. */
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+        // 增加引用计数
+        vfs_ref_node(node);
         return node;  // 返回当前目录节点
     }
     
@@ -252,6 +254,8 @@ static fs_node_t *procfs_pid_finddir(fs_node_t *node, const char *name) {
         // 查找或创建 status 文件节点
         for (uint32_t i = 0; i < proc_dir_count; i++) {
             if (proc_status_files[i] && (uint32_t)proc_status_files[i]->impl == pid) {
+                // 增加引用计数
+                vfs_ref_node(proc_status_files[i]);
                 return proc_status_files[i];
             }
         }
@@ -270,7 +274,7 @@ static fs_node_t *procfs_pid_finddir(fs_node_t *node, const char *name) {
             status_file->size = 512;  // 估计大小
             status_file->permissions = FS_PERM_READ;
             status_file->impl = (uint32_t)pid;  // 存储 PID
-            status_file->ref_count = 0;  // 初始化引用计数
+            status_file->ref_count = 1;  // 返回时引用计数为 1
             status_file->read = procfs_status_read;
             status_file->write = NULL;
             status_file->open = NULL;
@@ -281,6 +285,7 @@ static fs_node_t *procfs_pid_finddir(fs_node_t *node, const char *name) {
             status_file->mkdir = NULL;
             status_file->unlink = NULL;
             status_file->ptr = NULL;
+            status_file->flags = FS_NODE_FLAG_ALLOCATED;  // 标记为动态分配
             
             proc_status_files[proc_dir_count] = status_file;
             return status_file;
@@ -366,11 +371,15 @@ static fs_node_t *procfs_root_finddir(fs_node_t *node, const char *name) {
     
     /* 处理 . 和 .. */
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+        // 增加引用计数（根节点是静态的，不会被释放，但需要计数管理）
+        vfs_ref_node(node);
         return node;  // 返回当前目录节点（procfs_root）
     }
     
     /* meminfo 文件 */
     if (strcmp(name, "meminfo") == 0) {
+        // 增加引用计数（静态节点也需要引用计数管理）
+        vfs_ref_node(procfs_meminfo_file);
         return procfs_meminfo_file;
     }
     
@@ -389,6 +398,8 @@ static fs_node_t *procfs_root_finddir(fs_node_t *node, const char *name) {
             // 查找或创建进程目录节点
             for (uint32_t i = 0; i < proc_dir_count; i++) {
                 if (proc_dirs[i] && (uint32_t)proc_dirs[i]->impl == pid) {
+                    // 增加引用计数
+                    vfs_ref_node(proc_dirs[i]);
                     return proc_dirs[i];
                 }
             }
@@ -407,7 +418,7 @@ static fs_node_t *procfs_root_finddir(fs_node_t *node, const char *name) {
                 pid_dir->size = 0;
                 pid_dir->permissions = FS_PERM_READ | FS_PERM_EXEC;
                 pid_dir->impl = (uint32_t)pid;  // 存储 PID
-                pid_dir->ref_count = 0;  // 初始化引用计数
+                pid_dir->ref_count = 1;  // 返回时引用计数为 1
                 pid_dir->read = NULL;
                 pid_dir->write = NULL;
                 pid_dir->open = NULL;
@@ -418,6 +429,7 @@ static fs_node_t *procfs_root_finddir(fs_node_t *node, const char *name) {
                 pid_dir->mkdir = NULL;
                 pid_dir->unlink = NULL;
                 pid_dir->ptr = NULL;
+                pid_dir->flags = FS_NODE_FLAG_ALLOCATED;  // 标记为动态分配
                 
                 proc_dirs[proc_dir_count++] = pid_dir;
                 return pid_dir;

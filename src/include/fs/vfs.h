@@ -148,14 +148,14 @@ struct dirent *vfs_readdir(fs_node_t *node, uint32_t index);
  * 在目录中查找文件
  * @param node 目录节点
  * @param name 文件名
- * @return 文件节点，未找到返回 NULL
+ * @return 文件节点（ref_count=1，调用者需要调用 vfs_release_node），未找到返回 NULL
  */
 fs_node_t *vfs_finddir(fs_node_t *node, const char *name);
 
 /**
  * 路径解析
  * @param path 路径字符串
- * @return 文件节点，未找到返回 NULL
+ * @return 文件节点（对于动态分配的节点 ref_count=1，调用者需要调用 vfs_release_node），未找到返回 NULL
  */
 fs_node_t *vfs_path_to_node(const char *path);
 

@@ -28,5 +28,11 @@ fs_node_t *fat32_init(blockdev_t *dev);
  */
 bool fat32_probe(blockdev_t *dev);
 
+/**
+ * 卸载 FAT32 文件系统并释放所有资源
+ * @param root 根目录节点（由 fat32_init 返回）
+ */
+void fat32_deinit(fs_node_t *root);
+
 #endif // _FS_FAT32_H_
 

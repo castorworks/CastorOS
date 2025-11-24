@@ -25,12 +25,16 @@ static uint32_t mount_count = 0;
 /* VFS 挂载表互斥锁 - 保护 mount_table 和 mount_count */
 static mutex_t vfs_mount_mutex;
 
+/* VFS 引用计数互斥锁 - 保护所有节点的引用计数操作 */
+static mutex_t vfs_refcount_mutex;
+
 void vfs_init(void) {
     LOG_INFO_MSG("VFS: Initializing virtual file system...\n");
     fs_root = NULL;
     mount_count = 0;
     mutex_init(&vfs_mount_mutex);
-    LOG_INFO_MSG("VFS: Mount table mutex initialized\n");
+    mutex_init(&vfs_refcount_mutex);
+    LOG_INFO_MSG("VFS: Mount table and refcount mutexes initialized\n");
 }
 
 /* 查询挂载表，根据路径获取挂载的根节点 */
@@ -105,8 +109,11 @@ void vfs_ref_node(fs_node_t *node) {
         return;
     }
     
+    // 保护引用计数操作，防止并发竞争
+    mutex_lock(&vfs_refcount_mutex);
     node->ref_count++;
     LOG_DEBUG_MSG("vfs_ref_node: %s ref_count=%u\n", node->name, node->ref_count);
+    mutex_unlock(&vfs_refcount_mutex);
 }
 
 void vfs_release_node(fs_node_t *node) {
@@ -114,24 +121,36 @@ void vfs_release_node(fs_node_t *node) {
         return;
     }
     
+    // 保护引用计数操作，防止并发竞争
+    mutex_lock(&vfs_refcount_mutex);
+    
     // 减少引用计数
     if (node->ref_count > 0) {
         node->ref_count--;
         LOG_DEBUG_MSG("vfs_release_node: %s ref_count=%u\n", node->name, node->ref_count);
     } else {
-        LOG_WARN_MSG("vfs_release_node: %s already has ref_count=0\n", node->name);
+        // 引用计数已经为 0，打印警告但不要继续释放（防止双重释放）
+        LOG_WARN_MSG("vfs_release_node: %s already has ref_count=0, skipping free\n", node->name);
+        mutex_unlock(&vfs_refcount_mutex);
+        return;  // 立即返回，防止双重释放
     }
     
     // 只有当引用计数为 0 且是动态分配的节点时才释放
     if (node->ref_count == 0 && (node->flags & FS_NODE_FLAG_ALLOCATED)) {
         LOG_INFO_MSG("vfs_release_node: freeing node %s\n", node->name);
+        // 释放之前先解锁，因为释放操作可能需要较长时间
+        mutex_unlock(&vfs_refcount_mutex);
+        
         // 释放实现相关的数据（如 fat32_file_t）
         if (node->impl) {
             kfree((void *)node->impl);
         }
         // 释放节点本身
         kfree(node);
+        return;
     }
+    
+    mutex_unlock(&vfs_refcount_mutex);
 }
 
 struct dirent *vfs_readdir(fs_node_t *node, uint32_t index) {
@@ -304,6 +323,7 @@ fs_node_t *vfs_path_to_node(const char *path) {
             
             LOG_DEBUG_MSG("VFS: path_to_node: resolved to %p in mounted fs\n", current);
             mutex_unlock(&vfs_mount_mutex);
+            // 如果返回的节点是动态分配的，已经在 finddir 中设置了 ref_count=1
             return current;
         }
     }
@@ -393,6 +413,7 @@ fs_node_t *vfs_path_to_node(const char *path) {
     }
     
     LOG_DEBUG_MSG("VFS: path_to_node: resolved to %p\n", current);
+    // 如果返回的节点是动态分配的，已经在 finddir 中设置了 ref_count=1
     return current;
 }
 

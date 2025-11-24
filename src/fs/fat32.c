@@ -84,6 +84,7 @@ typedef struct fat32_file {
     uint32_t dirent_cluster;      // 目录项所在簇
     uint32_t dirent_offset;       // 目录项偏移（字节）
     uint32_t parent_cluster;      // 父目录簇号
+    struct dirent readdir_cache;  // readdir 结果缓冲区（避免静态变量）
 } fat32_file_t;
 
 // 目录查找结果
@@ -1377,7 +1378,8 @@ static struct dirent *fat32_dir_readdir(fs_node_t *node, uint32_t index) {
         return NULL;
     }
     
-    static struct dirent result;
+    // 使用 fat32_file_t 中的缓冲区，避免静态变量带来的并发问题
+    struct dirent *result = &file->readdir_cache;
     uint32_t current_index = 0;
     uint32_t current_cluster = file->start_cluster;
     uint32_t chain_length = 0;
@@ -1402,22 +1404,22 @@ static struct dirent *fat32_dir_readdir(fs_node_t *node, uint32_t index) {
                 // 找到目标项
                 char formatted_name[13];
                 fat32_format_filename(fat_dirent->name, formatted_name);
-                strncpy(result.d_name, formatted_name, sizeof(result.d_name) - 1);
-                result.d_name[sizeof(result.d_name) - 1] = '\0';
+                strncpy(result->d_name, formatted_name, sizeof(result->d_name) - 1);
+                result->d_name[sizeof(result->d_name) - 1] = '\0';
                 
                 uint32_t cluster = ((uint32_t)fat_dirent->cluster_high << 16) | fat_dirent->cluster_low;
-                result.d_ino = cluster;  // 使用簇号作为 inode
-                result.d_reclen = sizeof(struct dirent);
-                result.d_off = index + 1;
+                result->d_ino = cluster;  // 使用簇号作为 inode
+                result->d_reclen = sizeof(struct dirent);
+                result->d_off = index + 1;
                 
                 if (fat_dirent->attributes & FAT32_ATTR_DIRECTORY) {
-                    result.d_type = DT_DIR;
+                    result->d_type = DT_DIR;
                 } else {
-                    result.d_type = DT_REG;
+                    result->d_type = DT_REG;
                 }
                 
                 kfree(cluster_buffer);
-                return &result;
+                return result;
             }
             
             current_index++;
@@ -1477,7 +1479,7 @@ static fs_node_t *fat32_dir_finddir(fs_node_t *node, const char *name) {
     new_node->size = lookup->entry.file_size;
     new_node->permissions = FS_PERM_READ | FS_PERM_WRITE;
     new_node->flags = FS_NODE_FLAG_ALLOCATED;  // 标记为动态分配的节点
-    new_node->ref_count = 0;  // 初始化引用计数
+    new_node->ref_count = 1;  // 返回时引用计数为 1，表示调用者拥有一个引用
     
     if (lookup->entry.attributes & FAT32_ATTR_DIRECTORY) {
         new_node->type = FS_DIRECTORY;
@@ -1563,6 +1565,7 @@ fs_node_t *fat32_init(blockdev_t *dev) {
     fs->dev = blockdev_retain(dev);  // 保留设备引用，防止被销毁
     
     if (blockdev_read(dev, 0, 1, (uint8_t *)&fs->bpb) != 0) {
+        blockdev_release(fs->dev);  // 释放设备引用
         kfree(fs);
         LOG_ERROR_MSG("fat32: Failed to read BPB\n");
         return NULL;
@@ -1579,12 +1582,14 @@ fs_node_t *fat32_init(blockdev_t *dev) {
                                                      : fs->bpb.total_sectors_16;
     if (fs->bpb.sectors_per_cluster == 0) {
         LOG_ERROR_MSG("fat32: Invalid sectors per cluster (0)\n");
+        blockdev_release(fs->dev);  // 释放设备引用
         kfree(fs);
         return NULL;
     }
     uint32_t fats_total = fs->bpb.fat_count * fs->bpb.sectors_per_fat_32;
     if (total_sectors < fs->bpb.reserved_sectors + fats_total) {
         LOG_ERROR_MSG("fat32: Invalid BPB, total sectors too small\n");
+        blockdev_release(fs->dev);  // 释放设备引用
         kfree(fs);
         return NULL;
     }
@@ -1592,6 +1597,7 @@ fs_node_t *fat32_init(blockdev_t *dev) {
     fs->total_clusters = data_sectors / fs->bpb.sectors_per_cluster;
     if (fs->total_clusters == 0) {
         LOG_ERROR_MSG("fat32: No data clusters available\n");
+        blockdev_release(fs->dev);  // 释放设备引用
         kfree(fs);
         return NULL;
     }
@@ -1629,6 +1635,7 @@ fs_node_t *fat32_init(blockdev_t *dev) {
     // 创建根目录节点
     fs_node_t *root = (fs_node_t *)kmalloc(sizeof(fs_node_t));
     if (!root) {
+        blockdev_release(fs->dev);  // 释放设备引用
         kfree(fs);
         return NULL;
     }
@@ -1636,6 +1643,7 @@ fs_node_t *fat32_init(blockdev_t *dev) {
     fat32_file_t *root_file = (fat32_file_t *)kmalloc(sizeof(fat32_file_t));
     if (!root_file) {
         kfree(root);
+        blockdev_release(fs->dev);  // 释放设备引用
         kfree(fs);
         return NULL;
     }
@@ -1668,4 +1676,50 @@ fs_node_t *fat32_init(blockdev_t *dev) {
     return root;
 }
 
+/**
+ * 卸载 FAT32 文件系统并释放所有资源
+ * @param root 根目录节点
+ */
+void fat32_deinit(fs_node_t *root) {
+    if (!root || !root->impl) {
+        LOG_WARN_MSG("fat32_deinit: Invalid root node\n");
+        return;
+    }
+    
+    fat32_file_t *root_file = (fat32_file_t *)root->impl;
+    if (!root_file || !root_file->fs) {
+        LOG_WARN_MSG("fat32_deinit: Invalid root_file or fs\n");
+        return;
+    }
+    
+    fat32_fs_t *fs = root_file->fs;
+    
+    LOG_INFO_MSG("fat32: Unmounting filesystem...\n");
+    
+    // 释放设备引用
+    if (fs->dev) {
+        blockdev_release(fs->dev);
+        LOG_DEBUG_MSG("fat32: Released block device\n");
+    }
+    
+    // 释放 FAT 缓存（如果有）
+    if (fs->fat_cache) {
+        kfree(fs->fat_cache);
+        LOG_DEBUG_MSG("fat32: Freed FAT cache\n");
+    }
+    
+    // 释放文件系统结构
+    kfree(fs);
+    LOG_DEBUG_MSG("fat32: Freed filesystem structure\n");
+    
+    // 释放根文件节点
+    kfree(root_file);
+    LOG_DEBUG_MSG("fat32: Freed root_file\n");
+    
+    // 释放根目录节点
+    kfree(root);
+    LOG_DEBUG_MSG("fat32: Freed root node\n");
+    
+    LOG_INFO_MSG("fat32: Filesystem unmounted and all resources freed\n");
+}
 

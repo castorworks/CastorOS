@@ -50,6 +50,7 @@ uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
     // 检查 O_EXCL 标志
     if ((flags & O_CREAT) && (flags & O_EXCL)) {
         LOG_ERROR_MSG("sys_open: file '%s' exists but O_EXCL specified\n", path);
+        vfs_release_node(node);  // 释放节点，修复内存泄漏
         return (uint32_t)-1;
     }
     
@@ -71,6 +72,10 @@ uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
         vfs_release_node(node);  // 释放节点
         return (uint32_t)-1;
     }
+    
+    // 关键修复：释放 vfs_path_to_node 的初始引用
+    // fd_table_alloc 已经增加了引用计数，现在 fd 持有唯一引用
+    vfs_release_node(node);
     
     // 如果是追加模式，设置偏移量到文件末尾
     if (flags & O_APPEND) {
