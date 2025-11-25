@@ -12,9 +12,9 @@ CastorOS 实现了三种核心同步原语：自旋锁（Spinlock）、互斥锁
 - 🔄 **在关键系统组件中应用同步保护**
   - ✅ 任务管理 (Task Management)
   - ✅ 内存管理 (PMM, VMM, Heap)
-  - ✅ 文件系统 (VFS Mount, RamFS Inode/Dir/File)
+  - ✅ 文件系统 (VFS Mount/Refcount, RamFS Inode/Dir/File)
   - ❌ 文件描述符表 (FD Table)
-  - ❌ 设别驱动 (Serial, Keyboard, ATA)
+  - ❌ 设备驱动 (Serial, Keyboard, ATA)
   - ❌ 中断管理 (IRQ Registry)
 
 ---
@@ -44,6 +44,7 @@ void spinlock_init(spinlock_t *lock);
 void spinlock_lock(spinlock_t *lock);
 bool spinlock_try_lock(spinlock_t *lock);
 void spinlock_unlock(spinlock_t *lock);
+bool spinlock_is_locked(const spinlock_t *lock);
 void spinlock_lock_irqsave(spinlock_t *lock, bool *irq_state);
 void spinlock_unlock_irqrestore(spinlock_t *lock, bool irq_state);
 ```
@@ -69,6 +70,15 @@ typedef struct {
 - **任务阻塞**：无法获取锁时，任务进入 BLOCKED 状态并主动调度
 - **防止 Lost Wakeup**：在持有自旋锁的情况下设置任务状态，确保不会丢失唤醒信号
 
+**API 接口**：
+```c
+void mutex_init(mutex_t *mutex);
+void mutex_lock(mutex_t *mutex);
+bool mutex_try_lock(mutex_t *mutex);
+void mutex_unlock(mutex_t *mutex);
+bool mutex_is_locked(const mutex_t *mutex);
+```
+
 ### 3. 信号量（Semaphore）
 
 **位置**：`src/kernel/sync/semaphore.c`、`src/include/kernel/sync/semaphore.h`
@@ -80,6 +90,21 @@ typedef struct {
     spinlock_t lock;  // 保护信号量内部状态的自旋锁
     int32_t count;    // 计数值
 } semaphore_t;
+```
+
+**核心机制**：
+- **基于 spinlock 实现**：使用自旋锁保护信号量内部状态
+- **计数语义**：支持多个资源的同步管理
+- **任务阻塞**：当计数为 0 时，等待任务进入 BLOCKED 状态
+- **溢出保护**：`semaphore_signal` 检查整数溢出（INT32_MAX）
+
+**API 接口**：
+```c
+void semaphore_init(semaphore_t *sem, int32_t initial_count);
+void semaphore_wait(semaphore_t *sem);
+bool semaphore_try_wait(semaphore_t *sem);
+void semaphore_signal(semaphore_t *sem);
+int32_t semaphore_get_value(semaphore_t *sem);
 ```
 
 ---
@@ -117,14 +142,21 @@ typedef struct {
 
 使用全局自旋锁保护页表映射操作。
 
-### 3. 文件系统（File System）🔄
+### 3. 文件系统（File System）✅
 
 #### 3.1 VFS 挂载表 ✅
 **状态**：已实现
 **锁类型**：`mutex_t vfs_mount_mutex`
 **位置**：`src/fs/vfs.c`
 
-#### 3.2 RamFS 实现 ✅
+#### 3.2 VFS 引用计数 ✅
+**状态**：已实现
+**锁类型**：`mutex_t vfs_refcount_mutex`
+**位置**：`src/fs/vfs.c`
+
+保护 `vfs_ref_node()` 和 `vfs_release_node()` 中的节点引用计数操作，防止并发竞争导致的双重释放或引用丢失。
+
+#### 3.3 RamFS 实现 ✅
 - **Inode 分配** ✅：`spinlock_t inode_alloc_lock`
 - **目录操作** ✅：`mutex_t lock` (在 `ramfs_dir_t` 中)
 - **文件数据读写** ✅：`mutex_t lock` (在 `ramfs_file_t` 中)，保护文件内容读写和扩容操作。
