@@ -1727,20 +1727,56 @@ static void shell_init(void) {
     shell_state.history_index = -1;
 }
 
+// ANSI 颜色代码
+#define ANSI_RESET      "\033[0m"
+#define ANSI_BOLD       "\033[1m"
+#define ANSI_RED        "\033[31m"
+#define ANSI_GREEN      "\033[32m"
+#define ANSI_YELLOW     "\033[33m"
+#define ANSI_BLUE       "\033[34m"
+#define ANSI_MAGENTA    "\033[35m"
+#define ANSI_CYAN       "\033[36m"
+#define ANSI_WHITE      "\033[37m"
+#define ANSI_BRIGHT_RED     "\033[91m"
+#define ANSI_BRIGHT_GREEN   "\033[92m"
+#define ANSI_BRIGHT_YELLOW  "\033[93m"
+#define ANSI_BRIGHT_BLUE    "\033[94m"
+#define ANSI_BRIGHT_MAGENTA "\033[95m"
+#define ANSI_BRIGHT_CYAN    "\033[96m"
+#define ANSI_BRIGHT_WHITE   "\033[97m"
+
 static void shell_print_welcome(void) {
+    // 上边框 - 青色
+    printf(ANSI_CYAN);
     printf("================================================================================\n");
+    
+    // ASCII Art Logo - 渐变色效果 (黄色到橙色/红色)
+    printf(ANSI_BRIGHT_YELLOW);
     printf("     ____          _              ___  ____\n");
+    printf(ANSI_YELLOW);
     printf("    / ___|__ _ ___| |_ ___  _ __ / _ \\/ ___|\n");
+    printf(ANSI_BRIGHT_RED);
     printf("   | |   / _` / __| __/ _ \\| '__| | | \\___ \\\n");
+    printf(ANSI_RED);
     printf("   | |__| (_| \\__ \\ || (_) | |  | |_| |___) |\n");
+    printf(ANSI_BRIGHT_MAGENTA);
     printf("    \\____\\__,_|___/\\__\\___/|_|   \\___/|____/\n");
+    
+    printf(ANSI_RESET "\n");
+    
+    // 版本信息 - 亮绿色
+    printf(ANSI_BRIGHT_GREEN "          CastorOS User Shell " ANSI_BRIGHT_CYAN "v%s\n" ANSI_RESET, SHELL_VERSION);
     printf("\n");
-    printf("          CastorOS User Shell v%s\n", SHELL_VERSION);
+    
+    // 欢迎信息 - 白色/亮白色
+    printf(ANSI_BRIGHT_WHITE "          Welcome to " ANSI_BRIGHT_YELLOW "CastorOS" ANSI_BRIGHT_WHITE "!\n" ANSI_RESET);
+    printf(ANSI_WHITE "          Type '" ANSI_BRIGHT_GREEN "help" ANSI_WHITE "' for available commands\n" ANSI_RESET);
     printf("\n");
-    printf("          Welcome to CastorOS!\n");
-    printf("          Type 'help' for available commands\n");
-    printf("\n");
+    
+    // 下边框 - 青色
+    printf(ANSI_CYAN);
     printf("================================================================================\n");
+    printf(ANSI_RESET);
 }
 
 static void shell_run(void) {
