@@ -43,15 +43,10 @@ static fs_node_t *vfs_get_mounted_root_by_path(const char *path) {
         return NULL;
     }
     
-    LOG_DEBUG_MSG("VFS: get_mounted_root_by_path: checking '%s' against %u mounts\n", path, mount_count);
-    
     mutex_lock(&vfs_mount_mutex);
     
     for (uint32_t i = 0; i < mount_count; i++) {
-        LOG_DEBUG_MSG("VFS: get_mounted_root_by_path: mount[%u] = {%s, %p}\n", i, 
-                     mount_table[i].path, mount_table[i].root);
         if (strcmp(mount_table[i].path, path) == 0) {
-            LOG_DEBUG_MSG("VFS: found mounted root for '%s': %p\n", path, mount_table[i].root);
             fs_node_t *result = mount_table[i].root;
             mutex_unlock(&vfs_mount_mutex);
             return result;
@@ -59,7 +54,6 @@ static fs_node_t *vfs_get_mounted_root_by_path(const char *path) {
     }
     
     mutex_unlock(&vfs_mount_mutex);
-    LOG_DEBUG_MSG("VFS: no mounted root found for '%s'\n", path);
     return NULL;
 }
 
@@ -112,7 +106,6 @@ void vfs_ref_node(fs_node_t *node) {
     // 保护引用计数操作，防止并发竞争
     mutex_lock(&vfs_refcount_mutex);
     node->ref_count++;
-    LOG_DEBUG_MSG("vfs_ref_node: %s ref_count=%u\n", node->name, node->ref_count);
     mutex_unlock(&vfs_refcount_mutex);
 }
 
@@ -127,7 +120,6 @@ void vfs_release_node(fs_node_t *node) {
     // 减少引用计数
     if (node->ref_count > 0) {
         node->ref_count--;
-        LOG_DEBUG_MSG("vfs_release_node: %s ref_count=%u\n", node->name, node->ref_count);
     } else {
         // 引用计数已经为 0，打印警告但不要继续释放（防止双重释放）
         LOG_WARN_MSG("vfs_release_node: %s already has ref_count=0, skipping free\n", node->name);
@@ -156,24 +148,18 @@ void vfs_release_node(fs_node_t *node) {
 
 struct dirent *vfs_readdir(fs_node_t *node, uint32_t index) {
     if (!node || node->type != FS_DIRECTORY) {
-        LOG_DEBUG_MSG("VFS: readdir: invalid node or not directory\n");
         return NULL;
     }
-    
-    LOG_DEBUG_MSG("VFS: readdir: index=%u, node=%p\n", index, node);
     
     /* 正常读取（挂载点切换在 vfs_path_to_node 中处理） */
     if (!node->readdir) {
-        LOG_DEBUG_MSG("VFS: readdir: node has no readdir callback\n");
         return NULL;
     }
-    LOG_DEBUG_MSG("VFS: readdir: calling node->readdir\n");
     return node->readdir(node, index);
 }
 
 fs_node_t *vfs_finddir(fs_node_t *node, const char *name) {
     if (!node || node->type != FS_DIRECTORY) {
-        LOG_DEBUG_MSG("VFS: finddir: invalid node or not directory\n");
         return NULL;
     }
     
@@ -202,10 +188,8 @@ fs_node_t *vfs_finddir(fs_node_t *node, const char *name) {
     
     /* 正常查找（挂载点切换在 vfs_path_to_node 中处理） */
     if (!node->finddir) {
-        LOG_DEBUG_MSG("VFS: finddir: node has no finddir callback\n");
         return NULL;
     }
-    LOG_DEBUG_MSG("VFS: finddir: calling node->finddir for '%s'\n", name);
     return node->finddir(node, name);
 }
 
@@ -215,8 +199,6 @@ fs_node_t *vfs_path_to_node(const char *path) {
         return NULL;
     }
     
-    LOG_DEBUG_MSG("VFS: path_to_node: resolving '%s'\n", path);
-    
     // 处理根目录
     if (strcmp(path, "/") == 0) {
         return fs_root;
@@ -225,7 +207,6 @@ fs_node_t *vfs_path_to_node(const char *path) {
     /* 检查是否是挂载点或其子路径 */
     fs_node_t *mounted = vfs_get_mounted_root_by_path(path);
     if (mounted != NULL) {
-        LOG_DEBUG_MSG("VFS: path_to_node: '%s' is a mount point, returning root %p\n", path, mounted);
         return mounted;
     }
     
@@ -239,8 +220,6 @@ fs_node_t *vfs_path_to_node(const char *path) {
         if (strncmp(path, mount_path, mount_len) == 0 && 
             (path[mount_len] == '/' || path[mount_len] == '\0')) {
             
-            LOG_DEBUG_MSG("VFS: path_to_node: '%s' is under mount point '%s'\n", path, mount_path);
-            
             /* 如果正好是挂载点，返回根 */
             if (path[mount_len] == '\0') {
                 mutex_unlock(&vfs_mount_mutex);
@@ -249,7 +228,6 @@ fs_node_t *vfs_path_to_node(const char *path) {
             
             /* 否则，在挂载的根中继续解析剩余路径 */
             const char *remaining = path + mount_len + 1;  /* 跳过 '/' */
-            LOG_DEBUG_MSG("VFS: path_to_node: resolving '%s' in mounted filesystem\n", remaining);
             
             fs_node_t *current = mount_table[i].root;
             char token[128];
@@ -289,7 +267,6 @@ fs_node_t *vfs_path_to_node(const char *path) {
                 if (strcmp(token, "..") == 0) {
                     fs_node_t *parent = vfs_finddir(current, "..");
                     if (!parent) {
-                        LOG_DEBUG_MSG("VFS: path_to_node: failed to find parent for '..' in mounted fs\n");
                         vfs_release_node(current);  // 释放中间节点
                         mutex_unlock(&vfs_mount_mutex);
                         return NULL;
@@ -303,10 +280,8 @@ fs_node_t *vfs_path_to_node(const char *path) {
                 }
                 
                 /* 查找下一个节点 */
-                LOG_DEBUG_MSG("VFS: path_to_node: looking for '%s' in mounted fs\n", token);
                 fs_node_t *next = vfs_finddir(current, token);
                 if (!next) {
-                    LOG_DEBUG_MSG("VFS: path_to_node: failed to find '%s' in mounted fs\n", token);
                     // 释放中间节点
                     if (current != mount_table[i].root) {
                         vfs_release_node(current);
@@ -322,7 +297,6 @@ fs_node_t *vfs_path_to_node(const char *path) {
                 current = next;
             }
             
-            LOG_DEBUG_MSG("VFS: path_to_node: resolved to %p in mounted fs\n", current);
             mutex_unlock(&vfs_mount_mutex);
             // 如果返回的节点是动态分配的，已经在 finddir 中设置了 ref_count=1
             return current;
@@ -378,7 +352,6 @@ fs_node_t *vfs_path_to_node(const char *path) {
         if (strcmp(token, "..") == 0) {
             fs_node_t *parent = vfs_finddir(current, "..");
             if (!parent) {
-                LOG_DEBUG_MSG("VFS: path_to_node: failed to find parent for '..'\n");
                 // 释放中间节点
                 if (current != fs_root) {
                     vfs_release_node(current);
@@ -394,10 +367,8 @@ fs_node_t *vfs_path_to_node(const char *path) {
         }
         
         /* 查找下一个节点 */
-        LOG_DEBUG_MSG("VFS: path_to_node: looking for '%s' in %p\n", token, current);
         fs_node_t *next = vfs_finddir(current, token);
         if (!next) {
-            LOG_DEBUG_MSG("VFS: path_to_node: failed to find '%s'\n", token);
             // 释放中间节点
             if (current != fs_root) {
                 vfs_release_node(current);
@@ -405,7 +376,6 @@ fs_node_t *vfs_path_to_node(const char *path) {
             return NULL;  /* 路径不存在 */
         }
         
-        LOG_DEBUG_MSG("VFS: path_to_node: found '%s' at %p (type=%u)\n", token, next, next->type);
         // 释放旧的 current（如果它是动态分配的且不是根）
         if (current != fs_root) {
             vfs_release_node(current);
@@ -413,7 +383,6 @@ fs_node_t *vfs_path_to_node(const char *path) {
         current = next;
     }
     
-    LOG_DEBUG_MSG("VFS: path_to_node: resolved to %p\n", current);
     // 如果返回的节点是动态分配的，已经在 finddir 中设置了 ref_count=1
     return current;
 }
@@ -592,16 +561,12 @@ int vfs_mount(const char *path, fs_node_t *root) {
         return -1;
     }
     
-    LOG_DEBUG_MSG("VFS: mount: mounting filesystem at '%s' (root=%p)\n", path, root);
-    
     /* 查找挂载点 */
     fs_node_t *mount_point = vfs_path_to_node(path);
     if (!mount_point) {
         LOG_ERROR_MSG("VFS: Mount point '%s' not found\n", path);
         return -1;
     }
-    
-    LOG_DEBUG_MSG("VFS: mount: found mount_point=%p (type=%u)\n", mount_point, mount_point->type);
     
     if (mount_point->type != FS_DIRECTORY) {
         LOG_ERROR_MSG("VFS: Mount point '%s' is not a directory\n", path);

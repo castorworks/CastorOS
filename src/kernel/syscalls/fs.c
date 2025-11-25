@@ -17,6 +17,7 @@
  * sys_open - 打开或创建文件
  */
 uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
+    (void)mode;
     if (!path) {
         LOG_ERROR_MSG("sys_open: path is NULL\n");
         return (uint32_t)-1;
@@ -27,8 +28,6 @@ uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
         LOG_ERROR_MSG("sys_open: no current task or fd_table\n");
         return (uint32_t)-1;
     }
-    
-    LOG_DEBUG_MSG("sys_open: path='%s', flags=0x%x, mode=0x%x\n", path, flags, mode);
     
     // 查找文件
     fs_node_t *node = vfs_path_to_node(path);
@@ -85,7 +84,6 @@ uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
         }
     }
     
-    LOG_DEBUG_MSG("sys_open: opened '%s' as fd %d\n", path, fd);
     return (uint32_t)fd;
 }
 
@@ -98,8 +96,6 @@ uint32_t sys_close(int32_t fd) {
         LOG_ERROR_MSG("sys_close: no current task or fd_table\n");
         return (uint32_t)-1;
     }
-    
-    LOG_DEBUG_MSG("sys_close: fd=%d\n", fd);
     
     // 获取文件描述符表项
     fd_entry_t *entry = fd_table_get(current->fd_table, fd);
@@ -119,7 +115,6 @@ uint32_t sys_close(int32_t fd) {
         return (uint32_t)-1;
     }
     
-    LOG_DEBUG_MSG("sys_close: closed fd %d\n", fd);
     return 0;
 }
 
@@ -245,8 +240,6 @@ uint32_t sys_lseek(int32_t fd, int32_t offset, int32_t whence) {
         return (uint32_t)-1;
     }
     
-    LOG_DEBUG_MSG("sys_lseek: fd=%d, offset=%d, whence=%d\n", fd, offset, whence);
-    
     // 获取文件描述符表项
     fd_entry_t *entry = fd_table_get(current->fd_table, fd);
     if (!entry || !entry->node) {
@@ -279,7 +272,6 @@ uint32_t sys_lseek(int32_t fd, int32_t offset, int32_t whence) {
     
     entry->offset = new_offset;
     
-    LOG_DEBUG_MSG("sys_lseek: new offset %u for fd %d\n", new_offset, fd);
     return new_offset;
 }
 
@@ -292,15 +284,12 @@ uint32_t sys_mkdir(const char *path, uint32_t mode) {
         return (uint32_t)-1;
     }
     
-    LOG_DEBUG_MSG("sys_mkdir: path='%s', mode=0x%x\n", path, mode);
-    
     // 创建目录
     if (vfs_mkdir(path, mode) != 0) {
         LOG_ERROR_MSG("sys_mkdir: failed to create directory '%s'\n", path);
         return (uint32_t)-1;
     }
     
-    LOG_DEBUG_MSG("sys_mkdir: created directory '%s'\n", path);
     return 0;
 }
 
@@ -313,15 +302,12 @@ uint32_t sys_unlink(const char *path) {
         return (uint32_t)-1;
     }
     
-    LOG_DEBUG_MSG("sys_unlink: path='%s'\n", path);
-    
     // 删除文件或目录
     if (vfs_unlink(path) != 0) {
         LOG_ERROR_MSG("sys_unlink: failed to unlink '%s'\n", path);
         return (uint32_t)-1;
     }
     
-    LOG_DEBUG_MSG("sys_unlink: unlinked '%s'\n", path);
     return 0;
 }
 
@@ -563,9 +549,7 @@ uint32_t sys_getdents(int32_t fd, uint32_t index, void *dirent) {
         LOG_ERROR_MSG("sys_getdents: no current task or fd_table\n");
         return (uint32_t)-1;
     }
-    
-    LOG_DEBUG_MSG("sys_getdents: fd=%d, index=%u\n", fd, index);
-    
+        
     // 获取文件描述符表项
     fd_entry_t *entry = fd_table_get(current->fd_table, fd);
     if (!entry || !entry->node) {
@@ -582,14 +566,12 @@ uint32_t sys_getdents(int32_t fd, uint32_t index, void *dirent) {
     // 读取目录项
     struct dirent *dir_entry = vfs_readdir(entry->node, index);
     if (!dir_entry) {
-        LOG_DEBUG_MSG("sys_getdents: no more entries at index %u\n", index);
         return (uint32_t)-1;
     }
     
     // 复制目录项到用户空间
     // 注意：这里应该进行用户空间内存检查，简化实现直接复制
     memcpy(dirent, dir_entry, sizeof(struct dirent));
-    
-    LOG_DEBUG_MSG("sys_getdents: returned entry '%s'\n", dir_entry->d_name);
+
     return 0;
 }

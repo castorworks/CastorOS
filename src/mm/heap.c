@@ -138,7 +138,6 @@ static void split(heap_block_t *b, size_t size) {
         if (b->next) b->next->prev = new;
         b->next = new;
         b->size = size;
-        LOG_DEBUG_MSG("split: created new block %p (size=%u) from %p\n", new, new->size, b);
     }
 }
 
@@ -220,7 +219,6 @@ void* kmalloc(size_t size) {
             b->is_free = false;
             split(b, size);
             void *ptr = (void*)((uint32_t)b + sizeof(heap_block_t));
-            LOG_DEBUG_MSG("kmalloc: allocated %u bytes at %p (block at %p)\n", size, ptr, b);
             spinlock_unlock_irqrestore(&heap_lock, irq_state);
             return ptr;
         }
@@ -248,7 +246,6 @@ void* kmalloc(size_t size) {
     last_block = new;
     
     void *ptr = (void*)((uint32_t)new + sizeof(heap_block_t));
-    LOG_DEBUG_MSG("kmalloc: allocated %u bytes at %p (block at %p, expanded heap)\n", size, ptr, new);
     spinlock_unlock_irqrestore(&heap_lock, irq_state);
     return ptr;
 }
@@ -273,7 +270,6 @@ void kfree(void* ptr) {
         spinlock_unlock_irqrestore(&heap_lock, irq_state);
         return;
     }
-    LOG_DEBUG_MSG("kfree: freeing %u bytes at %p (block at %p)\n", b->size, ptr, b);
     b->is_free = true;
     coalesce(b);
     

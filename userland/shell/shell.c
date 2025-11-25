@@ -974,6 +974,7 @@ static int parse_proc_status(const char *status_content, uint32_t *pid, char *na
 
 /**
  * ps 命令 - 显示进程列表（通过 /proc 文件系统）
+ * 输出同时发送到屏幕和串口
  */
 static int cmd_ps(int argc, char **argv) {
     (void)argc;
@@ -982,15 +983,18 @@ static int cmd_ps(int argc, char **argv) {
     // 打开 /proc 目录
     int proc_fd = open("/proc", O_RDONLY, 0);
     if (proc_fd < 0) {
-        printf("Error: Cannot open /proc directory\n");
+        print_tee("Error: Cannot open /proc directory\n");
         return -1;
     }
     
+    // 用于格式化输出的缓冲区
+    char line_buf[256];
+    
     // 显示表头
-    printf("Process List\n");
-    printf("================================================================================\n");
-    printf("PID   Name              State       Priority  Runtime (ms)\n");
-    printf("--------------------------------------------------------------------------------\n");
+    print_tee("Process List\n");
+    print_tee("================================================================================\n");
+    print_tee("PID   Name              State       Priority  Runtime (ms)\n");
+    print_tee("--------------------------------------------------------------------------------\n");
     
     // 读取 /proc 目录中的所有 PID 目录
     struct dirent entry;
@@ -1069,12 +1073,14 @@ static int cmd_ps(int argc, char **argv) {
                             state_str = "UNKNOWN";
                         }
                         
-                        printf("%-5u %-17s %-11s %-9u %llu\n",
-                               proc_pid,
-                               proc_name,
-                               state_str,
-                               proc_priority,
-                               (unsigned long long)proc_runtime);
+                        snprintf(line_buf, sizeof(line_buf),
+                                 "%-5u %-17s %-11s %-9u %llu\n",
+                                 proc_pid,
+                                 proc_name,
+                                 state_str,
+                                 proc_priority,
+                                 (unsigned long long)proc_runtime);
+                        print_tee(line_buf);
                         process_count++;
                     }
                 }
@@ -1087,7 +1093,7 @@ static int cmd_ps(int argc, char **argv) {
     close(proc_fd);
     
     if (process_count == 0) {
-        printf("(No processes found)\n");
+        print_tee("(No processes found)\n");
     }
     
     return 0;

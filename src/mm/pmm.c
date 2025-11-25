@@ -31,6 +31,11 @@ static uint16_t *frame_refcount = NULL;   ///< 页帧引用计数数组（每帧
 static uint32_t pmm_data_end_virt = 0;    ///< PMM 数据结构结束的虚拟地址（位图+引用计数表）
 extern uint32_t _kernel_end;           ///< 内核结束地址
 
+// 堆保留区域：物理地址在此范围内的帧不会被分配，避免与堆虚拟地址重叠
+// 当堆扩展时，它会重新映射 PHYS_TO_VIRT(phys) 地址，这会破坏已分配帧的恒等映射
+static uint32_t heap_reserved_phys_start = 0;  ///< 堆保留区物理起始地址
+static uint32_t heap_reserved_phys_end = 0;    ///< 堆保留区物理结束地址
+
 static inline protected_frame_t* find_protected_frame_unsafe(uint32_t frame) {
     for (uint32_t i = 0; i < protected_frame_count; i++) {
         if (protected_frames[i].frame == frame) {
@@ -510,8 +515,7 @@ void pmm_free_frame(uint32_t frame) {
         if (frame_refcount[idx] > 0) {
             // 引用计数还不为 0，说明还有其他进程通过 COW 共享此帧
             // 不释放，只减少计数
-            LOG_DEBUG_MSG("PMM: Frame 0x%x refcount decreased to %u, not freeing (COW shared)\n", 
-                         frame, frame_refcount[idx]);
+            // LOG_DEBUG_MSG("PMM: Frame 0x%x refcount decreased to %u, not freeing (COW shared)\n", frame, frame_refcount[idx]);
             spinlock_unlock_irqrestore(&pmm_lock, irq_state);
             return;
         }
@@ -566,6 +570,50 @@ uint32_t pmm_get_bitmap_end(void) {
     // 这种情况理论上不应该发生，因为 pmm_init 会在任何调用之前执行
     uint32_t bitmap_bytes = PAGE_ALIGN_UP((total_frames + 31) / 32 * 4);
     return PAGE_ALIGN_UP((uint32_t)frame_bitmap + bitmap_bytes);
+}
+
+/**
+ * @brief 设置堆保留区域的物理地址范围
+ * @param heap_virt_start 堆虚拟起始地址
+ * @param heap_virt_end 堆虚拟结束地址（最大地址）
+ * 
+ * 将堆虚拟地址范围转换为物理地址范围，并标记这些物理帧不可分配。
+ * 这防止了堆扩展时重新映射已分配帧的恒等映射导致的内存损坏。
+ * 
+ * 原理：
+ * - 堆使用虚拟地址空间 [heap_virt_start, heap_virt_end)
+ * - 当堆扩展时，它会将新物理帧映射到这些虚拟地址
+ * - 但 PMM 分配的帧通过 PHYS_TO_VIRT 恒等映射访问
+ * - 如果物理帧 P 的 PHYS_TO_VIRT(P) 落在堆的虚拟范围内，
+ *   堆扩展会覆盖这个映射，导致帧 P 无法正确访问
+ * - 因此我们需要避免分配这些"危险"的物理帧
+ */
+void pmm_set_heap_reserved_range(uint32_t heap_virt_start, uint32_t heap_virt_end) {
+    // 将堆虚拟地址转换为对应的物理地址
+    // 只有在高半核范围内的地址才需要转换
+    if (heap_virt_start >= 0x80000000 && heap_virt_end > heap_virt_start) {
+        heap_reserved_phys_start = VIRT_TO_PHYS(heap_virt_start);
+        heap_reserved_phys_end = VIRT_TO_PHYS(heap_virt_end);
+        
+        // 标记这些帧为已使用，确保它们不会被分配
+        uint32_t start_frame = heap_reserved_phys_start / PAGE_SIZE;
+        uint32_t end_frame = (heap_reserved_phys_end + PAGE_SIZE - 1) / PAGE_SIZE;
+        
+        uint32_t reserved_count = 0;
+        for (uint32_t f = start_frame; f < end_frame && f < total_frames; f++) {
+            if (!test_frame(f)) {
+                set_frame(f);
+                pmm_info.free_frames--;
+                pmm_info.used_frames++;
+                frame_refcount[f] = 1;  // 设置引用计数防止释放
+                reserved_count++;
+            }
+        }
+        
+        LOG_INFO_MSG("PMM: Reserved heap range: phys 0x%x - 0x%x (%u frames, %u newly reserved)\n",
+                    heap_reserved_phys_start, heap_reserved_phys_end,
+                    end_frame - start_frame, reserved_count);
+    }
 }
 
 /**

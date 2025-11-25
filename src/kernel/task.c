@@ -817,8 +817,6 @@ void task_timer_tick(void) {
                 task->sleep_until_ms = 0;
                 task->state = TASK_READY;
                 tasks_to_wake[wake_count++] = task;
-                
-                LOG_DEBUG_MSG("Task %u (%s) woke up\n", task->pid, task->name);
             }
         }
     }
@@ -954,9 +952,6 @@ void task_sleep(uint32_t ms) {
     uint64_t wake_time = timer_get_uptime_ms() + ms;
     current_task->sleep_until_ms = wake_time;
     current_task->state = TASK_BLOCKED;
-    
-    LOG_DEBUG_MSG("Task %u (%s) sleeping for %u ms\n", 
-                 current_task->pid, current_task->name, ms);
     
     // 切换到其他任务
     task_schedule();

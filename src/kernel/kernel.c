@@ -137,7 +137,13 @@ void kernel_main(multiboot_info_t* mbi) {
         LOG_DEBUG_MSG("  Heap start adjusted for multiboot modules: %x\n", heap_start);
     }
     
-    heap_init(heap_start, 32 * 1024 * 1024);  // 32MB 堆
+    uint32_t heap_size = 32 * 1024 * 1024;  // 32MB 堆
+    heap_init(heap_start, heap_size);
+    
+    // 【关键】通知 PMM 堆的虚拟地址范围，防止分配会与堆重叠的物理帧
+    // 这解决了堆扩展时覆盖已分配帧的恒等映射导致的页目录损坏问题
+    pmm_set_heap_reserved_range(heap_start, heap_start + heap_size);
+    
     heap_print_info();
     LOG_DEBUG_MSG("  [3.3] Heap initialized\n");
 
@@ -176,7 +182,7 @@ void kernel_main(multiboot_info_t* mbi) {
     // 单元测试
     // ========================================================================
     LOG_INFO_MSG("Running test suite...\n");
-    // run_all_tests();
+    run_all_tests();
     kprintf("\n");
 
     // ========================================================================

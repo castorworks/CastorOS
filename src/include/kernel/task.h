@@ -22,8 +22,8 @@
 /** @brief 内核栈大小（8KB） */
 #define KERNEL_STACK_SIZE (8 * 1024)
 
-/** @brief 用户栈大小（8MB） */
-#define USER_STACK_SIZE (8 * 1024 * 1024)
+/** @brief 用户栈大小（1MB） */
+#define USER_STACK_SIZE (1 * 1024 * 1024)
 
 /** @brief 用户空间结束地址（内核空间起始地址） */
 #define USER_SPACE_END 0x80000000

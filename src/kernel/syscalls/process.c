@@ -16,6 +16,7 @@
 #include <kernel/user.h>
 #include <fs/vfs.h>
 #include <mm/vmm.h>
+#include <mm/pmm.h>
 #include <mm/heap.h>
 #include <lib/klog.h>
 #include <lib/string.h>
@@ -74,6 +75,19 @@ uint32_t sys_fork(uint32_t *frame) {
         LOG_ERROR_MSG("sys_fork: Cannot fork kernel thread\n");
         interrupts_restore(prev_state);
         return (uint32_t)-1;
+    }
+    
+    // 【内存安全检查】检查是否有足够内存创建新进程
+    // 需要：1个页目录 + 页表（最多512个） + 其他开销
+    // 注意：由于使用 COW，不需要预留用户栈的全部 2048 页
+    // 但需要预留足够的页表和页目录
+    pmm_info_t mem_info = pmm_get_info();
+    uint32_t min_required_frames = 64;  // 页目录 + 页表 + 内核栈 + 其他
+    if (mem_info.free_frames < min_required_frames) {
+        LOG_ERROR_MSG("sys_fork: Insufficient memory (free=%u, required>=%u)\n",
+                     mem_info.free_frames, min_required_frames);
+        interrupts_restore(prev_state);
+        return (uint32_t)-12;  // ENOMEM
     }
     
     // 直接从传递的 frame 参数读取用户态寄存器
@@ -335,6 +349,20 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
     current->page_dir = new_dir;
     current->page_dir_phys = new_dir_phys;
     
+    // 【内存安全检查】在分配用户栈前检查是否有足够内存
+    // USER_STACK_SIZE / PAGE_SIZE = 需要的页数，再加一些页表开销
+    uint32_t stack_pages_needed = (USER_STACK_SIZE / PAGE_SIZE) + 4;  // +4 用于页表
+    pmm_info_t execve_mem_info = pmm_get_info();
+    if (execve_mem_info.free_frames < stack_pages_needed) {
+        LOG_ERROR_MSG("sys_execve: Insufficient memory for user stack (free=%u, required=%u)\n",
+                     execve_mem_info.free_frames, stack_pages_needed);
+        // 回滚
+        current->page_dir = old_dir;
+        current->page_dir_phys = old_dir_phys;
+        vmm_free_page_directory(new_dir_phys);
+        return (uint32_t)-1;  // ENOMEM
+    }
+    
     // 在新页目录中设置用户栈
     if (!task_setup_user_stack(current)) {
         LOG_ERROR_MSG("sys_execve: failed to setup user stack\n");
@@ -525,7 +553,6 @@ uint32_t sys_nanosleep(const struct timespec *req, struct timespec *rem) {
             total_ms = 0xFFFFFFFFull;
         }
         uint32_t sleep_ms = (uint32_t)total_ms;
-        LOG_DEBUG_MSG("sys_nanosleep: sleeping for %u ms\n", sleep_ms);
         task_sleep(sleep_ms);
     }
 
@@ -775,7 +802,11 @@ uint32_t sys_waitpid(int32_t pid, uint32_t *wstatus, uint32_t options) {
         
         // 如果没有符合条件的子进程（指定的进程不存在或不是子进程），返回错误
         if (!has_waited_child) {
-            LOG_DEBUG_MSG("sys_waitpid: child PID %d not found or not a child\n", pid);
+            if (pid == -1) {
+                LOG_DEBUG_MSG("sys_waitpid: no child processes\n");
+            } else {
+                LOG_DEBUG_MSG("sys_waitpid: child PID %d not found or not a child\n", pid);
+            }
             return (uint32_t)-1;
         }
         

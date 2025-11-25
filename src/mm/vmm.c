@@ -732,7 +732,12 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
 static bool is_page_directory_in_use(uint32_t dir_phys) {
     // task_pool 在 task.h 中声明，在 task.c 中定义
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
+        // 只有活跃状态的任务才算"在使用"页目录
+        // TASK_UNUSED: 空闲槽位
+        // TASK_ZOMBIE: 已退出，等待回收（页目录可以释放）
+        // TASK_TERMINATED: 已终止
         if (task_pool[i].state != TASK_UNUSED && 
+            task_pool[i].state != TASK_ZOMBIE &&
             task_pool[i].state != TASK_TERMINATED &&
             task_pool[i].page_dir_phys == dir_phys) {
             return true;

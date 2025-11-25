@@ -78,6 +78,16 @@ void pmm_print_info(void);
 uint32_t pmm_get_bitmap_end(void);
 
 /**
+ * @brief 设置堆保留区域的物理地址范围
+ * @param heap_virt_start 堆虚拟起始地址
+ * @param heap_virt_end 堆虚拟结束地址（最大地址）
+ * 
+ * 将堆虚拟地址范围转换为物理地址范围，并标记这些物理帧不可分配。
+ * 这防止了堆扩展时重新映射已分配帧的恒等映射导致的内存损坏。
+ */
+void pmm_set_heap_reserved_range(uint32_t heap_virt_start, uint32_t heap_virt_end);
+
+/**
  * @brief 增加物理页帧的引用计数
  * @param frame 页帧的物理地址
  * @return 新的引用计数值
