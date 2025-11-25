@@ -25,7 +25,7 @@ typedef enum {
 #define FS_PERM_EXEC    0x1
 
 // 文件节点标志（用于 flags 字段）
-#define FS_NODE_FLAG_ALLOCATED  0x80000000  // 节点是动态分配的，需要释放
+#define FS_NODE_FLAG_ALLOCATED      0x80000000  // 节点是动态分配的，需要释放
 
 /* 前向声明 */
 struct fs_node;
@@ -54,7 +54,8 @@ typedef struct fs_node {
     uint32_t uid;                // 用户 ID
     uint32_t gid;                // 组 ID
     uint32_t flags;              // 标志位
-    uint32_t impl;               // 实现相关数据（指针）
+    void *impl;                  // 文件系统私有数据指针（如 fat32_file_t*），释放节点时会 kfree
+    uint32_t impl_data;          // 文件系统私有整数值（如 procfs 的 PID），不会被 kfree
     uint32_t ref_count;          // 引用计数（用于资源管理）
     
     // 文件操作函数

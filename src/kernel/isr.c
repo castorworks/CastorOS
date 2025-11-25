@@ -117,6 +117,11 @@ void isr_handler(registers_t *regs) {
     if (vmm_handle_kernel_page_fault(faulting_address)) {
         return;
     }
+    
+    // 尝试处理 COW 写保护异常
+    if (vmm_handle_cow_page_fault(faulting_address, regs->err_code)) {
+        return;
+    }
 
     page_fault_info_t pf_info = parse_page_fault_error(regs->err_code);
     

@@ -16,6 +16,20 @@
 #define PAGE_WRITE      0x002
 /** @brief 用户模式标志 */
 #define PAGE_USER       0x004
+/** 
+ * @brief Copy-on-Write 标志（使用 x86 Available bit 9）
+ * 
+ * COW 机制说明：
+ * - fork() 时，父子进程共享物理页，但各自有独立的页表
+ * - 共享的可写页面被标记为只读 + PAGE_COW
+ * - 首次写入时触发 Page Fault (#14)，由 vmm_handle_cow_page_fault 处理
+ * - COW handler 会：
+ *   1. 如果引用计数 == 1：直接恢复写权限（无需复制）
+ *   2. 如果引用计数 > 1：分配新物理页，复制内容，更新页表
+ * 
+ * 注意：PAGE_COW 与 PAGE_WRITE 互斥，COW 页面必须是只读的
+ */
+#define PAGE_COW        0x200
 
 typedef uint32_t pde_t;  ///< 页目录项类型
 typedef uint32_t pte_t;  ///< 页表项类型
@@ -81,12 +95,21 @@ uint32_t vmm_get_page_directory(void);
 uint32_t vmm_create_page_directory(void);
 
 /**
- * @brief 克隆页目录（用于 fork）
+ * @brief 克隆页目录（用于 fork，实现 COW 语义）
  * @param src_dir_phys 源页目录的物理地址
  * @return 成功返回新页目录的物理地址，失败返回 0
  * 
- * 注意：这是浅拷贝，物理页会被共享
- * 实现 COW 需要额外处理
+ * Copy-on-Write (COW) 实现：
+ * - 页表是独立的（每个进程有自己的页表副本）
+ * - 物理页是共享的（通过引用计数管理）
+ * - 可写页面被标记为只读 + PAGE_COW
+ * - 首次写入时触发 page fault，由 vmm_handle_cow_page_fault 处理
+ * 
+ * 引用计数：
+ * - 每个共享的物理页都有引用计数
+ * - 克隆时增加引用计数
+ * - 释放页目录时减少引用计数
+ * - 引用计数降为 0 时才真正释放物理页
  */
 uint32_t vmm_clone_page_directory(uint32_t src_dir_phys);
 
@@ -128,5 +151,13 @@ uint32_t vmm_unmap_page_in_directory(uint32_t dir_phys, uint32_t virt);
  * @return 是否成功处理（如果成功，不需要 panic）
  */
 bool vmm_handle_kernel_page_fault(uint32_t addr);
+
+/**
+ * @brief 处理写保护异常（COW）
+ * @param addr 缺页地址
+ * @param error_code 错误码
+ * @return 是否成功处理（如果成功，不需要 panic）
+ */
+bool vmm_handle_cow_page_fault(uint32_t addr, uint32_t error_code);
 
 #endif // _MM_VMM_H_

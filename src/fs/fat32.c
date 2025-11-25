@@ -1503,7 +1503,7 @@ static fs_node_t *fat32_dir_finddir(fs_node_t *node, const char *name) {
     new_file->dirent_cluster = lookup->cluster;
     new_file->dirent_offset = lookup->offset;
     new_file->parent_cluster = file->start_cluster;
-    new_node->impl = (uint32_t)new_file;
+    new_node->impl = new_file;
     
     kfree(lookup);
     return new_node;
@@ -1640,6 +1640,9 @@ fs_node_t *fat32_init(blockdev_t *dev) {
         return NULL;
     }
     
+    LOG_INFO_MSG("fat32: sizeof(fat32_file_t) = %u, sizeof(struct dirent) = %u\n",
+                 sizeof(fat32_file_t), sizeof(struct dirent));
+    
     fat32_file_t *root_file = (fat32_file_t *)kmalloc(sizeof(fat32_file_t));
     if (!root_file) {
         kfree(root);
@@ -1669,7 +1672,7 @@ fs_node_t *fat32_init(blockdev_t *dev) {
     root_file->dirent_cluster = 0;
     root_file->dirent_offset = 0;
     root_file->parent_cluster = 0;
-    root->impl = (uint32_t)root_file;
+    root->impl = root_file;
     
     LOG_INFO_MSG("fat32: Root directory created\n");
     

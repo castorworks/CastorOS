@@ -75,8 +75,20 @@ static bool expand(size_t size) {
  * 向前和向后合并相邻的空闲块以减少内存碎片
  */
 static void coalesce(heap_block_t *b) {
+    // 【安全检查】验证块的 magic
+    if (b->magic != HEAP_MAGIC) {
+        LOG_ERROR_MSG("coalesce: block %p has invalid magic 0x%x!\n", b, b->magic);
+        return;
+    }
+    
     // 向后合并
     if (b->next && b->next->is_free) {
+        // 【安全检查】验证 next 块的 magic
+        if (b->next->magic != HEAP_MAGIC) {
+            LOG_ERROR_MSG("coalesce: next block %p has invalid magic 0x%x!\n", b->next, b->next->magic);
+            return;
+        }
+        
         if (b->next == last_block) {
             last_block = b;
         }
@@ -86,6 +98,12 @@ static void coalesce(heap_block_t *b) {
     }
     // 向前合并
     if (b->prev && b->prev->is_free) {
+        // 【安全检查】验证 prev 块的 magic
+        if (b->prev->magic != HEAP_MAGIC) {
+            LOG_ERROR_MSG("coalesce: prev block %p has invalid magic 0x%x!\n", b->prev, b->prev->magic);
+            return;
+        }
+        
         if (b == last_block) {
             last_block = b->prev;
         }
@@ -103,6 +121,12 @@ static void coalesce(heap_block_t *b) {
  * 如果块足够大，将其分裂成两部分：使用的部分和剩余的空闲部分
  */
 static void split(heap_block_t *b, size_t size) {
+    // 【安全检查】验证块的 magic
+    if (b->magic != HEAP_MAGIC) {
+        LOG_ERROR_MSG("split: block %p has invalid magic 0x%x!\n", b, b->magic);
+        return;
+    }
+    
     // 只有当剩余空间足够容纳一个新块时才分裂（至少16字节）
     if (b->size >= size + sizeof(heap_block_t) + 16) {
         heap_block_t *new = (heap_block_t*)((uint32_t)b + sizeof(heap_block_t) + size);
@@ -114,6 +138,7 @@ static void split(heap_block_t *b, size_t size) {
         if (b->next) b->next->prev = new;
         b->next = new;
         b->size = size;
+        LOG_DEBUG_MSG("split: created new block %p (size=%u) from %p\n", new, new->size, b);
     }
 }
 
@@ -126,6 +151,8 @@ void heap_init(uint32_t start, uint32_t size) {
     heap_start = heap_end = PAGE_ALIGN_UP(start);
     heap_max = heap_start + size;
     
+    LOG_INFO_MSG("heap_init: start=0x%x, max=0x%x, size=%u\n", heap_start, heap_max, size);
+    
     // 初始化堆自旋锁
     spinlock_init(&heap_lock);
     
@@ -134,11 +161,16 @@ void heap_init(uint32_t start, uint32_t size) {
     
     // 初始化第一个内存块
     first_block = (heap_block_t*)heap_start;
+    LOG_INFO_MSG("heap_init: first_block at 0x%p, setting magic...\n", first_block);
+    
     first_block->size = PAGE_SIZE - sizeof(heap_block_t);
     first_block->is_free = true;
     first_block->magic = HEAP_MAGIC;
     first_block->next = first_block->prev = NULL;
     last_block = first_block;
+    
+    LOG_INFO_MSG("heap_init: first_block magic=0x%x (expected 0x%x)\n", 
+                 first_block->magic, HEAP_MAGIC);
 }
 
 /**
@@ -154,15 +186,41 @@ void* kmalloc(size_t size) {
     bool irq_state;
     spinlock_lock_irqsave(&heap_lock, &irq_state);
     
+    // 【安全检查】验证 first_block 的有效性
+    if (first_block == NULL) {
+        LOG_ERROR_MSG("kmalloc: first_block is NULL!\n");
+        spinlock_unlock_irqrestore(&heap_lock, irq_state);
+        return NULL;
+    }
+    if ((uint32_t)first_block < 0x80000000 || first_block->magic != HEAP_MAGIC) {
+        LOG_ERROR_MSG("kmalloc: first_block corrupted! addr=%p, magic=0x%x (expected 0x%x)\n", 
+                     first_block, (uint32_t)first_block < 0x80000000 ? 0 : first_block->magic, HEAP_MAGIC);
+        spinlock_unlock_irqrestore(&heap_lock, irq_state);
+        return NULL;
+    }
+    
     // 对齐到4字节边界
     size = (size + 3) & ~3;
     
     // 查找第一个足够大的空闲块
     for (heap_block_t *b = first_block; b; b = b->next) {
+        // 【安全检查】验证当前块的有效性
+        if ((uint32_t)b < 0x80000000) {
+            LOG_ERROR_MSG("kmalloc: invalid block pointer %p in heap chain!\n", b);
+            spinlock_unlock_irqrestore(&heap_lock, irq_state);
+            return NULL;
+        }
+        if (b->magic != HEAP_MAGIC) {
+            LOG_ERROR_MSG("kmalloc: block %p has invalid magic 0x%x (expected 0x%x)!\n", b, b->magic, HEAP_MAGIC);
+            spinlock_unlock_irqrestore(&heap_lock, irq_state);
+            return NULL;
+        }
+        
         if (b->is_free && b->size >= size) {
             b->is_free = false;
             split(b, size);
             void *ptr = (void*)((uint32_t)b + sizeof(heap_block_t));
+            LOG_DEBUG_MSG("kmalloc: allocated %u bytes at %p (block at %p)\n", size, ptr, b);
             spinlock_unlock_irqrestore(&heap_lock, irq_state);
             return ptr;
         }
@@ -190,6 +248,7 @@ void* kmalloc(size_t size) {
     last_block = new;
     
     void *ptr = (void*)((uint32_t)new + sizeof(heap_block_t));
+    LOG_DEBUG_MSG("kmalloc: allocated %u bytes at %p (block at %p, expanded heap)\n", size, ptr, new);
     spinlock_unlock_irqrestore(&heap_lock, irq_state);
     return ptr;
 }
@@ -210,9 +269,11 @@ void kfree(void* ptr) {
     heap_block_t *b = (heap_block_t*)((uint32_t)ptr - sizeof(heap_block_t));
     // 验证魔数
     if (b->magic != HEAP_MAGIC) {
+        LOG_WARN_MSG("kfree: invalid magic at %p (block %p), magic=0x%x\n", ptr, b, b->magic);
         spinlock_unlock_irqrestore(&heap_lock, irq_state);
         return;
     }
+    LOG_DEBUG_MSG("kfree: freeing %u bytes at %p (block at %p)\n", b->size, ptr, b);
     b->is_free = true;
     coalesce(b);
     

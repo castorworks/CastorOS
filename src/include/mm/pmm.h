@@ -42,6 +42,25 @@ uint32_t pmm_alloc_frame(void);
 void pmm_free_frame(uint32_t frame);
 
 /**
+ * @brief 将物理页帧标记为受保护（禁止释放）
+ * @param frame 页帧的物理地址
+ */
+void pmm_protect_frame(uint32_t frame);
+
+/**
+ * @brief 取消物理页帧的保护标记
+ * @param frame 页帧的物理地址
+ */
+void pmm_unprotect_frame(uint32_t frame);
+
+/**
+ * @brief 查询物理帧是否处于保护状态
+ * @param frame 页帧的物理地址
+ * @return true 表示受保护，false 表示未受保护
+ */
+bool pmm_is_frame_protected(uint32_t frame);
+
+/**
  * @brief 获取物理内存信息
  * @return 物理内存信息结构
  */
@@ -57,5 +76,26 @@ void pmm_print_info(void);
  * @return 位图结束的虚拟地址（页对齐）
  */
 uint32_t pmm_get_bitmap_end(void);
+
+/**
+ * @brief 增加物理页帧的引用计数
+ * @param frame 页帧的物理地址
+ * @return 新的引用计数值
+ */
+uint32_t pmm_frame_ref_inc(uint32_t frame);
+
+/**
+ * @brief 减少物理页帧的引用计数
+ * @param frame 页帧的物理地址
+ * @return 新的引用计数值
+ */
+uint32_t pmm_frame_ref_dec(uint32_t frame);
+
+/**
+ * @brief 获取物理页帧的引用计数
+ * @param frame 页帧的物理地址
+ * @return 引用计数值
+ */
+uint32_t pmm_frame_get_refcount(uint32_t frame);
 
 #endif // _MM_PMM_H_

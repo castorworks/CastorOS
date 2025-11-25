@@ -22,27 +22,29 @@ bool load_user_shell(void) {
         return false;
     }
     
-    LOG_INFO_MSG("Found shell: %s (size: %u bytes)\n", shell_path, shell_file->size);
+    uint32_t shell_size = shell_file->size;  // 保存大小，避免释放后访问
+    
+    LOG_INFO_MSG("Found shell: %s (size: %u bytes)\n", shell_path, shell_size);
     
     // 检查文件大小
-    if (shell_file->size == 0 || shell_file->size > 16 * 1024 * 1024) {
-        LOG_ERROR_MSG("Invalid shell file size: %u\n", shell_file->size);
+    if (shell_size == 0 || shell_size > 16 * 1024 * 1024) {
+        LOG_ERROR_MSG("Invalid shell file size: %u\n", shell_size);
         vfs_release_node(shell_file);  // 释放节点
         return false;
     }
     
     // 读取 ELF 文件到内存
-    uint8_t *elf_data = (uint8_t *)kmalloc(shell_file->size);
+    uint8_t *elf_data = (uint8_t *)kmalloc(shell_size);
     if (!elf_data) {
         LOG_ERROR_MSG("Failed to allocate memory for shell\n");
         vfs_release_node(shell_file);  // 释放节点
         return false;
     }
     
-    uint32_t read_bytes = vfs_read(shell_file, 0, shell_file->size, elf_data);
-    if (read_bytes != shell_file->size) {
+    uint32_t read_bytes = vfs_read(shell_file, 0, shell_size, elf_data);
+    if (read_bytes != shell_size) {
         LOG_ERROR_MSG("Failed to read shell file (got %u/%u bytes)\n", 
-                     read_bytes, shell_file->size);
+                     read_bytes, shell_size);
         kfree(elf_data);
         vfs_release_node(shell_file);  // 释放节点
         return false;
@@ -51,6 +53,8 @@ bool load_user_shell(void) {
     // 文件已读取，立即释放节点
     vfs_release_node(shell_file);
     
+    LOG_DEBUG_MSG("Shell: ELF data loaded at %p, size=%u\n", elf_data, shell_size);
+    
     // 验证 ELF 头
     if (!elf_validate_header(elf_data)) {
         LOG_ERROR_MSG("Invalid ELF file\n");
@@ -58,7 +62,10 @@ bool load_user_shell(void) {
         return false;
     }
     
+    LOG_DEBUG_MSG("Shell: ELF header validated\n");
+    
     // 创建页目录
+    LOG_DEBUG_MSG("Shell: Creating page directory...\n");
     uint32_t page_dir_phys = vmm_create_page_directory();
     if (!page_dir_phys) {
         LOG_ERROR_MSG("Failed to create page directory\n");
@@ -69,19 +76,23 @@ bool load_user_shell(void) {
     LOG_INFO_MSG("Shell: Created page directory at phys 0x%x\n", page_dir_phys);
     
     page_directory_t *page_dir = (page_directory_t*)PHYS_TO_VIRT(page_dir_phys);
+    LOG_DEBUG_MSG("Shell: Page directory virt address: %p\n", page_dir);
     
     // 加载 ELF
+    LOG_DEBUG_MSG("Shell: Loading ELF (size=%u)...\n", shell_size);
     uint32_t entry_point;
-    if (!elf_load(elf_data, shell_file->size, page_dir, &entry_point)) {
+    if (!elf_load(elf_data, shell_size, page_dir, &entry_point)) {
         LOG_ERROR_MSG("Failed to load ELF\n");
         vmm_free_page_directory(page_dir_phys);
         kfree(elf_data);
         return false;
     }
     
+    LOG_DEBUG_MSG("Shell: ELF loaded, entry=%x\n", entry_point);
     kfree(elf_data);
     
     // 创建用户进程
+    LOG_DEBUG_MSG("Shell: Creating user process...\n");
     uint32_t pid = task_create_user_process("shell", entry_point, page_dir);
     if (pid == 0) {
         LOG_ERROR_MSG("Failed to create shell process\n");

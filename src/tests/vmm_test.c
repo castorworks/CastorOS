@@ -364,8 +364,9 @@ TEST_CASE(test_vmm_map_page_in_directory_basic) {
     ASSERT_TRUE(result);
     
     // 清理
+    // 注意：vmm_free_page_directory 会自动释放所有映射的页面
     vmm_free_page_directory(dir);
-    pmm_free_frame(frame);
+    // pmm_free_frame(frame);  // ❌ 不需要：会导致 double free
 }
 
 TEST_CASE(test_vmm_map_page_in_directory_multiple) {
@@ -384,9 +385,10 @@ TEST_CASE(test_vmm_map_page_in_directory_multiple) {
                                           PAGE_PRESENT | PAGE_WRITE));
     
     // 清理
+    // 注意：vmm_free_page_directory 会自动释放所有映射的页面
     vmm_free_page_directory(dir);
-    pmm_free_frame(frame1);
-    pmm_free_frame(frame2);
+    // pmm_free_frame(frame1);  // ❌ 不需要：会导致 double free
+    // pmm_free_frame(frame2);  // ❌ 不需要：会导致 double free
 }
 
 // ============================================================================
@@ -449,9 +451,11 @@ TEST_CASE(test_vmm_clone_page_directory_basic) {
     ASSERT_NE_U(clone_dir, src_dir);
     
     // 清理
+    // 注意：vmm_free_page_directory 会自动处理 COW 共享页面的引用计数
+    // 不需要手动调用 pmm_free_frame(frame)，否则会导致 double-free
     vmm_free_page_directory(src_dir);
     vmm_free_page_directory(clone_dir);
-    pmm_free_frame(frame);
+    // ❌ 移除：pmm_free_frame(frame); - 已被 vmm_free_page_directory 处理
 }
 
 TEST_CASE(test_vmm_clone_page_directory_data_isolation) {
@@ -473,25 +477,27 @@ TEST_CASE(test_vmm_clone_page_directory_data_isolation) {
     *ptr = 0xAAAAAAAA;
     *(ptr + 1) = 0xBBBBBBBB;
     
-    // 克隆页目录（深拷贝）
+    // 克隆页目录（使用 COW 机制）
+    // 此时两个页目录共享同一个物理页，且都被标记为只读 + COW
     uint32_t clone_dir = vmm_clone_page_directory(src_dir);
     ASSERT_NE_U(clone_dir, 0);
     
     // 切换到克隆的页目录
     vmm_switch_page_directory(clone_dir);
     
-    // 验证克隆的数据与源相同
+    // 验证克隆的数据与源相同（COW：共享同一物理页）
     ASSERT_EQ_U(*ptr, 0xAAAAAAAA);
     ASSERT_EQ_U(*(ptr + 1), 0xBBBBBBBB);
     
     // 修改克隆页目录中的数据
+    // 注意：这会触发 COW page fault，分配新物理页并复制内容
     *ptr = 0x11111111;
     *(ptr + 1) = 0x22222222;
     
     // 切换回源页目录
     vmm_switch_page_directory(src_dir);
     
-    // 验证源页目录的数据未被修改（数据隔离）
+    // 验证源页目录的数据未被修改（COW 数据隔离）
     ASSERT_EQ_U(*ptr, 0xAAAAAAAA);
     ASSERT_EQ_U(*(ptr + 1), 0xBBBBBBBB);
     
@@ -499,9 +505,14 @@ TEST_CASE(test_vmm_clone_page_directory_data_isolation) {
     vmm_switch_page_directory(original_dir);
     
     // 清理
+    // 注意：vmm_free_page_directory 会自动处理 COW 共享页面的引用计数
+    // 不需要手动调用 pmm_free_frame(frame)
+    // - src_dir 释放时：frame 引用计数从 2 降到 1（或如果 COW 已触发，
+    //   src 保留原 frame，clone 有新 frame）
+    // - clone_dir 释放时：释放 clone 的物理页
     vmm_free_page_directory(src_dir);
     vmm_free_page_directory(clone_dir);
-    pmm_free_frame(frame);
+    // ❌ 移除：pmm_free_frame(frame); - 可能导致 double-free
 }
 
 TEST_CASE(test_vmm_clone_page_directory_empty) {
@@ -515,6 +526,87 @@ TEST_CASE(test_vmm_clone_page_directory_empty) {
     
     // 清理
     vmm_free_page_directory(empty_dir);
+    vmm_free_page_directory(clone_dir);
+}
+
+// ============================================================================
+// 测试用例：COW 引用计数测试
+// ============================================================================
+
+TEST_CASE(test_vmm_cow_refcount) {
+    // 测试 COW 克隆后的引用计数
+    uint32_t src_dir = vmm_create_page_directory();
+    ASSERT_NE_U(src_dir, 0);
+    
+    // 分配物理页并映射
+    uint32_t frame = pmm_alloc_frame();
+    ASSERT_NE_U(frame, 0);
+    
+    // 检查初始引用计数（应该是 1）
+    uint32_t initial_refcount = pmm_frame_get_refcount(frame);
+    ASSERT_EQ_U(initial_refcount, 1);
+    
+    // 映射到源页目录
+    ASSERT_TRUE(vmm_map_page_in_directory(src_dir, TEST_VIRT_ADDR1, frame,
+                                          PAGE_PRESENT | PAGE_WRITE));
+    
+    // 克隆页目录（COW）
+    uint32_t clone_dir = vmm_clone_page_directory(src_dir);
+    ASSERT_NE_U(clone_dir, 0);
+    
+    // 检查克隆后的引用计数（应该是 2，因为 COW 共享）
+    uint32_t cow_refcount = pmm_frame_get_refcount(frame);
+    ASSERT_EQ_U(cow_refcount, 2);
+    
+    // 再克隆一次（模拟多级 fork）
+    uint32_t clone2_dir = vmm_clone_page_directory(src_dir);
+    ASSERT_NE_U(clone2_dir, 0);
+    
+    // 检查引用计数（应该是 3）
+    uint32_t cow_refcount2 = pmm_frame_get_refcount(frame);
+    ASSERT_EQ_U(cow_refcount2, 3);
+    
+    // 释放一个克隆（引用计数应该降到 2）
+    vmm_free_page_directory(clone2_dir);
+    uint32_t after_free_refcount = pmm_frame_get_refcount(frame);
+    ASSERT_EQ_U(after_free_refcount, 2);
+    
+    // 清理
+    vmm_free_page_directory(src_dir);
+    vmm_free_page_directory(clone_dir);
+    
+    // 最终引用计数应该是 0（帧已释放）
+    uint32_t final_refcount = pmm_frame_get_refcount(frame);
+    ASSERT_EQ_U(final_refcount, 0);
+}
+
+TEST_CASE(test_vmm_cow_multiple_pages) {
+    // 测试多个页面的 COW
+    uint32_t src_dir = vmm_create_page_directory();
+    ASSERT_NE_U(src_dir, 0);
+    
+    // 分配并映射多个页面
+    uint32_t frames[3];
+    for (int i = 0; i < 3; i++) {
+        frames[i] = pmm_alloc_frame();
+        ASSERT_NE_U(frames[i], 0);
+        ASSERT_TRUE(vmm_map_page_in_directory(src_dir, 
+            TEST_VIRT_ADDR1 + i * PAGE_SIZE, frames[i],
+            PAGE_PRESENT | PAGE_WRITE));
+    }
+    
+    // 克隆页目录
+    uint32_t clone_dir = vmm_clone_page_directory(src_dir);
+    ASSERT_NE_U(clone_dir, 0);
+    
+    // 验证所有帧的引用计数都是 2
+    for (int i = 0; i < 3; i++) {
+        uint32_t refcount = pmm_frame_get_refcount(frames[i]);
+        ASSERT_EQ_U(refcount, 2);
+    }
+    
+    // 清理
+    vmm_free_page_directory(src_dir);
     vmm_free_page_directory(clone_dir);
 }
 
@@ -593,7 +685,7 @@ TEST_CASE(test_vmm_comprehensive) {
     
     // 4. 清理
     vmm_free_page_directory(dir);
-    pmm_free_frame(frame);
+    // pmm_free_frame(frame);  // ❌ 不需要：会导致 double free
 }
 
 TEST_CASE(test_vmm_multiple_page_tables) {
@@ -623,9 +715,9 @@ TEST_CASE(test_vmm_multiple_page_tables) {
     
     // 清理
     vmm_free_page_directory(dir);
-    pmm_free_frame(frame1);
-    pmm_free_frame(frame2);
-    pmm_free_frame(frame3);
+    // pmm_free_frame(frame1);  // ❌ 不需要：会导致 double free
+    // pmm_free_frame(frame2);  // ❌ 不需要：会导致 double free
+    // pmm_free_frame(frame3);  // ❌ 不需要：会导致 double free
 }
 
 // ============================================================================
@@ -665,6 +757,11 @@ TEST_SUITE(vmm_directory_tests) {
     RUN_TEST(test_vmm_free_page_directory_empty);
 }
 
+TEST_SUITE(vmm_cow_tests) {
+    RUN_TEST(test_vmm_cow_refcount);
+    RUN_TEST(test_vmm_cow_multiple_pages);
+}
+
 TEST_SUITE(vmm_tlb_tests) {
     RUN_TEST(test_vmm_flush_tlb_single_page);
     RUN_TEST(test_vmm_flush_tlb_full);
@@ -688,6 +785,7 @@ void run_vmm_tests(void) {
     RUN_SUITE(vmm_unmap_tests);
     RUN_SUITE(vmm_tlb_tests);
     RUN_SUITE(vmm_directory_tests);
+    RUN_SUITE(vmm_cow_tests);
     RUN_SUITE(vmm_comprehensive_tests);
     
     // 打印测试摘要

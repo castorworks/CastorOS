@@ -144,8 +144,8 @@ static uint32_t procfs_status_read(fs_node_t *node, uint32_t offset, uint32_t si
         return 0;
     }
     
-    // 从 impl 中获取 PID（存储为指针值）
-    uint32_t pid = (uint32_t)node->impl;
+    // 从 impl_data 中获取 PID
+    uint32_t pid = node->impl_data;
     task_t *task = task_get_by_pid(pid);
     
     if (!task || task->state == TASK_UNUSED) {
@@ -249,11 +249,11 @@ static fs_node_t *procfs_pid_finddir(fs_node_t *node, const char *name) {
     
     /* 查找 status 文件 */
     if (strcmp(name, "status") == 0) {
-        uint32_t pid = (uint32_t)node->impl;
+        uint32_t pid = node->impl_data;
         
         // 查找或创建 status 文件节点
         for (uint32_t i = 0; i < proc_dir_count; i++) {
-            if (proc_status_files[i] && (uint32_t)proc_status_files[i]->impl == pid) {
+            if (proc_status_files[i] && proc_status_files[i]->impl_data == pid) {
                 // 增加引用计数
                 vfs_ref_node(proc_status_files[i]);
                 return proc_status_files[i];
@@ -273,7 +273,7 @@ static fs_node_t *procfs_pid_finddir(fs_node_t *node, const char *name) {
             status_file->type = FS_FILE;
             status_file->size = 512;  // 估计大小
             status_file->permissions = FS_PERM_READ;
-            status_file->impl = (uint32_t)pid;  // 存储 PID
+            status_file->impl_data = pid;  // 存储 PID
             status_file->ref_count = 1;  // 返回时引用计数为 1
             status_file->read = procfs_status_read;
             status_file->write = NULL;
@@ -397,7 +397,7 @@ static fs_node_t *procfs_root_finddir(fs_node_t *node, const char *name) {
         if (task && task->state != TASK_UNUSED) {
             // 查找或创建进程目录节点
             for (uint32_t i = 0; i < proc_dir_count; i++) {
-                if (proc_dirs[i] && (uint32_t)proc_dirs[i]->impl == pid) {
+                if (proc_dirs[i] && proc_dirs[i]->impl_data == pid) {
                     // 增加引用计数
                     vfs_ref_node(proc_dirs[i]);
                     return proc_dirs[i];
@@ -417,7 +417,7 @@ static fs_node_t *procfs_root_finddir(fs_node_t *node, const char *name) {
                 pid_dir->type = FS_DIRECTORY;
                 pid_dir->size = 0;
                 pid_dir->permissions = FS_PERM_READ | FS_PERM_EXEC;
-                pid_dir->impl = (uint32_t)pid;  // 存储 PID
+                pid_dir->impl_data = pid;  // 存储 PID
                 pid_dir->ref_count = 1;  // 返回时引用计数为 1
                 pid_dir->read = NULL;
                 pid_dir->write = NULL;

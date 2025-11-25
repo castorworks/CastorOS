@@ -12,13 +12,33 @@
 #include <kernel/panic.h>
 #include <kernel/sync/spinlock.h>
 
-static uint32_t *frame_bitmap = NULL;  ///< 页帧位图
-static uint32_t bitmap_size = 0;       ///< 位图大小（32位字数量）
-static uint32_t total_frames = 0;      ///< 总页帧数
-static pmm_info_t pmm_info = {0};      ///< 物理内存信息
-static uint32_t last_free_index = 0;   ///< 上次分配的空闲页帧索引（优化搜索）
-static spinlock_t pmm_lock;            ///< PMM 自旋锁
+#define MAX_PROTECTED_FRAMES 65536
+
+typedef struct {
+    uint32_t frame;
+    uint32_t refcount;
+} protected_frame_t;
+
+static uint32_t *frame_bitmap = NULL;     ///< 页帧位图
+static uint32_t bitmap_size = 0;          ///< 位图大小（32位字数量）
+static uint32_t total_frames = 0;         ///< 总页帧数
+static pmm_info_t pmm_info = {0};         ///< 物理内存信息
+static uint32_t last_free_index = 0;      ///< 上次分配的空闲页帧索引（优化搜索）
+static spinlock_t pmm_lock;               ///< PMM 自旋锁
+static protected_frame_t protected_frames[MAX_PROTECTED_FRAMES];
+static uint32_t protected_frame_count = 0;
+static uint16_t *frame_refcount = NULL;   ///< 页帧引用计数数组（每帧2字节，最大65535引用）
+static uint32_t pmm_data_end_virt = 0;    ///< PMM 数据结构结束的虚拟地址（位图+引用计数表）
 extern uint32_t _kernel_end;           ///< 内核结束地址
+
+static inline protected_frame_t* find_protected_frame_unsafe(uint32_t frame) {
+    for (uint32_t i = 0; i < protected_frame_count; i++) {
+        if (protected_frames[i].frame == frame) {
+            return &protected_frames[i];
+        }
+    }
+    return NULL;
+}
 
 /**
  * @brief 标记页帧为已使用
@@ -106,6 +126,100 @@ static int32_t find_free_frame(void) {
 }
 
 /**
+ * @brief 将物理帧加入保护列表
+ */
+void pmm_protect_frame(uint32_t frame) {
+    if (!frame) {
+        return;
+    }
+    if (frame & (PAGE_SIZE - 1)) {
+        LOG_WARN_MSG("PMM: pmm_protect_frame received unaligned frame 0x%x, aligning down\n", frame);
+        frame &= ~(PAGE_SIZE - 1);
+    }
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&pmm_lock, &irq_state);
+    
+    // 【关键修复】确保受保护的帧在位图中被标记为已使用
+    // 这防止 find_free_frame 返回一个受保护的帧
+    uint32_t idx = frame / PAGE_SIZE;
+    if (idx < total_frames && !test_frame(idx)) {
+        LOG_WARN_MSG("PMM: Protecting frame 0x%x that was FREE in bitmap! Marking as used.\n", frame);
+        set_frame(idx);
+        pmm_info.free_frames--;
+        pmm_info.used_frames++;
+        frame_refcount[idx] = 1;
+    }
+    
+    protected_frame_t *entry = find_protected_frame_unsafe(frame);
+    if (entry) {
+        entry->refcount++;
+    } else if (protected_frame_count < MAX_PROTECTED_FRAMES) {
+        protected_frames[protected_frame_count].frame = frame;
+        protected_frames[protected_frame_count].refcount = 1;
+        protected_frame_count++;
+    } else {
+        LOG_ERROR_MSG("PMM: Protected frame table full! Cannot protect 0x%x\n", frame);
+    }
+    
+    spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+}
+
+/**
+ * @brief 将物理帧从保护列表移除
+ */
+void pmm_unprotect_frame(uint32_t frame) {
+    if (!frame) {
+        return;
+    }
+    if (frame & (PAGE_SIZE - 1)) {
+        LOG_WARN_MSG("PMM: pmm_unprotect_frame received unaligned frame 0x%x, aligning down\n", frame);
+        frame &= ~(PAGE_SIZE - 1);
+    }
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&pmm_lock, &irq_state);
+    
+    protected_frame_t *entry = find_protected_frame_unsafe(frame);
+    if (!entry) {
+        LOG_WARN_MSG("PMM: Attempted to unprotect unknown frame 0x%x\n", frame);
+        spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+        return;
+    }
+    
+    if (entry->refcount == 0) {
+        LOG_ERROR_MSG("PMM: Frame 0x%x has zero refcount while protected!\n", frame);
+    } else {
+        entry->refcount--;
+    }
+    
+    if (entry->refcount == 0) {
+        protected_frame_count--;
+        *entry = protected_frames[protected_frame_count];
+    }
+    
+    spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+}
+
+/**
+ * @brief 查询物理帧是否处于保护状态
+ */
+bool pmm_is_frame_protected(uint32_t frame) {
+    if (!frame) {
+        return false;
+    }
+    if (frame & (PAGE_SIZE - 1)) {
+        frame &= ~(PAGE_SIZE - 1);
+    }
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&pmm_lock, &irq_state);
+    bool protected_flag = (find_protected_frame_unsafe(frame) != NULL);
+    spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+    return protected_flag;
+}
+
+/**
  * @brief 初始化物理内存管理器
  * @param mbi Multiboot信息结构指针
  * 
@@ -164,6 +278,31 @@ void pmm_init(multiboot_info_t *mbi) {
     uint32_t bitmap_phys_start = VIRT_TO_PHYS((uint32_t)frame_bitmap);
     uint32_t bitmap_end = PAGE_ALIGN_UP(bitmap_phys_start + bitmap_bytes);
     
+    // 初始化引用计数表（紧跟位图之后）
+    // 每个页帧用 uint16_t (2字节) 存储引用计数
+    uint32_t refcount_bytes = PAGE_ALIGN_UP(total_frames * sizeof(uint16_t));
+    frame_refcount = (uint16_t*)PHYS_TO_VIRT(bitmap_end);
+    memset(frame_refcount, 0, refcount_bytes);
+    uint32_t refcount_end = PAGE_ALIGN_UP(bitmap_end + refcount_bytes);
+    
+    // 保存 PMM 数据结构结束地址（虚拟地址），供堆初始化使用
+    pmm_data_end_virt = PHYS_TO_VIRT(refcount_end);
+    
+    LOG_DEBUG_MSG("PMM: Frame refcount table at virt=%p, phys=0x%x, size=%u bytes\n",
+                 frame_refcount, bitmap_end, refcount_bytes);
+    LOG_DEBUG_MSG("PMM: Refcount table ends at phys=0x%x (virt=0x%x)\n", refcount_end, pmm_data_end_virt);
+    
+    // 【关键修复】标记引用计数表占用的帧为已使用
+    uint32_t refcount_start_frame = bitmap_end / PAGE_SIZE;
+    uint32_t refcount_end_frame = refcount_end / PAGE_SIZE;
+    LOG_DEBUG_MSG("PMM: Marking refcount table frames %u-%u as used\n", 
+                 refcount_start_frame, refcount_end_frame - 1);
+    for (uint32_t f = refcount_start_frame; f < refcount_end_frame; f++) {
+        if (f < total_frames) {
+            set_frame(f);  // 标记为已使用
+        }
+    }
+    
     // 标记空闲内存区域
     mmap = (multiboot_memory_map_t*)PHYS_TO_VIRT(mbi->mmap_addr);
     
@@ -177,9 +316,9 @@ void pmm_init(multiboot_info_t *mbi) {
                 end = 0x80000000;
             }
             
-            // 跳过内核和位图占用的区域
+            // 跳过内核、位图和引用计数表占用的区域
             if (start < kernel_end) start = kernel_end;
-            if (start < bitmap_end) start = bitmap_end;
+            if (start < refcount_end) start = refcount_end;
             
             if (end > start) {
                 for (uint32_t f = start/PAGE_SIZE; f < end/PAGE_SIZE; f++) {
@@ -212,11 +351,27 @@ void pmm_init(multiboot_info_t *mbi) {
     // 计算内核占用的页帧数（从 1MB 到 kernel_end）
     pmm_info.kernel_frames = (kernel_end - kernel_start) / PAGE_SIZE;
     
-    // 计算位图占用的页帧数（使用之前已定义的 bitmap_phys_start）
+    // 计算位图占用的页帧数
     pmm_info.bitmap_frames = (bitmap_end - bitmap_phys_start) / PAGE_SIZE;
     
-    // 保留页帧数 = 内核 + 位图
-    pmm_info.reserved_frames = pmm_info.kernel_frames + pmm_info.bitmap_frames;
+    // 计算引用计数表占用的页帧数
+    uint32_t refcount_frames = (refcount_end - bitmap_end) / PAGE_SIZE;
+    
+    // 保留页帧数 = 内核 + 位图 + 引用计数表
+    pmm_info.reserved_frames = pmm_info.kernel_frames + pmm_info.bitmap_frames + refcount_frames;
+    
+    LOG_DEBUG_MSG("PMM: Reserved frames: kernel=%u, bitmap=%u, refcount=%u, total=%u\n",
+                 pmm_info.kernel_frames, pmm_info.bitmap_frames, refcount_frames, 
+                 pmm_info.reserved_frames);
+    
+    // 初始化引用计数：所有已使用的帧设置为 1
+    for (uint32_t i = 0; i < total_frames; i++) {
+        if (test_frame(i)) {
+            frame_refcount[i] = 1;
+        } else {
+            frame_refcount[i] = 0;
+        }
+    }
     
     pmm_print_info();
 }
@@ -247,6 +402,9 @@ uint32_t pmm_alloc_frame(void) {
     set_frame(idx);
     pmm_info.free_frames--;
     pmm_info.used_frames++;
+    
+    // 设置引用计数为 1（新分配）
+    frame_refcount[idx] = 1;
     
     // 【安全检查】验证 set_frame 是否生效
     if (!test_frame(idx)) {
@@ -281,6 +439,19 @@ uint32_t pmm_alloc_frame(void) {
         LOG_WARN_MSG("  PMM state: used=%u, free=%u\n", pmm_info.used_frames, pmm_info.free_frames);
     }
     
+    // 【关键安全检查】确保我们没有分配一个受保护的帧
+    // 这是最后一道防线，确保不会返回活动页目录或页表的帧
+    if (find_protected_frame_unsafe(addr)) {
+        LOG_ERROR_MSG("PMM: CRITICAL! Allocated frame 0x%x is protected! This should never happen!\n", addr);
+        // 回滚分配
+        clear_frame(idx);
+        frame_refcount[idx] = 0;
+        pmm_info.free_frames++;
+        pmm_info.used_frames--;
+        spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+        return 0;
+    }
+    
     // 清零页帧内容
     memset((void*)PHYS_TO_VIRT(addr), 0, PAGE_SIZE);
     
@@ -293,6 +464,9 @@ uint32_t pmm_alloc_frame(void) {
  * @param frame 页帧的物理地址
  * 
  * 地址必须是页对齐的
+ * 
+ * COW 支持：如果帧的引用计数 > 1，只递减计数，不实际释放
+ * 这允许多个进程通过 COW 共享同一物理页
  */
 void pmm_free_frame(uint32_t frame) {
     // 检查页对齐
@@ -318,6 +492,33 @@ void pmm_free_frame(uint32_t frame) {
         return;
     }
     
+    if (find_protected_frame_unsafe(frame)) {
+        LOG_ERROR_MSG("PMM: Attempt to free protected frame 0x%x blocked\n", frame);
+        spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+        return;
+    }
+    
+    // 【COW 关键】检查并递减引用计数
+    // 只有当引用计数降为 0 时才真正释放帧
+    if (frame_refcount[idx] == 0) {
+        // 引用计数已经是 0，这是一个错误状态
+        // （帧被标记为使用，但引用计数为 0）
+        LOG_WARN_MSG("PMM: Frame 0x%x marked as used but refcount is 0, releasing anyway\n", frame);
+        // 继续执行释放逻辑
+    } else {
+        frame_refcount[idx]--;
+        if (frame_refcount[idx] > 0) {
+            // 引用计数还不为 0，说明还有其他进程通过 COW 共享此帧
+            // 不释放，只减少计数
+            LOG_DEBUG_MSG("PMM: Frame 0x%x refcount decreased to %u, not freeing (COW shared)\n", 
+                         frame, frame_refcount[idx]);
+            spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+            return;
+        }
+        // 引用计数降为 0，继续执行释放逻辑
+    }
+    
+    // 引用计数为 0，真正释放
     clear_frame(idx);
     pmm_info.free_frames++;
     pmm_info.used_frames--;
@@ -346,13 +547,23 @@ pmm_info_t pmm_get_info(void) {
 }
 
 /**
- * @brief 获取位图结束地址（虚拟地址）
- * @return 位图结束的虚拟地址（页对齐）
+ * @brief 获取 PMM 数据结构结束地址（虚拟地址）
+ * @return PMM 数据结构结束的虚拟地址（页对齐）
  * 
- * 用于确定堆的起始地址，避免堆与位图重叠
+ * 返回位图和引用计数表之后的地址。
+ * 用于确定堆的起始地址，避免堆与 PMM 数据结构重叠。
+ * 
+ * 注意：函数名保留为 pmm_get_bitmap_end 以保持 API 兼容性，
+ * 但实际返回的是包括引用计数表在内的所有 PMM 数据结构的结束地址。
  */
 uint32_t pmm_get_bitmap_end(void) {
-    // 每个 uint32_t 有 32 位，所以需要的字节数是 (total_frames + 31) / 32 * 4
+    // 返回保存的 PMM 数据结构结束地址（包括位图和引用计数表）
+    if (pmm_data_end_virt != 0) {
+        return pmm_data_end_virt;
+    }
+    
+    // 回退：如果还没有初始化，使用旧的计算方式（仅位图）
+    // 这种情况理论上不应该发生，因为 pmm_init 会在任何调用之前执行
     uint32_t bitmap_bytes = PAGE_ALIGN_UP((total_frames + 31) / 32 * 4);
     return PAGE_ALIGN_UP((uint32_t)frame_bitmap + bitmap_bytes);
 }
@@ -366,4 +577,111 @@ void pmm_print_info(void) {
     kprintf("Free:  %u MB\n", (pmm_info.free_frames * PAGE_SIZE) / (1024*1024));
     kprintf("Used:  %u MB\n", (pmm_info.used_frames * PAGE_SIZE) / (1024*1024));
     kprintf("================================================================================\n\n");
+}
+
+/**
+ * @brief 增加物理页帧的引用计数
+ * @param frame 页帧的物理地址
+ * @return 新的引用计数值
+ */
+uint32_t pmm_frame_ref_inc(uint32_t frame) {
+    if (!frame || (frame & (PAGE_SIZE - 1))) {
+        LOG_ERROR_MSG("PMM: pmm_frame_ref_inc invalid frame 0x%x\n", frame);
+        return 0;
+    }
+    
+    uint32_t idx = frame / PAGE_SIZE;
+    if (idx >= total_frames) {
+        LOG_ERROR_MSG("PMM: pmm_frame_ref_inc frame 0x%x out of range (idx=%u, total=%u)\n", 
+                     frame, idx, total_frames);
+        return 0;
+    }
+    
+    // 【安全检查】确保 frame_refcount 已初始化
+    if (!frame_refcount) {
+        LOG_ERROR_MSG("PMM: pmm_frame_ref_inc called but frame_refcount not initialized!\n");
+        return 0;
+    }
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&pmm_lock, &irq_state);
+    
+    if (frame_refcount[idx] == 0xFFFF) {
+        LOG_ERROR_MSG("PMM: pmm_frame_ref_inc frame 0x%x refcount overflow!\n", frame);
+        spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+        return 0xFFFF;
+    }
+    
+    frame_refcount[idx]++;
+    uint32_t new_count = frame_refcount[idx];
+    
+    spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+    return new_count;
+}
+
+/**
+ * @brief 减少物理页帧的引用计数
+ * @param frame 页帧的物理地址
+ * @return 新的引用计数值
+ */
+uint32_t pmm_frame_ref_dec(uint32_t frame) {
+    if (!frame || (frame & (PAGE_SIZE - 1))) {
+        LOG_ERROR_MSG("PMM: pmm_frame_ref_dec invalid frame 0x%x\n", frame);
+        return 0;
+    }
+    
+    uint32_t idx = frame / PAGE_SIZE;
+    if (idx >= total_frames) {
+        LOG_ERROR_MSG("PMM: pmm_frame_ref_dec frame 0x%x out of range\n", frame);
+        return 0;
+    }
+    
+    // 【安全检查】确保 frame_refcount 已初始化
+    if (!frame_refcount) {
+        LOG_ERROR_MSG("PMM: pmm_frame_ref_dec called but frame_refcount not initialized!\n");
+        return 0;
+    }
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&pmm_lock, &irq_state);
+    
+    if (frame_refcount[idx] == 0) {
+        LOG_WARN_MSG("PMM: pmm_frame_ref_dec frame 0x%x already zero!\n", frame);
+        spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+        return 0;
+    }
+    
+    frame_refcount[idx]--;
+    uint32_t new_count = frame_refcount[idx];
+    
+    spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+    return new_count;
+}
+
+/**
+ * @brief 获取物理页帧的引用计数
+ * @param frame 页帧的物理地址
+ * @return 引用计数值
+ */
+uint32_t pmm_frame_get_refcount(uint32_t frame) {
+    if (!frame || (frame & (PAGE_SIZE - 1))) {
+        return 0;
+    }
+    
+    uint32_t idx = frame / PAGE_SIZE;
+    if (idx >= total_frames) {
+        return 0;
+    }
+    
+    // 【安全检查】确保 frame_refcount 已初始化
+    if (!frame_refcount) {
+        return 1;  // 未初始化时假设引用计数为 1（保守策略）
+    }
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&pmm_lock, &irq_state);
+    uint32_t count = frame_refcount[idx];
+    spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+    
+    return count;
 }

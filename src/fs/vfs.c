@@ -142,8 +142,9 @@ void vfs_release_node(fs_node_t *node) {
         mutex_unlock(&vfs_refcount_mutex);
         
         // 释放实现相关的数据（如 fat32_file_t）
+        // 注意：impl 是指针，会被 kfree；impl_data 是整数值，不会被释放
         if (node->impl) {
-            kfree((void *)node->impl);
+            kfree(node->impl);
         }
         // 释放节点本身
         kfree(node);

@@ -10,11 +10,15 @@
 #include <lib/klog.h>
 #include <lib/string.h>
 #include <kernel/sync/spinlock.h>
+#include <kernel/task.h>
 
 static page_directory_t *current_dir = NULL;  ///< 当前页目录虚拟地址
 static uint32_t current_dir_phys = 0;          ///< 当前页目录物理地址
 extern uint32_t boot_page_directory[];         ///< 引导时的页目录
 static spinlock_t vmm_lock;                    ///< VMM 自旋锁，保护页表操作
+
+#define KERNEL_PDE_START 512
+#define KERNEL_PDE_END   1024
 
 // 活动页目录跟踪（防止页目录被意外覆盖）
 #define MAX_PAGE_DIRECTORIES 64
@@ -63,6 +67,52 @@ static bool is_active_page_directory(uint32_t frame) {
     return false;
 }
 
+static inline void protect_phys_frame(uint32_t frame) {
+    if (frame) {
+        pmm_protect_frame(frame);
+    }
+}
+
+static inline void unprotect_phys_frame(uint32_t frame) {
+    if (frame) {
+        pmm_unprotect_frame(frame);
+    }
+}
+
+static void protect_directory_range(page_directory_t *dir, uint32_t start_idx, uint32_t end_idx) {
+    for (uint32_t i = start_idx; i < end_idx; i++) {
+        pde_t entry = dir->entries[i];
+        if (is_present(entry)) {
+            uint32_t frame = get_frame(entry);
+            if (frame == 0) {
+                LOG_ERROR_MSG("VMM: protect_directory_range detected zero frame at PDE %u\n", i);
+                continue;
+            }
+            protect_phys_frame(frame);
+        }
+    }
+}
+
+static void release_directory_range(page_directory_t *dir, uint32_t start_idx, uint32_t end_idx, bool clear_entries) {
+    for (uint32_t i = start_idx; i < end_idx; i++) {
+        pde_t entry = dir->entries[i];
+        if (is_present(entry)) {
+            uint32_t frame = get_frame(entry);
+            if (frame == 0) {
+                LOG_ERROR_MSG("VMM: release_directory_range detected zero frame at PDE %u\n", i);
+                if (clear_entries) {
+                    dir->entries[i] = 0;
+                }
+                continue;
+            }
+            unprotect_phys_frame(frame);
+            if (clear_entries) {
+                dir->entries[i] = 0;
+            }
+        }
+    }
+}
+
 /**
  * @brief 注册活动页目录
  * @param dir_phys 页目录的物理地址
@@ -79,6 +129,7 @@ static void register_page_directory(uint32_t dir_phys) {
         return;
     }
     
+    protect_phys_frame(dir_phys);
     active_page_directories[active_pd_count++] = dir_phys;
     LOG_INFO_MSG("VMM: Registered page directory 0x%x (total: %u)\n", dir_phys, active_pd_count);
 }
@@ -90,6 +141,7 @@ static void register_page_directory(uint32_t dir_phys) {
 static void unregister_page_directory(uint32_t dir_phys) {
     for (uint32_t i = 0; i < active_pd_count; i++) {
         if (active_page_directories[i] == dir_phys) {
+            unprotect_phys_frame(dir_phys);
             // 用最后一个元素替换当前元素
             active_page_directories[i] = active_page_directories[--active_pd_count];
             LOG_INFO_MSG("VMM: Unregistered page directory 0x%x (remaining: %u)\n", dir_phys, active_pd_count);
@@ -194,6 +246,7 @@ void vmm_init(void) {
     
     // 注册引导页目录为活动页目录（保护它不被覆盖）
     register_page_directory(current_dir_phys);
+    protect_directory_range(current_dir, KERNEL_PDE_START, KERNEL_PDE_END);
     
     LOG_INFO_MSG("VMM: High-half kernel mapping extended\n");
     LOG_INFO_MSG("VMM: Boot page directory registered at phys 0x%x\n", current_dir_phys);
@@ -234,6 +287,128 @@ bool vmm_handle_kernel_page_fault(uint32_t addr) {
 }
 
 /**
+ * @brief 处理写保护异常（COW）
+ * @param addr 缺页地址
+ * @param error_code 错误码
+ * @return 是否成功处理
+ * 
+ * x86 Page Fault Error Code:
+ *   Bit 0 (P): 1 = 页面存在，0 = 页面不存在
+ *   Bit 1 (W): 1 = 写操作，0 = 读操作
+ *   Bit 2 (U): 1 = 用户模式，0 = 内核模式
+ *   Bit 3 (RSVD): 1 = 保留位被设置
+ *   Bit 4 (I/D): 1 = 指令获取导致
+ * 
+ * COW 异常特征：页面存在(P=1) + 写操作(W=1) + 页面有 PAGE_COW 标志
+ */
+bool vmm_handle_cow_page_fault(uint32_t addr, uint32_t error_code) {
+    // error_code bit 1: 写入导致的异常
+    // error_code bit 0: 页面存在
+    // COW 异常应该是：页面存在(bit0=1) + 写入(bit1=1) = 0x3 或 0x7
+    if ((error_code & 0x3) != 0x3) {
+        LOG_DEBUG_MSG("COW: Not a COW fault - addr=0x%x, error=0x%x\n", addr, error_code);
+        return false;  // 不是写保护异常
+    }
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    
+    uint32_t pd_idx = pde_idx(addr);
+    uint32_t pt_idx = pte_idx(addr);
+    
+    // 检查页表是否存在
+    if (!is_present(current_dir->entries[pd_idx])) {
+        LOG_DEBUG_MSG("COW: Page table not present - addr=0x%x\n", addr);
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        return false;
+    }
+    
+    // 【安全检查】验证页表的物理地址
+    uint32_t table_phys = get_frame(current_dir->entries[pd_idx]);
+    if (table_phys == 0 || table_phys >= 0x80000000) {
+        LOG_ERROR_MSG("COW: Invalid page table address 0x%x at PDE %u\n", table_phys, pd_idx);
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        return false;
+    }
+    
+    page_table_t *table = (page_table_t*)PHYS_TO_VIRT(table_phys);
+    pte_t *pte = &table->entries[pt_idx];
+    
+    // 检查页面是否存在且标记为 COW
+    if (!is_present(*pte) || !(*pte & PAGE_COW)) {
+        LOG_DEBUG_MSG("COW: Not a COW page - addr=0x%x, pte=0x%x, present=%d, cow=%d\n",
+                     addr, *pte, is_present(*pte), (*pte & PAGE_COW) != 0);
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        return false;  // 不是 COW 页面
+    }
+    
+    uint32_t old_frame = get_frame(*pte);
+    
+    // 【安全检查】验证旧物理帧地址
+    if (old_frame == 0 || old_frame >= 0x80000000) {
+        LOG_ERROR_MSG("COW: Invalid old frame address 0x%x at addr=0x%x\n", old_frame, addr);
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        return false;
+    }
+    
+    uint32_t refcount = pmm_frame_get_refcount(old_frame);
+    
+    LOG_INFO_MSG("COW: Handling page fault - addr=0x%x, old_frame=0x%x, refcount=%u\n", 
+                addr, old_frame, refcount);
+    
+    if (refcount == 0) {
+        // 异常情况：COW 页面但引用计数为 0
+        // 这不应该发生，但为了安全，我们恢复写权限并继续
+        LOG_WARN_MSG("COW: Page at 0x%x has refcount=0 but is marked COW, restoring write\n", addr);
+        *pte = old_frame | ((*pte & 0xFFF) & ~PAGE_COW) | PAGE_WRITE;
+        vmm_flush_tlb(addr);
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        return true;
+    }
+    
+    if (refcount == 1) {
+        // 只有当前进程引用，直接恢复写权限，无需复制
+        *pte = old_frame | ((*pte & 0xFFF) & ~PAGE_COW) | PAGE_WRITE;
+        vmm_flush_tlb(addr);
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        LOG_DEBUG_MSG("COW: Single reference (refcount=1), restored write permission\n");
+        return true;
+    }
+    
+    // 多个进程共享（refcount > 1），需要复制页面
+    uint32_t new_frame = pmm_alloc_frame();
+    if (!new_frame) {
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        LOG_ERROR_MSG("COW: Failed to allocate frame for COW copy (out of memory)\n");
+        return false;
+    }
+    
+    // 复制页面内容
+    void *src_virt = (void*)PHYS_TO_VIRT(old_frame);
+    void *dst_virt = (void*)PHYS_TO_VIRT(new_frame);
+    memcpy(dst_virt, src_virt, PAGE_SIZE);
+    
+    // 更新页表项：指向新页面，恢复写权限，去掉 COW 标记
+    uint32_t old_flags = *pte & 0xFFF;
+    uint32_t new_flags = (old_flags & ~PAGE_COW) | PAGE_WRITE;
+    *pte = new_frame | new_flags;
+    
+    // 刷新 TLB
+    vmm_flush_tlb(addr);
+    
+    // 减少旧页面的引用计数
+    // 注意：这里不调用 pmm_free_frame，因为我们不想释放帧
+    // 我们只是减少引用计数，让其他进程继续共享
+    pmm_frame_ref_dec(old_frame);
+    
+    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+    
+    LOG_DEBUG_MSG("COW: Copied page (refcount was %u), old_frame=0x%x -> new_frame=0x%x\n", 
+                 refcount, old_frame, new_frame);
+    return true;
+}
+
+/**
  * @brief 映射虚拟页到物理页
  * @param virt 虚拟地址（页对齐）
  * @param phys 物理地址（页对齐）
@@ -260,6 +435,7 @@ bool vmm_map_page(uint32_t virt, uint32_t phys, uint32_t flags) {
             spinlock_unlock_irqrestore(&vmm_lock, irq_state);
             return false;
         }
+        uint32_t table_phys = VIRT_TO_PHYS((uint32_t)table);
         
         // 创建页表时，权限应该根据目标虚拟地址决定
         // 如果是内核空间（>= 0x80000000），则不应设置 PAGE_USER
@@ -269,14 +445,18 @@ bool vmm_map_page(uint32_t virt, uint32_t phys, uint32_t flags) {
             pde_flags |= PAGE_USER;
         }
         
-        uint32_t new_pde = VIRT_TO_PHYS((uint32_t)table) | pde_flags;
+        uint32_t new_pde = table_phys | pde_flags;
         *pde = new_pde;
+        protect_phys_frame(table_phys);
         
         // 关键修复：如果是内核空间的新页表，必须同步到主内核页目录 (boot_page_directory)
         // 这样其他进程可以通过 page fault handler 同步这个新映射
         if (virt >= KERNEL_VIRTUAL_BASE) {
             page_directory_t *k_dir = (page_directory_t *)boot_page_directory;
             k_dir->entries[pd] = new_pde;
+            if (k_dir != current_dir) {
+                protect_phys_frame(table_phys);
+            }
         }
     } else {
         table = (page_table_t*)PHYS_TO_VIRT(get_frame(*pde));
@@ -365,6 +545,7 @@ uint32_t vmm_create_page_directory(void) {
     for (uint32_t i = 512; i < 1024; i++) {
         new_dir->entries[i] = master_dir->entries[i];
     }
+    protect_directory_range(new_dir, KERNEL_PDE_START, KERNEL_PDE_END);
     
     // 注册为活动页目录
     register_page_directory(dir_phys);
@@ -377,17 +558,46 @@ uint32_t vmm_create_page_directory(void) {
  * @brief 克隆页目录（用于 fork）
  * @param src_dir_phys 源页目录的物理地址
  * @return 成功返回新页目录的物理地址，失败返回 0
+ * 
+ * 实现 Copy-on-Write (COW) 语义：
+ * - 父子进程共享物理页，但页表是独立的
+ * - 共享的可写页面被标记为只读 + COW
+ * - 首次写入时触发 page fault，由 vmm_handle_cow_page_fault 处理
  */
 uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
+    // 【安全检查】验证源页目录地址有效
+    if (!src_dir_phys || src_dir_phys >= 0x80000000) {
+        LOG_ERROR_MSG("vmm_clone_page_directory: Invalid src_dir_phys 0x%x\n", src_dir_phys);
+        return 0;
+    }
+    
     // 分配新页目录
     uint32_t new_dir_phys = pmm_alloc_frame();
     if (!new_dir_phys) return 0;
+    
+    // 【安全检查】确保新分配的帧不与源相同
+    if (new_dir_phys == src_dir_phys) {
+        LOG_ERROR_MSG("vmm_clone_page_directory: CRITICAL! PMM returned same frame as source 0x%x!\n", src_dir_phys);
+        pmm_free_frame(new_dir_phys);
+        return 0;
+    }
     
     bool irq_state;
     spinlock_lock_irqsave(&vmm_lock, &irq_state);
     
     page_directory_t *src_dir = (page_directory_t*)PHYS_TO_VIRT(src_dir_phys);
     page_directory_t *new_dir = (page_directory_t*)PHYS_TO_VIRT(new_dir_phys);
+    
+    // 【调试检查】验证源页目录前几个 PDE 的完整性
+    for (uint32_t i = 0; i < 4; i++) {
+        if (is_present(src_dir->entries[i])) {
+            uint32_t phys = get_frame(src_dir->entries[i]);
+            if (phys == 0 || phys >= 0x80000000) {
+                LOG_ERROR_MSG("vmm_clone: CORRUPTED source PDE[%u]=0x%x before clone!\n", 
+                             i, src_dir->entries[i]);
+            }
+        }
+    }
     
     // 清空新页目录
     memset(new_dir, 0, sizeof(page_directory_t));
@@ -396,182 +606,115 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
     for (uint32_t i = 512; i < 1024; i++) {
         new_dir->entries[i] = src_dir->entries[i];
     }
+    protect_directory_range(new_dir, KERNEL_PDE_START, KERNEL_PDE_END);
     
-    // 复制用户空间映射（深拷贝：复制物理页）
+    // 复制用户空间映射（COW方式：复制页表，共享物理页，标记只读）
+    LOG_DEBUG_MSG("vmm_clone_cow: Cloning user space with COW (src=0x%x, new=0x%x)\n", 
+                 src_dir_phys, new_dir_phys);
+    
+    // 用于跟踪失败时的回滚信息
+    uint32_t last_successful_pde = 0;
+    bool clone_failed = false;
+    
     for (uint32_t i = 0; i < 512; i++) {
         if (is_present(src_dir->entries[i])) {
-            // 分配新页表
-            uint32_t new_table_phys = pmm_alloc_frame();
-            if (!new_table_phys) {
-                // 分配失败，清理已分配的资源
-                spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-                vmm_free_page_directory(new_dir_phys);
-                return 0;
-            }
-            
             // 【安全检查】验证源页表的物理地址有效性
             uint32_t src_table_phys = get_frame(src_dir->entries[i]);
             if (src_table_phys >= 0x80000000 || src_table_phys == 0) {
-                LOG_ERROR_MSG("vmm_clone: Invalid src_table_phys 0x%x at PDE %u (PDE entry=0x%x)\n",
-                             src_table_phys, i, src_dir->entries[i]);
-                // 释放刚分配的页表
-                pmm_free_frame(new_table_phys);
-                // 清理已分配的资源
-                spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-                vmm_free_page_directory(new_dir_phys);
-                return 0;
+                LOG_ERROR_MSG("vmm_clone_cow: Invalid src_table_phys 0x%x at PDE %u\n",
+                             src_table_phys, i);
+                clone_failed = true;
+                break;
             }
             
             page_table_t *src_table = (page_table_t*)PHYS_TO_VIRT(src_table_phys);
-            page_table_t *new_table = (page_table_t*)PHYS_TO_VIRT(new_table_phys);
             
-            // 【调试】记录克隆的源页表
-            if (i >= 510) {
-                LOG_DEBUG_MSG("vmm_clone: PDE %u: src_table_phys=0x%x, new_table_phys=0x%x\n",
-                             i, get_frame(src_dir->entries[i]), new_table_phys);
+            // COW策略关键修复：为子进程创建新的页表副本，而不是共享页表
+            uint32_t new_table_phys = pmm_alloc_frame();
+            if (!new_table_phys) {
+                LOG_ERROR_MSG("vmm_clone_cow: Failed to allocate page table for PDE %u\n", i);
+                clone_failed = true;
+                break;
             }
             
-            // 清空新页表
-            memset(new_table, 0, sizeof(page_table_t));
+            page_table_t *new_table = (page_table_t*)PHYS_TO_VIRT(new_table_phys);
             
-            // 逐页复制（深拷贝物理页，而不是共享）
+            // 遍历源页表中的每个页面，设置 COW 标记并复制到新页表
+            uint32_t cow_pages = 0;
             for (uint32_t j = 0; j < 1024; j++) {
                 if (is_present(src_table->entries[j])) {
-                    // 【安全检查】验证源页帧的物理地址有效性
                     uint32_t src_frame = get_frame(src_table->entries[j]);
-                    if (src_frame >= 0x80000000 || src_frame == 0) {
-                        LOG_ERROR_MSG("vmm_clone: Invalid src_frame 0x%x at PDE %u PTE %u (PTE entry=0x%x)\n",
-                                     src_frame, i, j, src_table->entries[j]);
-                        // 清理当前页表中已分配的页
-                        for (uint32_t k = 0; k < j; k++) {
-                            if (is_present(new_table->entries[k])) {
-                                pmm_free_frame(get_frame(new_table->entries[k]));
-                            }
-                        }
-                        // 释放页表本身
-                        pmm_free_frame(new_table_phys);
-                        
-                        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-                        vmm_free_page_directory(new_dir_phys);
-                        return 0;
-                    }
+                    uint32_t flags = src_table->entries[j] & 0xFFF;
                     
-                    // 分配新的物理页
-                    uint32_t new_frame = pmm_alloc_frame();
-                    if (!new_frame) {
-                        // 分配失败，清理当前页表中已分配的页
-                        for (uint32_t k = 0; k < j; k++) {
-                            if (is_present(new_table->entries[k])) {
-                                pmm_free_frame(get_frame(new_table->entries[k]));
-                            }
-                        }
-                        // 释放页表本身
-                        pmm_free_frame(new_table_phys);
+                    // 如果页面可写，将其改为只读并标记为 COW
+                    if (flags & PAGE_WRITE) {
+                        flags &= ~PAGE_WRITE;  // 去掉写权限
+                        flags |= PAGE_COW;     // 标记为 COW
+                        src_table->entries[j] = src_frame | flags;
+                        cow_pages++;
                         
-                        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-                        vmm_free_page_directory(new_dir_phys);
-                        return 0;
-                    }
-                    
-                    // 【关键安全检查1】确保新分配的帧不是任何活动进程的页目录
-                    if (is_active_page_directory(new_frame)) {
-                        LOG_ERROR_MSG("vmm_clone: CRITICAL: Allocated frame 0x%x is an active page directory!\n", new_frame);
-                        LOG_ERROR_MSG("  This would cause catastrophic corruption. Aborting clone.\n");
-                        LOG_ERROR_MSG("  PDE %u PTE %u, src_frame=0x%x\n", i, j, src_frame);
-                        
-                        // 释放刚分配的帧
-                        pmm_free_frame(new_frame);
-                        
-                        // 清理当前页表中已分配的页
-                        for (uint32_t k = 0; k < j; k++) {
-                            if (is_present(new_table->entries[k])) {
-                                pmm_free_frame(get_frame(new_table->entries[k]));
-                            }
-                        }
-                        // 释放页表本身
-                        pmm_free_frame(new_table_phys);
-                        
-                        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-                        vmm_free_page_directory(new_dir_phys);
-                        return 0;
-                    }
-                    
-                    // 【关键安全检查2】确保新分配的帧不是任何活动进程的页表
-                    // 检查所有活动页目录，看这个帧是否被用作页表
-                    for (uint32_t pd_idx = 0; pd_idx < active_pd_count; pd_idx++) {
-                        uint32_t active_pd_phys = active_page_directories[pd_idx];
-                        page_directory_t *active_pd = (page_directory_t*)PHYS_TO_VIRT(active_pd_phys);
-                        
-                        // 检查所有 PDE（包括用户空间和内核空间）
-                        for (uint32_t pde = 0; pde < 1024; pde++) {
-                            if (is_present(active_pd->entries[pde])) {
-                                uint32_t page_table_phys = get_frame(active_pd->entries[pde]);
-                                if (new_frame == page_table_phys) {
-                                    LOG_ERROR_MSG("vmm_clone: CRITICAL: Allocated frame 0x%x is a page table of active PD 0x%x (PDE %u)!\n", 
-                                                 new_frame, active_pd_phys, pde);
-                                    LOG_ERROR_MSG("  This would corrupt the page table. Aborting clone.\n");
-                                    LOG_ERROR_MSG("  Current PDE %u PTE %u, src_frame=0x%x\n", i, j, src_frame);
-                                    
-                                    // 释放刚分配的帧
-                                    pmm_free_frame(new_frame);
-                                    
-                                    // 清理当前页表中已分配的页
-                                    for (uint32_t k = 0; k < j; k++) {
-                                        if (is_present(new_table->entries[k])) {
-                                            pmm_free_frame(get_frame(new_table->entries[k]));
-                                        }
-                                    }
-                                    // 释放页表本身
-                                    pmm_free_frame(new_table_phys);
-                                    
-                                    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-                                    vmm_free_page_directory(new_dir_phys);
-                                    return 0;
-                                }
-                            }
+                        // 调试：记录第一个 COW 页面的详细信息
+                        if (cow_pages == 1) {
+                            LOG_DEBUG_MSG("vmm_clone_cow: First COW page: PDE=%u PTE=%u frame=0x%x flags=0x%x\n",
+                                         i, j, src_frame, flags);
+                            LOG_DEBUG_MSG("vmm_clone_cow: src_table_phys=0x%x new_table_phys=0x%x\n",
+                                         src_table_phys, new_table_phys);
                         }
                     }
                     
-                    // 复制页面内容
-                    void *src_virt = (void*)PHYS_TO_VIRT(src_frame);
-                    void *dst_virt = (void*)PHYS_TO_VIRT(new_frame);
+                    // 复制页表项到新页表（指向相同的物理页）
+                    new_table->entries[j] = src_frame | flags;
                     
-                    // 【额外安全检查】验证目标地址不会覆盖页目录区域（双重保险）
-                    uint32_t dst_addr = (uint32_t)dst_virt;
-                    // 检查是否会覆盖页目录区域（通常在 0x80190000 - 0x801b0000 附近）
-                    if (dst_addr >= 0x80190000 && dst_addr < 0x801b0000) {
-                        LOG_ERROR_MSG("vmm_clone: CRITICAL: memcpy dst 0x%x would overwrite page directory area!\n", dst_addr);
-                        LOG_ERROR_MSG("  src_frame=0x%x, new_frame=0x%x, PDE %u PTE %u\n", 
-                                    src_frame, new_frame, i, j);
-                        LOG_ERROR_MSG("  Aborting clone operation to prevent corruption.\n");
-                        
-                        // 释放刚分配的帧
-                        pmm_free_frame(new_frame);
-                        
-                        // 清理当前页表中已分配的页
-                        for (uint32_t k = 0; k < j; k++) {
-                            if (is_present(new_table->entries[k])) {
-                                pmm_free_frame(get_frame(new_table->entries[k]));
-                            }
-                        }
-                        // 释放页表本身
-                        pmm_free_frame(new_table_phys);
-                        
-                        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-                        vmm_free_page_directory(new_dir_phys);
-                        return 0;
-                    }
-                    
-                    memcpy(dst_virt, src_virt, PAGE_SIZE);
-                    
-                    // 设置新页表项（保留权限标志）
-                    new_table->entries[j] = new_frame | (src_table->entries[j] & 0xFFF);
+                    // 增加物理页的引用计数（父子进程共享物理页）
+                    pmm_frame_ref_inc(src_frame);
+                } else {
+                    // 空页表项
+                    new_table->entries[j] = 0;
                 }
             }
             
-            // 设置新页目录项
-            new_dir->entries[i] = new_table_phys | (src_dir->entries[i] & 0xFFF);
+            LOG_DEBUG_MSG("vmm_clone_cow: PDE %u cloned, %u pages marked COW (src_table=0x%x, new_table=0x%x)\n", 
+                         i, cow_pages, src_table_phys, new_table_phys);
+            
+            // 子进程使用新的页表
+            uint32_t pde_flags = src_dir->entries[i] & 0xFFF;
+            new_dir->entries[i] = new_table_phys | pde_flags;
+            protect_phys_frame(new_table_phys);
+            
+            last_successful_pde = i + 1;
         }
+    }
+    
+    // 刷新父进程的TLB（因为我们修改了页表项的权限）
+    // 移到循环外面，只刷新一次
+    if (src_dir_phys == current_dir_phys && last_successful_pde > 0) {
+        vmm_flush_tlb(0);  // 刷新整个 TLB
+    }
+    
+    // 【调试检查】验证克隆后源页目录的完整性
+    for (uint32_t i = 0; i < 4; i++) {
+        if (is_present(src_dir->entries[i])) {
+            uint32_t phys = get_frame(src_dir->entries[i]);
+            if (phys == 0 || phys >= 0x80000000) {
+                LOG_ERROR_MSG("vmm_clone: Source PDE[%u]=0x%x CORRUPTED after clone!\n", 
+                             i, src_dir->entries[i]);
+            }
+        }
+    }
+    
+    // 处理克隆失败的情况
+    if (clone_failed) {
+        LOG_WARN_MSG("vmm_clone_cow: Clone failed, cleaning up (processed %u PDEs)\n", 
+                    last_successful_pde);
+        
+        // 注意：此时源页表的 COW 标记已经设置，但这不会造成问题
+        // 因为 vmm_handle_cow_page_fault 会正确处理 refcount == 1 的情况
+        // （直接恢复写权限，无需复制）
+        
+        // 释放已分配的新页目录资源
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        vmm_free_page_directory(new_dir_phys);
+        return 0;
     }
     
     // 注册为活动页目录
@@ -579,6 +722,23 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
     return new_dir_phys;
+}
+
+/**
+ * @brief 检查页目录是否被任何任务使用
+ * @param dir_phys 页目录的物理地址
+ * @return 如果被使用返回 true，否则返回 false
+ */
+static bool is_page_directory_in_use(uint32_t dir_phys) {
+    // task_pool 在 task.h 中声明，在 task.c 中定义
+    for (uint32_t i = 0; i < MAX_TASKS; i++) {
+        if (task_pool[i].state != TASK_UNUSED && 
+            task_pool[i].state != TASK_TERMINATED &&
+            task_pool[i].page_dir_phys == dir_phys) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /**
@@ -605,6 +765,12 @@ void vmm_free_page_directory(uint32_t dir_phys) {
         return;
     }
     
+    // 【关键修复】检查页目录是否仍被其他任务使用
+    if (is_page_directory_in_use(dir_phys)) {
+        LOG_ERROR_MSG("vmm_free_page_directory: BLOCKED! Page directory 0x%x is still in use by a task!\n", dir_phys);
+        return;
+    }
+    
     // 【新增检查】验证这个页目录是否在活动列表中
     if (!is_active_page_directory(dir_phys)) {
         LOG_ERROR_MSG("vmm_free_page_directory: WARNING! Page directory 0x%x is not in active list!\n", dir_phys);
@@ -626,82 +792,64 @@ void vmm_free_page_directory(uint32_t dir_phys) {
     
     // 只释放用户空间页表（0-511）
     // 内核空间页表（512-1023）是共享的，不释放
+    // COW 模式下：页表和页面都可能被共享，依靠引用计数自动管理
     for (uint32_t i = 0; i < 512; i++) {
         if (is_present(dir->entries[i])) {
             uint32_t table_phys = get_frame(dir->entries[i]);
-            page_table_t *table = (page_table_t*)PHYS_TO_VIRT(table_phys);
+            if (table_phys == 0) {
+                LOG_ERROR_MSG("vmm_free_page_directory: PDE %u has zero frame, skipping\n", i);
+                dir->entries[i] = 0;
+                continue;
+            }
             
+            page_table_t *table = (page_table_t*)PHYS_TO_VIRT(table_phys);
             uint32_t pages_in_table = 0;
             
-            // 释放页表中的所有物理页
+            // 释放页表中的所有物理页（pmm_free_frame 自动处理引用计数）
             for (uint32_t j = 0; j < 1024; j++) {
                 if (is_present(table->entries[j])) {
                     uint32_t frame = get_frame(table->entries[j]);
                     
-                    // 【安全检查】验证物理地址的合理性 (必须是 4KB 对齐且 < 2GB)
-                    if (frame & 0xFFF) {
-                        LOG_WARN_MSG("vmm_free_page_directory: PDE %u PTE %u has misaligned frame 0x%x\n",
-                                    i, j, frame);
-                        freed_pages++;  // 计数但不释放
-                        pages_in_table++;
-                        continue;
-                    }
-                    if (frame >= 0x80000000) {
-                        LOG_WARN_MSG("vmm_free_page_directory: PDE %u PTE %u has invalid frame 0x%x (>= 2GB)\n",
-                                    i, j, frame);
+                    // 基本安全检查
+                    if (frame == 0 || frame >= 0x80000000) {
+                        LOG_WARN_MSG("vmm_free: PDE %u PTE %u invalid frame 0x%x\n", i, j, frame);
                         freed_pages++;
                         pages_in_table++;
                         continue;
                     }
                     
-                    // 【关键安全检查1】确保不释放任何活动页目录
-                    if (is_active_page_directory(frame)) {
-                        LOG_ERROR_MSG("vmm_free_page_directory: CRITICAL: PDE %u PTE %u points to active page directory 0x%x!\n",
-                                     i, j, frame);
-                        LOG_ERROR_MSG("  Refusing to free this frame. This indicates corruption in the source process.\n");
-                        LOG_ERROR_MSG("  Source page directory being freed: 0x%x\n", dir_phys);
-                        freed_pages++;  // 计数但不释放
-                        pages_in_table++;
-                        continue;  // 跳过，不释放这个帧！
-                    }
-                    
-                    // 【终极保护】硬编码保护 Shell 的页目录物理地址
-                    // 即使它没被正确注册，也不能被释放
-                    // Shell 页目录通常在 0x00195000 - 0x001a5000 范围内（64KB 安全区）
-                    if (frame >= 0x00195000 && frame <= 0x001a5000) {
-                        LOG_ERROR_MSG("vmm_free_page_directory: CRITICAL: PDE %u PTE %u points to Shell page directory zone (frame=0x%x)!\n",
-                                     i, j, frame);
-                        LOG_ERROR_MSG("  Refusing to free this frame to protect Shell!\n");
-                        LOG_ERROR_MSG("  Source page directory being freed: 0x%x\n", dir_phys);
-                        freed_pages++;  // 计数但不释放
-                        pages_in_table++;
-                        continue;  // 跳过，不释放这个帧！
-                    }
-                    
-                    // 【调试】记录所有被释放的帧
-                    if (i < 10) {  // 只记录前10个PDE以减少日志
-                        LOG_DEBUG_MSG("vmm_free: Freeing frame 0x%x (PDE %u PTE %u)\n", frame, i, j);
-                    }
-                    
+                    // pmm_free_frame 会自动处理引用计数：
+                    // - 如果 refcount > 1，只递减，不释放
+                    // - 如果 refcount == 1，递减后释放
                     pmm_free_frame(frame);
                     freed_pages++;
                     pages_in_table++;
                 }
             }
             
-            // 如果这是栈所在的区域（PDE 510/511），打印详细信息
+            // 释放页表本身（同样由 pmm_free_frame 处理引用计数）
+            unprotect_phys_frame(table_phys);
+            pmm_free_frame(table_phys);
+            freed_tables++;
+            
+            // 打印栈区域的详细信息
             if (i >= 510) {
                 LOG_INFO_MSG("vmm_free_page_directory: PDE %u has %u pages\n", i, pages_in_table);
             }
             
-            // 释放页表本身
-            pmm_free_frame(table_phys);
-            freed_tables++;
+            dir->entries[i] = 0;
         }
     }
-    
-    // 注销活动页目录
-    unregister_page_directory(dir_phys);
+
+    // 释放内核共享页表（仅移除本页目录的引用，不释放物理帧）
+    release_directory_range(dir, KERNEL_PDE_START, KERNEL_PDE_END, true);
+
+    // 注销活动页目录（如果已注册）
+    if (is_active_page_directory(dir_phys)) {
+        unregister_page_directory(dir_phys);
+    } else {
+        LOG_WARN_MSG("vmm_free_page_directory: dir 0x%x was not registered\n", dir_phys);
+    }
     
     // 释放页目录本身
     LOG_DEBUG_MSG("vmm_free_page_directory: freeing page directory at phys 0x%x (virt 0x%x)\n", 
@@ -796,6 +944,7 @@ bool vmm_map_page_in_directory(uint32_t dir_phys, uint32_t virt,
         }
 
         *pde = table_phys | pde_flags;
+        protect_phys_frame(table_phys);
     } else {
         table = (page_table_t*)PHYS_TO_VIRT(get_frame(*pde));
     }
@@ -850,7 +999,12 @@ uint32_t vmm_unmap_page_in_directory(uint32_t dir_phys, uint32_t virt) {
 
     if (empty) {
         uint32_t table_frame = get_frame(*pde);
-        pmm_free_frame(table_frame);
+        if (table_frame == 0) {
+            LOG_ERROR_MSG("vmm_unmap_page_in_directory: PDE %u has zero frame, skipping free\n", pd);
+        } else {
+            unprotect_phys_frame(table_frame);
+            pmm_free_frame(table_frame);
+        }
         *pde = 0;
         LOG_DEBUG_MSG("  Page table at PDE %u (frame=%x) is empty, freed\n", pd, table_frame);
         

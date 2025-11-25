@@ -101,9 +101,12 @@ _start:
     mov ecx, (boot_page_directory - KERNEL_VIRTUAL_BASE)
     mov cr3, ecx
     
-    ; 2. 启用分页：设置 CR0 的 PG 位
+    ; 2. 启用分页：设置 CR0 的 PG 位（暂时不启用 WP）
+    ; PG (bit 31) = 启用分页
+    ; WP (bit 16) = 写保护，使内核也遵守页面的只读权限（COW 需要）
+    ; 注意：当前先禁用 WP 以测试页表复制逻辑，稍后启用
     mov ecx, cr0
-    or ecx, 0x80000000
+    or ecx, 0x80000000  ; 仅 PG（暂时禁用 WP）
     mov cr0, ecx
     
     ; 3. 跳转到高半核地址
