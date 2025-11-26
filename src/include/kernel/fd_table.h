@@ -9,6 +9,7 @@
 
 #include <types.h>
 #include <fs/vfs.h>
+#include <kernel/sync/spinlock.h>
 
 /* 最大文件描述符数 */
 #define MAX_FDS 512
@@ -23,6 +24,7 @@ typedef struct {
 
 /* 文件描述符表 */
 typedef struct {
+    spinlock_t lock;                // 保护 FD 表的自旋锁
     fd_entry_t entries[MAX_FDS];
 } fd_table_t;
 

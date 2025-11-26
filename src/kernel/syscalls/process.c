@@ -216,6 +216,9 @@ uint32_t sys_fork(uint32_t *frame) {
             return (uint32_t)-12;
         }
         
+        // 必须先初始化 fd_table（包括其中的锁），再复制内容
+        fd_table_init(child->fd_table);
+        
         if (fd_table_copy(parent->fd_table, child->fd_table) != 0) {
             LOG_ERROR_MSG("sys_fork: failed to copy fd_table\n");
             kfree(child->fd_table);
