@@ -1,8 +1,7 @@
 #include <kernel/sync/semaphore.h>
 #include <kernel/interrupt.h>
 #include <kernel/task.h>
-
-#define INT32_MAX ((int32_t)0x7FFFFFFF)
+#include <types.h>
 
 void semaphore_init(semaphore_t *sem, int32_t initial_count) {
     if (sem == NULL) {

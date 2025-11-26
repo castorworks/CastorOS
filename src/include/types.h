@@ -16,6 +16,7 @@ typedef uint32_t size_t;
 typedef int32_t  ssize_t;
 
 #define UINT32_MAX ((uint32_t)0xFFFFFFFF)
+#define INT32_MAX ((int32_t)0x7FFFFFFF)
 
 #ifndef _TIME_T_DEFINED
 #define _TIME_T_DEFINED

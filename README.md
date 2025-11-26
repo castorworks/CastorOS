@@ -25,6 +25,7 @@
 + [x] [文件系统](./docs/07-fs.md)
 + [x] [FAT32 文件系统](./docs/08-fat32.md)
 + [x] [用户模式](./docs/09-usermode.md)
++ [x] [同步机制](./docs/10-sync.md)
 
 ## Git 提交格式
 

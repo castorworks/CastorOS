@@ -276,12 +276,12 @@ int32_t semaphore_get_value(semaphore_t *sem);
 - **位置**：`src/fs/procfs.c`
 - **实现**：
   - 使用节点私有的 `dirent` 缓冲区替代静态 `dirent`
-  - 添加 `mutex_t procfs_lock` 保护 `proc_dirs[]` 和 `proc_status_files[]` 数组操作
+  - **不使用全局锁**：因为不再缓存节点，无需 `procfs_lock`
 - **实现细节**：
   - 添加 `procfs_private_t` 结构体，包含 `readdir_cache`
   - `procfs_root_readdir()` 和 `procfs_pid_readdir()` 使用节点私有缓冲区
   - **不再缓存 pid 目录和 status 文件节点**：每次请求时动态创建，由 VFS 引用计数机制管理生命周期
-- **设计说明**：移除了节点缓存（`proc_dirs`/`proc_status_files` 数组），避免悬空指针问题——当节点被 VFS 释放后，数组中仍保留指向已释放内存的指针会导致内存损坏
+- **设计说明**：移除了节点缓存（`proc_dirs`/`proc_status_files` 数组），避免悬空指针问题——当节点被 VFS 释放后，数组中仍保留指向已释放内存的指针会导致内存损坏。由于不再有共享的可变状态，因此不需要同步锁保护
 
 #### 7.5 已完成：中断管理 (IRQ) ✅
 - **位置**：`src/kernel/irq.c`

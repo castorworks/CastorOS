@@ -6,10 +6,7 @@
 #include <lib/string.h>
 #include <lib/klog.h>
 #include <mm/heap.h>
-
-#ifndef UINT32_MAX
-#define UINT32_MAX 0xFFFFFFFFu
-#endif
+#include <types.h>
 
 // 分区块设备的私有数据
 typedef struct partition_blockdev_data {

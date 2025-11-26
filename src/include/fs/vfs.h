@@ -72,8 +72,6 @@ typedef struct fs_node {
     struct fs_node *ptr;         // 用于符号链接和挂载点
 } fs_node_t;
 
-/* struct dirent 定义现在在 <uapi/types.h> 中 */
-
 /**
  * 初始化 VFS
  */
