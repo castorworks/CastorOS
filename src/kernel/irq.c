@@ -7,6 +7,7 @@
 #include <kernel/gdt.h>
 #include <kernel/io.h>
 #include <kernel/task.h>
+#include <kernel/sync/spinlock.h>
 #include <lib/klog.h>
 
 /* PIC 端口 */
@@ -25,6 +26,14 @@
 
 /* IRQ 处理函数数组（仅用于硬件中断 0-15） */
 static isr_handler_t irq_handlers[16] = {0};
+
+/* 保护 irq_handlers 数组的自旋锁
+ * 注意：irq_handler() 在中断上下文中执行，因此必须使用 spinlock + IRQ save
+ * 但由于 irq_handler 本身就在中断禁用状态下运行，所以读取时不需要额外保护
+ * 只需要保护 irq_register_handler() 的写操作
+ */
+static spinlock_t irq_registry_lock;
+static bool irq_registry_lock_initialized = false;
 
 /* IRQ 统计计数器 */
 static uint64_t irq_counts[16] = {0};
@@ -123,11 +132,24 @@ void irq_handler(registers_t *regs) {
 
 /**
  * 注册 IRQ 处理函数
+ * 线程安全：使用 spinlock + IRQ save 保护
  */
 void irq_register_handler(uint8_t irq, isr_handler_t handler) {
-    if (irq < 16) {
-        irq_handlers[irq] = handler;
+    if (irq >= 16) {
+        return;
     }
+    
+    /* 确保锁已初始化 */
+    if (!irq_registry_lock_initialized) {
+        spinlock_init(&irq_registry_lock);
+        irq_registry_lock_initialized = true;
+    }
+    
+    /* 使用 IRQ save 版本，防止在注册过程中被中断打断 */
+    bool irq_state;
+    spinlock_lock_irqsave(&irq_registry_lock, &irq_state);
+    irq_handlers[irq] = handler;
+    spinlock_unlock_irqrestore(&irq_registry_lock, irq_state);
 }
 
 static inline uint16_t irq_get_port(uint8_t irq) {
@@ -169,6 +191,11 @@ void irq_enable_line(uint8_t irq) {
  */
 void irq_init(void) {
     LOG_INFO_MSG("Initializing IRQ...\n");
+
+    /* 初始化 IRQ 注册表锁 */
+    spinlock_init(&irq_registry_lock);
+    irq_registry_lock_initialized = true;
+    LOG_DEBUG_MSG("  IRQ registry lock initialized\n");
 
     /* 重映射 PIC */
     pic_remap();
