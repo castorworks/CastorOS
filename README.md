@@ -27,6 +27,14 @@
 + [x] [用户模式](./docs/09-usermode.md)
 + [x] [同步机制](./docs/10-sync.md)
 
+## 下一步安排
+
++ [ ] [系统功能完善](./docs/11-system-enhancement.md)
++ [ ] [IBM ThinkPad T41 显卡驱动](./docs/12-ibm-thinkpad-t41-graphics.md)
++ [ ] [网络栈](./docs/13-network.md)
++ [ ] [intel E1000 网卡驱动](./docs/14-intel-e1000-network-card-driver.md)
++ [ ] [USB 1.1 驱动](./docs/15-usb-1.1-driver.md)
+
 ## Git 提交格式
 
 + `feat` 添加了新特性
