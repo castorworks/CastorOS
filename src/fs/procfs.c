@@ -20,9 +20,17 @@ static fs_node_t *procfs_pid_finddir(fs_node_t *node, const char *name);
 static uint32_t procfs_status_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 static uint32_t procfs_meminfo_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 
+/* ProcFS 私有数据结构 - 包含 readdir 缓冲区以避免静态变量 */
+typedef struct procfs_private {
+    struct dirent readdir_cache;  // readdir 结果缓冲区
+} procfs_private_t;
+
 /* /proc 根目录节点 */
 static fs_node_t *procfs_root = NULL;
+static procfs_private_t *procfs_root_private = NULL;  // 根目录私有数据
 static fs_node_t *procfs_meminfo_file = NULL;
+
+/* 注意：不再需要 procfs_lock，因为不再缓存节点 */
 static uint32_t procfs_meminfo_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
     (void)node;
     
@@ -114,13 +122,10 @@ static uint32_t procfs_meminfo_read(fs_node_t *node, uint32_t offset, uint32_t s
 }
 
 
-/* 进程目录节点缓存（动态分配） */
-#define MAX_PROC_DIRS 256
-static fs_node_t *proc_dirs[MAX_PROC_DIRS];
-static uint32_t proc_dir_count = 0;
-
-/* 进程状态文件节点缓存 */
-static fs_node_t *proc_status_files[MAX_PROC_DIRS];
+/* 注意：不再缓存进程目录和状态文件节点
+ * 每次请求时动态创建，由 VFS 的引用计数机制管理生命周期
+ * 这避免了悬空指针问题（节点被释放后数组中仍有指针）
+ */
 
 /**
  * 获取进程状态字符串
@@ -195,38 +200,42 @@ static uint32_t procfs_status_read(fs_node_t *node, uint32_t offset, uint32_t si
  * 读取 /proc/[pid] 目录
  */
 static struct dirent *procfs_pid_readdir(fs_node_t *node, uint32_t index) {
-    (void)node;
-    
-    static struct dirent dirent;
+    // 使用节点私有的 dirent 缓冲区，避免静态变量带来的并发问题
+    procfs_private_t *priv = (procfs_private_t *)node->impl;
+    if (!priv) {
+        LOG_ERROR_MSG("procfs: pid_readdir called on node without private data\n");
+        return NULL;
+    }
+    struct dirent *dirent = &priv->readdir_cache;
     
     /* 返回 . */
     if (index == 0) {
-        strcpy(dirent.d_name, ".");
-        dirent.d_ino = 0;
-        dirent.d_reclen = sizeof(struct dirent);
-        dirent.d_off = 1;
-        dirent.d_type = DT_DIR;
-        return &dirent;
+        strcpy(dirent->d_name, ".");
+        dirent->d_ino = 0;
+        dirent->d_reclen = sizeof(struct dirent);
+        dirent->d_off = 1;
+        dirent->d_type = DT_DIR;
+        return dirent;
     }
     
     /* 返回 .. */
     if (index == 1) {
-        strcpy(dirent.d_name, "..");
-        dirent.d_ino = 0;
-        dirent.d_reclen = sizeof(struct dirent);
-        dirent.d_off = 2;
-        dirent.d_type = DT_DIR;
-        return &dirent;
+        strcpy(dirent->d_name, "..");
+        dirent->d_ino = 0;
+        dirent->d_reclen = sizeof(struct dirent);
+        dirent->d_off = 2;
+        dirent->d_type = DT_DIR;
+        return dirent;
     }
     
     /* 返回 status 文件 */
     if (index == 2) {
-        strcpy(dirent.d_name, "status");
-        dirent.d_ino = 0;
-        dirent.d_reclen = sizeof(struct dirent);
-        dirent.d_off = 3;
-        dirent.d_type = DT_REG;
-        return &dirent;
+        strcpy(dirent->d_name, "status");
+        dirent->d_ino = 0;
+        dirent->d_reclen = sizeof(struct dirent);
+        dirent->d_off = 3;
+        dirent->d_type = DT_REG;
+        return dirent;
     }
     
     return NULL;
@@ -251,45 +260,40 @@ static fs_node_t *procfs_pid_finddir(fs_node_t *node, const char *name) {
     if (strcmp(name, "status") == 0) {
         uint32_t pid = node->impl_data;
         
-        // 查找或创建 status 文件节点
-        for (uint32_t i = 0; i < proc_dir_count; i++) {
-            if (proc_status_files[i] && proc_status_files[i]->impl_data == pid) {
-                // 增加引用计数
-                vfs_ref_node(proc_status_files[i]);
-                return proc_status_files[i];
-            }
+        // 验证进程仍然存在
+        task_t *task = task_get_by_pid(pid);
+        if (!task || task->state == TASK_UNUSED) {
+            return NULL;
         }
         
-        // 创建新的 status 文件节点
-        if (proc_dir_count < MAX_PROC_DIRS) {
-            fs_node_t *status_file = (fs_node_t *)kmalloc(sizeof(fs_node_t));
-            if (!status_file) {
-                return NULL;
-            }
-            
-            memset(status_file, 0, sizeof(fs_node_t));
-            strcpy(status_file->name, "status");
-            status_file->inode = 0;
-            status_file->type = FS_FILE;
-            status_file->size = 512;  // 估计大小
-            status_file->permissions = FS_PERM_READ;
-            status_file->impl_data = pid;  // 存储 PID
-            status_file->ref_count = 1;  // 返回时引用计数为 1
-            status_file->read = procfs_status_read;
-            status_file->write = NULL;
-            status_file->open = NULL;
-            status_file->close = NULL;
-            status_file->readdir = NULL;
-            status_file->finddir = NULL;
-            status_file->create = NULL;
-            status_file->mkdir = NULL;
-            status_file->unlink = NULL;
-            status_file->ptr = NULL;
-            status_file->flags = FS_NODE_FLAG_ALLOCATED;  // 标记为动态分配
-            
-            proc_status_files[proc_dir_count] = status_file;
-            return status_file;
+        // 每次都创建新的 status 文件节点（由 VFS 引用计数管理生命周期）
+        fs_node_t *status_file = (fs_node_t *)kmalloc(sizeof(fs_node_t));
+        if (!status_file) {
+            return NULL;
         }
+        
+        memset(status_file, 0, sizeof(fs_node_t));
+        strcpy(status_file->name, "status");
+        status_file->inode = 0;
+        status_file->type = FS_FILE;
+        status_file->size = 512;  // 估计大小
+        status_file->permissions = FS_PERM_READ;
+        status_file->impl_data = pid;  // 存储 PID
+        status_file->impl = NULL;  // status 文件不需要私有数据
+        status_file->ref_count = 1;  // 返回时引用计数为 1
+        status_file->read = procfs_status_read;
+        status_file->write = NULL;
+        status_file->open = NULL;
+        status_file->close = NULL;
+        status_file->readdir = NULL;
+        status_file->finddir = NULL;
+        status_file->create = NULL;
+        status_file->mkdir = NULL;
+        status_file->unlink = NULL;
+        status_file->ptr = NULL;
+        status_file->flags = FS_NODE_FLAG_ALLOCATED;  // 标记为动态分配
+        
+        return status_file;
     }
     
     return NULL;
@@ -299,38 +303,42 @@ static fs_node_t *procfs_pid_finddir(fs_node_t *node, const char *name) {
  * 读取 /proc 根目录
  */
 static struct dirent *procfs_root_readdir(fs_node_t *node, uint32_t index) {
-    (void)node;
-    
-    static struct dirent dirent;
+    // 使用节点私有的 dirent 缓冲区，避免静态变量带来的并发问题
+    procfs_private_t *priv = (procfs_private_t *)node->impl;
+    if (!priv) {
+        LOG_ERROR_MSG("procfs: readdir called on node without private data\n");
+        return NULL;
+    }
+    struct dirent *dirent = &priv->readdir_cache;
     
     /* 返回 . */
     if (index == 0) {
-        strcpy(dirent.d_name, ".");
-        dirent.d_ino = 0;
-        dirent.d_reclen = sizeof(struct dirent);
-        dirent.d_off = 1;
-        dirent.d_type = DT_DIR;
-        return &dirent;
+        strcpy(dirent->d_name, ".");
+        dirent->d_ino = 0;
+        dirent->d_reclen = sizeof(struct dirent);
+        dirent->d_off = 1;
+        dirent->d_type = DT_DIR;
+        return dirent;
     }
     
     /* 返回 .. */
     if (index == 1) {
-        strcpy(dirent.d_name, "..");
-        dirent.d_ino = 0;
-        dirent.d_reclen = sizeof(struct dirent);
-        dirent.d_off = 2;
-        dirent.d_type = DT_DIR;
-        return &dirent;
+        strcpy(dirent->d_name, "..");
+        dirent->d_ino = 0;
+        dirent->d_reclen = sizeof(struct dirent);
+        dirent->d_off = 2;
+        dirent->d_type = DT_DIR;
+        return dirent;
     }
     
     /* 返回 meminfo 文件 */
     if (index == 2) {
-        strcpy(dirent.d_name, "meminfo");
-        dirent.d_ino = 0;
-        dirent.d_reclen = sizeof(struct dirent);
-        dirent.d_off = 3;
-        dirent.d_type = DT_REG;
-        return &dirent;
+        strcpy(dirent->d_name, "meminfo");
+        dirent->d_ino = 0;
+        dirent->d_reclen = sizeof(struct dirent);
+        dirent->d_off = 3;
+        dirent->d_type = DT_REG;
+        return dirent;
     }
     
     /* 返回进程目录（PID 目录） */
@@ -345,12 +353,12 @@ static struct dirent *procfs_root_readdir(fs_node_t *node, uint32_t index) {
                 // 找到对应的进程，返回其 PID 目录名
                 char pid_str[32];
                 ksnprintf(pid_str, sizeof(pid_str), "%u", task->pid);
-                strcpy(dirent.d_name, pid_str);
-                dirent.d_ino = 0;
-                dirent.d_reclen = sizeof(struct dirent);
-                dirent.d_off = index + 1;
-                dirent.d_type = DT_DIR;
-                return &dirent;
+                strcpy(dirent->d_name, pid_str);
+                dirent->d_ino = 0;
+                dirent->d_reclen = sizeof(struct dirent);
+                dirent->d_off = index + 1;
+                dirent->d_type = DT_DIR;
+                return dirent;
             }
             found_count++;
         }
@@ -363,8 +371,6 @@ static struct dirent *procfs_root_readdir(fs_node_t *node, uint32_t index) {
  * 在 /proc 根目录中查找进程目录
  */
 static fs_node_t *procfs_root_finddir(fs_node_t *node, const char *name) {
-    (void)node;
-    
     if (!name) {
         return NULL;
     }
@@ -395,45 +401,42 @@ static fs_node_t *procfs_root_finddir(fs_node_t *node, const char *name) {
     if (*p == '\0' && pid > 0) {
         task_t *task = task_get_by_pid(pid);
         if (task && task->state != TASK_UNUSED) {
-            // 查找或创建进程目录节点
-            for (uint32_t i = 0; i < proc_dir_count; i++) {
-                if (proc_dirs[i] && proc_dirs[i]->impl_data == pid) {
-                    // 增加引用计数
-                    vfs_ref_node(proc_dirs[i]);
-                    return proc_dirs[i];
-                }
+            // 每次都创建新的进程目录节点（由 VFS 引用计数管理生命周期）
+            fs_node_t *pid_dir = (fs_node_t *)kmalloc(sizeof(fs_node_t));
+            if (!pid_dir) {
+                return NULL;
             }
             
-            // 创建新的进程目录节点
-            if (proc_dir_count < MAX_PROC_DIRS) {
-                fs_node_t *pid_dir = (fs_node_t *)kmalloc(sizeof(fs_node_t));
-                if (!pid_dir) {
-                    return NULL;
-                }
-                
-                memset(pid_dir, 0, sizeof(fs_node_t));
-                ksnprintf(pid_dir->name, sizeof(pid_dir->name), "%u", pid);
-                pid_dir->inode = 0;
-                pid_dir->type = FS_DIRECTORY;
-                pid_dir->size = 0;
-                pid_dir->permissions = FS_PERM_READ | FS_PERM_EXEC;
-                pid_dir->impl_data = pid;  // 存储 PID
-                pid_dir->ref_count = 1;  // 返回时引用计数为 1
-                pid_dir->read = NULL;
-                pid_dir->write = NULL;
-                pid_dir->open = NULL;
-                pid_dir->close = NULL;
-                pid_dir->readdir = procfs_pid_readdir;
-                pid_dir->finddir = procfs_pid_finddir;
-                pid_dir->create = NULL;
-                pid_dir->mkdir = NULL;
-                pid_dir->unlink = NULL;
-                pid_dir->ptr = NULL;
-                pid_dir->flags = FS_NODE_FLAG_ALLOCATED;  // 标记为动态分配
-                
-                proc_dirs[proc_dir_count++] = pid_dir;
-                return pid_dir;
+            // 分配私有数据（包含 readdir 缓冲区）
+            procfs_private_t *priv = (procfs_private_t *)kmalloc(sizeof(procfs_private_t));
+            if (!priv) {
+                kfree(pid_dir);
+                return NULL;
             }
+            memset(priv, 0, sizeof(procfs_private_t));
+            
+            memset(pid_dir, 0, sizeof(fs_node_t));
+            ksnprintf(pid_dir->name, sizeof(pid_dir->name), "%u", pid);
+            pid_dir->inode = 0;
+            pid_dir->type = FS_DIRECTORY;
+            pid_dir->size = 0;
+            pid_dir->permissions = FS_PERM_READ | FS_PERM_EXEC;
+            pid_dir->impl_data = pid;  // 存储 PID
+            pid_dir->impl = priv;  // 设置私有数据（包含 readdir 缓冲区）
+            pid_dir->ref_count = 1;  // 返回时引用计数为 1
+            pid_dir->read = NULL;
+            pid_dir->write = NULL;
+            pid_dir->open = NULL;
+            pid_dir->close = NULL;
+            pid_dir->readdir = procfs_pid_readdir;
+            pid_dir->finddir = procfs_pid_finddir;
+            pid_dir->create = NULL;
+            pid_dir->mkdir = NULL;
+            pid_dir->unlink = NULL;
+            pid_dir->ptr = NULL;
+            pid_dir->flags = FS_NODE_FLAG_ALLOCATED;  // 标记为动态分配
+            
+            return pid_dir;
         }
     }
     
@@ -446,17 +449,22 @@ static fs_node_t *procfs_root_finddir(fs_node_t *node, const char *name) {
 fs_node_t *procfs_init(void) {
     LOG_INFO_MSG("procfs: Initializing process filesystem...\n");
     
-    // 清空缓存
-    memset(proc_dirs, 0, sizeof(proc_dirs));
-    memset(proc_status_files, 0, sizeof(proc_status_files));
-    proc_dir_count = 0;
-    
     // 创建 /proc 根目录节点
     procfs_root = (fs_node_t *)kmalloc(sizeof(fs_node_t));
     if (!procfs_root) {
         LOG_ERROR_MSG("procfs: Failed to allocate root node\n");
         return NULL;
     }
+    
+    // 分配根目录私有数据
+    procfs_root_private = (procfs_private_t *)kmalloc(sizeof(procfs_private_t));
+    if (!procfs_root_private) {
+        LOG_ERROR_MSG("procfs: Failed to allocate root private data\n");
+        kfree(procfs_root);
+        procfs_root = NULL;
+        return NULL;
+    }
+    memset(procfs_root_private, 0, sizeof(procfs_private_t));
     
     memset(procfs_root, 0, sizeof(fs_node_t));
     strcpy(procfs_root->name, "proc");
@@ -478,6 +486,7 @@ fs_node_t *procfs_init(void) {
     procfs_root->mkdir = NULL;   // 不支持创建目录
     procfs_root->unlink = NULL;  // 不支持删除
     procfs_root->ptr = NULL;
+    procfs_root->impl = procfs_root_private;  // 设置私有数据
     
     /* 创建 meminfo 文件节点 */
     procfs_meminfo_file = (fs_node_t *)kmalloc(sizeof(fs_node_t));

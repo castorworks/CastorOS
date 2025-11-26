@@ -13,9 +13,16 @@
 /* 设备节点数量 */
 #define DEVFS_DEVICE_COUNT 4
 
+/* DevFS 私有数据结构 - 包含 readdir 缓冲区以避免静态变量 */
+typedef struct devfs_private {
+    struct dirent readdir_cache;  // readdir 结果缓冲区
+} devfs_private_t;
+
 /* 设备节点 */
 static fs_node_t devfs_devices[DEVFS_DEVICE_COUNT];
+static devfs_private_t devfs_device_private[DEVFS_DEVICE_COUNT];  // 每个设备的私有数据
 static fs_node_t *devfs_root = NULL;
+static devfs_private_t *devfs_root_private = NULL;  // 根目录私有数据
 
 /* 前向声明 */
 static uint32_t devnull_read(fs_node_t *node, uint32_t offset, 
@@ -167,32 +174,36 @@ static uint32_t devconsole_write(fs_node_t *node, uint32_t offset,
  * index 2-N: 设备文件
  */
 static struct dirent *devfs_readdir(fs_node_t *node, uint32_t index) {
-    (void)node;
-    
     LOG_DEBUG_MSG("devfs: readdir called with index=%u\n", index);
     
-    static struct dirent dirent;
+    // 使用节点私有的 dirent 缓冲区，避免静态变量带来的并发问题
+    devfs_private_t *priv = (devfs_private_t *)node->impl;
+    if (!priv) {
+        LOG_ERROR_MSG("devfs: readdir called on node without private data\n");
+        return NULL;
+    }
+    struct dirent *dirent = &priv->readdir_cache;
     
     /* 返回 . */
     if (index == 0) {
-        strcpy(dirent.d_name, ".");
-        dirent.d_ino = 0;
-        dirent.d_reclen = sizeof(struct dirent);
-        dirent.d_off = 1;
-        dirent.d_type = DT_DIR;
+        strcpy(dirent->d_name, ".");
+        dirent->d_ino = 0;
+        dirent->d_reclen = sizeof(struct dirent);
+        dirent->d_off = 1;
+        dirent->d_type = DT_DIR;
         LOG_DEBUG_MSG("devfs: readdir returning '.'\n");
-        return &dirent;
+        return dirent;
     }
     
     /* 返回 .. */
     if (index == 1) {
-        strcpy(dirent.d_name, "..");
-        dirent.d_ino = 0;
-        dirent.d_reclen = sizeof(struct dirent);
-        dirent.d_off = 2;
-        dirent.d_type = DT_DIR;
+        strcpy(dirent->d_name, "..");
+        dirent->d_ino = 0;
+        dirent->d_reclen = sizeof(struct dirent);
+        dirent->d_off = 2;
+        dirent->d_type = DT_DIR;
         LOG_DEBUG_MSG("devfs: readdir returning '..'\n");
-        return &dirent;
+        return dirent;
     }
     
     /* 返回设备文件 */
@@ -203,16 +214,16 @@ static struct dirent *devfs_readdir(fs_node_t *node, uint32_t index) {
         return NULL;
     }
     
-    strcpy(dirent.d_name, devfs_devices[device_index].name);
-    dirent.d_ino = devfs_devices[device_index].inode;
-    dirent.d_reclen = sizeof(struct dirent);
-    dirent.d_off = index + 1;  // 下一个索引
-    dirent.d_type = DT_CHR;  // 字符设备
+    strcpy(dirent->d_name, devfs_devices[device_index].name);
+    dirent->d_ino = devfs_devices[device_index].inode;
+    dirent->d_reclen = sizeof(struct dirent);
+    dirent->d_off = index + 1;  // 下一个索引
+    dirent->d_type = DT_CHR;  // 字符设备
     
     LOG_DEBUG_MSG("devfs: readdir returning device '%s' (index=%u, device_index=%u)\n", 
-                 dirent.d_name, index, device_index);
+                 dirent->d_name, index, device_index);
     
-    return &dirent;
+    return dirent;
 }
 
 /**
@@ -245,6 +256,7 @@ fs_node_t *devfs_init(void) {
     LOG_INFO_MSG("devfs: Initializing device filesystem...\n");
     
     memset(devfs_devices, 0, sizeof(devfs_devices));
+    memset(devfs_device_private, 0, sizeof(devfs_device_private));
     
     // 设备 0: /dev/null
     strcpy(devfs_devices[0].name, "null");
@@ -266,6 +278,7 @@ fs_node_t *devfs_init(void) {
     devfs_devices[0].mkdir = NULL;
     devfs_devices[0].unlink = NULL;
     devfs_devices[0].ptr = NULL;
+    devfs_devices[0].impl = &devfs_device_private[0];  // 设置私有数据
     
     // 设备 1: /dev/zero
     strcpy(devfs_devices[1].name, "zero");
@@ -287,6 +300,7 @@ fs_node_t *devfs_init(void) {
     devfs_devices[1].mkdir = NULL;
     devfs_devices[1].unlink = NULL;
     devfs_devices[1].ptr = NULL;
+    devfs_devices[1].impl = &devfs_device_private[1];  // 设置私有数据
     
     // 设备 2: /dev/serial
     strcpy(devfs_devices[2].name, "serial");
@@ -308,6 +322,7 @@ fs_node_t *devfs_init(void) {
     devfs_devices[2].mkdir = NULL;
     devfs_devices[2].unlink = NULL;
     devfs_devices[2].ptr = NULL;
+    devfs_devices[2].impl = &devfs_device_private[2];  // 设置私有数据
     
     // 设备 3: /dev/console
     strcpy(devfs_devices[3].name, "console");
@@ -329,6 +344,7 @@ fs_node_t *devfs_init(void) {
     devfs_devices[3].mkdir = NULL;
     devfs_devices[3].unlink = NULL;
     devfs_devices[3].ptr = NULL;
+    devfs_devices[3].impl = &devfs_device_private[3];  // 设置私有数据
     
     // 创建 /dev 根目录节点
     devfs_root = (fs_node_t *)kmalloc(sizeof(fs_node_t));
@@ -336,6 +352,16 @@ fs_node_t *devfs_init(void) {
         LOG_ERROR_MSG("devfs: Failed to allocate root node\n");
         return NULL;
     }
+    
+    // 分配根目录私有数据
+    devfs_root_private = (devfs_private_t *)kmalloc(sizeof(devfs_private_t));
+    if (!devfs_root_private) {
+        LOG_ERROR_MSG("devfs: Failed to allocate root private data\n");
+        kfree(devfs_root);
+        devfs_root = NULL;
+        return NULL;
+    }
+    memset(devfs_root_private, 0, sizeof(devfs_private_t));
     
     memset(devfs_root, 0, sizeof(fs_node_t));
     strcpy(devfs_root->name, "dev");
@@ -357,6 +383,7 @@ fs_node_t *devfs_init(void) {
     devfs_root->mkdir = NULL;   // 不支持创建目录
     devfs_root->unlink = NULL;  // 不支持删除设备
     devfs_root->ptr = NULL;
+    devfs_root->impl = devfs_root_private;  // 设置私有数据
     
     LOG_INFO_MSG("devfs: Initialized with %u devices\n", DEVFS_DEVICE_COUNT);
     LOG_DEBUG_MSG("  - /dev/null\n");
