@@ -89,6 +89,9 @@ uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
 
 /**
  * sys_close - 关闭文件描述符
+ * 
+ * 注意：vfs_close() 和 vfs_release_node() 由 fd_table_free() 统一处理
+ * 避免双重 close 问题
  */
 uint32_t sys_close(int32_t fd) {
     task_t *current = task_get_current();
@@ -97,19 +100,7 @@ uint32_t sys_close(int32_t fd) {
         return (uint32_t)-1;
     }
     
-    // 获取文件描述符表项
-    fd_entry_t *entry = fd_table_get(current->fd_table, fd);
-    if (!entry) {
-        LOG_ERROR_MSG("sys_close: invalid fd %d\n", fd);
-        return (uint32_t)-1;
-    }
-    
-    // 关闭文件
-    if (entry->node) {
-        vfs_close(entry->node);
-    }
-    
-    // 释放文件描述符
+    // 释放文件描述符（fd_table_free 会处理 vfs_close 和 vfs_release_node）
     if (fd_table_free(current->fd_table, fd) != 0) {
         LOG_ERROR_MSG("sys_close: failed to free fd %d\n", fd);
         return (uint32_t)-1;

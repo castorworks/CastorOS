@@ -1,5 +1,9 @@
 // ============================================================================
 // keyboard.c - PS/2 键盘驱动
+// 
+// 同步机制：使用 spinlock + IRQ save 保护缓冲区和事件处理器
+// - 中断处理程序写入缓冲区，用户上下文读取缓冲区
+// - 防止竞态条件导致的输入丢失或重复
 // ============================================================================
 
 #include <drivers/keyboard.h>
@@ -7,8 +11,12 @@
 #include <kernel/irq.h>
 #include <kernel/isr.h>
 #include <kernel/task.h>
+#include <kernel/sync/spinlock.h>
 #include <lib/klog.h>
 #include <lib/string.h>
+
+/* 键盘缓冲区锁 */
+static spinlock_t keyboard_lock;
 
 /* 键盘缓冲区 */
 static char keyboard_buffer[KEYBOARD_BUFFER_SIZE];
@@ -94,19 +102,17 @@ static const char scancode_to_ascii_shift[128] = {
 };
 
 /**
- * 将字符放入缓冲区
+ * 将字符放入缓冲区（内部函数，不加锁）
  * 
- * 注意：此实现在理论上存在竞态条件（中断可能在更新 buffer_write_pos 时打断读取操作）
- * 但在单核 x86 系统中，由于环形缓冲区的简单性和操作的原子性，实际影响极小。
- * 如果需要严格的线程安全，可以在读写时禁用中断（cli/sti）。
+ * 注意：此函数只在中断上下文中调用，调用者负责持有锁
  */
-static void buffer_put(char c) {
+static void buffer_put_nolock(char c) {
     size_t next_write = (buffer_write_pos + 1) % KEYBOARD_BUFFER_SIZE;
     if (next_write != buffer_read_pos) {
         keyboard_buffer[buffer_write_pos] = c;
         buffer_write_pos = next_write;
     }
-    // 如果缓冲区满，静默丢弃输入（生产环境可考虑添加日志）
+    // 如果缓冲区满，静默丢弃输入
 }
 
 /**
@@ -147,22 +153,34 @@ static void trigger_key_event(uint8_t scancode, char ascii, uint8_t keycode,
 }
 
 /**
- * 从缓冲区获取字符
+ * 从缓冲区获取字符（带锁保护）
  */
 static bool buffer_get(char *c) {
-    if (buffer_read_pos == buffer_write_pos) {
-        return false;  // 缓冲区为空
+    bool irq_state;
+    spinlock_lock_irqsave(&keyboard_lock, &irq_state);
+    
+    bool result = false;
+    if (buffer_read_pos != buffer_write_pos) {
+        *c = keyboard_buffer[buffer_read_pos];
+        buffer_read_pos = (buffer_read_pos + 1) % KEYBOARD_BUFFER_SIZE;
+        result = true;
     }
-    *c = keyboard_buffer[buffer_read_pos];
-    buffer_read_pos = (buffer_read_pos + 1) % KEYBOARD_BUFFER_SIZE;
-    return true;
+    
+    spinlock_unlock_irqrestore(&keyboard_lock, irq_state);
+    return result;
 }
 
 /**
  * 键盘中断处理函数
+ * 
+ * 注意：此函数在中断上下文中执行，使用 spinlock_lock 而非 spinlock_lock_irqsave
+ * 因为中断已经禁用了
  */
 static void keyboard_callback(registers_t *regs) {
     (void)regs;  // 未使用参数
+    
+    /* 获取锁（中断上下文，中断已禁用） */
+    spinlock_lock(&keyboard_lock);
     
     /* 读取扫描码 */
     uint8_t scancode = inb(KEYBOARD_DATA_PORT);
@@ -170,6 +188,7 @@ static void keyboard_callback(registers_t *regs) {
     /* 处理扩展键前缀 */
     if (scancode == SCANCODE_EXTENDED) {
         is_extended = true;
+        spinlock_unlock(&keyboard_lock);
         return;
     }
     
@@ -183,40 +202,53 @@ static void keyboard_callback(registers_t *regs) {
         case 0x36:  // Right Shift
             modifiers.shift = !is_release;
             is_extended = false;
+            spinlock_unlock(&keyboard_lock);
             return;
             
         case 0x1D:  // Ctrl
             modifiers.ctrl = !is_release;
             is_extended = false;
+            spinlock_unlock(&keyboard_lock);
             return;
             
         case 0x38:  // Alt
             modifiers.alt = !is_release;
             is_extended = false;
+            spinlock_unlock(&keyboard_lock);
             return;
             
         case 0x3A:  // Caps Lock
             if (!is_release) {
                 modifiers.caps_lock = !modifiers.caps_lock;
-                keyboard_update_leds();  // 更新 LED
+                // 注意：在解锁后更新 LED，避免持锁时长等待
+                spinlock_unlock(&keyboard_lock);
+                keyboard_update_leds();
+                return;
             }
             is_extended = false;
+            spinlock_unlock(&keyboard_lock);
             return;
             
         case 0x45:  // Num Lock
             if (!is_release) {
                 modifiers.num_lock = !modifiers.num_lock;
-                keyboard_update_leds();  // 更新 LED
+                spinlock_unlock(&keyboard_lock);
+                keyboard_update_leds();
+                return;
             }
             is_extended = false;
+            spinlock_unlock(&keyboard_lock);
             return;
             
         case 0x46:  // Scroll Lock
             if (!is_release) {
                 modifiers.scroll_lock = !modifiers.scroll_lock;
-                keyboard_update_leds();  // 更新 LED
+                spinlock_unlock(&keyboard_lock);
+                keyboard_update_leds();
+                return;
             }
             is_extended = false;
+            spinlock_unlock(&keyboard_lock);
             return;
     }
     
@@ -232,24 +264,25 @@ static void keyboard_callback(registers_t *regs) {
             /* 对于按下事件，生成 ANSI 转义序列到缓冲区 */
             if (!is_release) {
                 /* 生成 ANSI 转义序列: ESC [ X */
-                buffer_put(0x1B);  // ESC
-                buffer_put('[');
+                buffer_put_nolock(0x1B);  // ESC
+                buffer_put_nolock('[');
                 
                 switch (keycode) {
-                    case KEY_UP:     buffer_put('A'); break;
-                    case KEY_DOWN:   buffer_put('B'); break;
-                    case KEY_RIGHT:  buffer_put('C'); break;
-                    case KEY_LEFT:   buffer_put('D'); break;
-                    case KEY_HOME:   buffer_put('H'); break;
-                    case KEY_END:    buffer_put('F'); break;
-                    case KEY_PGUP:   buffer_put('5'); buffer_put('~'); break;
-                    case KEY_PGDN:   buffer_put('6'); buffer_put('~'); break;
-                    case KEY_INSERT: buffer_put('2'); buffer_put('~'); break;
-                    case KEY_DELETE: buffer_put('3'); buffer_put('~'); break;
+                    case KEY_UP:     buffer_put_nolock('A'); break;
+                    case KEY_DOWN:   buffer_put_nolock('B'); break;
+                    case KEY_RIGHT:  buffer_put_nolock('C'); break;
+                    case KEY_LEFT:   buffer_put_nolock('D'); break;
+                    case KEY_HOME:   buffer_put_nolock('H'); break;
+                    case KEY_END:    buffer_put_nolock('F'); break;
+                    case KEY_PGUP:   buffer_put_nolock('5'); buffer_put_nolock('~'); break;
+                    case KEY_PGDN:   buffer_put_nolock('6'); buffer_put_nolock('~'); break;
+                    case KEY_INSERT: buffer_put_nolock('2'); buffer_put_nolock('~'); break;
+                    case KEY_DELETE: buffer_put_nolock('3'); buffer_put_nolock('~'); break;
                 }
             }
         }
         is_extended = false;
+        spinlock_unlock(&keyboard_lock);
         return;
     }
     
@@ -287,13 +320,16 @@ static void keyboard_callback(registers_t *regs) {
     
     /* 只处理按下事件的字符输入 */
     if (is_release) {
+        spinlock_unlock(&keyboard_lock);
         return;
     }
     
     /* 将字符放入缓冲区 */
     if (ascii != 0) {
-        buffer_put(ascii);
+        buffer_put_nolock(ascii);
     }
+    
+    spinlock_unlock(&keyboard_lock);
 }
 
 /**
@@ -301,6 +337,9 @@ static void keyboard_callback(registers_t *regs) {
  */
 void keyboard_init(void) {
     LOG_INFO_MSG("Initializing PS/2 keyboard...\n");
+    
+    /* 初始化锁 */
+    spinlock_init(&keyboard_lock);
     
     /* 清空缓冲区 */
     buffer_read_pos = 0;
@@ -324,14 +363,22 @@ void keyboard_init(void) {
  * 获取修饰键状态
  */
 keyboard_modifiers_t keyboard_get_modifiers(void) {
-    return modifiers;
+    bool irq_state;
+    spinlock_lock_irqsave(&keyboard_lock, &irq_state);
+    keyboard_modifiers_t result = modifiers;
+    spinlock_unlock_irqrestore(&keyboard_lock, irq_state);
+    return result;
 }
 
 /**
  * 检查是否有按键可读
  */
 bool keyboard_has_key(void) {
-    return buffer_read_pos != buffer_write_pos;
+    bool irq_state;
+    spinlock_lock_irqsave(&keyboard_lock, &irq_state);
+    bool has_key = (buffer_read_pos != buffer_write_pos);
+    spinlock_unlock_irqrestore(&keyboard_lock, irq_state);
+    return has_key;
 }
 
 /**
@@ -384,15 +431,21 @@ size_t keyboard_getline(char *buffer, size_t size) {
  * 清空键盘缓冲区
  */
 void keyboard_clear_buffer(void) {
+    bool irq_state;
+    spinlock_lock_irqsave(&keyboard_lock, &irq_state);
     buffer_read_pos = 0;
     buffer_write_pos = 0;
+    spinlock_unlock_irqrestore(&keyboard_lock, irq_state);
 }
 
 /**
  * 注册按键事件处理函数
  */
 void keyboard_register_event_handler(key_event_handler_t handler) {
+    bool irq_state;
+    spinlock_lock_irqsave(&keyboard_lock, &irq_state);
     event_handler = handler;
+    spinlock_unlock_irqrestore(&keyboard_lock, irq_state);
     LOG_DEBUG_MSG("Keyboard event handler registered\n");
 }
 
@@ -400,7 +453,10 @@ void keyboard_register_event_handler(key_event_handler_t handler) {
  * 取消注册按键事件处理函数
  */
 void keyboard_unregister_event_handler(void) {
+    bool irq_state;
+    spinlock_lock_irqsave(&keyboard_lock, &irq_state);
     event_handler = NULL;
+    spinlock_unlock_irqrestore(&keyboard_lock, irq_state);
     LOG_DEBUG_MSG("Keyboard event handler unregistered\n");
 }
 
@@ -450,8 +506,13 @@ void keyboard_update_leds(void) {
  * 设置键盘 LED 状态
  */
 void keyboard_set_leds(bool caps_lock, bool num_lock, bool scroll_lock) {
+    bool irq_state;
+    spinlock_lock_irqsave(&keyboard_lock, &irq_state);
     modifiers.caps_lock = caps_lock;
     modifiers.num_lock = num_lock;
     modifiers.scroll_lock = scroll_lock;
+    spinlock_unlock_irqrestore(&keyboard_lock, irq_state);
+    
+    // LED 更新在解锁后执行，避免持锁时长等待
     keyboard_update_leds();
 }

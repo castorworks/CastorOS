@@ -1,7 +1,16 @@
+/**
+ * ATA 驱动（PIO 模式）
+ * 
+ * 同步机制：每个 ATA 通道使用一个 mutex 保护
+ * - PIO 操作耗时较长，使用 mutex 比 spinlock 更合适
+ * - 防止并发磁盘操作导致 I/O 指令冲突和数据损坏
+ */
+
 #include <drivers/ata.h>
 #include <fs/blockdev.h>
 #include <kernel/io.h>
 #include <kernel/irq.h>
+#include <kernel/sync/mutex.h>
 #include <lib/klog.h>
 #include <lib/string.h>
 
@@ -41,13 +50,17 @@ typedef struct ata_device {
     uint8_t drive;          // 0 = master, 1 = slave
     bool present;
     uint32_t total_sectors;
+    uint8_t channel;        // 0 = primary, 1 = secondary
 } ata_device_t;
 
+/* 每个 ATA 通道一个 mutex（主通道和次通道各一个） */
+static mutex_t ata_channel_mutex[2];
+
 static ata_device_t ata_devices[ATA_MAX_DEVICES] = {
-    {.io_base = ATA_PRIMARY_IO_BASE,    .ctrl_base = ATA_PRIMARY_CTRL_BASE,    .drive = 0, .present = false, .total_sectors = 0}, // ata0: primary master
-    {.io_base = ATA_PRIMARY_IO_BASE,    .ctrl_base = ATA_PRIMARY_CTRL_BASE,    .drive = 1, .present = false, .total_sectors = 0}, // ata1: primary slave
-    {.io_base = ATA_SECONDARY_IO_BASE,  .ctrl_base = ATA_SECONDARY_CTRL_BASE,  .drive = 0, .present = false, .total_sectors = 0}, // ata2: secondary master
-    {.io_base = ATA_SECONDARY_IO_BASE,  .ctrl_base = ATA_SECONDARY_CTRL_BASE,  .drive = 1, .present = false, .total_sectors = 0}, // ata3: secondary slave
+    {.io_base = ATA_PRIMARY_IO_BASE,    .ctrl_base = ATA_PRIMARY_CTRL_BASE,    .drive = 0, .present = false, .total_sectors = 0, .channel = 0}, // ata0: primary master
+    {.io_base = ATA_PRIMARY_IO_BASE,    .ctrl_base = ATA_PRIMARY_CTRL_BASE,    .drive = 1, .present = false, .total_sectors = 0, .channel = 0}, // ata1: primary slave
+    {.io_base = ATA_SECONDARY_IO_BASE,  .ctrl_base = ATA_SECONDARY_CTRL_BASE,  .drive = 0, .present = false, .total_sectors = 0, .channel = 1}, // ata2: secondary master
+    {.io_base = ATA_SECONDARY_IO_BASE,  .ctrl_base = ATA_SECONDARY_CTRL_BASE,  .drive = 1, .present = false, .total_sectors = 0, .channel = 1}, // ata3: secondary slave
 };
 
 static blockdev_t ata_blockdevs[ATA_MAX_DEVICES];
@@ -194,13 +207,20 @@ static int ata_blockdev_read(void *dev_ptr, uint32_t sector, uint32_t count, uin
         return -1;
     }
 
+    /* 获取通道锁 */
+    mutex_lock(&ata_channel_mutex[dev->channel]);
+
+    int result = 0;
     for (uint32_t i = 0; i < count; i++) {
         if (ata_pio_read_sector(dev, sector + i, buffer + i * ATA_SECTOR_SIZE) != 0) {
             LOG_ERROR_MSG("ata: Read sector %u failed\n", sector + i);
-            return -1;
+            result = -1;
+            break;
         }
     }
-    return 0;
+
+    mutex_unlock(&ata_channel_mutex[dev->channel]);
+    return result;
 }
 
 static int ata_blockdev_write(void *dev_ptr, uint32_t sector, uint32_t count, const uint8_t *buffer) {
@@ -215,16 +235,27 @@ static int ata_blockdev_write(void *dev_ptr, uint32_t sector, uint32_t count, co
         return -1;
     }
 
+    /* 获取通道锁 */
+    mutex_lock(&ata_channel_mutex[dev->channel]);
+
+    int result = 0;
     for (uint32_t i = 0; i < count; i++) {
         if (ata_pio_write_sector(dev, sector + i, buffer + i * ATA_SECTOR_SIZE) != 0) {
             LOG_ERROR_MSG("ata: Write sector %u failed\n", sector + i);
-            return -1;
+            result = -1;
+            break;
         }
     }
-    return 0;
+
+    mutex_unlock(&ata_channel_mutex[dev->channel]);
+    return result;
 }
 
 void ata_init(void) {
+    /* 初始化通道 mutex */
+    mutex_init(&ata_channel_mutex[0]);  // 主通道
+    mutex_init(&ata_channel_mutex[1]);  // 次通道
+    
     irq_disable_line(14);
     
     const char *device_names[] = {"ata0", "ata1", "ata2", "ata3"};
