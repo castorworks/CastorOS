@@ -97,16 +97,16 @@ if [ -d "$PROJECT_ROOT/userland/helloworld" ] && [ -f "$PROJECT_ROOT/userland/he
     cd "$PROJECT_ROOT/userland/helloworld"
     make clean >/dev/null 2>&1 || true
     
-    UDP_COMPILE_COMMANDS="$PROJECT_ROOT/userland/helloworld/compile_commands.json"
+    HELLOWORLD_COMPILE_COMMANDS="$PROJECT_ROOT/userland/helloworld/compile_commands.json"
     if [ "$USE_COMPILEDB" = true ]; then
-        compiledb -o "$UDP_COMPILE_COMMANDS" make 2>&1 | grep -v "warning:" | grep -v "^make" || true
+        compiledb -o "$HELLOWORLD_COMPILE_COMMANDS" make 2>&1 | grep -v "warning:" | grep -v "^make" || true
     elif [ "$IS_MACOS" = true ]; then
-        bear --output "$UDP_COMPILE_COMMANDS" -- make 2>&1 | grep -v "warning:" | grep -v "^make" || true
+        bear --output "$HELLOWORLD_COMPILE_COMMANDS" -- make 2>&1 | grep -v "warning:" | grep -v "^make" || true
     else
         bear make 2>&1 | grep -v "warning:" | grep -v "^make" || true
     fi
-    if [ -f "$UDP_COMPILE_COMMANDS" ]; then
-        ENTRIES=$(extract_entries "$UDP_COMPILE_COMMANDS")
+    if [ -f "$HELLOWORLD_COMPILE_COMMANDS" ]; then
+        ENTRIES=$(extract_entries "$HELLOWORLD_COMPILE_COMMANDS")
         if [ -n "$ENTRIES" ]; then
             if [ "$FIRST" = false ]; then
                 echo "," >> "$TEMP_FILE"
@@ -116,6 +116,34 @@ if [ -d "$PROJECT_ROOT/userland/helloworld" ] && [ -f "$PROJECT_ROOT/userland/he
     fi
 else
     echo "[3/3] Skipping helloworld (directory or Makefile not found)"
+fi
+
+# 4. Add userland tests compilation database
+# Example: helloworld:
+if [ -d "$PROJECT_ROOT/userland/tests" ] && [ -f "$PROJECT_ROOT/userland/tests/Makefile" ]; then
+    echo "[4/4] Generating userland tests compilation database..."
+    cd "$PROJECT_ROOT/userland/tests"
+    make clean >/dev/null 2>&1 || true
+    
+    TESTS_COMPILE_COMMANDS="$PROJECT_ROOT/userland/tests/compile_commands.json"
+    if [ "$USE_COMPILEDB" = true ]; then
+        compiledb -o "$TESTS_COMPILE_COMMANDS" make 2>&1 | grep -v "warning:" | grep -v "^make" || true
+    elif [ "$IS_MACOS" = true ]; then
+        bear --output "$TESTS_COMPILE_COMMANDS" -- make 2>&1 | grep -v "warning:" | grep -v "^make" || true
+    else
+        bear make 2>&1 | grep -v "warning:" | grep -v "^make" || true
+    fi
+    if [ -f "$TESTS_COMPILE_COMMANDS" ]; then
+        ENTRIES=$(extract_entries "$TESTS_COMPILE_COMMANDS")
+        if [ -n "$ENTRIES" ]; then
+            if [ "$FIRST" = false ]; then
+                echo "," >> "$TEMP_FILE"
+            fi
+            echo "$ENTRIES" >> "$TEMP_FILE"
+        fi
+    fi
+else
+    echo "[4/4] Skipping userland tests (directory or Makefile not found)"
 fi
 
 # Complete JSON array

@@ -134,6 +134,8 @@ int mkdir(const char *path, uint32_t mode);
 int chdir(const char *path);
 char *getcwd(char *buf, size_t size);
 int getdents(int fd, uint32_t index, struct dirent *dirent);
+int stat(const char *path, struct stat *buf);
+int fstat(int fd, struct stat *buf);
 
 size_t strlen_simple(const char *str);
 void print(const char *msg);

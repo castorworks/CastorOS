@@ -71,6 +71,14 @@ int getdents(int fd, uint32_t index, struct dirent *dirent) {
     return (int)syscall3(SYS_GETDENTS, (uint32_t)fd, index, (uint32_t)dirent);
 }
 
+int stat(const char *path, struct stat *buf) {
+    return (int)syscall2(SYS_STAT, (uint32_t)path, (uint32_t)buf);
+}
+
+int fstat(int fd, struct stat *buf) {
+    return (int)syscall2(SYS_FSTAT, (uint32_t)fd, (uint32_t)buf);
+}
+
 size_t strlen_simple(const char *str) {
     if (!str) {
         return 0;

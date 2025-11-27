@@ -4,6 +4,7 @@
  * 实现 POSIX 标准的文件 I/O 系统调用：
  * - open(2), close(2), read(2), write(2), lseek(2)
  * - mkdir(2), unlink(2), chdir(2), getcwd(2)
+ * - stat(2), fstat(2)
  */
 
 #include <kernel/syscalls/fs.h>
@@ -12,6 +13,117 @@
 #include <fs/vfs.h>
 #include <lib/klog.h>
 #include <lib/string.h>
+
+/* ============================================================================
+ * stat/fstat 实现
+ * ============================================================================ */
+
+/**
+ * fill_stat_from_node - 将 VFS 节点信息填充到 stat 结构体
+ * @param node VFS 文件节点
+ * @param buf  输出的 stat 结构体
+ */
+static void fill_stat_from_node(fs_node_t *node, struct stat *buf) {
+    memset(buf, 0, sizeof(struct stat));
+    
+    buf->st_ino = node->inode;
+    buf->st_size = node->size;
+    buf->st_uid = node->uid;
+    buf->st_gid = node->gid;
+    buf->st_blksize = 512;
+    buf->st_blocks = (node->size + 511) / 512;
+    
+    // 设置文件类型
+    switch (node->type) {
+        case FS_FILE:
+            buf->st_mode = S_IFREG;
+            break;
+        case FS_DIRECTORY:
+            buf->st_mode = S_IFDIR;
+            break;
+        case FS_CHARDEVICE:
+            buf->st_mode = S_IFCHR;
+            break;
+        case FS_BLOCKDEVICE:
+            buf->st_mode = S_IFBLK;
+            break;
+        case FS_PIPE:
+            buf->st_mode = S_IFIFO;
+            break;
+        case FS_SYMLINK:
+            buf->st_mode = S_IFLNK;
+            break;
+        default:
+            buf->st_mode = S_IFREG;
+    }
+    
+    // 添加权限位（从 VFS 节点的 permissions 字段）
+    buf->st_mode |= (node->permissions & 0777);
+    
+    buf->st_nlink = 1;  // 简化实现，总是返回 1
+    buf->st_dev = 0;    // 设备 ID（简化实现）
+    buf->st_rdev = 0;   // 特殊设备类型
+    buf->st_atime = 0;  // 时间戳（暂不支持）
+    buf->st_mtime = 0;
+    buf->st_ctime = 0;
+}
+
+/**
+ * sys_stat - 获取文件状态信息
+ */
+uint32_t sys_stat(const char *path, struct stat *buf) {
+    if (!path || !buf) {
+        LOG_ERROR_MSG("sys_stat: invalid arguments (path=%p, buf=%p)\n", path, buf);
+        return (uint32_t)-1;
+    }
+    
+    LOG_DEBUG_MSG("sys_stat: path='%s'\n", path);
+    
+    // 查找文件节点
+    fs_node_t *node = vfs_path_to_node(path);
+    if (!node) {
+        LOG_ERROR_MSG("sys_stat: file '%s' not found\n", path);
+        return (uint32_t)-1;
+    }
+    
+    // 填充 stat 结构体
+    fill_stat_from_node(node, buf);
+    
+    // 释放节点引用
+    vfs_release_node(node);
+    
+    return 0;
+}
+
+/**
+ * sys_fstat - 获取文件描述符状态信息
+ */
+uint32_t sys_fstat(int32_t fd, struct stat *buf) {
+    if (!buf) {
+        LOG_ERROR_MSG("sys_fstat: buf is NULL\n");
+        return (uint32_t)-1;
+    }
+    
+    task_t *current = task_get_current();
+    if (!current || !current->fd_table) {
+        LOG_ERROR_MSG("sys_fstat: no current task or fd_table\n");
+        return (uint32_t)-1;
+    }
+    
+    LOG_DEBUG_MSG("sys_fstat: fd=%d\n", fd);
+    
+    // 获取文件描述符表项
+    fd_entry_t *entry = fd_table_get(current->fd_table, fd);
+    if (!entry || !entry->node) {
+        LOG_ERROR_MSG("sys_fstat: invalid fd %d\n", fd);
+        return (uint32_t)-1;
+    }
+    
+    // 填充 stat 结构体
+    fill_stat_from_node(entry->node, buf);
+    
+    return 0;
+}
 
 /**
  * sys_open - 打开或创建文件

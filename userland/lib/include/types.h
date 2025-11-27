@@ -72,4 +72,57 @@ struct dirent {
 #define WTERMSIG(status)     ((status) & 0x7F)                         // 获取终止信号
 #define WCOREDUMP(status)    (((status) & 0x80) != 0)                  // 是否产生 core dump（暂未实现）
 
+/* ============================================================================
+ * stat 结构体 - 文件状态信息
+ * ============================================================================ */
+
+#ifndef _STRUCT_STAT_DEFINED
+#define _STRUCT_STAT_DEFINED
+
+struct stat {
+    uint32_t st_dev;      // 设备 ID
+    uint32_t st_ino;      // inode 编号
+    uint32_t st_mode;     // 文件类型和权限
+    uint32_t st_nlink;    // 硬链接数
+    uint32_t st_uid;      // 所有者用户 ID
+    uint32_t st_gid;      // 所有者组 ID
+    uint32_t st_rdev;     // 设备类型（如果是特殊文件）
+    uint32_t st_size;     // 文件大小（字节）
+    uint32_t st_blksize;  // 文件系统 I/O 块大小
+    uint32_t st_blocks;   // 分配的 512B 块数
+    uint32_t st_atime;    // 最后访问时间
+    uint32_t st_mtime;    // 最后修改时间
+    uint32_t st_ctime;    // 最后状态改变时间
+};
+
+#endif // _STRUCT_STAT_DEFINED
+
+/* 文件类型掩码（st_mode 字段） */
+#define S_IFMT   0170000   // 文件类型掩码
+#define S_IFREG  0100000   // 普通文件
+#define S_IFDIR  0040000   // 目录
+#define S_IFCHR  0020000   // 字符设备
+#define S_IFBLK  0060000   // 块设备
+#define S_IFIFO  0010000   // FIFO（管道）
+#define S_IFLNK  0120000   // 符号链接
+
+/* 权限位 */
+#define S_IRUSR  0400      // 所有者读
+#define S_IWUSR  0200      // 所有者写
+#define S_IXUSR  0100      // 所有者执行
+#define S_IRGRP  0040      // 组读
+#define S_IWGRP  0020      // 组写
+#define S_IXGRP  0010      // 组执行
+#define S_IROTH  0004      // 其他用户读
+#define S_IWOTH  0002      // 其他用户写
+#define S_IXOTH  0001      // 其他用户执行
+
+/* 类型检查宏 */
+#define S_ISREG(m)  (((m) & S_IFMT) == S_IFREG)   // 是否为普通文件
+#define S_ISDIR(m)  (((m) & S_IFMT) == S_IFDIR)   // 是否为目录
+#define S_ISCHR(m)  (((m) & S_IFMT) == S_IFCHR)   // 是否为字符设备
+#define S_ISBLK(m)  (((m) & S_IFMT) == S_IFBLK)   // 是否为块设备
+#define S_ISFIFO(m) (((m) & S_IFMT) == S_IFIFO)   // 是否为 FIFO
+#define S_ISLNK(m)  (((m) & S_IFMT) == S_IFLNK)   // 是否为符号链接
+
 #endif /* _USERLAND_LIB_TYPES_H_ */

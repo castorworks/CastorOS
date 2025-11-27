@@ -156,6 +156,18 @@ static uint32_t sys_getdents_wrapper(uint32_t *frame, uint32_t fd, uint32_t inde
     return sys_getdents((int32_t)fd, index, (void *)dirent);
 }
 
+static uint32_t sys_stat_wrapper(uint32_t *frame, uint32_t path, uint32_t buf, uint32_t p3,
+                                 uint32_t p4, uint32_t p5) {
+    (void)frame; (void)p3; (void)p4; (void)p5;
+    return sys_stat((const char *)path, (struct stat *)buf);
+}
+
+static uint32_t sys_fstat_wrapper(uint32_t *frame, uint32_t fd, uint32_t buf, uint32_t p3,
+                                  uint32_t p4, uint32_t p5) {
+    (void)frame; (void)p3; (void)p4; (void)p5;
+    return sys_fstat((int32_t)fd, (struct stat *)buf);
+}
+
 static uint32_t sys_getpid_wrapper(uint32_t *frame, uint32_t p1, uint32_t p2, uint32_t p3,
                                    uint32_t p4, uint32_t p5) {
     (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
@@ -264,6 +276,8 @@ void syscall_init(void) {
     syscall_table[SYS_READ]        = sys_read_wrapper;   
     syscall_table[SYS_WRITE]       = sys_write_wrapper;  
     syscall_table[SYS_LSEEK]       = sys_lseek_wrapper;
+    syscall_table[SYS_STAT]        = sys_stat_wrapper;
+    syscall_table[SYS_FSTAT]       = sys_fstat_wrapper;
     syscall_table[SYS_MKDIR]       = sys_mkdir_wrapper;  
     syscall_table[SYS_UNLINK]      = sys_unlink_wrapper; 
     syscall_table[SYS_GETCWD]      = sys_getcwd_wrapper;

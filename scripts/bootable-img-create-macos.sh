@@ -27,6 +27,7 @@ GRUB_CFG="$PROJECT_ROOT/grub.cfg"
 
 SHELL_ELF="$PROJECT_ROOT/userland/shell/shell.elf"
 HELLO_ELF="$PROJECT_ROOT/userland/helloworld/hello.elf"
+TESTS_ELF="$PROJECT_ROOT/userland/tests/tests.elf"
 
 # i686-elf-grub 工具链路径(你需要根据自己环境调整)
 GRUB_PREFIX="/opt/homebrew"
@@ -175,7 +176,7 @@ install_files() {
 
     [ -f "$SHELL_ELF" ] && cp "$SHELL_ELF" "$MOUNT_POINT/bin/shell.elf"
     [ -f "$HELLO_ELF" ] && cp "$HELLO_ELF" "$MOUNT_POINT/bin/hello.elf"
-
+    [ -f "$TESTS_ELF" ] && cp "$TESTS_ELF" "$MOUNT_POINT/bin/tests.elf"
     sync
 }
 

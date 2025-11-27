@@ -151,4 +151,26 @@ uint32_t sys_chdir(const char *path);
  */
 uint32_t sys_getcwd(char *buffer, uint32_t size);
 
+/**
+ * sys_stat - 获取文件状态信息
+ * @path: 文件路径
+ * @buf: 用户空间 stat 结构体指针
+ * 
+ * 返回值：
+ *   0: 成功
+ *   (uint32_t)-1: 错误
+ */
+uint32_t sys_stat(const char *path, struct stat *buf);
+
+/**
+ * sys_fstat - 获取文件描述符状态信息
+ * @fd: 文件描述符
+ * @buf: 用户空间 stat 结构体指针
+ * 
+ * 返回值：
+ *   0: 成功
+ *   (uint32_t)-1: 错误
+ */
+uint32_t sys_fstat(int32_t fd, struct stat *buf);
+
 #endif /* _KERNEL_SYSCALLS_FILE_H_ */

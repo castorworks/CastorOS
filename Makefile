@@ -98,6 +98,10 @@ shell:
 hello:
 	@$(MAKE) -C userland/helloworld
 
+# 编译 Userland Tests
+tests:
+	@$(MAKE) -C userland/tests
+
 # 创建可启动的磁盘镜像
 disk: $(KERNEL) shell hello
 	@bash $(CREATE_SCRIPT)
