@@ -397,13 +397,13 @@ uint32_t sys_brk(uint32_t addr) {
     
     // 验证地址范围
     if (addr < current->heap_start) {
-        LOG_ERROR_MSG("sys_brk: addr 0x%x below heap_start 0x%x\n", 
+        LOG_ERROR_MSG("sys_brk: addr %x below heap_start %x\n", 
                       addr, current->heap_start);
         return (uint32_t)-1;
     }
     
     if (addr > current->heap_max) {
-        LOG_ERROR_MSG("sys_brk: addr 0x%x exceeds heap_max 0x%x\n", 
+        LOG_ERROR_MSG("sys_brk: addr %x exceeds heap_max %x\n", 
                       addr, current->heap_max);
         return (uint32_t)-1;
     }
@@ -428,7 +428,7 @@ uint32_t sys_brk(uint32_t addr) {
             if (!vmm_map_page_in_directory(current->page_dir_phys, page, phys,
                                            PAGE_PRESENT | PAGE_WRITE | PAGE_USER)) {
                 pmm_free_frame(phys);
-                LOG_ERROR_MSG("sys_brk: failed to map page 0x%x\n", page);
+                LOG_ERROR_MSG("sys_brk: failed to map page %x\n", page);
                 return (uint32_t)-1;
             }
             
@@ -450,7 +450,7 @@ uint32_t sys_brk(uint32_t addr) {
     
     current->heap_end = addr;
     
-    LOG_DEBUG_MSG("sys_brk: heap extended from 0x%x to 0x%x\n", old_end, addr);
+    LOG_DEBUG_MSG("sys_brk: heap extended from %x to %x\n", old_end, addr);
     
     return addr;
 }

@@ -73,7 +73,7 @@ bool load_user_shell(void) {
         return false;
     }
     
-    LOG_INFO_MSG("Shell: Created page directory at phys 0x%x\n", page_dir_phys);
+    LOG_INFO_MSG("Shell: Created page directory at phys %x\n", page_dir_phys);
     
     page_directory_t *page_dir = (page_directory_t*)PHYS_TO_VIRT(page_dir_phys);
     LOG_DEBUG_MSG("Shell: Page directory virt address: %p\n", page_dir);

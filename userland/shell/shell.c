@@ -549,6 +549,7 @@ static int cmd_history(int argc, char **argv);
 // 系统信息命令
 static int cmd_uname(int argc, char **argv);
 static int cmd_uptime(int argc, char **argv);
+static int cmd_date(int argc, char **argv);
 static int cmd_free(int argc, char **argv);
 static int cmd_ps(int argc, char **argv);
 static int cmd_reboot(int argc, char **argv);
@@ -605,6 +606,7 @@ static const shell_command_t commands[] = {
     // 系统信息
     {"uname",    "Print system information",       "uname [-a]",        cmd_uname},
     {"uptime",   "Show system uptime",             "uptime",            cmd_uptime},
+    {"date",     "Display current date and time",  "date",              cmd_date},
     
     // 内存管理命令
     {"free",     "Display memory usage",           "free",              cmd_free},
@@ -813,6 +815,103 @@ static int cmd_uptime(int argc, char **argv) {
     format_uptime((uint32_t)(uptime_sec * 1000), uptime_str, sizeof(uptime_str));
     
     printf("System uptime: %s\n", uptime_str);
+    return 0;
+}
+
+/**
+ * date 命令 - 显示当前日期和时间
+ * 从 RTC 读取真实时间
+ */
+static int cmd_date(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    
+    // 读取 /dev/rtc 设备文件获取时间信息
+    int fd = open("/dev/rtc", O_RDONLY, 0);
+    if (fd < 0) {
+        // 如果无法打开 /dev/rtc，使用 Unix 时间戳显示
+        time_t ts = time(NULL);
+        if (ts == (time_t)-1) {
+            printf("Error: Failed to get current time\n");
+            return -1;
+        }
+        
+        // 简单格式化 Unix 时间戳
+        printf("Unix timestamp: %u\n", (unsigned int)ts);
+        printf("(RTC device not available for detailed date/time)\n");
+        return 0;
+    }
+    
+    // 读取 RTC 信息
+    char buffer[256];
+    int bytes_read = read(fd, buffer, sizeof(buffer) - 1);
+    close(fd);
+    
+    if (bytes_read > 0) {
+        buffer[bytes_read] = '\0';
+        printf("%s", buffer);
+    } else {
+        // 后备方案：使用 Unix 时间戳
+        time_t ts = time(NULL);
+        if (ts != (time_t)-1) {
+            // 将 Unix 时间戳转换为日期时间（简化计算）
+            uint32_t days = (uint32_t)(ts / 86400);
+            uint32_t remaining = (uint32_t)(ts % 86400);
+            uint32_t hours = remaining / 3600;
+            uint32_t minutes = (remaining % 3600) / 60;
+            uint32_t seconds = remaining % 60;
+            
+            // 从 1970-01-01 开始计算年月日
+            uint16_t year = 1970;
+            uint8_t month = 1;
+            uint8_t day = 1;
+            
+            // 每年的天数
+            while (1) {
+                uint32_t days_in_year = ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)) ? 366 : 365;
+                if (days < days_in_year) break;
+                days -= days_in_year;
+                year++;
+            }
+            
+            // 每月的天数
+            static const uint8_t days_per_month[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+            while (1) {
+                uint32_t dim = days_per_month[month - 1];
+                if (month == 2 && ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0))) {
+                    dim = 29;  // 闰年 2 月
+                }
+                if (days < dim) break;
+                days -= dim;
+                month++;
+            }
+            day = (uint8_t)(days + 1);
+            
+            // 计算星期几 (Zeller's formula)
+            static const char *weekday_names[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+            int y = year;
+            int m = month;
+            if (m < 3) {
+                m += 12;
+                y--;
+            }
+            int k = y % 100;
+            int j = y / 100;
+            int h = (day + (13 * (m + 1)) / 5 + k + k / 4 + j / 4 + 5 * j) % 7;
+            int weekday = ((h + 6) % 7);  // 0 = Sunday
+            
+            char out[256];
+            snprintf(out, sizeof(out), "%s %04u-%02u-%02u %02u:%02u:%02u\n",
+                   weekday_names[weekday],
+                   year, month, day,
+                   hours, minutes, seconds);
+            print_tee(out);
+        } else {
+            printf("Error: Failed to get current time\n");
+            return -1;
+        }
+    }
+    
     return 0;
 }
 
@@ -1415,7 +1514,7 @@ static int cmd_wait(int argc, char **argv) {
         
         printf("Process %d terminated by signal %s (%d)\n", pid, signal_name, signal);
     } else {
-        printf("Process %d status changed (status=0x%x)\n", pid, status);
+        printf("Process %d status changed (status=%x)\n", pid, status);
     }
     
     return 0;

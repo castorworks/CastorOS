@@ -119,9 +119,9 @@ uint32_t sys_fork(uint32_t *frame) {
         if (is_present(parent_dir->entries[i])) {
             uint32_t phys = get_frame(parent_dir->entries[i]);
             if (phys == 0 || phys >= 0x80000000) {
-                LOG_ERROR_MSG("sys_fork: Parent PDE[%u] corrupted: 0x%x (phys=0x%x)\n", 
+                LOG_ERROR_MSG("sys_fork: Parent PDE[%u] corrupted: %x (phys=%x)\n", 
                              i, parent_dir->entries[i], phys);
-                LOG_ERROR_MSG("  Parent: PID=%u, name=%s, page_dir=%p, page_dir_phys=0x%x\n",
+                LOG_ERROR_MSG("  Parent: PID=%u, name=%s, page_dir=%p, page_dir_phys=%x\n",
                              parent->pid, parent->name, parent_dir, parent->page_dir_phys);
                 // 打印更多 PDE 以帮助诊断
                 LOG_ERROR_MSG("  PDE[0]=%x, PDE[1]=%x, PDE[2]=%x, PDE[3]=%x\n",
@@ -460,7 +460,7 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
     strncpy(current->name, filename, sizeof(current->name) - 1);
     current->name[sizeof(current->name) - 1] = '\0';
     
-    LOG_DEBUG_MSG("sys_execve: loaded '%s' at entry 0x%x for PID %u\n", 
+    LOG_DEBUG_MSG("sys_execve: loaded '%s' at entry %x for PID %u\n", 
                   path, entry_point, current->pid);
     
     // 设置用户态上下文
@@ -509,7 +509,7 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
         frame[11] = current->user_stack;  // ESP = 用户栈顶
         frame[12] = 0x23;              // SS = 用户栈段 (Ring 3)
         
-        LOG_DEBUG_MSG("sys_execve: modified syscall frame to return to 0x%x\n", entry_point);
+        LOG_DEBUG_MSG("sys_execve: modified syscall frame to return to %x\n", entry_point);
     } else {
         // 如果没有 frame（不应该发生），使用原来的方法
         LOG_WARN_MSG("sys_execve: no frame provided, using fallback method\n");

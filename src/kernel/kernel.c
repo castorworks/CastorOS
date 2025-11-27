@@ -7,6 +7,7 @@
 #include <drivers/timer.h>
 #include <drivers/keyboard.h>
 #include <drivers/ata.h>
+#include <drivers/rtc.h>
 
 #include <kernel/multiboot.h>
 #include <kernel/version.h>
@@ -65,7 +66,7 @@ void kernel_main(multiboot_info_t* mbi) {
 
     gdt_init_all_with_tss(temp_kernel_stack, kernel_ss);
 
-    LOG_DEBUG_MSG("  [1.1] GDT and TSS installed\n");
+    LOG_INFO_MSG("  [1.1] GDT and TSS installed\n");
     
     // ========================================================================
     // 阶段 2: 中断系统（Interrupt System）
@@ -74,19 +75,19 @@ void kernel_main(multiboot_info_t* mbi) {
     
     // 2.1 初始化 IDT（Interrupt Descriptor Table）
     idt_init();
-    LOG_DEBUG_MSG("  [2.1] IDT initialized\n");
+    LOG_INFO_MSG("  [2.1] IDT initialized\n");
     
     // 2.2 初始化 ISR（Interrupt Service Routines - 异常处理）
     isr_init();
-    LOG_DEBUG_MSG("  [2.2] ISR initialized (Exception handlers)\n");
+    LOG_INFO_MSG("  [2.2] ISR initialized (Exception handlers)\n");
     
     // 2.3 初始化 IRQ（Hardware Interrupt Requests - 硬件中断）
     irq_init();
-    LOG_DEBUG_MSG("  [2.3] IRQ initialized (Hardware interrupts)\n");
+    LOG_INFO_MSG("  [2.3] IRQ initialized (Hardware interrupts)\n");
     
     // 2.4 初始化系统调用（System Calls）
     syscall_init();
-    LOG_DEBUG_MSG("  [2.4] System calls initialized\n");
+    LOG_INFO_MSG("  [2.4] System calls initialized\n");
 
     // ========================================================================
     // 阶段 3: 内存管理（Memory Management）
@@ -105,11 +106,11 @@ void kernel_main(multiboot_info_t* mbi) {
     // 3.1 初始化 PMM（Physical Memory Manager - 物理内存管理）阶段1
     //     解析内存映射，记录所有可用区域
     pmm_init(mbi);
-    LOG_DEBUG_MSG("  [3.1] PMM phase 1 initialized\n");
+    LOG_INFO_MSG("  [3.1] PMM phase 1 initialized\n");
     
     // 3.2 初始化 VMM（Virtual Memory Manager - 虚拟内存管理）
     vmm_init();
-    LOG_DEBUG_MSG("  [3.2] VMM initialized\n");
+    LOG_INFO_MSG("  [3.2] VMM initialized\n");
     
     // 3.5 初始化 Heap（堆内存分配器）
     // 堆起始地址：PMM 位图之后（避免与位图重叠）
@@ -134,7 +135,7 @@ void kernel_main(multiboot_info_t* mbi) {
         }
         
         heap_start = PAGE_ALIGN_UP(heap_start);
-        LOG_DEBUG_MSG("  Heap start adjusted for multiboot modules: %x\n", heap_start);
+        LOG_INFO_MSG("  Heap start adjusted for multiboot modules: %x\n", heap_start);
     }
     
     uint32_t heap_size = 32 * 1024 * 1024;  // 32MB 堆
@@ -145,7 +146,7 @@ void kernel_main(multiboot_info_t* mbi) {
     pmm_set_heap_reserved_range(heap_start, heap_start + heap_size);
     
     heap_print_info();
-    LOG_DEBUG_MSG("  [3.3] Heap initialized\n");
+    LOG_INFO_MSG("  [3.3] Heap initialized\n");
 
     // ========================================================================
     // 阶段 4: 设备驱动（Device Drivers）
@@ -155,15 +156,19 @@ void kernel_main(multiboot_info_t* mbi) {
     
     // 4.1 初始化 PIT（Programmable Interval Timer - 可编程定时器）
     timer_init(100);  // 100 Hz
-    LOG_DEBUG_MSG("  [4.1] PIT initialized (100 Hz)\n");
+    LOG_INFO_MSG("  [4.1] PIT initialized (100 Hz)\n");
     
     // 4.2 初始化键盘驱动
     keyboard_init();
-    LOG_DEBUG_MSG("  [4.2] Keyboard initialized\n");
+    LOG_INFO_MSG("  [4.2] Keyboard initialized\n");
 
     // 4.3 初始化 ATA 驱动
     ata_init();
-    LOG_DEBUG_MSG("  [4.3] ATA driver initialized\n");
+    LOG_INFO_MSG("  [4.3] ATA driver initialized\n");
+
+    // 4.4 初始化 RTC（实时时钟）
+    rtc_init();
+    LOG_INFO_MSG("  [4.4] RTC initialized\n");
 
     // ========================================================================
     // 阶段 5: 高级子系统（Advanced Subsystems）
@@ -172,11 +177,11 @@ void kernel_main(multiboot_info_t* mbi) {
 
     // 5.1 初始化进程管理
     task_init();
-    LOG_DEBUG_MSG("  [5.1] Task management initialized\n");
+    LOG_INFO_MSG("  [5.1] Task management initialized\n");
 
     // 5.2 初始化文件系统
     fs_init();
-    LOG_DEBUG_MSG("  [5.2] File system initialized\n");
+    LOG_INFO_MSG("  [5.2] File system initialized\n");
 
     // ========================================================================
     // 单元测试
@@ -197,7 +202,7 @@ void kernel_main(multiboot_info_t* mbi) {
 
         // 初始化 Shell
         kernel_shell_init();
-        LOG_DEBUG_MSG("  [6.2] Kernel shell initialized\n");
+        LOG_INFO_MSG("  [6.2] Kernel shell initialized\n");
         
         // 将 Shell 作为内核线程运行，这样它会出现在进程列表中
         task_create_kernel_thread(kernel_shell_run, "kernel_shell");

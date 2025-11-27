@@ -138,7 +138,7 @@ void pmm_protect_frame(uint32_t frame) {
         return;
     }
     if (frame & (PAGE_SIZE - 1)) {
-        LOG_WARN_MSG("PMM: pmm_protect_frame received unaligned frame 0x%x, aligning down\n", frame);
+        LOG_WARN_MSG("PMM: pmm_protect_frame received unaligned frame %x, aligning down\n", frame);
         frame &= ~(PAGE_SIZE - 1);
     }
     
@@ -149,7 +149,7 @@ void pmm_protect_frame(uint32_t frame) {
     // 这防止 find_free_frame 返回一个受保护的帧
     uint32_t idx = frame / PAGE_SIZE;
     if (idx < total_frames && !test_frame(idx)) {
-        LOG_WARN_MSG("PMM: Protecting frame 0x%x that was FREE in bitmap! Marking as used.\n", frame);
+        LOG_WARN_MSG("PMM: Protecting frame %x that was FREE in bitmap! Marking as used.\n", frame);
         set_frame(idx);
         pmm_info.free_frames--;
         pmm_info.used_frames++;
@@ -164,7 +164,7 @@ void pmm_protect_frame(uint32_t frame) {
         protected_frames[protected_frame_count].refcount = 1;
         protected_frame_count++;
     } else {
-        LOG_ERROR_MSG("PMM: Protected frame table full! Cannot protect 0x%x\n", frame);
+        LOG_ERROR_MSG("PMM: Protected frame table full! Cannot protect %x\n", frame);
     }
     
     spinlock_unlock_irqrestore(&pmm_lock, irq_state);
@@ -178,7 +178,7 @@ void pmm_unprotect_frame(uint32_t frame) {
         return;
     }
     if (frame & (PAGE_SIZE - 1)) {
-        LOG_WARN_MSG("PMM: pmm_unprotect_frame received unaligned frame 0x%x, aligning down\n", frame);
+        LOG_WARN_MSG("PMM: pmm_unprotect_frame received unaligned frame %x, aligning down\n", frame);
         frame &= ~(PAGE_SIZE - 1);
     }
     
@@ -187,13 +187,13 @@ void pmm_unprotect_frame(uint32_t frame) {
     
     protected_frame_t *entry = find_protected_frame_unsafe(frame);
     if (!entry) {
-        LOG_WARN_MSG("PMM: Attempted to unprotect unknown frame 0x%x\n", frame);
+        LOG_WARN_MSG("PMM: Attempted to unprotect unknown frame %x\n", frame);
         spinlock_unlock_irqrestore(&pmm_lock, irq_state);
         return;
     }
     
     if (entry->refcount == 0) {
-        LOG_ERROR_MSG("PMM: Frame 0x%x has zero refcount while protected!\n", frame);
+        LOG_ERROR_MSG("PMM: Frame %x has zero refcount while protected!\n", frame);
     } else {
         entry->refcount--;
     }
@@ -293,9 +293,9 @@ void pmm_init(multiboot_info_t *mbi) {
     // 保存 PMM 数据结构结束地址（虚拟地址），供堆初始化使用
     pmm_data_end_virt = PHYS_TO_VIRT(refcount_end);
     
-    LOG_DEBUG_MSG("PMM: Frame refcount table at virt=%p, phys=0x%x, size=%u bytes\n",
+    LOG_DEBUG_MSG("PMM: Frame refcount table at virt=%p, phys=%x, size=%u bytes\n",
                  frame_refcount, bitmap_end, refcount_bytes);
-    LOG_DEBUG_MSG("PMM: Refcount table ends at phys=0x%x (virt=0x%x)\n", refcount_end, pmm_data_end_virt);
+    LOG_DEBUG_MSG("PMM: Refcount table ends at phys=%x (virt=%x)\n", refcount_end, pmm_data_end_virt);
     
     // 【关键修复】标记引用计数表占用的帧为已使用
     uint32_t refcount_start_frame = bitmap_end / PAGE_SIZE;
@@ -417,7 +417,7 @@ uint32_t pmm_alloc_frame(void) {
         LOG_ERROR_MSG("PMM: CRITICAL: set_frame(%d) failed! Frame still shows as free!\n", idx);
         LOG_ERROR_MSG("  idx=%u, bitmap_idx=%u, bitmap_size=%u, total_frames=%u\n",
                      idx, bitmap_idx, bitmap_size, total_frames);
-        LOG_ERROR_MSG("  frame_bitmap=%p, frame_bitmap[%u]=0x%x\n",
+        LOG_ERROR_MSG("  frame_bitmap=%p, frame_bitmap[%u]=%x\n",
                      frame_bitmap, bitmap_idx, bitmap_idx < bitmap_size ? frame_bitmap[bitmap_idx] : 0);
         pmm_info.free_frames++;
         pmm_info.used_frames--;
@@ -440,14 +440,14 @@ uint32_t pmm_alloc_frame(void) {
     
     // 【诊断日志】记录页目录区域的分配
     if (addr >= 0x00190000 && addr < 0x001b0000) {
-        LOG_WARN_MSG("PMM: Allocated frame 0x%x in page directory danger zone (0x190000-0x1b0000)\n", addr);
+        LOG_WARN_MSG("PMM: Allocated frame %x in page directory danger zone (0x190000-0x1b0000)\n", addr);
         LOG_WARN_MSG("  PMM state: used=%u, free=%u\n", pmm_info.used_frames, pmm_info.free_frames);
     }
     
     // 【关键安全检查】确保我们没有分配一个受保护的帧
     // 这是最后一道防线，确保不会返回活动页目录或页表的帧
     if (find_protected_frame_unsafe(addr)) {
-        LOG_ERROR_MSG("PMM: CRITICAL! Allocated frame 0x%x is protected! This should never happen!\n", addr);
+        LOG_ERROR_MSG("PMM: CRITICAL! Allocated frame %x is protected! This should never happen!\n", addr);
         // 回滚分配
         clear_frame(idx);
         frame_refcount[idx] = 0;
@@ -491,14 +491,14 @@ void pmm_free_frame(uint32_t frame) {
         // 仅在可能是有效内存区域时发出警告
         // 忽略低端内存（可能被 BIOS/VGA 使用）
         if (frame > 0x100000) {
-            LOG_WARN_MSG("PMM: Double free or freeing unused frame 0x%x (idx %u)\n", frame, idx);
+            LOG_WARN_MSG("PMM: Double free or freeing unused frame %x (idx %u)\n", frame, idx);
         }
         spinlock_unlock_irqrestore(&pmm_lock, irq_state);
         return;
     }
     
     if (find_protected_frame_unsafe(frame)) {
-        LOG_ERROR_MSG("PMM: Attempt to free protected frame 0x%x blocked\n", frame);
+        LOG_ERROR_MSG("PMM: Attempt to free protected frame %x blocked\n", frame);
         spinlock_unlock_irqrestore(&pmm_lock, irq_state);
         return;
     }
@@ -508,14 +508,14 @@ void pmm_free_frame(uint32_t frame) {
     if (frame_refcount[idx] == 0) {
         // 引用计数已经是 0，这是一个错误状态
         // （帧被标记为使用，但引用计数为 0）
-        LOG_WARN_MSG("PMM: Frame 0x%x marked as used but refcount is 0, releasing anyway\n", frame);
+        LOG_WARN_MSG("PMM: Frame %x marked as used but refcount is 0, releasing anyway\n", frame);
         // 继续执行释放逻辑
     } else {
         frame_refcount[idx]--;
         if (frame_refcount[idx] > 0) {
             // 引用计数还不为 0，说明还有其他进程通过 COW 共享此帧
             // 不释放，只减少计数
-            // LOG_DEBUG_MSG("PMM: Frame 0x%x refcount decreased to %u, not freeing (COW shared)\n", frame, frame_refcount[idx]);
+            // LOG_DEBUG_MSG("PMM: Frame %x refcount decreased to %u, not freeing (COW shared)\n", frame, frame_refcount[idx]);
             spinlock_unlock_irqrestore(&pmm_lock, irq_state);
             return;
         }
@@ -529,7 +529,7 @@ void pmm_free_frame(uint32_t frame) {
     
     // 【诊断日志】记录页目录区域的释放
     if (frame >= 0x00190000 && frame < 0x001b0000) {
-        LOG_WARN_MSG("PMM: Freed frame 0x%x in page directory danger zone\n", frame);
+        LOG_WARN_MSG("PMM: Freed frame %x in page directory danger zone\n", frame);
     }
     
     // 更新搜索游标，如果有更小的空闲帧
@@ -610,7 +610,7 @@ void pmm_set_heap_reserved_range(uint32_t heap_virt_start, uint32_t heap_virt_en
             }
         }
         
-        LOG_INFO_MSG("PMM: Reserved heap range: phys 0x%x - 0x%x (%u frames, %u newly reserved)\n",
+        LOG_INFO_MSG("PMM: Reserved heap range: phys %x - %x (%u frames, %u newly reserved)\n",
                     heap_reserved_phys_start, heap_reserved_phys_end,
                     end_frame - start_frame, reserved_count);
     }
@@ -634,13 +634,13 @@ void pmm_print_info(void) {
  */
 uint32_t pmm_frame_ref_inc(uint32_t frame) {
     if (!frame || (frame & (PAGE_SIZE - 1))) {
-        LOG_ERROR_MSG("PMM: pmm_frame_ref_inc invalid frame 0x%x\n", frame);
+        LOG_ERROR_MSG("PMM: pmm_frame_ref_inc invalid frame %x\n", frame);
         return 0;
     }
     
     uint32_t idx = frame / PAGE_SIZE;
     if (idx >= total_frames) {
-        LOG_ERROR_MSG("PMM: pmm_frame_ref_inc frame 0x%x out of range (idx=%u, total=%u)\n", 
+        LOG_ERROR_MSG("PMM: pmm_frame_ref_inc frame %x out of range (idx=%u, total=%u)\n", 
                      frame, idx, total_frames);
         return 0;
     }
@@ -655,7 +655,7 @@ uint32_t pmm_frame_ref_inc(uint32_t frame) {
     spinlock_lock_irqsave(&pmm_lock, &irq_state);
     
     if (frame_refcount[idx] == 0xFFFF) {
-        LOG_ERROR_MSG("PMM: pmm_frame_ref_inc frame 0x%x refcount overflow!\n", frame);
+        LOG_ERROR_MSG("PMM: pmm_frame_ref_inc frame %x refcount overflow!\n", frame);
         spinlock_unlock_irqrestore(&pmm_lock, irq_state);
         return 0xFFFF;
     }
@@ -674,13 +674,13 @@ uint32_t pmm_frame_ref_inc(uint32_t frame) {
  */
 uint32_t pmm_frame_ref_dec(uint32_t frame) {
     if (!frame || (frame & (PAGE_SIZE - 1))) {
-        LOG_ERROR_MSG("PMM: pmm_frame_ref_dec invalid frame 0x%x\n", frame);
+        LOG_ERROR_MSG("PMM: pmm_frame_ref_dec invalid frame %x\n", frame);
         return 0;
     }
     
     uint32_t idx = frame / PAGE_SIZE;
     if (idx >= total_frames) {
-        LOG_ERROR_MSG("PMM: pmm_frame_ref_dec frame 0x%x out of range\n", frame);
+        LOG_ERROR_MSG("PMM: pmm_frame_ref_dec frame %x out of range\n", frame);
         return 0;
     }
     
@@ -694,7 +694,7 @@ uint32_t pmm_frame_ref_dec(uint32_t frame) {
     spinlock_lock_irqsave(&pmm_lock, &irq_state);
     
     if (frame_refcount[idx] == 0) {
-        LOG_WARN_MSG("PMM: pmm_frame_ref_dec frame 0x%x already zero!\n", frame);
+        LOG_WARN_MSG("PMM: pmm_frame_ref_dec frame %x already zero!\n", frame);
         spinlock_unlock_irqrestore(&pmm_lock, irq_state);
         return 0;
     }

@@ -115,7 +115,7 @@ static void test_brk(void) {
         printf("  Error: sbrk(0) failed\n");
         return;
     }
-    printf("  Initial heap end: 0x%x\n", (uint32_t)initial_brk);
+    printf("  Initial heap end: %x\n", (uint32_t)initial_brk);
     
     // 测试 2: 使用 sbrk 分配内存
     printf("\n[2] Allocate 4096 bytes using sbrk:\n");
@@ -124,10 +124,10 @@ static void test_brk(void) {
         printf("  Error: sbrk(4096) failed\n");
         return;
     }
-    printf("  Old heap end: 0x%x\n", (uint32_t)ptr1);
+    printf("  Old heap end: %x\n", (uint32_t)ptr1);
     
     void *new_brk = sbrk(0);
-    printf("  New heap end: 0x%x\n", (uint32_t)new_brk);
+    printf("  New heap end: %x\n", (uint32_t)new_brk);
     printf("  Allocated: %u bytes\n", (uint32_t)new_brk - (uint32_t)ptr1);
     
     // 测试 3: 写入和读取分配的内存
@@ -137,7 +137,7 @@ static void test_brk(void) {
     int_ptr[1] = 0xCAFEBABE;
     int_ptr[2] = 0x12345678;
     
-    printf("  Written: 0x%x, 0x%x, 0x%x\n", int_ptr[0], int_ptr[1], int_ptr[2]);
+    printf("  Written: %x, %x, %x\n", int_ptr[0], int_ptr[1], int_ptr[2]);
     
     if (int_ptr[0] == 0xDEADBEEF && int_ptr[1] == 0xCAFEBABE && int_ptr[2] == 0x12345678) {
         printf("  OK: Memory read/write successful\n");
@@ -152,10 +152,10 @@ static void test_brk(void) {
         printf("  Error: sbrk(8192) failed\n");
         return;
     }
-    printf("  Old heap end: 0x%x\n", (uint32_t)ptr2);
+    printf("  Old heap end: %x\n", (uint32_t)ptr2);
     
     new_brk = sbrk(0);
-    printf("  New heap end: 0x%x\n", (uint32_t)new_brk);
+    printf("  New heap end: %x\n", (uint32_t)new_brk);
     printf("  Total allocated from initial: %u bytes\n", (uint32_t)new_brk - (uint32_t)initial_brk);
     
     // 测试 5: 使用 brk 直接设置堆位置
@@ -163,11 +163,11 @@ static void test_brk(void) {
     uint32_t target_addr = (uint32_t)new_brk + 4096;
     void *result = brk((void *)target_addr);
     if (result == (void *)-1) {
-        printf("  Error: brk(0x%x) failed\n", target_addr);
+        printf("  Error: brk(%x) failed\n", target_addr);
     } else {
-        printf("  OK: brk returned 0x%x\n", (uint32_t)result);
+        printf("  OK: brk returned %x\n", (uint32_t)result);
         void *current = sbrk(0);
-        printf("  Current heap end: 0x%x\n", (uint32_t)current);
+        printf("  Current heap end: %x\n", (uint32_t)current);
     }
     
     // 测试 6: 验证之前的数据没有被破坏
@@ -193,7 +193,7 @@ static void test_mmap(void) {
         printf("  Error: mmap failed\n");
         return;
     }
-    printf("  Mapped at: 0x%x\n", (uint32_t)ptr1);
+    printf("  Mapped at: %x\n", (uint32_t)ptr1);
     
     // 验证映射的内存是零初始化的
     uint32_t *int_ptr = (uint32_t *)ptr1;
@@ -217,7 +217,7 @@ static void test_mmap(void) {
     int_ptr[2] = 0x12345678;
     int_ptr[255] = 0xFEEDFACE;  // 最后一个 uint32_t（接近页末尾）
     
-    printf("  Written: 0x%x, 0x%x, 0x%x, ..., 0x%x\n", 
+    printf("  Written: %x, %x, %x, ..., %x\n", 
            int_ptr[0], int_ptr[1], int_ptr[2], int_ptr[255]);
     
     if (int_ptr[0] == 0xDEADBEEF && int_ptr[1] == 0xCAFEBABE && 
@@ -234,7 +234,7 @@ static void test_mmap(void) {
     if (ptr2 == MAP_FAILED) {
         printf("  Error: mmap failed\n");
     } else {
-        printf("  Mapped at: 0x%x\n", (uint32_t)ptr2);
+        printf("  Mapped at: %x\n", (uint32_t)ptr2);
         
         // 写入每个页的开头
         uint32_t *mp = (uint32_t *)ptr2;
@@ -267,7 +267,7 @@ static void test_mmap(void) {
     if (ptr3 == MAP_FAILED) {
         printf("  Error: mmap failed\n");
     } else {
-        printf("  Mapped at: 0x%x\n", (uint32_t)ptr3);
+        printf("  Mapped at: %x\n", (uint32_t)ptr3);
         if ((uint32_t)ptr3 == (uint32_t)ptr1) {
             printf("  Note: Address was reused (expected behavior)\n");
         }
@@ -291,10 +291,10 @@ static void test_mmap(void) {
     if (ptr_ro == MAP_FAILED) {
         printf("  Error: mmap failed\n");
     } else {
-        printf("  Mapped read-only at: 0x%x\n", (uint32_t)ptr_ro);
+        printf("  Mapped read-only at: %x\n", (uint32_t)ptr_ro);
         // 读取应该成功
         uint32_t val = *(uint32_t *)ptr_ro;
-        printf("  OK: Read value: 0x%x (should be 0)\n", val);
+        printf("  OK: Read value: %x (should be 0)\n", val);
         // 注意：写入会触发页错误，这里不测试
         munmap(ptr_ro, 4096);
     }

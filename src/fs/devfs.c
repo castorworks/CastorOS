@@ -6,12 +6,14 @@
 #include <fs/vfs.h>
 #include <lib/string.h>
 #include <lib/klog.h>
+#include <lib/kprintf.h>
 #include <mm/heap.h>
 #include <drivers/serial.h>
+#include <drivers/rtc.h>
 #include <kernel/io.h>
 
 /* 设备节点数量 */
-#define DEVFS_DEVICE_COUNT 4
+#define DEVFS_DEVICE_COUNT 5
 
 /* DevFS 私有数据结构 - 包含 readdir 缓冲区以避免静态变量 */
 typedef struct devfs_private {
@@ -41,6 +43,8 @@ static uint32_t devconsole_read(fs_node_t *node, uint32_t offset,
                                 uint32_t size, uint8_t *buffer);
 static uint32_t devconsole_write(fs_node_t *node, uint32_t offset,
                                  uint32_t size, uint8_t *buffer);
+static uint32_t devrtc_read(fs_node_t *node, uint32_t offset,
+                            uint32_t size, uint8_t *buffer);
 static struct dirent *devfs_readdir(fs_node_t *node, uint32_t index);
 static fs_node_t *devfs_finddir(fs_node_t *node, const char *name);
 
@@ -163,6 +167,52 @@ static uint32_t devconsole_write(fs_node_t *node, uint32_t offset,
     }
     
     return size;
+}
+
+/**
+ * /dev/rtc - 实时时钟设备
+ * 读取返回当前日期时间字符串
+ */
+static uint32_t devrtc_read(fs_node_t *node, uint32_t offset,
+                            uint32_t size, uint8_t *buffer) {
+    (void)node; (void)offset;
+    
+    // 获取 RTC 时间
+    uint16_t year;
+    uint8_t month, day, hours, minutes, seconds;
+    
+    rtc_get_date(&year, &month, &day);
+    rtc_get_time(&hours, &minutes, &seconds);
+    uint8_t weekday = rtc_get_weekday();
+    
+    // 星期几名称
+    static const char *weekday_names[] = {
+        "", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
+    };
+    const char *wday_name = (weekday >= 1 && weekday <= 7) ? weekday_names[weekday] : "???";
+    
+    // 格式化日期时间字符串
+    char time_str[128];
+    int len = ksnprintf(time_str, sizeof(time_str),
+                        "%s %04u-%02u-%02u %02u:%02u:%02u\n",
+                        wday_name, year, month, day,
+                        hours, minutes, seconds);
+    
+    if (len < 0) {
+        return 0;
+    }
+    
+    // 应用偏移量
+    if (offset >= (uint32_t)len) {
+        return 0;  // 超过文件末尾
+    }
+    
+    // 计算可读取的字节数
+    uint32_t available = (uint32_t)len - offset;
+    uint32_t to_copy = (size < available) ? size : available;
+    
+    memcpy(buffer, time_str + offset, to_copy);
+    return to_copy;
 }
 
 /**
@@ -346,6 +396,28 @@ fs_node_t *devfs_init(void) {
     devfs_devices[3].ptr = NULL;
     devfs_devices[3].impl = &devfs_device_private[3];  // 设置私有数据
     
+    // 设备 4: /dev/rtc
+    strcpy(devfs_devices[4].name, "rtc");
+    devfs_devices[4].inode = 4;
+    devfs_devices[4].type = FS_CHARDEVICE;
+    devfs_devices[4].size = 0;
+    devfs_devices[4].permissions = FS_PERM_READ;  // 只读
+    devfs_devices[4].uid = 0;
+    devfs_devices[4].gid = 0;
+    devfs_devices[4].flags = 0;
+    devfs_devices[4].ref_count = 0;  // 初始化引用计数
+    devfs_devices[4].read = devrtc_read;
+    devfs_devices[4].write = NULL;  // 只读设备
+    devfs_devices[4].open = NULL;
+    devfs_devices[4].close = NULL;
+    devfs_devices[4].readdir = NULL;
+    devfs_devices[4].finddir = NULL;
+    devfs_devices[4].create = NULL;
+    devfs_devices[4].mkdir = NULL;
+    devfs_devices[4].unlink = NULL;
+    devfs_devices[4].ptr = NULL;
+    devfs_devices[4].impl = &devfs_device_private[4];  // 设置私有数据
+    
     // 创建 /dev 根目录节点
     devfs_root = (fs_node_t *)kmalloc(sizeof(fs_node_t));
     if (!devfs_root) {
@@ -390,6 +462,7 @@ fs_node_t *devfs_init(void) {
     LOG_DEBUG_MSG("  - /dev/zero\n");
     LOG_DEBUG_MSG("  - /dev/serial\n");
     LOG_DEBUG_MSG("  - /dev/console\n");
+    LOG_DEBUG_MSG("  - /dev/rtc\n");
     
     return devfs_root;
 }
