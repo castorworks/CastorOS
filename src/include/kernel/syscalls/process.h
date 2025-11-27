@@ -35,6 +35,12 @@ uint32_t sys_execve(uint32_t *frame, const char *path);
 uint32_t sys_getpid(void);
 
 /**
+ * sys_getppid - 获取父进程 PID
+ * @return 父进程 PID，如果没有父进程返回 0
+ */
+uint32_t sys_getppid(void);
+
+/**
  * sys_yield - 主动让出 CPU
  * @return 总是返回 0
  */

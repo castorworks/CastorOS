@@ -162,6 +162,12 @@ static uint32_t sys_getpid_wrapper(uint32_t *frame, uint32_t p1, uint32_t p2, ui
     return sys_getpid();
 }
 
+static uint32_t sys_getppid_wrapper(uint32_t *frame, uint32_t p1, uint32_t p2, uint32_t p3,
+                                    uint32_t p4, uint32_t p5) {
+    (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
+    return sys_getppid();
+}
+
 static uint32_t sys_yield_wrapper(uint32_t *frame, uint32_t p1, uint32_t p2, uint32_t p3,
                                   uint32_t p4, uint32_t p5) {
     (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
@@ -246,6 +252,7 @@ void syscall_init(void) {
     syscall_table[SYS_EXECVE]      = sys_execve_wrapper;
     syscall_table[SYS_WAITPID]     = sys_waitpid_wrapper;
     syscall_table[SYS_GETPID]      = sys_getpid_wrapper;
+    syscall_table[SYS_GETPPID]     = sys_getppid_wrapper;
     syscall_table[SYS_SCHED_YIELD] = sys_yield_wrapper;
     
     /* 信号与进程控制 */

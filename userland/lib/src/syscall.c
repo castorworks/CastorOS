@@ -17,6 +17,14 @@ int exec(const char *path) {
     return (int)syscall1(SYS_EXECVE, (uint32_t)path);
 }
 
+int getpid(void) {
+    return (int)syscall0(SYS_GETPID);
+}
+
+int getppid(void) {
+    return (int)syscall0(SYS_GETPPID);
+}
+
 int waitpid(int pid, int *wstatus, int options) {
     return (int)syscall3(SYS_WAITPID, (uint32_t)pid, (uint32_t)wstatus, (uint32_t)options);
 }

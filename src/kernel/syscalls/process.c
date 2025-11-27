@@ -519,6 +519,27 @@ uint32_t sys_getpid(void) {
 }
 
 /**
+ * sys_getppid - 获取父进程 PID
+ * @return 父进程 PID，如果没有父进程返回 0
+ */
+uint32_t sys_getppid(void) {
+    task_t *current = task_get_current();
+    if (!current) {
+        LOG_ERROR_MSG("sys_getppid: no current task\n");
+        return 0;
+    }
+    
+    if (current->parent && current->parent->state != TASK_UNUSED) {
+        LOG_DEBUG_MSG("sys_getppid: returning PPID %u\n", current->parent->pid);
+        return current->parent->pid;
+    }
+    
+    // 没有父进程（如 init 进程或孤儿进程）
+    LOG_DEBUG_MSG("sys_getppid: no parent, returning 0\n");
+    return 0;
+}
+
+/**
  * sys_yield - 主动让出 CPU
  */
 uint32_t sys_yield(void) {
