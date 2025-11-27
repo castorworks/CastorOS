@@ -42,16 +42,16 @@ int close(int fd) {
     return (int)syscall1(SYS_CLOSE, (uint32_t)fd);
 }
 
-int read(int fd, void *buf, uint32_t count) {
-    return (int)syscall3(SYS_READ, (uint32_t)fd, (uint32_t)buf, count);
+ssize_t read(int fd, void *buf, size_t count) {
+    return (ssize_t)syscall3(SYS_READ, (uint32_t)fd, (uint32_t)buf, (uint32_t)count);
 }
 
-int write(int fd, const void *buf, uint32_t count) {
-    return (int)syscall3(SYS_WRITE, (uint32_t)fd, (uint32_t)buf, count);
+ssize_t write(int fd, const void *buf, size_t count) {
+    return (ssize_t)syscall3(SYS_WRITE, (uint32_t)fd, (uint32_t)buf, (uint32_t)count);
 }
 
-int lseek(int fd, int offset, int whence) {
-    return (int)syscall3(SYS_LSEEK, (uint32_t)fd, (uint32_t)offset, (uint32_t)whence);
+off_t lseek(int fd, off_t offset, int whence) {
+    return (off_t)syscall3(SYS_LSEEK, (uint32_t)fd, (uint32_t)offset, (uint32_t)whence);
 }
 
 int mkdir(const char *path, uint32_t mode) {
@@ -77,6 +77,10 @@ int stat(const char *path, struct stat *buf) {
 
 int fstat(int fd, struct stat *buf) {
     return (int)syscall2(SYS_FSTAT, (uint32_t)fd, (uint32_t)buf);
+}
+
+int ftruncate(int fd, off_t length) {
+    return (int)syscall2(SYS_FTRUNCATE, (uint32_t)fd, (uint32_t)length);
 }
 
 // 静态变量，用于 sbrk 跟踪当前堆位置

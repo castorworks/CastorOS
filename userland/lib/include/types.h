@@ -20,6 +20,7 @@ typedef signed long long   int64_t;
 
 typedef uint32_t size_t;
 typedef int32_t  ssize_t;
+typedef int32_t  off_t;    // POSIX: 文件偏移量类型（有符号）
 #endif
 
 #ifndef _TIME_T_DEFINED

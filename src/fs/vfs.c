@@ -103,6 +103,11 @@ void vfs_ref_node(fs_node_t *node) {
         return;
     }
     
+    // 静态节点（没有 FS_NODE_FLAG_ALLOCATED 标志）不需要引用计数管理
+    if (!(node->flags & FS_NODE_FLAG_ALLOCATED)) {
+        return;
+    }
+    
     // 保护引用计数操作，防止并发竞争
     mutex_lock(&vfs_refcount_mutex);
     node->ref_count++;
@@ -114,6 +119,12 @@ void vfs_release_node(fs_node_t *node) {
         return;
     }
     
+    // 静态节点（没有 FS_NODE_FLAG_ALLOCATED 标志）不需要引用计数管理
+    // 直接返回，不打印警告
+    if (!(node->flags & FS_NODE_FLAG_ALLOCATED)) {
+        return;
+    }
+    
     // 保护引用计数操作，防止并发竞争
     mutex_lock(&vfs_refcount_mutex);
     
@@ -121,15 +132,15 @@ void vfs_release_node(fs_node_t *node) {
     if (node->ref_count > 0) {
         node->ref_count--;
     } else {
-        // 引用计数已经为 0，打印警告但不要继续释放（防止双重释放）
+        // 动态分配的节点引用计数为 0，打印警告（可能是双重释放）
         LOG_WARN_MSG("vfs_release_node: %s already has ref_count=0, skipping free\n", node->name);
         mutex_unlock(&vfs_refcount_mutex);
         return;  // 立即返回，防止双重释放
     }
     
-    // 只有当引用计数为 0 且是动态分配的节点时才释放
-    if (node->ref_count == 0 && (node->flags & FS_NODE_FLAG_ALLOCATED)) {
-        LOG_INFO_MSG("vfs_release_node: freeing node %s\n", node->name);
+    // 当引用计数为 0 时释放动态分配的节点
+    if (node->ref_count == 0) {
+        LOG_DEBUG_MSG("vfs_release_node: freeing node %s\n", node->name);
         // 释放之前先解锁，因为释放操作可能需要较长时间
         mutex_unlock(&vfs_refcount_mutex);
         
@@ -552,6 +563,28 @@ int vfs_unlink(const char *path) {
     int result = parent->unlink(parent, file_name);
     vfs_release_node(parent);  // 释放节点
     return result;
+}
+
+// 截断文件到指定大小
+int vfs_truncate(fs_node_t *node, uint32_t new_size) {
+    if (!node) {
+        return -1;
+    }
+    
+    // 检查是否为文件
+    if (node->type != FS_FILE) {
+        LOG_ERROR_MSG("vfs_truncate: not a regular file\n");
+        return -1;
+    }
+    
+    // 如果文件系统支持 truncate 操作，调用它
+    if (node->truncate) {
+        return node->truncate(node, new_size);
+    }
+    
+    // 否则，只更新大小（对于简单的内存文件系统）
+    node->size = new_size;
+    return 0;
 }
 
 // 挂载文件系统到指定路径

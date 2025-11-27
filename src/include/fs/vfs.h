@@ -40,6 +40,7 @@ typedef struct fs_node *(*finddir_type_t)(struct fs_node *node, const char *name
 typedef int (*create_type_t)(struct fs_node *node, const char *name);
 typedef int (*mkdir_type_t)(struct fs_node *node, const char *name, uint32_t permissions);
 typedef int (*unlink_type_t)(struct fs_node *node, const char *name);
+typedef int (*truncate_type_t)(struct fs_node *node, uint32_t new_size);
 
 /**
  * 文件节点（inode）
@@ -68,6 +69,7 @@ typedef struct fs_node {
     create_type_t create;
     mkdir_type_t mkdir;
     unlink_type_t unlink;
+    truncate_type_t truncate;
     
     struct fs_node *ptr;         // 用于符号链接和挂载点
 } fs_node_t;
@@ -179,6 +181,14 @@ int vfs_mkdir(const char *path, uint32_t permissions);
  * @return 0 成功，-1 失败
  */
 int vfs_unlink(const char *path);
+
+/**
+ * 截断文件到指定大小
+ * @param node 文件节点
+ * @param new_size 新的文件大小
+ * @return 0 成功，-1 失败
+ */
+int vfs_truncate(fs_node_t *node, uint32_t new_size);
 
 /**
  * 挂载文件系统到指定路径

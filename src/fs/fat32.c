@@ -891,6 +891,131 @@ static int fat32_update_dirent_metadata(fat32_file_t *file) {
     kfree(buffer);
     return ret;
 }
+
+/**
+ * 截断簇链到指定数量的簇
+ * @param fs 文件系统
+ * @param start_cluster 起始簇号
+ * @param keep_clusters 保留的簇数量（0 表示释放所有簇）
+ */
+static void fat32_truncate_cluster_chain(fat32_fs_t *fs, uint32_t start_cluster, 
+                                          uint32_t keep_clusters) {
+    if (!fs || start_cluster < 2) {
+        return;
+    }
+    
+    uint32_t cluster = start_cluster;
+    uint32_t cluster_count = 0;
+    uint32_t last_kept_cluster = 0;
+    const uint32_t MAX_CHAIN_LENGTH = fs->total_clusters + 10;
+    
+    // 遍历簇链
+    while (cluster >= 2 && cluster < FAT32_CLUSTER_EOF_MIN && cluster_count < MAX_CHAIN_LENGTH) {
+        uint32_t next = fat32_read_fat_entry(fs, cluster);
+        if (next == 0xFFFFFFFF) {
+            LOG_ERROR_MSG("fat32: Error reading FAT entry during truncate\n");
+            break;
+        }
+        
+        cluster_count++;
+        
+        if (cluster_count <= keep_clusters) {
+            // 保留此簇
+            last_kept_cluster = cluster;
+        } else {
+            // 释放此簇
+            fat32_free_cluster(fs, cluster);
+        }
+        
+        if (next >= FAT32_CLUSTER_EOF_MIN) {
+            break;
+        }
+        cluster = next;
+    }
+    
+    // 如果保留了簇，将最后一个保留的簇标记为 EOF
+    if (keep_clusters > 0 && last_kept_cluster >= 2) {
+        fat32_write_fat_entry(fs, last_kept_cluster, FAT32_CLUSTER_EOF_MAX);
+    }
+}
+
+/**
+ * FAT32 文件截断
+ * @param node 文件节点
+ * @param new_size 新的文件大小
+ * @return 0 成功，-1 失败
+ */
+static int fat32_file_truncate(fs_node_t *node, uint32_t new_size) {
+    if (!node || !node->impl) {
+        return -1;
+    }
+    
+    fat32_file_t *file = (fat32_file_t *)node->impl;
+    if (file->is_dir) {
+        LOG_ERROR_MSG("fat32: Cannot truncate a directory\n");
+        return -1;
+    }
+    
+    fat32_fs_t *fs = file->fs;
+    if (!fs) {
+        return -1;
+    }
+    
+    mutex_lock(&fs->fs_lock);
+    
+    uint32_t cluster_size = fs->bytes_per_cluster;
+    uint32_t old_size = file->size;
+    
+    if (new_size == old_size) {
+        // 大小不变
+        mutex_unlock(&fs->fs_lock);
+        return 0;
+    }
+    
+    if (new_size > old_size) {
+        // 扩展文件
+        if (fat32_ensure_file_size(file, new_size) != 0) {
+            mutex_unlock(&fs->fs_lock);
+            return -1;
+        }
+        
+        // 将新扩展的区域填充为 0
+        if (fat32_zero_range(file, old_size, new_size) != 0) {
+            mutex_unlock(&fs->fs_lock);
+            return -1;
+        }
+    } else {
+        // 收缩文件
+        if (new_size == 0) {
+            // 截断到 0：释放所有簇
+            if (file->start_cluster >= 2) {
+                fat32_free_cluster_chain(fs, file->start_cluster);
+                file->start_cluster = 0;
+            }
+        } else {
+            // 计算需要保留的簇数
+            uint32_t keep_clusters = (new_size + cluster_size - 1) / cluster_size;
+            
+            // 截断簇链
+            if (file->start_cluster >= 2) {
+                fat32_truncate_cluster_chain(fs, file->start_cluster, keep_clusters);
+            }
+        }
+    }
+    
+    // 更新文件大小
+    file->size = new_size;
+    node->size = new_size;
+    
+    // 更新目录项
+    fat32_update_dirent_metadata(file);
+    
+    mutex_unlock(&fs->fs_lock);
+    
+    LOG_DEBUG_MSG("fat32: Truncated file from %u to %u bytes\n", old_size, new_size);
+    
+    return 0;
+}
 /**
  * 将簇号转换为扇区号
  */
@@ -1549,6 +1674,7 @@ static fs_node_t *fat32_dir_finddir(fs_node_t *node, const char *name) {
         new_node->type = FS_FILE;
         new_node->read = fat32_file_read;
         new_node->write = fat32_file_write;
+        new_node->truncate = fat32_file_truncate;
         new_file->is_dir = false;
     }
     

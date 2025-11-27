@@ -37,6 +37,7 @@ enum {
     SYS_GETCWD          = 0x010B,
     SYS_CHDIR           = 0x010C,
     SYS_GETDENTS        = 0x010D,  // 读取目录项（简化版本，与 Linux getdents 接口不同）
+    SYS_FTRUNCATE       = 0x010E,  // 截断文件到指定大小
 
     // -------------------- 内存管理 (0x02xx) --------------------
     SYS_BRK             = 0x0200,
@@ -127,15 +128,16 @@ int waitpid(int pid, int *wstatus, int options);
 int wait(int *wstatus);
 int open(const char *path, int flags, uint32_t mode);
 int close(int fd);
-int read(int fd, void *buf, uint32_t count);
-int write(int fd, const void *buf, uint32_t count);
-int lseek(int fd, int offset, int whence);
+ssize_t read(int fd, void *buf, size_t count);        // POSIX: ssize_t read(int, void*, size_t)
+ssize_t write(int fd, const void *buf, size_t count); // POSIX: ssize_t write(int, const void*, size_t)
+off_t lseek(int fd, off_t offset, int whence);        // POSIX: off_t lseek(int, off_t, int)
 int mkdir(const char *path, uint32_t mode);
 int chdir(const char *path);
 char *getcwd(char *buf, size_t size);
 int getdents(int fd, uint32_t index, struct dirent *dirent);
 int stat(const char *path, struct stat *buf);
 int fstat(int fd, struct stat *buf);
+int ftruncate(int fd, off_t length);                  // POSIX: int ftruncate(int, off_t)
 
 /**
  * brk - 调整堆边界

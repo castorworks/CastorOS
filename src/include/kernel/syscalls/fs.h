@@ -173,4 +173,15 @@ uint32_t sys_stat(const char *path, struct stat *buf);
  */
 uint32_t sys_fstat(int32_t fd, struct stat *buf);
 
+/**
+ * sys_ftruncate - 截断文件到指定大小
+ * @fd: 文件描述符
+ * @length: 新的文件大小
+ * 
+ * 返回值：
+ *   0: 成功
+ *   (uint32_t)-1: 错误
+ */
+uint32_t sys_ftruncate(int32_t fd, uint32_t length);
+
 #endif /* _KERNEL_SYSCALLS_FILE_H_ */

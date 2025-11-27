@@ -167,9 +167,12 @@ uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
     
     // 截断文件（如果指定了 O_TRUNC 且是写模式）
     if ((flags & O_TRUNC) && (flags & (O_WRONLY | O_RDWR))) {
-        node->size = 0;
-        // 这里应该调用文件系统特定的截断操作
-        // 暂时只设置大小为0
+        if (node->type == FS_FILE) {
+            if (vfs_truncate(node, 0) != 0) {
+                LOG_WARN_MSG("sys_open: failed to truncate file '%s'\n", path);
+                // 继续，不视为致命错误
+            }
+        }
     }
     
     // 打开文件
@@ -633,6 +636,45 @@ uint32_t sys_getcwd(char *buffer, uint32_t size) {
     
     LOG_DEBUG_MSG("sys_getcwd: returned '%s'\n", current->cwd);
     return (uint32_t)buffer;
+}
+
+/**
+ * sys_ftruncate - 截断文件到指定大小
+ */
+uint32_t sys_ftruncate(int32_t fd, uint32_t length) {
+    task_t *current = task_get_current();
+    if (!current || !current->fd_table) {
+        LOG_ERROR_MSG("sys_ftruncate: no current task or fd_table\n");
+        return (uint32_t)-1;
+    }
+    
+    // 获取文件描述符表项
+    fd_entry_t *entry = fd_table_get(current->fd_table, fd);
+    if (!entry || !entry->node) {
+        LOG_ERROR_MSG("sys_ftruncate: invalid fd %d\n", fd);
+        return (uint32_t)-1;
+    }
+    
+    // 检查是否为文件
+    if (entry->node->type != FS_FILE) {
+        LOG_ERROR_MSG("sys_ftruncate: fd %d is not a regular file\n", fd);
+        return (uint32_t)-1;
+    }
+    
+    // 检查写权限
+    if ((entry->flags & O_RDONLY) && !(entry->flags & O_RDWR)) {
+        LOG_ERROR_MSG("sys_ftruncate: fd %d is read-only\n", fd);
+        return (uint32_t)-1;
+    }
+    
+    // 调用 VFS truncate
+    if (vfs_truncate(entry->node, length) != 0) {
+        LOG_ERROR_MSG("sys_ftruncate: failed to truncate fd %d to %u bytes\n", fd, length);
+        return (uint32_t)-1;
+    }
+    
+    LOG_DEBUG_MSG("sys_ftruncate: fd %d truncated to %u bytes\n", fd, length);
+    return 0;
 }
 
 /**
