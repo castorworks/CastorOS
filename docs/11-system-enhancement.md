@@ -18,7 +18,7 @@
   - [SYS_MMAP/MUNMAP](#8-sys_mmapmunmap---内存映射)
   - [SYS_UNAME](#9-sys_uname---系统信息查询)
   - [SYS_RENAME](#10-sys_rename---文件重命名)
-  - [共享内存](#11-共享内存)
+  - [SHMFS](#11-shmfs---共享内存文件系统)
   - [RTC 驱动](#12-rtc-驱动---实时时钟)
 
 ---
@@ -1663,33 +1663,49 @@ uint32_t sys_rename(const char *oldpath, const char *newpath) {
 
 ---
 
-## 11. 共享内存
+## 11. SHMFS - 共享内存文件系统
+
+> **状态**：已实现
 
 ### 11.1 功能描述
 
-实现 System V 风格或 POSIX 风格的共享内存。
+类似 Linux `/dev/shm` 的共享内存文件系统，提供进程间共享内存的能力。
 
-### 11.2 简化设计（命名共享内存）
+### 11.2 已实现功能
 
-```c
-// 共享内存区域
-typedef struct shm_region {
-    char name[64];           // 名称
-    uint32_t size;           // 大小
-    uint32_t phys_base;      // 物理基地址
-    uint32_t ref_count;      // 引用计数
-    struct shm_region *next; // 链表
-} shm_region_t;
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| 文件创建/删除 | ✅ | `touch /shm/xxx`, `rm /shm/xxx` |
+| 文件读写 | ✅ | `cat`, `write` 命令 |
+| 目录列表 | ✅ | `ls /shm` |
+| 文件截断 | ✅ | `ftruncate()` 支持 |
+| 物理页管理 | ✅ | 自动分配/释放物理内存 |
+| 映射计数 | ✅ | 供 mmap 集成使用 |
+| 系统启动挂载 | ✅ | 自动挂载到 `/shm` |
 
-// 创建/打开共享内存
-int shm_open(const char *name, int flags, uint32_t mode);
+### 11.3 文件位置
 
-// 设置大小
-int ftruncate(int fd, uint32_t length);
+| 文件 | 说明 |
+|------|------|
+| `src/include/fs/shmfs.h` | 头文件，数据结构和接口定义 |
+| `src/fs/shmfs.c` | 实现文件 |
+| `src/kernel/fs_bootstrap.c` | 系统启动时挂载到 `/shm` |
 
-// 映射到地址空间（使用 mmap）
-void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+### 11.4 使用方法
+
+```bash
+# Shell 命令测试
+touch /shm/test              # 创建共享内存
+write /shm/test "Hello!"     # 写入数据
+cat /shm/test                # 读取数据
+ls /shm                      # 列出所有共享内存
+rm /shm/test                 # 删除共享内存
 ```
+
+### 11.5 待完成（依赖 SYS_MMAP）
+
+- 用户态 `shm_open()`/`shm_unlink()` 封装
+- 与 `mmap()` 集成实现真正的共享内存映射
 
 ---
 
@@ -1820,38 +1836,3 @@ uint32_t sys_gettimeofday(struct timeval *tv, void *tz) {
     return 0;
 }
 ```
-
----
-
-## 总结
-
-| 功能 | 优先级 | 难度 | 预计工时 | 依赖 |
-|------|--------|------|----------|------|
-| SYS_GETPPID | 高 | ⭐ | 0.5h | 无 |
-| SYS_STAT/FSTAT | 高 | ⭐⭐ | 2-3h | 无 |
-| SYS_BRK | 高 | ⭐⭐ | 3-4h | 无 |
-| FAT32 写入 | 高 | ⭐⭐⭐ | 8-12h | 无 |
-| 信号机制 | 高 | ⭐⭐⭐ | 12-16h | 无 |
-| SYS_PIPE | 中 | ⭐⭐⭐ | 6-8h | 无 |
-| SYS_DUP/DUP2 | 中 | ⭐⭐ | 2-3h | 无 |
-| SYS_MMAP | 中 | ⭐⭐⭐ | 8-10h | 无 |
-| SYS_UNAME | 中 | ⭐ | 1h | 无 |
-| SYS_RENAME | 中 | ⭐⭐ | 3-4h | 无 |
-| 共享内存 | 中 | ⭐⭐⭐ | 8-10h | SYS_MMAP |
-| RTC 驱动 | 中 | ⭐⭐ | 3-4h | 无 |
-
-**建议开发顺序**：
-
-1. SYS_GETPPID（热身）
-2. SYS_UNAME（简单）
-3. SYS_STAT/FSTAT
-4. SYS_DUP/DUP2
-5. SYS_BRK
-6. RTC 驱动
-7. SYS_PIPE
-8. FAT32 写入
-9. 信号机制
-10. SYS_MMAP/MUNMAP
-11. 共享内存
-12. SYS_RENAME
-

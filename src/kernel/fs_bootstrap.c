@@ -6,6 +6,7 @@
 #include <fs/ramfs.h>
 #include <fs/devfs.h>
 #include <fs/procfs.h>
+#include <fs/shmfs.h>
 #include <fs/blockdev.h>
 #include <fs/partition.h>
 #include <fs/fat32.h>
@@ -151,5 +152,27 @@ void fs_init(void) {
         // 不返回错误，系统可以继续运行，只是没有 /proc
     } else {
         LOG_INFO_MSG("procfs mounted at /proc\n");
+    }
+
+    // 第六步：初始化 shmfs（共享内存文件系统）
+    fs_node_t *shmfs_root = shmfs_init();
+    if (!shmfs_root) {
+        LOG_ERROR_MSG("Failed to initialize shmfs\n");
+        return;
+    }
+
+    // 创建 /shm 目录并挂载 shmfs
+    if (vfs_mkdir("/shm", FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC) != 0) {
+        LOG_WARN_MSG("Failed to create /shm directory (may already exist)\n");
+    } else {
+        LOG_INFO_MSG("/shm directory created\n");
+    }
+
+    // 尝试挂载 shmfs
+    if (vfs_mount("/shm", shmfs_root) != 0) {
+        LOG_ERROR_MSG("Failed to mount shmfs to /shm\n");
+        // 不返回错误，系统可以继续运行，只是没有 /shm
+    } else {
+        LOG_INFO_MSG("shmfs mounted at /shm\n");
     }
 }
