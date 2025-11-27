@@ -96,10 +96,12 @@ bool elf_validate_header(const void *elf_data);
  * @param size ELF 文件大小
  * @param page_dir 目标页目录
  * @param entry_point 输出参数：程序入口点地址
+ * @param program_end 输出参数：程序加载的最高地址（可选，可为 NULL）
  * @return 成功返回 true
  */
 bool elf_load(const void *elf_data, uint32_t size, 
-              page_directory_t *page_dir, uint32_t *entry_point);
+              page_directory_t *page_dir, uint32_t *entry_point,
+              uint32_t *program_end);
 
 /**
  * 获取 ELF 入口点地址

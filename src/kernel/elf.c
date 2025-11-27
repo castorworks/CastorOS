@@ -73,7 +73,8 @@ uint32_t elf_get_entry(const void *elf_data) {
 /**
  * 加载 ELF 文件到指定页目录
  */
-bool elf_load(const void *elf_data, uint32_t size, page_directory_t *page_dir, uint32_t *entry_point) {
+bool elf_load(const void *elf_data, uint32_t size, page_directory_t *page_dir, 
+              uint32_t *entry_point, uint32_t *program_end) {
     if (!elf_data || !page_dir || !entry_point) {
         LOG_ERROR_MSG("ELF: Invalid parameters\n");
         return false;
@@ -96,6 +97,9 @@ bool elf_load(const void *elf_data, uint32_t size, page_directory_t *page_dir, u
     // 记录加载进度的变量，用于出错时清理
     int32_t cleanup_last_segment_idx = -1;
     uint32_t cleanup_last_vaddr = 0;
+    
+    // 记录程序加载的最高地址
+    uint32_t max_vaddr = 0;
     
     // 遍历程序头表
     for (uint32_t i = 0; i < ehdr->e_phnum; i++) {
@@ -147,6 +151,11 @@ bool elf_load(const void *elf_data, uint32_t size, page_directory_t *page_dir, u
         
         LOG_DEBUG_MSG("    Pages: %u (%x - %x)\n", 
                      num_pages, vaddr_start, vaddr_end);
+        
+        // 更新程序加载的最高地址
+        if (vaddr_end > max_vaddr) {
+            max_vaddr = vaddr_end;
+        }
         
         // 更新进度：当前开始处理这个 Segment
         cleanup_last_segment_idx = i;
@@ -203,7 +212,12 @@ bool elf_load(const void *elf_data, uint32_t size, page_directory_t *page_dir, u
     // 返回入口点
     *entry_point = ehdr->e_entry;
     
-    LOG_INFO_MSG("ELF: Load complete, entry at %x\n", *entry_point);
+    // 返回程序结束地址（如果需要）
+    if (program_end) {
+        *program_end = max_vaddr;
+    }
+    
+    LOG_INFO_MSG("ELF: Load complete, entry at %x, end at %x\n", *entry_point, max_vaddr);
     return true;
 
 cleanup:

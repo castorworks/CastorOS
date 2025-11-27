@@ -173,6 +173,11 @@ uint32_t sys_fork(uint32_t *frame) {
     child->user_stack = parent->user_stack;
     child->user_entry = parent->user_entry;
     
+    // 复制堆信息
+    child->heap_start = parent->heap_start;
+    child->heap_end = parent->heap_end;
+    child->heap_max = parent->heap_max;
+    
     // 初始化子进程上下文
     // 按照 Unix fork 语义：子进程从 fork() 调用返回处继续执行
     memset(&child->context, 0, sizeof(cpu_context_t));
@@ -338,7 +343,8 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
     uint32_t old_dir_phys = current->page_dir_phys;
     
     // 加载 ELF 到新页目录
-    if (!elf_load(elf_data, file_size, new_dir, &entry_point)) {
+    uint32_t program_end;
+    if (!elf_load(elf_data, file_size, new_dir, &entry_point, &program_end)) {
         LOG_ERROR_MSG("sys_execve: failed to load ELF '%s'\n", path);
         vmm_free_page_directory(new_dir_phys);
         kfree(elf_data);
@@ -375,6 +381,16 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
         vmm_free_page_directory(new_dir_phys);
         return (uint32_t)-1;
     }
+    
+    // 设置堆管理
+    // 堆从程序结束后的下一页开始
+    current->heap_start = PAGE_ALIGN_UP(program_end);
+    current->heap_end = current->heap_start;
+    // 堆最大值：留出 8MB 给栈
+    current->heap_max = current->user_stack_base - (8 * 1024 * 1024);
+    
+    LOG_DEBUG_MSG("sys_execve: heap: start=%x, end=%x, max=%x\n", 
+                 current->heap_start, current->heap_end, current->heap_max);
     
     // ============================================================================
     // 切换到新地址空间

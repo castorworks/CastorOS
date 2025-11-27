@@ -137,6 +137,20 @@ int getdents(int fd, uint32_t index, struct dirent *dirent);
 int stat(const char *path, struct stat *buf);
 int fstat(int fd, struct stat *buf);
 
+/**
+ * brk - 调整堆边界
+ * @param addr 新的堆结束地址（0 表示查询当前值）
+ * @return 成功返回新的堆结束地址，失败返回 (void *)-1
+ */
+void *brk(void *addr);
+
+/**
+ * sbrk - 增加/减少堆大小
+ * @param increment 要增加的字节数（可为负数）
+ * @return 成功返回之前的堆结束地址，失败返回 (void *)-1
+ */
+void *sbrk(int increment);
+
 size_t strlen_simple(const char *str);
 void print(const char *msg);
 int reboot(void);

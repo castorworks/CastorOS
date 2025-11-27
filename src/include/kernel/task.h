@@ -122,6 +122,11 @@ typedef struct task {
     uint32_t page_dir_phys;          ///< 页目录物理地址
     page_directory_t *page_dir;      ///< 页目录虚拟地址
     
+    /* 堆管理 */
+    uint32_t heap_start;             ///< 堆起始地址（初始 brk）
+    uint32_t heap_end;               ///< 当前堆结束地址（当前 brk）
+    uint32_t heap_max;               ///< 堆最大地址（防止与栈冲突）
+    
     /* 文件系统 */
     fd_table_t *fd_table;            ///< 文件描述符表
     char cwd[MAX_CWD_LENGTH];        ///< 当前工作目录
@@ -175,10 +180,11 @@ uint32_t task_create_kernel_thread(void (*entry)(void), const char *name);
  * @param name 进程名称
  * @param entry_point 用户程序入口点
  * @param page_dir 页目录
+ * @param program_end 程序加载的最高地址（用于设置堆起始地址）
  * @return 成功返回 PID，失败返回 0
  */
 uint32_t task_create_user_process(const char *name, uint32_t entry_point,
-                                   page_directory_t *page_dir);
+                                   page_directory_t *page_dir, uint32_t program_end);
 
 /**
  * @brief 退出当前任务

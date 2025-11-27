@@ -79,6 +79,48 @@ int fstat(int fd, struct stat *buf) {
     return (int)syscall2(SYS_FSTAT, (uint32_t)fd, (uint32_t)buf);
 }
 
+// 静态变量，用于 sbrk 跟踪当前堆位置
+static uint32_t _brk_current = 0;
+
+void *brk(void *addr) {
+    uint32_t result = syscall1(SYS_BRK, (uint32_t)addr);
+    if (result == (uint32_t)-1) {
+        return (void *)-1;
+    }
+    _brk_current = result;
+    return (void *)result;
+}
+
+void *sbrk(int increment) {
+    // 如果还没有初始化，先获取当前堆位置
+    if (_brk_current == 0) {
+        _brk_current = syscall1(SYS_BRK, 0);
+        if (_brk_current == (uint32_t)-1) {
+            return (void *)-1;
+        }
+    }
+    
+    // 保存旧的堆位置
+    uint32_t old_brk = _brk_current;
+    
+    // 如果 increment 为 0，直接返回当前位置
+    if (increment == 0) {
+        return (void *)old_brk;
+    }
+    
+    // 计算新的堆位置
+    uint32_t new_brk = old_brk + increment;
+    
+    // 调用 brk 设置新位置
+    uint32_t result = syscall1(SYS_BRK, new_brk);
+    if (result == (uint32_t)-1) {
+        return (void *)-1;
+    }
+    
+    _brk_current = result;
+    return (void *)old_brk;
+}
+
 size_t strlen_simple(const char *str) {
     if (!str) {
         return 0;

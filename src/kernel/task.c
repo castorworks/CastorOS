@@ -457,7 +457,7 @@ uint32_t task_create_kernel_thread(void (*entry)(void), const char *name) {
  * @brief 创建用户进程
  */
 uint32_t task_create_user_process(const char *name, uint32_t entry_point,
-                                   page_directory_t *page_dir) {
+                                   page_directory_t *page_dir, uint32_t program_end) {
     if (!name || !page_dir || entry_point == 0) {
         LOG_ERROR_MSG("task_create_user_process: Invalid parameters\n");
         return 0;
@@ -546,6 +546,16 @@ uint32_t task_create_user_process(const char *name, uint32_t entry_point,
     } else {
         LOG_WARN_MSG("  Failed to open /dev/console for stdio\n");
     }
+    
+    // 设置堆管理
+    // 堆从程序结束后的下一页开始
+    task->heap_start = PAGE_ALIGN_UP(program_end);
+    task->heap_end = task->heap_start;
+    // 堆最大值：留出 8MB 给栈（栈在用户空间顶部）
+    task->heap_max = task->user_stack_base - (8 * 1024 * 1024);
+    
+    LOG_DEBUG_MSG("  Heap: start=%x, end=%x, max=%x\n", 
+                 task->heap_start, task->heap_end, task->heap_max);
     
     // 工作目录
     strcpy(task->cwd, "/");

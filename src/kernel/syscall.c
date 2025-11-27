@@ -7,6 +7,7 @@
 #include <kernel/syscalls/process.h>
 #include <kernel/syscalls/time.h>
 #include <kernel/syscalls/system.h>
+#include <kernel/syscalls/mm.h>
 #include <kernel/task.h>
 #include <kernel/idt.h>
 #include <kernel/gdt.h>
@@ -226,6 +227,12 @@ static uint32_t sys_waitpid_wrapper(uint32_t *frame, uint32_t pid, uint32_t wsta
     return sys_waitpid((int32_t)pid, (uint32_t *)wstatus_ptr, options);
 }
 
+static uint32_t sys_brk_wrapper(uint32_t *frame, uint32_t addr, uint32_t p2,
+                                uint32_t p3, uint32_t p4, uint32_t p5) {
+    (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
+    return sys_brk(addr);
+}
+
 uint32_t syscall_dispatcher(uint32_t syscall_num, uint32_t p1, uint32_t p2, 
                             uint32_t p3, uint32_t p4, uint32_t p5, uint32_t *frame) {
     /* 检查系统调用号是否在有效范围内 */
@@ -287,6 +294,9 @@ void syscall_init(void) {
     /* 时间相关 */
     syscall_table[SYS_TIME]        = sys_time_wrapper;
     syscall_table[SYS_NANOSLEEP]   = sys_nanosleep_wrapper;
+    
+    /* 内存管理 */
+    syscall_table[SYS_BRK]         = sys_brk_wrapper;
     
     /* 杂项 / 系统控制 */
     syscall_table[SYS_REBOOT]      = sys_reboot_wrapper;

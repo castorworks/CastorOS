@@ -81,19 +81,20 @@ bool load_user_shell(void) {
     // 加载 ELF
     LOG_DEBUG_MSG("Shell: Loading ELF (size=%u)...\n", shell_size);
     uint32_t entry_point;
-    if (!elf_load(elf_data, shell_size, page_dir, &entry_point)) {
+    uint32_t program_end;
+    if (!elf_load(elf_data, shell_size, page_dir, &entry_point, &program_end)) {
         LOG_ERROR_MSG("Failed to load ELF\n");
         vmm_free_page_directory(page_dir_phys);
         kfree(elf_data);
         return false;
     }
     
-    LOG_DEBUG_MSG("Shell: ELF loaded, entry=%x\n", entry_point);
+    LOG_DEBUG_MSG("Shell: ELF loaded, entry=%x, program_end=%x\n", entry_point, program_end);
     kfree(elf_data);
     
     // 创建用户进程
     LOG_DEBUG_MSG("Shell: Creating user process...\n");
-    uint32_t pid = task_create_user_process("shell", entry_point, page_dir);
+    uint32_t pid = task_create_user_process("shell", entry_point, page_dir, program_end);
     if (pid == 0) {
         LOG_ERROR_MSG("Failed to create shell process\n");
         vmm_free_page_directory(page_dir_phys);
