@@ -15,6 +15,7 @@
 #define SHELL_MAX_ARGS              16
 #define SHELL_MAX_PATH_LENGTH       256
 #define SHELL_MAX_HISTORY           50
+#define SHELL_MAX_PIPE_STAGES       8
 #define SHELL_PROMPT                "root@CastorOS:~$ "
 #define SHELL_VERSION               "0.1.2"
 #define SHELL_CAT_ZERO_PREVIEW      4096
@@ -65,6 +66,12 @@ typedef struct {
     const char *usage;
     int (*handler)(int argc, char **argv);
 } shell_command_t;
+
+// 管道阶段结构
+typedef struct {
+    int argc;
+    char *argv[SHELL_MAX_ARGS];
+} pipe_stage_t;
 
 // ============================================================================
 // 全局变量
@@ -560,6 +567,11 @@ static int cmd_rmdir(int argc, char **argv);
 
 static uint32_t shell_parse_meminfo_value(const char *line);
 
+// 管道相关函数声明
+static int shell_parse_pipeline(char *line, pipe_stage_t *stages, int *num_stages);
+static int shell_execute_pipeline(pipe_stage_t *stages, int num_stages);
+static int shell_execute_single_command(int argc, char **argv);
+
 static uint32_t shell_parse_meminfo_value(const char *line) {
     if (!line) return 0;
     
@@ -610,7 +622,7 @@ static const shell_command_t commands[] = {
     
     // 文件操作命令
     {"ls",       "List directory contents",         "ls [path]",         cmd_ls},
-    {"cat",      "Display file contents",           "cat <file>",        cmd_cat},
+    {"cat",      "Display file contents or stdin",  "cat [file]",        cmd_cat},
     {"touch",    "Create an empty file",           "touch <file>",       cmd_touch},
     {"write",    "Write text to file",             "write <file> <text...>", cmd_write},
     {"rm",       "Remove a file",                  "rm <file>",         cmd_rm},
@@ -1438,29 +1450,37 @@ static int cmd_ls(int argc, char **argv) {
  * cat 命令 - 显示文件内容
  */
 static int cmd_cat(int argc, char **argv) {
+    int fd;
+    int should_close = 0;
+    int is_dev_zero = 0;
+    int is_dev_console = 0;
+    
     if (argc < 2) {
-        printf("Error: Usage: cat <file>\n");
-        return -1;
+        // 无参数：从 stdin 读取（支持管道）
+        fd = STDIN_FILENO;
+        should_close = 0;
+    } else {
+        // 有参数：从文件读取
+        char abs_path[SHELL_MAX_PATH_LENGTH];
+        if (shell_resolve_path(argv[1], abs_path, sizeof(abs_path)) != 0) {
+            printf("Error: Invalid path\n");
+            return -1;
+        }
+        
+        // 打开文件
+        fd = open(abs_path, O_RDONLY, 0);
+        if (fd < 0) {
+            printf("Error: Cannot open file '%s'\n", abs_path);
+            return -1;
+        }
+        should_close = 1;
+        is_dev_zero = (strcmp(abs_path, "/dev/zero") == 0);
+        is_dev_console = (strcmp(abs_path, "/dev/console") == 0);
     }
     
-    char abs_path[SHELL_MAX_PATH_LENGTH];
-    if (shell_resolve_path(argv[1], abs_path, sizeof(abs_path)) != 0) {
-        printf("Error: Invalid path\n");
-        return -1;
-    }
-    
-    // 打开文件
-    int fd = open(abs_path, O_RDONLY, 0);
-    if (fd < 0) {
-        printf("Error: Cannot open file '%s'\n", abs_path);
-        return -1;
-    }
-    
-    // 读取并显示文件内容
+    // 读取并显示内容
     char buffer[512];
     int bytes_read;
-    int is_dev_zero = (strcmp(abs_path, "/dev/zero") == 0);
-    int is_dev_console = (strcmp(abs_path, "/dev/console") == 0);
     size_t zero_bytes_previewed = 0;
     int reached_zero_limit = 0;
     int interrupted = 0;
@@ -1500,10 +1520,11 @@ static int cmd_cat(int argc, char **argv) {
     } else if (is_dev_zero && reached_zero_limit) {
         printf("\n[cat] /dev/zero produces infinite zero bytes. Stopped after %u bytes to keep the shell responsive.\n",
                (unsigned)SHELL_CAT_ZERO_PREVIEW);
-    } else {
-        printf("\n");
     }
-    close(fd);
+    
+    if (should_close) {
+        close(fd);
+    }
     return 0;
 }
 
@@ -1694,6 +1715,238 @@ static int cmd_rmdir(int argc, char **argv) {
 }
 
 // ============================================================================
+// 管道支持
+// ============================================================================
+
+/**
+ * 解析管道命令行
+ * 将 "cmd1 | cmd2 | cmd3" 分割成多个阶段
+ * 
+ * @param line 输入的命令行（会被修改）
+ * @param stages 输出的管道阶段数组
+ * @param num_stages 输出的阶段数量
+ * @return 0 成功，-1 失败
+ */
+static int shell_parse_pipeline(char *line, pipe_stage_t *stages, int *num_stages) {
+    *num_stages = 0;
+    
+    if (!line || !stages) {
+        return -1;
+    }
+    
+    char *segment = line;
+    char *pipe_pos;
+    
+    while ((pipe_pos = strchr(segment, '|')) != NULL && *num_stages < SHELL_MAX_PIPE_STAGES) {
+        // 将 '|' 替换为 '\0' 以分割字符串
+        *pipe_pos = '\0';
+        
+        // 解析当前段
+        pipe_stage_t *stage = &stages[*num_stages];
+        stage->argc = 0;
+        
+        // 跳过前导空格
+        while (*segment && isspace(*segment)) segment++;
+        
+        if (*segment != '\0') {
+            // 分割参数
+            char *p = segment;
+            while (*p && stage->argc < SHELL_MAX_ARGS) {
+                while (*p && isspace(*p)) p++;
+                if (*p == '\0') break;
+                
+                stage->argv[stage->argc++] = p;
+                
+                while (*p && !isspace(*p)) p++;
+                if (*p) {
+                    *p = '\0';
+                    p++;
+                }
+            }
+        }
+        
+        if (stage->argc > 0) {
+            (*num_stages)++;
+        }
+        
+        // 移动到下一段
+        segment = pipe_pos + 1;
+    }
+    
+    // 处理最后一段（或唯一一段）
+    if (*num_stages < SHELL_MAX_PIPE_STAGES) {
+        pipe_stage_t *stage = &stages[*num_stages];
+        stage->argc = 0;
+        
+        // 跳过前导空格
+        while (*segment && isspace(*segment)) segment++;
+        
+        if (*segment != '\0') {
+            char *p = segment;
+            while (*p && stage->argc < SHELL_MAX_ARGS) {
+                while (*p && isspace(*p)) p++;
+                if (*p == '\0') break;
+                
+                stage->argv[stage->argc++] = p;
+                
+                while (*p && !isspace(*p)) p++;
+                if (*p) {
+                    *p = '\0';
+                    p++;
+                }
+            }
+        }
+        
+        if (stage->argc > 0) {
+            (*num_stages)++;
+        }
+    }
+    
+    return 0;
+}
+
+/**
+ * 执行单个命令（在子进程中）
+ * 与 shell_execute_command 类似，但用于管道场景
+ */
+static int shell_execute_single_command(int argc, char **argv) {
+    if (argc == 0) return 0;
+    
+    const shell_command_t *cmd = NULL;
+    for (int i = 0; commands[i].name; i++) {
+        if (strcmp(commands[i].name, argv[0]) == 0) {
+            cmd = &commands[i];
+            break;
+        }
+    }
+    
+    if (!cmd) {
+        // 尝试作为外部命令执行
+        char abs_path[SHELL_MAX_PATH_LENGTH];
+        if (shell_resolve_path(argv[0], abs_path, sizeof(abs_path)) == 0) {
+            int fd = open(abs_path, O_RDONLY, 0);
+            if (fd >= 0) {
+                close(fd);
+                // 这是一个可执行文件，执行它
+                int ret = exec(abs_path);
+                printf("Error: exec failed for '%s' (code=%d)\n", abs_path, ret);
+                return -1;
+            }
+        }
+        printf("Error: Unknown command '%s'\n", argv[0]);
+        return -1;
+    }
+    
+    return cmd->handler(argc, argv);
+}
+
+/**
+ * 执行管道命令
+ * 
+ * 对于 "cmd1 | cmd2 | cmd3":
+ * 1. 创建 n-1 个管道
+ * 2. fork n 个子进程
+ * 3. 每个子进程设置适当的 stdin/stdout 重定向
+ * 4. 父进程等待所有子进程完成
+ */
+static int shell_execute_pipeline(pipe_stage_t *stages, int num_stages) {
+    if (num_stages <= 0) {
+        return 0;
+    }
+    
+    // 只有一个命令，不需要管道
+    if (num_stages == 1) {
+        return shell_execute_single_command(stages[0].argc, stages[0].argv);
+    }
+    
+    // 创建所有需要的管道
+    // pipes[i] 连接 stage[i] 和 stage[i+1]
+    int pipes[SHELL_MAX_PIPE_STAGES - 1][2];
+    
+    for (int i = 0; i < num_stages - 1; i++) {
+        if (pipe(pipes[i]) < 0) {
+            printf("Error: Failed to create pipe\n");
+            // 关闭已创建的管道
+            for (int j = 0; j < i; j++) {
+                close(pipes[j][0]);
+                close(pipes[j][1]);
+            }
+            return -1;
+        }
+    }
+    
+    // 保存子进程 PID
+    int pids[SHELL_MAX_PIPE_STAGES];
+    
+    // 为每个阶段创建子进程
+    for (int i = 0; i < num_stages; i++) {
+        int pid = fork();
+        
+        if (pid < 0) {
+            printf("Error: fork failed\n");
+            // 清理管道
+            for (int j = 0; j < num_stages - 1; j++) {
+                close(pipes[j][0]);
+                close(pipes[j][1]);
+            }
+            return -1;
+        }
+        
+        if (pid == 0) {
+            // 子进程
+            
+            // 设置 stdin（除了第一个阶段）
+            if (i > 0) {
+                // 从前一个管道的读端读取
+                dup2(pipes[i - 1][0], STDIN_FILENO);
+            }
+            
+            // 设置 stdout（除了最后一个阶段）
+            if (i < num_stages - 1) {
+                // 写入到当前管道的写端
+                dup2(pipes[i][1], STDOUT_FILENO);
+            }
+            
+            // 关闭所有管道文件描述符（子进程不再需要）
+            for (int j = 0; j < num_stages - 1; j++) {
+                close(pipes[j][0]);
+                close(pipes[j][1]);
+            }
+            
+            // 执行命令
+            int ret = shell_execute_single_command(stages[i].argc, stages[i].argv);
+            
+            // 退出子进程
+            exit(ret);
+        }
+        
+        // 父进程：保存子进程 PID
+        pids[i] = pid;
+    }
+    
+    // 父进程：关闭所有管道文件描述符
+    for (int i = 0; i < num_stages - 1; i++) {
+        close(pipes[i][0]);
+        close(pipes[i][1]);
+    }
+    
+    // 等待所有子进程完成
+    int last_status = 0;
+    for (int i = 0; i < num_stages; i++) {
+        int status;
+        waitpid(pids[i], &status, 0);
+        if (i == num_stages - 1) {
+            // 保存最后一个命令的退出状态
+            if (WIFEXITED(status)) {
+                last_status = WEXITSTATUS(status);
+            }
+        }
+    }
+    
+    return last_status;
+}
+
+// ============================================================================
 // Shell 核心函数
 // ============================================================================
 
@@ -1802,18 +2055,34 @@ static void shell_run(void) {
             continue;
         }
         
-        // 先添加到历史记录（在解析之前，因为解析会修改 buffer）
-        if (shell_state.input_buffer[0] != '\0') {
-            shell_add_history(shell_state.input_buffer);
+        // 跳过空行
+        if (shell_state.input_buffer[0] == '\0') {
+            continue;
         }
         
-        // 解析命令
-        if (shell_parse_command(shell_state.input_buffer, 
-                                &shell_state.argc, 
-                                shell_state.argv) == 0) {
-            if (shell_state.argc > 0) {
-                // 执行命令
-                shell_execute_command(shell_state.argc, shell_state.argv);
+        // 先添加到历史记录（在解析之前，因为解析会修改 buffer）
+        shell_add_history(shell_state.input_buffer);
+        
+        // 检查是否包含管道符号
+        if (strchr(shell_state.input_buffer, '|') != NULL) {
+            // 管道命令
+            pipe_stage_t stages[SHELL_MAX_PIPE_STAGES];
+            int num_stages = 0;
+            
+            if (shell_parse_pipeline(shell_state.input_buffer, stages, &num_stages) == 0) {
+                if (num_stages > 0) {
+                    shell_execute_pipeline(stages, num_stages);
+                }
+            }
+        } else {
+            // 普通命令
+            if (shell_parse_command(shell_state.input_buffer, 
+                                    &shell_state.argc, 
+                                    shell_state.argv) == 0) {
+                if (shell_state.argc > 0) {
+                    // 执行命令
+                    shell_execute_command(shell_state.argc, shell_state.argv);
+                }
             }
         }
     }

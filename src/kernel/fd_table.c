@@ -8,6 +8,7 @@
  */
 
 #include <kernel/fd_table.h>
+#include <fs/pipe.h>
 #include <lib/string.h>
 #include <lib/klog.h>
 
@@ -141,6 +142,11 @@ int32_t fd_table_copy(fd_table_t *src, fd_table_t *dst) {
             // 关键修复：增加引用计数，因为现在有两个fd指向同一个节点
             if (dst->entries[i].node) {
                 vfs_ref_node(dst->entries[i].node);
+                
+                // 如果是管道，还需要增加 readers/writers 计数
+                if (dst->entries[i].node->type == FS_PIPE) {
+                    pipe_on_dup(dst->entries[i].node);
+                }
             }
         } else {
             dst->entries[i].in_use = false;

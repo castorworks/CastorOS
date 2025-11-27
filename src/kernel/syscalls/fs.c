@@ -11,6 +11,7 @@
 #include <kernel/task.h>
 #include <kernel/fd_table.h>
 #include <fs/vfs.h>
+#include <fs/pipe.h>
 #include <lib/klog.h>
 #include <lib/string.h>
 
@@ -719,4 +720,179 @@ uint32_t sys_getdents(int32_t fd, uint32_t index, void *dirent) {
     memcpy(dirent, dir_entry, sizeof(struct dirent));
 
     return 0;
+}
+
+/* ============================================================================
+ * 管道系统调用
+ * ============================================================================ */
+
+/**
+ * sys_pipe - 创建管道
+ * @fds: 用户空间数组，fds[0] 为读端，fds[1] 为写端
+ */
+uint32_t sys_pipe(int32_t *fds) {
+    if (!fds) {
+        LOG_ERROR_MSG("sys_pipe: fds is NULL\n");
+        return (uint32_t)-1;
+    }
+    
+    task_t *current = task_get_current();
+    if (!current || !current->fd_table) {
+        LOG_ERROR_MSG("sys_pipe: no current task or fd_table\n");
+        return (uint32_t)-1;
+    }
+    
+    // 创建管道
+    fs_node_t *read_node = NULL;
+    fs_node_t *write_node = NULL;
+    
+    if (pipe_create(&read_node, &write_node) != 0) {
+        LOG_ERROR_MSG("sys_pipe: failed to create pipe\n");
+        return (uint32_t)-1;
+    }
+    
+    // 分配读端文件描述符
+    int32_t read_fd = fd_table_alloc(current->fd_table, read_node, O_RDONLY);
+    if (read_fd < 0) {
+        LOG_ERROR_MSG("sys_pipe: failed to allocate read fd\n");
+        vfs_release_node(read_node);
+        vfs_release_node(write_node);
+        return (uint32_t)-1;
+    }
+    
+    // 释放 pipe_create 的初始引用（fd_table_alloc 已增加引用）
+    vfs_release_node(read_node);
+    
+    // 分配写端文件描述符
+    int32_t write_fd = fd_table_alloc(current->fd_table, write_node, O_WRONLY);
+    if (write_fd < 0) {
+        LOG_ERROR_MSG("sys_pipe: failed to allocate write fd\n");
+        fd_table_free(current->fd_table, read_fd);
+        vfs_release_node(write_node);
+        return (uint32_t)-1;
+    }
+    
+    // 释放 pipe_create 的初始引用
+    vfs_release_node(write_node);
+    
+    // 设置返回值
+    fds[0] = read_fd;
+    fds[1] = write_fd;
+    
+    LOG_DEBUG_MSG("sys_pipe: created pipe (read_fd=%d, write_fd=%d)\n", read_fd, write_fd);
+    
+    return 0;
+}
+
+/* ============================================================================
+ * 文件描述符复制系统调用
+ * ============================================================================ */
+
+/**
+ * sys_dup - 复制文件描述符
+ * @oldfd: 要复制的文件描述符
+ */
+uint32_t sys_dup(int32_t oldfd) {
+    task_t *current = task_get_current();
+    if (!current || !current->fd_table) {
+        LOG_ERROR_MSG("sys_dup: no current task or fd_table\n");
+        return (uint32_t)-1;
+    }
+    
+    // 获取旧的文件描述符表项
+    fd_entry_t *old_entry = fd_table_get(current->fd_table, oldfd);
+    if (!old_entry || !old_entry->node) {
+        LOG_ERROR_MSG("sys_dup: invalid fd %d\n", oldfd);
+        return (uint32_t)-1;
+    }
+    
+    // 分配新的文件描述符（fd_table_alloc 会自动增加引用计数）
+    int32_t newfd = fd_table_alloc(current->fd_table, old_entry->node, old_entry->flags);
+    if (newfd < 0) {
+        LOG_ERROR_MSG("sys_dup: failed to allocate new fd\n");
+        return (uint32_t)-1;
+    }
+    
+    // 如果是管道，增加 readers/writers 计数
+    if (old_entry->node->type == FS_PIPE) {
+        pipe_on_dup(old_entry->node);
+    }
+    
+    // 复制偏移量
+    fd_entry_t *new_entry = fd_table_get(current->fd_table, newfd);
+    if (new_entry) {
+        new_entry->offset = old_entry->offset;
+    }
+    
+    LOG_DEBUG_MSG("sys_dup: duplicated fd %d -> %d\n", oldfd, newfd);
+    
+    return (uint32_t)newfd;
+}
+
+/**
+ * sys_dup2 - 复制文件描述符到指定编号
+ * @oldfd: 要复制的文件描述符
+ * @newfd: 目标文件描述符编号
+ */
+uint32_t sys_dup2(int32_t oldfd, int32_t newfd) {
+    // 如果 oldfd 和 newfd 相同，直接返回
+    if (oldfd == newfd) {
+        // 验证 oldfd 有效
+        task_t *current = task_get_current();
+        if (!current || !current->fd_table) {
+            return (uint32_t)-1;
+        }
+        fd_entry_t *entry = fd_table_get(current->fd_table, oldfd);
+        if (!entry || !entry->node) {
+            return (uint32_t)-1;
+        }
+        return (uint32_t)newfd;
+    }
+    
+    task_t *current = task_get_current();
+    if (!current || !current->fd_table) {
+        LOG_ERROR_MSG("sys_dup2: no current task or fd_table\n");
+        return (uint32_t)-1;
+    }
+    
+    // 检查 newfd 范围
+    if (newfd < 0 || newfd >= MAX_FDS) {
+        LOG_ERROR_MSG("sys_dup2: newfd %d out of range\n", newfd);
+        return (uint32_t)-1;
+    }
+    
+    // 获取旧的文件描述符表项
+    fd_entry_t *old_entry = fd_table_get(current->fd_table, oldfd);
+    if (!old_entry || !old_entry->node) {
+        LOG_ERROR_MSG("sys_dup2: invalid oldfd %d\n", oldfd);
+        return (uint32_t)-1;
+    }
+    
+    // 如果 newfd 已打开，先关闭它
+    fd_entry_t *existing = fd_table_get(current->fd_table, newfd);
+    if (existing && existing->in_use) {
+        fd_table_free(current->fd_table, newfd);
+    }
+    
+    // 手动设置新的文件描述符（直接操作表项，绕过 fd_table_alloc）
+    spinlock_lock(&current->fd_table->lock);
+    
+    current->fd_table->entries[newfd].node = old_entry->node;
+    current->fd_table->entries[newfd].offset = old_entry->offset;
+    current->fd_table->entries[newfd].flags = old_entry->flags;
+    current->fd_table->entries[newfd].in_use = true;
+    
+    // 增加引用计数
+    vfs_ref_node(old_entry->node);
+    
+    // 如果是管道，增加 readers/writers 计数
+    if (old_entry->node->type == FS_PIPE) {
+        pipe_on_dup(old_entry->node);
+    }
+    
+    spinlock_unlock(&current->fd_table->lock);
+    
+    LOG_DEBUG_MSG("sys_dup2: duplicated fd %d -> %d\n", oldfd, newfd);
+    
+    return (uint32_t)newfd;
 }

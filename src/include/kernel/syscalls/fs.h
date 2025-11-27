@@ -184,4 +184,35 @@ uint32_t sys_fstat(int32_t fd, struct stat *buf);
  */
 uint32_t sys_ftruncate(int32_t fd, uint32_t length);
 
+/**
+ * sys_pipe - 创建管道
+ * @fds: 用户空间数组，fds[0] 为读端，fds[1] 为写端
+ * 
+ * 返回值：
+ *   0: 成功
+ *   (uint32_t)-1: 错误
+ */
+uint32_t sys_pipe(int32_t *fds);
+
+/**
+ * sys_dup - 复制文件描述符
+ * @oldfd: 要复制的文件描述符
+ * 
+ * 返回值：
+ *   >= 0: 新的文件描述符
+ *   (uint32_t)-1: 错误
+ */
+uint32_t sys_dup(int32_t oldfd);
+
+/**
+ * sys_dup2 - 复制文件描述符到指定编号
+ * @oldfd: 要复制的文件描述符
+ * @newfd: 目标文件描述符编号
+ * 
+ * 返回值：
+ *   >= 0: 新的文件描述符（即 newfd）
+ *   (uint32_t)-1: 错误
+ */
+uint32_t sys_dup2(int32_t oldfd, int32_t newfd);
+
 #endif /* _KERNEL_SYSCALLS_FILE_H_ */

@@ -43,6 +43,9 @@ enum {
     SYS_CHDIR           = 0x010C,
     SYS_GETDENTS        = 0x010D,  // 读取目录项（简化版本，与 Linux getdents 接口不同）
     SYS_FTRUNCATE       = 0x010E,  // 截断文件到指定大小
+    SYS_PIPE            = 0x010F,  // 创建管道
+    SYS_DUP             = 0x0110,  // 复制文件描述符
+    SYS_DUP2            = 0x0111,  // 复制文件描述符到指定编号
 
     // -------------------- 内存管理 (0x02xx) --------------------
     SYS_BRK             = 0x0200,

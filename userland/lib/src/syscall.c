@@ -83,6 +83,18 @@ int ftruncate(int fd, off_t length) {
     return (int)syscall2(SYS_FTRUNCATE, (uint32_t)fd, (uint32_t)length);
 }
 
+int pipe(int fds[2]) {
+    return (int)syscall1(SYS_PIPE, (uint32_t)fds);
+}
+
+int dup(int oldfd) {
+    return (int)syscall1(SYS_DUP, (uint32_t)oldfd);
+}
+
+int dup2(int oldfd, int newfd) {
+    return (int)syscall2(SYS_DUP2, (uint32_t)oldfd, (uint32_t)newfd);
+}
+
 // 静态变量，用于 sbrk 跟踪当前堆位置
 static uint32_t _brk_current = 0;
 

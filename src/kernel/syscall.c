@@ -175,6 +175,24 @@ static uint32_t sys_ftruncate_wrapper(uint32_t *frame, uint32_t fd, uint32_t len
     return sys_ftruncate((int32_t)fd, length);
 }
 
+static uint32_t sys_pipe_wrapper(uint32_t *frame, uint32_t fds, uint32_t p2, uint32_t p3,
+                                 uint32_t p4, uint32_t p5) {
+    (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
+    return sys_pipe((int32_t *)fds);
+}
+
+static uint32_t sys_dup_wrapper(uint32_t *frame, uint32_t oldfd, uint32_t p2, uint32_t p3,
+                                uint32_t p4, uint32_t p5) {
+    (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
+    return sys_dup((int32_t)oldfd);
+}
+
+static uint32_t sys_dup2_wrapper(uint32_t *frame, uint32_t oldfd, uint32_t newfd, uint32_t p3,
+                                 uint32_t p4, uint32_t p5) {
+    (void)frame; (void)p3; (void)p4; (void)p5;
+    return sys_dup2((int32_t)oldfd, (int32_t)newfd);
+}
+
 static uint32_t sys_getpid_wrapper(uint32_t *frame, uint32_t p1, uint32_t p2, uint32_t p3,
                                    uint32_t p4, uint32_t p5) {
     (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
@@ -297,6 +315,9 @@ void syscall_init(void) {
     syscall_table[SYS_CHDIR]       = sys_chdir_wrapper;
     syscall_table[SYS_GETDENTS]    = sys_getdents_wrapper;
     syscall_table[SYS_FTRUNCATE]   = sys_ftruncate_wrapper;
+    syscall_table[SYS_PIPE]        = sys_pipe_wrapper;
+    syscall_table[SYS_DUP]         = sys_dup_wrapper;
+    syscall_table[SYS_DUP2]        = sys_dup2_wrapper;
     
     /* 时间相关 */
     syscall_table[SYS_TIME]        = sys_time_wrapper;
