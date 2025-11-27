@@ -26,10 +26,10 @@
 + [x] [FAT32 文件系统](./docs/08-fat32.md)
 + [x] [用户模式](./docs/09-usermode.md)
 + [x] [同步机制](./docs/10-sync.md)
++ [x] [系统增强](./docs/11-system-enhancement.md)
 
 ## 下一步安排
 
-+ [ ] [系统功能完善](./docs/11-system-enhancement.md)
 + [ ] [IBM ThinkPad T41 显卡驱动](./docs/12-ibm-thinkpad-t41-graphics.md)
 + [ ] [网络栈](./docs/13-network.md)
 + [ ] [intel E1000 网卡驱动](./docs/14-intel-e1000-network-card-driver.md)
