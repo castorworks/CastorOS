@@ -126,4 +126,24 @@ struct stat {
 #define S_ISFIFO(m) (((m) & S_IFMT) == S_IFIFO)   // 是否为 FIFO
 #define S_ISLNK(m)  (((m) & S_IFMT) == S_IFLNK)   // 是否为符号链接
 
+/* ============================================================================
+ * mmap 相关常量定义
+ * ============================================================================ */
+
+/* 内存保护标志（prot 参数） */
+#define PROT_NONE   0x0     // 不可访问
+#define PROT_READ   0x1     // 可读
+#define PROT_WRITE  0x2     // 可写
+#define PROT_EXEC   0x4     // 可执行
+
+/* 映射标志（flags 参数） */
+#define MAP_SHARED      0x01    // 共享映射（修改可见于其他进程）
+#define MAP_PRIVATE     0x02    // 私有映射（写时复制）
+#define MAP_FIXED       0x10    // 使用指定地址（不推荐）
+#define MAP_ANONYMOUS   0x20    // 匿名映射（不关联文件）
+#define MAP_ANON        MAP_ANONYMOUS  // 别名
+
+/* 映射失败返回值 */
+#define MAP_FAILED      ((void *)-1)
+
 #endif /* _USERLAND_LIB_TYPES_H_ */

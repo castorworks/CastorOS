@@ -137,6 +137,26 @@ void *sbrk(int increment) {
     return (void *)old_brk;
 }
 
+void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset) {
+    // 使用 syscall6：6 个参数分别通过 ebx, ecx, edx, esi, edi, ebp 传递
+    uint32_t result = syscall6(SYS_MMAP, 
+                               (uint32_t)addr, 
+                               (uint32_t)length, 
+                               (uint32_t)prot, 
+                               (uint32_t)flags, 
+                               (uint32_t)fd,
+                               (uint32_t)offset);
+    
+    if (result == (uint32_t)-1) {
+        return MAP_FAILED;
+    }
+    return (void *)result;
+}
+
+int munmap(void *addr, size_t length) {
+    return (int)syscall2(SYS_MUNMAP, (uint32_t)addr, (uint32_t)length);
+}
+
 size_t strlen_simple(const char *str) {
     if (!str) {
         return 0;

@@ -18,9 +18,6 @@ BUILD_DIR = build
 KERNEL = $(BUILD_DIR)/castor.bin
 DISK_IMAGE = $(BUILD_DIR)/bootable.img
 
-# Shell 文件
-SHELL_ELF = userland/shell/shell.elf
-
 # 源文件
 C_SOURCES = $(wildcard $(SRC_DIR)/drivers/*.c) \
 	$(wildcard $(SRC_DIR)/fs/*.c) \
@@ -103,7 +100,7 @@ tests:
 	@$(MAKE) -C userland/tests
 
 # 创建可启动的磁盘镜像
-disk: $(KERNEL) shell hello
+disk: $(KERNEL) shell hello tests
 	@bash $(CREATE_SCRIPT)
 
 run-disk: disk

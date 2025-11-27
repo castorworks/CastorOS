@@ -257,6 +257,20 @@ static uint32_t sys_brk_wrapper(uint32_t *frame, uint32_t addr, uint32_t p2,
     return sys_brk(addr);
 }
 
+static uint32_t sys_mmap_wrapper(uint32_t *frame, uint32_t addr, uint32_t length,
+                                 uint32_t prot, uint32_t flags, uint32_t fd) {
+    // frame[7] 是用户态传递的 ebp，我们用它作为第 6 个参数 (offset)
+    // 用户态需要在调用 int 0x80 前将 offset 放入 ebp
+    uint32_t offset = frame[7];
+    return sys_mmap(addr, length, prot, flags, (int32_t)fd, offset);
+}
+
+static uint32_t sys_munmap_wrapper(uint32_t *frame, uint32_t addr, uint32_t length,
+                                   uint32_t p3, uint32_t p4, uint32_t p5) {
+    (void)frame; (void)p3; (void)p4; (void)p5;
+    return sys_munmap(addr, length);
+}
+
 uint32_t syscall_dispatcher(uint32_t syscall_num, uint32_t p1, uint32_t p2, 
                             uint32_t p3, uint32_t p4, uint32_t p5, uint32_t *frame) {
     /* 检查系统调用号是否在有效范围内 */
@@ -325,6 +339,8 @@ void syscall_init(void) {
     
     /* 内存管理 */
     syscall_table[SYS_BRK]         = sys_brk_wrapper;
+    syscall_table[SYS_MMAP]        = sys_mmap_wrapper;
+    syscall_table[SYS_MUNMAP]      = sys_munmap_wrapper;
     
     /* 杂项 / 系统控制 */
     syscall_table[SYS_REBOOT]      = sys_reboot_wrapper;

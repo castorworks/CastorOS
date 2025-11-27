@@ -114,6 +114,56 @@ static inline __maybe_unused uint32_t syscall4(uint32_t num, uint32_t arg0,
     return __syscall4(num, arg0, arg1, arg2, arg3);
 }
 
+// 5 参数系统调用（使用 edi 寄存器）
+static inline __maybe_unused uint32_t __syscall5(uint32_t num, uint32_t arg0,
+                                                 uint32_t arg1,
+                                                 uint32_t arg2,
+                                                 uint32_t arg3,
+                                                 uint32_t arg4) {
+    uint32_t ret;
+    __asm__ volatile (
+        "int $0x80"
+        : "=a"(ret)
+        : "a"(num), "b"(arg0), "c"(arg1), "d"(arg2), "S"(arg3), "D"(arg4)
+        : "memory", "cc"
+    );
+    return ret;
+}
+
+static inline __maybe_unused uint32_t syscall5(uint32_t num, uint32_t arg0,
+                                               uint32_t arg1,
+                                               uint32_t arg2,
+                                               uint32_t arg3,
+                                               uint32_t arg4) {
+    return __syscall5(num, arg0, arg1, arg2, arg3, arg4);
+}
+
+// 6 参数系统调用（使用 ebp 寄存器作为第 6 个参数）
+// 注意：ebp 会被内核从中断帧中读取
+static inline __maybe_unused uint32_t __syscall6(uint32_t num, uint32_t arg0,
+                                                 uint32_t arg1, uint32_t arg2,
+                                                 uint32_t arg3, uint32_t arg4,
+                                                 uint32_t arg5) {
+    uint32_t ret;
+    __asm__ volatile (
+        "push %%ebp\n\t"        // 保存原 ebp
+        "mov %7, %%ebp\n\t"     // 将第 6 个参数放入 ebp
+        "int $0x80\n\t"
+        "pop %%ebp"             // 恢复原 ebp
+        : "=a"(ret)
+        : "a"(num), "b"(arg0), "c"(arg1), "d"(arg2), "S"(arg3), "D"(arg4), "g"(arg5)
+        : "memory", "cc"
+    );
+    return ret;
+}
+
+static inline __maybe_unused uint32_t syscall6(uint32_t num, uint32_t arg0,
+                                               uint32_t arg1, uint32_t arg2,
+                                               uint32_t arg3, uint32_t arg4,
+                                               uint32_t arg5) {
+    return __syscall6(num, arg0, arg1, arg2, arg3, arg4, arg5);
+}
+
 // ============================================================================
 // 用户态封装函数声明
 // ============================================================================
@@ -177,6 +227,31 @@ void *brk(void *addr);
  * @return 成功返回之前的堆结束地址，失败返回 (void *)-1
  */
 void *sbrk(int increment);
+
+/**
+ * mmap - 内存映射（简化版：仅支持匿名映射）
+ * @param addr 建议的映射地址（NULL 表示由内核选择）
+ * @param length 映射长度（字节）
+ * @param prot 保护标志（PROT_READ, PROT_WRITE, PROT_EXEC）
+ * @param flags 映射标志（必须包含 MAP_ANONYMOUS）
+ * @param fd 文件描述符（匿名映射时应传 -1）
+ * @param offset 文件偏移（匿名映射时应传 0）
+ * @return 成功返回映射的虚拟地址，失败返回 MAP_FAILED
+ * 
+ * 使用示例：
+ *   void *p = mmap(NULL, 4096, PROT_READ|PROT_WRITE, 
+ *                  MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+ *   if (p == MAP_FAILED) { // 处理错误 }
+ */
+void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+
+/**
+ * munmap - 取消内存映射
+ * @param addr 映射起始地址
+ * @param length 取消映射的长度
+ * @return 成功返回 0，失败返回 -1
+ */
+int munmap(void *addr, size_t length);
 
 size_t strlen_simple(const char *str);
 void print(const char *msg);

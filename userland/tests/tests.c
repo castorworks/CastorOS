@@ -181,6 +181,136 @@ static void test_brk(void) {
     printf("\n[Summary] Heap operations completed successfully\n");
 }
 
+// 测试 mmap/munmap 系统调用
+static void test_mmap(void) {
+    printf("\n=== Testing mmap()/munmap() ===\n");
+    
+    // 测试 1: 基本匿名映射 - 分配一页内存
+    printf("\n[1] Anonymous mmap (4096 bytes):\n");
+    void *ptr1 = mmap(NULL, 4096, PROT_READ | PROT_WRITE, 
+                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (ptr1 == MAP_FAILED) {
+        printf("  Error: mmap failed\n");
+        return;
+    }
+    printf("  Mapped at: 0x%x\n", (uint32_t)ptr1);
+    
+    // 验证映射的内存是零初始化的
+    uint32_t *int_ptr = (uint32_t *)ptr1;
+    int is_zeroed = 1;
+    for (int i = 0; i < 16; i++) {
+        if (int_ptr[i] != 0) {
+            is_zeroed = 0;
+            break;
+        }
+    }
+    if (is_zeroed) {
+        printf("  OK: Memory is zero-initialized\n");
+    } else {
+        printf("  Warning: Memory not zero-initialized\n");
+    }
+    
+    // 测试 2: 写入和读取 mmap 的内存
+    printf("\n[2] Write/read mmap memory:\n");
+    int_ptr[0] = 0xDEADBEEF;
+    int_ptr[1] = 0xCAFEBABE;
+    int_ptr[2] = 0x12345678;
+    int_ptr[255] = 0xFEEDFACE;  // 最后一个 uint32_t（接近页末尾）
+    
+    printf("  Written: 0x%x, 0x%x, 0x%x, ..., 0x%x\n", 
+           int_ptr[0], int_ptr[1], int_ptr[2], int_ptr[255]);
+    
+    if (int_ptr[0] == 0xDEADBEEF && int_ptr[1] == 0xCAFEBABE && 
+        int_ptr[2] == 0x12345678 && int_ptr[255] == 0xFEEDFACE) {
+        printf("  OK: Memory read/write successful\n");
+    } else {
+        printf("  Error: Memory corruption detected!\n");
+    }
+    
+    // 测试 3: 分配多页内存
+    printf("\n[3] Anonymous mmap (16384 bytes = 4 pages):\n");
+    void *ptr2 = mmap(NULL, 16384, PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (ptr2 == MAP_FAILED) {
+        printf("  Error: mmap failed\n");
+    } else {
+        printf("  Mapped at: 0x%x\n", (uint32_t)ptr2);
+        
+        // 写入每个页的开头
+        uint32_t *mp = (uint32_t *)ptr2;
+        mp[0] = 0x11111111;           // 第 1 页
+        mp[1024] = 0x22222222;        // 第 2 页
+        mp[2048] = 0x33333333;        // 第 3 页
+        mp[3072] = 0x44444444;        // 第 4 页
+        
+        if (mp[0] == 0x11111111 && mp[1024] == 0x22222222 &&
+            mp[2048] == 0x33333333 && mp[3072] == 0x44444444) {
+            printf("  OK: Multi-page read/write successful\n");
+        } else {
+            printf("  Error: Multi-page memory corruption!\n");
+        }
+    }
+    
+    // 测试 4: munmap 释放第一个映射
+    printf("\n[4] munmap first mapping:\n");
+    int ret = munmap(ptr1, 4096);
+    if (ret == 0) {
+        printf("  OK: munmap succeeded\n");
+    } else {
+        printf("  Error: munmap failed\n");
+    }
+    
+    // 测试 5: 再次分配内存，可能会复用刚释放的地址
+    printf("\n[5] Allocate again after munmap:\n");
+    void *ptr3 = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (ptr3 == MAP_FAILED) {
+        printf("  Error: mmap failed\n");
+    } else {
+        printf("  Mapped at: 0x%x\n", (uint32_t)ptr3);
+        if ((uint32_t)ptr3 == (uint32_t)ptr1) {
+            printf("  Note: Address was reused (expected behavior)\n");
+        }
+    }
+    
+    // 测试 6: munmap 多页映射
+    printf("\n[6] munmap multi-page mapping:\n");
+    if (ptr2 != MAP_FAILED) {
+        ret = munmap(ptr2, 16384);
+        if (ret == 0) {
+            printf("  OK: munmap 4 pages succeeded\n");
+        } else {
+            printf("  Error: munmap failed\n");
+        }
+    }
+    
+    // 测试 7: 只读映射测试
+    printf("\n[7] Read-only mmap:\n");
+    void *ptr_ro = mmap(NULL, 4096, PROT_READ,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (ptr_ro == MAP_FAILED) {
+        printf("  Error: mmap failed\n");
+    } else {
+        printf("  Mapped read-only at: 0x%x\n", (uint32_t)ptr_ro);
+        // 读取应该成功
+        uint32_t val = *(uint32_t *)ptr_ro;
+        printf("  OK: Read value: 0x%x (should be 0)\n", val);
+        // 注意：写入会触发页错误，这里不测试
+        munmap(ptr_ro, 4096);
+    }
+    
+    // 测试 8: 清理最后一个映射
+    printf("\n[8] Cleanup:\n");
+    if (ptr3 != MAP_FAILED) {
+        ret = munmap(ptr3, 4096);
+        if (ret == 0) {
+            printf("  OK: Final cleanup succeeded\n");
+        }
+    }
+    
+    printf("\n[Summary] mmap/munmap tests completed\n");
+}
+
 // 主函数
 void _start(void) {
     printf("========================================\n");
@@ -194,6 +324,9 @@ void _start(void) {
     
     // 运行 brk/sbrk 测试
     test_brk();
+    
+    // 运行 mmap/munmap 测试
+    test_mmap();
     
     printf("\n========================================\n");
     printf("    All tests completed!\n");
