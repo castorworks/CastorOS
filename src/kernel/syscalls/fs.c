@@ -896,3 +896,30 @@ uint32_t sys_dup2(int32_t oldfd, int32_t newfd) {
     
     return (uint32_t)newfd;
 }
+
+/* ============================================================================
+ * 文件重命名系统调用
+ * ============================================================================ */
+
+/**
+ * sys_rename - 重命名文件或目录
+ * @oldpath: 原路径
+ * @newpath: 新路径
+ */
+uint32_t sys_rename(const char *oldpath, const char *newpath) {
+    if (!oldpath || !newpath) {
+        LOG_ERROR_MSG("sys_rename: invalid arguments (oldpath=%p, newpath=%p)\n", 
+                      oldpath, newpath);
+        return (uint32_t)-1;
+    }
+    
+    LOG_DEBUG_MSG("sys_rename: '%s' -> '%s'\n", oldpath, newpath);
+    
+    // 调用 VFS 层的重命名函数
+    if (vfs_rename(oldpath, newpath) != 0) {
+        LOG_ERROR_MSG("sys_rename: failed to rename '%s' to '%s'\n", oldpath, newpath);
+        return (uint32_t)-1;
+    }
+    
+    return 0;
+}

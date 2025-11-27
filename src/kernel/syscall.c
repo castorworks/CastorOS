@@ -8,6 +8,7 @@
 #include <kernel/syscalls/time.h>
 #include <kernel/syscalls/system.h>
 #include <kernel/syscalls/mm.h>
+#include <kernel/utsname.h>
 #include <kernel/task.h>
 #include <kernel/idt.h>
 #include <kernel/gdt.h>
@@ -271,6 +272,18 @@ static uint32_t sys_munmap_wrapper(uint32_t *frame, uint32_t addr, uint32_t leng
     return sys_munmap(addr, length);
 }
 
+static uint32_t sys_uname_wrapper(uint32_t *frame, uint32_t buf, uint32_t p2,
+                                  uint32_t p3, uint32_t p4, uint32_t p5) {
+    (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
+    return sys_uname((struct utsname *)buf);
+}
+
+static uint32_t sys_rename_wrapper(uint32_t *frame, uint32_t oldpath, uint32_t newpath,
+                                   uint32_t p3, uint32_t p4, uint32_t p5) {
+    (void)frame; (void)p3; (void)p4; (void)p5;
+    return sys_rename((const char *)oldpath, (const char *)newpath);
+}
+
 uint32_t syscall_dispatcher(uint32_t syscall_num, uint32_t p1, uint32_t p2, 
                             uint32_t p3, uint32_t p4, uint32_t p5, uint32_t *frame) {
     /* 检查系统调用号是否在有效范围内 */
@@ -324,7 +337,8 @@ void syscall_init(void) {
     syscall_table[SYS_STAT]        = sys_stat_wrapper;
     syscall_table[SYS_FSTAT]       = sys_fstat_wrapper;
     syscall_table[SYS_MKDIR]       = sys_mkdir_wrapper;  
-    syscall_table[SYS_UNLINK]      = sys_unlink_wrapper; 
+    syscall_table[SYS_UNLINK]      = sys_unlink_wrapper;
+    syscall_table[SYS_RENAME]      = sys_rename_wrapper; 
     syscall_table[SYS_GETCWD]      = sys_getcwd_wrapper;
     syscall_table[SYS_CHDIR]       = sys_chdir_wrapper;
     syscall_table[SYS_GETDENTS]    = sys_getdents_wrapper;
@@ -345,6 +359,7 @@ void syscall_init(void) {
     /* 杂项 / 系统控制 */
     syscall_table[SYS_REBOOT]      = sys_reboot_wrapper;
     syscall_table[SYS_POWEROFF]    = sys_poweroff_wrapper;
+    syscall_table[SYS_UNAME]       = sys_uname_wrapper;
     
     /* 注册 INT 0x80 处理程序 */
     idt_set_gate(0x80, (uint32_t)syscall_handler, GDT_KERNEL_CODE_SEGMENT, IDT_FLAG_PRESENT | IDT_FLAG_RING3 | IDT_FLAG_GATE_TRAP);

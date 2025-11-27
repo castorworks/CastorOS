@@ -587,6 +587,115 @@ int vfs_truncate(fs_node_t *node, uint32_t new_size) {
     return 0;
 }
 
+// 重命名文件或目录
+int vfs_rename(const char *oldpath, const char *newpath) {
+    if (!oldpath || !newpath || !fs_root) {
+        LOG_ERROR_MSG("vfs_rename: invalid arguments\n");
+        return -1;
+    }
+    
+    // 不能重命名根目录
+    if (strcmp(oldpath, "/") == 0 || strcmp(newpath, "/") == 0) {
+        LOG_ERROR_MSG("vfs_rename: cannot rename root directory\n");
+        return -1;
+    }
+    
+    // 解析旧路径：找到最后一个 '/' 分隔符
+    const char *old_last_slash = NULL;
+    const char *p = oldpath;
+    while (*p) {
+        if (*p == '/') {
+            old_last_slash = p;
+        }
+        p++;
+    }
+    
+    // 解析新路径：找到最后一个 '/' 分隔符
+    const char *new_last_slash = NULL;
+    p = newpath;
+    while (*p) {
+        if (*p == '/') {
+            new_last_slash = p;
+        }
+        p++;
+    }
+    
+    // 获取旧路径的父目录和文件名
+    char old_parent_path[256];
+    const char *old_name;
+    
+    if (old_last_slash == NULL || old_last_slash == oldpath) {
+        // 在根目录下
+        old_parent_path[0] = '/';
+        old_parent_path[1] = '\0';
+        old_name = (old_last_slash == oldpath) ? oldpath + 1 : oldpath;
+    } else {
+        uint32_t len = old_last_slash - oldpath;
+        if (len >= 256) {
+            LOG_ERROR_MSG("vfs_rename: old path too long\n");
+            return -1;
+        }
+        strncpy(old_parent_path, oldpath, len);
+        old_parent_path[len] = '\0';
+        old_name = old_last_slash + 1;
+    }
+    
+    // 获取新路径的父目录和文件名
+    char new_parent_path[256];
+    const char *new_name;
+    
+    if (new_last_slash == NULL || new_last_slash == newpath) {
+        // 在根目录下
+        new_parent_path[0] = '/';
+        new_parent_path[1] = '\0';
+        new_name = (new_last_slash == newpath) ? newpath + 1 : newpath;
+    } else {
+        uint32_t len = new_last_slash - newpath;
+        if (len >= 256) {
+            LOG_ERROR_MSG("vfs_rename: new path too long\n");
+            return -1;
+        }
+        strncpy(new_parent_path, newpath, len);
+        new_parent_path[len] = '\0';
+        new_name = new_last_slash + 1;
+    }
+    
+    // 检查是否在同一目录下（当前仅支持同一目录下的重命名）
+    if (strcmp(old_parent_path, new_parent_path) != 0) {
+        LOG_ERROR_MSG("vfs_rename: cross-directory rename not supported yet\n");
+        LOG_ERROR_MSG("  old_parent='%s', new_parent='%s'\n", old_parent_path, new_parent_path);
+        return -1;
+    }
+    
+    // 查找父目录
+    fs_node_t *parent = vfs_path_to_node(old_parent_path);
+    if (!parent || parent->type != FS_DIRECTORY) {
+        LOG_ERROR_MSG("vfs_rename: parent directory not found or not a directory\n");
+        vfs_release_node(parent);
+        return -1;
+    }
+    
+    // 检查文件系统是否支持重命名操作
+    if (!parent->rename) {
+        LOG_ERROR_MSG("vfs_rename: filesystem does not support rename operation\n");
+        vfs_release_node(parent);
+        return -1;
+    }
+    
+    // 调用文件系统的重命名操作
+    int result = parent->rename(parent, old_name, new_name);
+    
+    vfs_release_node(parent);
+    
+    if (result == 0) {
+        LOG_DEBUG_MSG("vfs_rename: '%s' -> '%s' success\n", oldpath, newpath);
+    } else {
+        LOG_ERROR_MSG("vfs_rename: '%s' -> '%s' failed\n", oldpath, newpath);
+    }
+    
+    return result;
+}
+
 // 挂载文件系统到指定路径
 int vfs_mount(const char *path, fs_node_t *root) {
     if (!path || !root || !fs_root) {

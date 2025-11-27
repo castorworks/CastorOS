@@ -107,6 +107,7 @@ static int ramfs_remove_entry(ramfs_dir_t *dir, const char *name) {
 
 // 前向声明
 static int ramfs_unlink(fs_node_t *node, const char *name);
+static int ramfs_rename(fs_node_t *node, const char *old_name, const char *new_name);
 
 /**
  * 读取文件
@@ -462,6 +463,7 @@ static int ramfs_mkdir(fs_node_t *node, const char *name, uint32_t permissions) 
     new_node->create = ramfs_create_file;
     new_node->mkdir = ramfs_mkdir;
     new_node->unlink = ramfs_unlink;
+    new_node->rename = ramfs_rename;
     
     // 添加到父目录
     if (ramfs_add_entry(parent_dir, name, new_node) != 0) {
@@ -472,6 +474,61 @@ static int ramfs_mkdir(fs_node_t *node, const char *name, uint32_t permissions) 
     }
     
     mutex_unlock(&parent_dir->lock);
+    return 0;
+}
+
+/**
+ * 重命名文件或目录（VFS 操作函数）
+ */
+static int ramfs_rename(fs_node_t *node, const char *old_name, const char *new_name) {
+    if (node->type != FS_DIRECTORY) {
+        return -1;
+    }
+    
+    ramfs_dir_t *dir = (ramfs_dir_t *)node->impl;
+    if (!dir) {
+        return -1;
+    }
+    
+    // 检查参数有效性
+    if (!old_name || !new_name || old_name[0] == '\0' || new_name[0] == '\0') {
+        return -1;
+    }
+    
+    // 如果新旧名字相同，直接返回成功
+    if (strcmp(old_name, new_name) == 0) {
+        return 0;
+    }
+    
+    // 加锁保护目录修改
+    mutex_lock(&dir->lock);
+    
+    // 查找要重命名的条目
+    ramfs_dirent_t *entry = ramfs_find_entry(dir, old_name);
+    if (!entry) {
+        mutex_unlock(&dir->lock);
+        LOG_ERROR_MSG("ramfs_rename: '%s' not found\n", old_name);
+        return -1;  // 源文件不存在
+    }
+    
+    // 检查目标名字是否已存在
+    if (ramfs_find_entry(dir, new_name)) {
+        mutex_unlock(&dir->lock);
+        LOG_ERROR_MSG("ramfs_rename: '%s' already exists\n", new_name);
+        return -1;  // 目标文件已存在
+    }
+    
+    // 更新目录项的名字
+    strncpy(entry->name, new_name, 127);
+    entry->name[127] = '\0';
+    
+    // 更新节点的名字
+    strncpy(entry->node->name, new_name, 127);
+    entry->node->name[127] = '\0';
+    
+    mutex_unlock(&dir->lock);
+    
+    LOG_DEBUG_MSG("ramfs_rename: '%s' -> '%s' success\n", old_name, new_name);
     return 0;
 }
 
@@ -586,6 +643,7 @@ fs_node_t *ramfs_create(const char *name) {
     root->create = ramfs_create_file;
     root->mkdir = ramfs_mkdir;
     root->unlink = ramfs_unlink;
+    root->rename = ramfs_rename;
     
     return root;
 }

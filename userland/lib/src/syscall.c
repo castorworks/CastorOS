@@ -184,3 +184,10 @@ int poweroff(void) {
     return (int)syscall0(SYS_POWEROFF);
 }
 
+int uname(struct utsname *buf) {
+    return (int)syscall1(SYS_UNAME, (uint32_t)buf);
+}
+
+int rename(const char *oldpath, const char *newpath) {
+    return (int)syscall2(SYS_RENAME, (uint32_t)oldpath, (uint32_t)newpath);
+}

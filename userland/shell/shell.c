@@ -547,6 +547,7 @@ static int cmd_clear(int argc, char **argv);
 static int cmd_history(int argc, char **argv);
 
 // 系统信息命令
+static int cmd_uname(int argc, char **argv);
 static int cmd_uptime(int argc, char **argv);
 static int cmd_free(int argc, char **argv);
 static int cmd_ps(int argc, char **argv);
@@ -562,6 +563,7 @@ static int cmd_cat(int argc, char **argv);
 static int cmd_touch(int argc, char **argv);
 static int cmd_write(int argc, char **argv);
 static int cmd_rm(int argc, char **argv);
+static int cmd_mv(int argc, char **argv);
 static int cmd_mkdir(int argc, char **argv);
 static int cmd_rmdir(int argc, char **argv);
 
@@ -600,7 +602,8 @@ static const shell_command_t commands[] = {
     {"exit",     "Exit shell",                     "exit",              cmd_exit},
     {"history",  "Show command history",           "history",           cmd_history},
     
-    // 运行时间
+    // 系统信息
+    {"uname",    "Print system information",       "uname [-a]",        cmd_uname},
     {"uptime",   "Show system uptime",             "uptime",            cmd_uptime},
     
     // 内存管理命令
@@ -626,6 +629,7 @@ static const shell_command_t commands[] = {
     {"touch",    "Create an empty file",           "touch <file>",       cmd_touch},
     {"write",    "Write text to file",             "write <file> <text...>", cmd_write},
     {"rm",       "Remove a file",                  "rm <file>",         cmd_rm},
+    {"mv",       "Move or rename file/directory", "mv <src> <dst>",    cmd_mv},
     {"mkdir",    "Create a directory",             "mkdir <dir>",       cmd_mkdir},
     {"rmdir",    "Remove a directory",             "rmdir <dir>",        cmd_rmdir},
     
@@ -748,6 +752,46 @@ static int cmd_exit(int argc, char **argv) {
 // ============================================================================
 // 系统信息命令实现
 // ============================================================================
+
+/**
+ * uname 命令 - 显示系统信息
+ * 
+ * 用法: uname [-a]
+ *   无参数: 仅显示系统名称
+ *   -a: 显示所有信息
+ */
+static int cmd_uname(int argc, char **argv) {
+    struct utsname info;
+    
+    if (uname(&info) != 0) {
+        printf("Error: Failed to get system information\n");
+        return -1;
+    }
+    
+    // 检查是否有 -a 参数
+    int show_all = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-a") == 0) {
+            show_all = 1;
+            break;
+        }
+    }
+    
+    if (show_all) {
+        // 显示所有信息：sysname nodename release version machine
+        printf("%s %s %s %s %s\n", 
+               info.sysname, 
+               info.nodename, 
+               info.release, 
+               info.version, 
+               info.machine);
+    } else {
+        // 仅显示系统名称
+        printf("%s\n", info.sysname);
+    }
+    
+    return 0;
+}
 
 /**
  * uptime 命令 - 显示系统运行时间
@@ -1653,6 +1697,44 @@ static int cmd_rm(int argc, char **argv) {
     }
     
     printf("File '%s' removed\n", abs_path);
+    return 0;
+}
+
+/**
+ * mv 命令 - 移动或重命名文件/目录
+ * 
+ * 用法: mv <source> <destination>
+ * 
+ * 注意: 当前仅支持同一目录下的重命名
+ */
+static int cmd_mv(int argc, char **argv) {
+    if (argc < 3) {
+        printf("Error: Usage: mv <source> <destination>\n");
+        return -1;
+    }
+    
+    // 解析源路径
+    char src_path[SHELL_MAX_PATH_LENGTH];
+    if (shell_resolve_path(argv[1], src_path, sizeof(src_path)) != 0) {
+        printf("Error: Invalid source path\n");
+        return -1;
+    }
+    
+    // 解析目标路径
+    char dst_path[SHELL_MAX_PATH_LENGTH];
+    if (shell_resolve_path(argv[2], dst_path, sizeof(dst_path)) != 0) {
+        printf("Error: Invalid destination path\n");
+        return -1;
+    }
+    
+    // 调用 rename 系统调用
+    if (rename(src_path, dst_path) != 0) {
+        printf("Error: Failed to move '%s' to '%s'\n", src_path, dst_path);
+        printf("Note: Currently only same-directory rename is supported\n");
+        return -1;
+    }
+    
+    printf("Moved '%s' -> '%s'\n", src_path, dst_path);
     return 0;
 }
 

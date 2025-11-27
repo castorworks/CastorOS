@@ -215,4 +215,17 @@ uint32_t sys_dup(int32_t oldfd);
  */
 uint32_t sys_dup2(int32_t oldfd, int32_t newfd);
 
+/**
+ * sys_rename - 重命名文件或目录
+ * @oldpath: 原路径
+ * @newpath: 新路径
+ * 
+ * 返回值：
+ *   0: 成功
+ *   (uint32_t)-1: 错误
+ * 
+ * 注意：当前仅支持同一目录下的重命名
+ */
+uint32_t sys_rename(const char *oldpath, const char *newpath);
+
 #endif /* _KERNEL_SYSCALLS_FILE_H_ */

@@ -253,6 +253,21 @@ void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
  */
 int munmap(void *addr, size_t length);
 
+/**
+ * uname - 获取系统信息
+ * @param buf utsname 结构体指针
+ * @return 0 成功，-1 失败
+ */
+int uname(struct utsname *buf);
+
+/**
+ * rename - 重命名文件或目录
+ * @param oldpath 原路径
+ * @param newpath 新路径
+ * @return 0 成功，-1 失败
+ */
+int rename(const char *oldpath, const char *newpath);
+
 size_t strlen_simple(const char *str);
 void print(const char *msg);
 int reboot(void);

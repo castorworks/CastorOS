@@ -41,6 +41,7 @@ typedef int (*create_type_t)(struct fs_node *node, const char *name);
 typedef int (*mkdir_type_t)(struct fs_node *node, const char *name, uint32_t permissions);
 typedef int (*unlink_type_t)(struct fs_node *node, const char *name);
 typedef int (*truncate_type_t)(struct fs_node *node, uint32_t new_size);
+typedef int (*rename_type_t)(struct fs_node *node, const char *old_name, const char *new_name);
 
 /**
  * 文件节点（inode）
@@ -70,6 +71,7 @@ typedef struct fs_node {
     mkdir_type_t mkdir;
     unlink_type_t unlink;
     truncate_type_t truncate;
+    rename_type_t rename;        // 重命名操作
     
     struct fs_node *ptr;         // 用于符号链接和挂载点
 } fs_node_t;
@@ -197,5 +199,15 @@ int vfs_truncate(fs_node_t *node, uint32_t new_size);
  * @return 0 成功，-1 失败
  */
 int vfs_mount(const char *path, fs_node_t *root);
+
+/**
+ * 重命名文件或目录
+ * @param oldpath 原路径
+ * @param newpath 新路径
+ * @return 0 成功，-1 失败
+ * 
+ * 注意：当前仅支持同一目录下的重命名
+ */
+int vfs_rename(const char *oldpath, const char *newpath);
 
 #endif // _FS_VFS_H_

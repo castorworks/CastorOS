@@ -130,6 +130,7 @@ static int fat32_read_cluster(fat32_fs_t *fs, uint32_t cluster, uint8_t *buffer)
 static int fat32_dir_create(fs_node_t *node, const char *name);
 static int fat32_dir_mkdir(fs_node_t *node, const char *name, uint32_t permissions);
 static int fat32_dir_unlink(fs_node_t *node, const char *name);
+static int fat32_dir_rename(fs_node_t *node, const char *old_name, const char *new_name);
 
 // ============================================================================
 // 内部辅助函数
@@ -1323,6 +1324,85 @@ static int fat32_dir_unlink(fs_node_t *node, const char *name) {
     return ret;
 }
 
+/**
+ * 重命名目录中的文件或子目录
+ */
+static int fat32_dir_rename(fs_node_t *node, const char *old_name, const char *new_name) {
+    if (!node || !old_name || !new_name || node->type != FS_DIRECTORY) {
+        return -1;
+    }
+    
+    fat32_file_t *dir = (fat32_file_t *)node->impl;
+    if (!dir || !dir->is_dir || !dir->fs) {
+        return -1;
+    }
+    
+    // 检查参数有效性
+    if (old_name[0] == '\0' || new_name[0] == '\0') {
+        return -1;
+    }
+    
+    // 不能重命名 . 和 ..
+    if (strcmp(old_name, ".") == 0 || strcmp(old_name, "..") == 0 ||
+        strcmp(new_name, ".") == 0 || strcmp(new_name, "..") == 0) {
+        return -1;
+    }
+    
+    // 如果新旧名字相同，直接返回成功
+    if (strcasecmp(old_name, new_name) == 0) {
+        return 0;
+    }
+    
+    fat32_fs_t *fs = dir->fs;
+    
+    // 获取文件系统锁
+    mutex_lock(&fs->fs_lock);
+    
+    // 查找旧文件
+    fat32_dir_lookup_t *lookup = fat32_find_file_in_dir(fs, dir->start_cluster, old_name);
+    if (!lookup) {
+        mutex_unlock(&fs->fs_lock);
+        LOG_ERROR_MSG("fat32_dir_rename: '%s' not found\n", old_name);
+        return -1;
+    }
+    
+    // 检查新名字是否已存在
+    fat32_dir_lookup_t *existing = fat32_find_file_in_dir(fs, dir->start_cluster, new_name);
+    if (existing) {
+        kfree(existing);
+        kfree(lookup);
+        mutex_unlock(&fs->fs_lock);
+        LOG_ERROR_MSG("fat32_dir_rename: '%s' already exists\n", new_name);
+        return -1;
+    }
+    
+    // 将新名字转换为 8.3 格式
+    char short_name[11];
+    if (fat32_make_short_name(new_name, short_name) != 0) {
+        kfree(lookup);
+        mutex_unlock(&fs->fs_lock);
+        LOG_ERROR_MSG("fat32_dir_rename: invalid new name '%s'\n", new_name);
+        return -1;
+    }
+    
+    // 更新目录项中的文件名
+    memcpy(lookup->entry.name, short_name, 11);
+    
+    // 写回目录项
+    int ret = fat32_write_dir_entry(fs, lookup->cluster, lookup->offset, &lookup->entry);
+    
+    kfree(lookup);
+    mutex_unlock(&fs->fs_lock);
+    
+    if (ret == 0) {
+        LOG_DEBUG_MSG("fat32_dir_rename: '%s' -> '%s' success\n", old_name, new_name);
+    } else {
+        LOG_ERROR_MSG("fat32_dir_rename: failed to write directory entry\n");
+    }
+    
+    return ret;
+}
+
 // ============================================================================
 // VFS 操作函数
 // ============================================================================
@@ -1668,6 +1748,7 @@ static fs_node_t *fat32_dir_finddir(fs_node_t *node, const char *name) {
         new_node->create = fat32_dir_create;
         new_node->mkdir = fat32_dir_mkdir;
         new_node->unlink = fat32_dir_unlink;
+        new_node->rename = fat32_dir_rename;
         new_node->permissions = FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC;
         new_file->is_dir = true;
     } else {
@@ -1847,6 +1928,7 @@ fs_node_t *fat32_init(blockdev_t *dev) {
     root->create = fat32_dir_create;
     root->mkdir = fat32_dir_mkdir;
     root->unlink = fat32_dir_unlink;
+    root->rename = fat32_dir_rename;
     
     root_file->fs = fs;
     root_file->start_cluster = fs->root_cluster;
