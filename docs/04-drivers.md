@@ -279,7 +279,7 @@ void kernel_main(multiboot_info_t* mbi) {
         }
         
         heap_start = PAGE_ALIGN_UP(heap_start);
-        LOG_DEBUG_MSG("  Heap start adjusted for multiboot modules: %x\n", heap_start);
+        LOG_DEBUG_MSG("  Heap start adjusted for multiboot modules: 0x%x\n", heap_start);
     }
     
     heap_init(heap_start, 32 * 1024 * 1024);  // 32MB 堆

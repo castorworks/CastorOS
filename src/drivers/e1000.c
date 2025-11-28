@@ -164,7 +164,7 @@ static int e1000_init_rx_ring(e1000_device_t *dev) {
     e1000_write_reg(dev, E1000_REG_RDH, 0);
     e1000_write_reg(dev, E1000_REG_RDT, E1000_NUM_RX_DESC - 1);
     
-    LOG_DEBUG_MSG("e1000: RX ring: descs_virt=%x descs_phys=%x\n", 
+    LOG_DEBUG_MSG("e1000: RX ring: descs_virt=0x%x descs_phys=0x%x\n", 
                   (uint32_t)dev->rx_descs, dev->rx_descs_phys);
     
     return 0;
@@ -218,7 +218,7 @@ static int e1000_init_tx_ring(e1000_device_t *dev) {
     e1000_write_reg(dev, E1000_REG_TDH, 0);
     e1000_write_reg(dev, E1000_REG_TDT, 0);
     
-    LOG_DEBUG_MSG("e1000: TX ring: descs_virt=%x descs_phys=%x\n", 
+    LOG_DEBUG_MSG("e1000: TX ring: descs_virt=0x%x descs_phys=0x%x\n", 
                   (uint32_t)dev->tx_descs, dev->tx_descs_phys);
     
     return 0;

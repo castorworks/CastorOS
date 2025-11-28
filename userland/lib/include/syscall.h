@@ -436,6 +436,8 @@ int getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
 #define SIOCSIFMTU      (SIOCBASE + 0x09)
 #define SIOCGIFCONF     (SIOCBASE + 0x10)
 #define SIOCGIFINDEX    (SIOCBASE + 0x11)
+#define SIOCGIFGATEWAY  (SIOCBASE + 0x12)
+#define SIOCSIFGATEWAY  (SIOCBASE + 0x13)
 
 // ARP 操作
 #define SIOCSARP        (SIOCBASE + 0x20)
@@ -444,6 +446,7 @@ int getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
 
 // CastorOS 扩展
 #define SIOCPING        (SIOCBASE + 0x40)
+#define SIOCGIFSTATS    (SIOCBASE + 0x41)
 
 // 接口标志
 #define IFF_UP          0x0001
@@ -499,6 +502,17 @@ struct ping_req {
     uint32_t min_rtt;
     uint32_t max_rtt;
     uint32_t avg_rtt;
+};
+
+/**
+ * @brief 网络接口统计结构（CastorOS 扩展）
+ */
+struct ifstats {
+    char ifr_name[16];
+    uint64_t rx_packets;
+    uint64_t tx_packets;
+    uint64_t rx_bytes;
+    uint64_t tx_bytes;
 };
 
 #endif /* _USERLAND_LIB_SYSCALL_H_ */

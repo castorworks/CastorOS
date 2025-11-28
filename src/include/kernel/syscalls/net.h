@@ -31,6 +31,8 @@
 #define SIOCSIFMTU      (SIOCBASE + 0x09)  // 设置 MTU
 #define SIOCGIFCONF     (SIOCBASE + 0x10)  // 获取接口列表
 #define SIOCGIFINDEX    (SIOCBASE + 0x11)  // 获取接口索引
+#define SIOCGIFGATEWAY  (SIOCBASE + 0x12)  // 获取网关地址
+#define SIOCSIFGATEWAY  (SIOCBASE + 0x13)  // 设置网关地址
 
 // ARP 操作
 #define SIOCSARP        (SIOCBASE + 0x20)  // 添加 ARP 条目
@@ -43,6 +45,7 @@
 
 // CastorOS 扩展：ICMP ping（用于内核调试/测试）
 #define SIOCPING        (SIOCBASE + 0x40)  // ICMP ping
+#define SIOCGIFSTATS    (SIOCBASE + 0x41)  // 获取接口统计信息
 
 // 接口标志
 #define IFF_UP          0x0001  // 接口启用
@@ -117,6 +120,17 @@ struct ping_req {
     uint32_t min_rtt;               // 最小 RTT（毫秒）
     uint32_t max_rtt;               // 最大 RTT（毫秒）
     uint32_t avg_rtt;               // 平均 RTT（毫秒）
+};
+
+/**
+ * @brief 网络接口统计请求结构（CastorOS 扩展，用于 SIOCGIFSTATS）
+ */
+struct ifstats {
+    char ifr_name[16];              // 接口名称
+    uint64_t rx_packets;            // 接收包数
+    uint64_t tx_packets;            // 发送包数
+    uint64_t rx_bytes;              // 接收字节数
+    uint64_t tx_bytes;              // 发送字节数
 };
 
 /* ============================================================================

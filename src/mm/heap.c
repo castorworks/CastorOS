@@ -78,7 +78,7 @@ static bool expand(size_t size) {
 static void coalesce(heap_block_t *b) {
     // 【安全检查】验证块的 magic
     if (b->magic != HEAP_MAGIC) {
-        LOG_ERROR_MSG("coalesce: block %p has invalid magic %x!\n", b, b->magic);
+        LOG_ERROR_MSG("coalesce: block %p has invalid magic 0x%x!\n", b, b->magic);
         return;
     }
     
@@ -86,7 +86,7 @@ static void coalesce(heap_block_t *b) {
     if (b->next && b->next->is_free) {
         // 【安全检查】验证 next 块的 magic
         if (b->next->magic != HEAP_MAGIC) {
-            LOG_ERROR_MSG("coalesce: next block %p has invalid magic %x!\n", b->next, b->next->magic);
+            LOG_ERROR_MSG("coalesce: next block %p has invalid magic 0x%x!\n", b->next, b->next->magic);
             return;
         }
         
@@ -101,7 +101,7 @@ static void coalesce(heap_block_t *b) {
     if (b->prev && b->prev->is_free) {
         // 【安全检查】验证 prev 块的 magic
         if (b->prev->magic != HEAP_MAGIC) {
-            LOG_ERROR_MSG("coalesce: prev block %p has invalid magic %x!\n", b->prev, b->prev->magic);
+            LOG_ERROR_MSG("coalesce: prev block %p has invalid magic 0x%x!\n", b->prev, b->prev->magic);
             return;
         }
         
@@ -124,7 +124,7 @@ static void coalesce(heap_block_t *b) {
 static void split(heap_block_t *b, size_t size) {
     // 【安全检查】验证块的 magic
     if (b->magic != HEAP_MAGIC) {
-        LOG_ERROR_MSG("split: block %p has invalid magic %x!\n", b, b->magic);
+        LOG_ERROR_MSG("split: block %p has invalid magic 0x%x!\n", b, b->magic);
         return;
     }
     
@@ -151,7 +151,7 @@ void heap_init(uint32_t start, uint32_t size) {
     heap_start = heap_end = PAGE_ALIGN_UP(start);
     heap_max = heap_start + size;
     
-    LOG_INFO_MSG("heap_init: start=%x, max=%x, size=%u\n", heap_start, heap_max, size);
+    LOG_INFO_MSG("heap_init: start=0x%x, max=0x%x, size=%u\n", heap_start, heap_max, size);
     
     // 初始化堆自旋锁
     spinlock_init(&heap_lock);
@@ -169,7 +169,7 @@ void heap_init(uint32_t start, uint32_t size) {
     first_block->next = first_block->prev = NULL;
     last_block = first_block;
     
-    LOG_INFO_MSG("heap_init: first_block magic=%x (expected %x)\n", 
+    LOG_INFO_MSG("heap_init: first_block magic=0x%x (expected 0x%x)\n", 
                  first_block->magic, HEAP_MAGIC);
 }
 
@@ -193,7 +193,7 @@ void* kmalloc(size_t size) {
         return NULL;
     }
     if ((uint32_t)first_block < 0x80000000 || first_block->magic != HEAP_MAGIC) {
-        LOG_ERROR_MSG("kmalloc: first_block corrupted! addr=%p, magic=%x (expected %x)\n", 
+        LOG_ERROR_MSG("kmalloc: first_block corrupted! addr=%p, magic=0x%x (expected 0x%x)\n", 
                      first_block, (uint32_t)first_block < 0x80000000 ? 0 : first_block->magic, HEAP_MAGIC);
         spinlock_unlock_irqrestore(&heap_lock, irq_state);
         return NULL;
@@ -211,7 +211,7 @@ void* kmalloc(size_t size) {
             return NULL;
         }
         if (b->magic != HEAP_MAGIC) {
-            LOG_ERROR_MSG("kmalloc: block %p has invalid magic %x (expected %x)!\n", b, b->magic, HEAP_MAGIC);
+            LOG_ERROR_MSG("kmalloc: block %p has invalid magic 0x%x (expected 0x%x)!\n", b, b->magic, HEAP_MAGIC);
             spinlock_unlock_irqrestore(&heap_lock, irq_state);
             return NULL;
         }
@@ -267,7 +267,7 @@ void kfree(void* ptr) {
     heap_block_t *b = (heap_block_t*)((uint32_t)ptr - sizeof(heap_block_t));
     // 验证魔数
     if (b->magic != HEAP_MAGIC) {
-        LOG_WARN_MSG("kfree: invalid magic at %p (block %p), magic=%x\n", ptr, b, b->magic);
+        LOG_WARN_MSG("kfree: invalid magic at %p (block %p), magic=0x%x\n", ptr, b, b->magic);
         spinlock_unlock_irqrestore(&heap_lock, irq_state);
         return;
     }

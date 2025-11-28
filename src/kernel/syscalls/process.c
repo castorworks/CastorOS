@@ -109,8 +109,8 @@ uint32_t sys_fork(uint32_t *frame) {
     (void)user_eax;  // 系统调用号，不需要复制
     
     LOG_DEBUG_MSG("sys_fork: Captured user context:\n");
-    LOG_DEBUG_MSG("  EIP=%x ESP=%x EBP=%x\n", user_eip, user_esp, user_ebp);
-    LOG_DEBUG_MSG("  CS=%x SS=%x DS=%x EFLAGS=%x\n", 
+    LOG_DEBUG_MSG("  EIP=0x%x ESP=0x%x EBP=0x%x\n", user_eip, user_esp, user_ebp);
+    LOG_DEBUG_MSG("  CS=0x%x SS=0x%x DS=0x%x EFLAGS=0x%x\n", 
                   user_cs, user_ss, user_ds, user_eflags);
     
     // 【安全检查】验证父进程页目录的完整性（仅检查前几个 PDE）
@@ -119,12 +119,12 @@ uint32_t sys_fork(uint32_t *frame) {
         if (is_present(parent_dir->entries[i])) {
             uint32_t phys = get_frame(parent_dir->entries[i]);
             if (phys == 0 || phys >= 0x80000000) {
-                LOG_ERROR_MSG("sys_fork: Parent PDE[%u] corrupted: %x (phys=%x)\n", 
+                LOG_ERROR_MSG("sys_fork: Parent PDE[%u] corrupted: 0x%x (phys=0x%x)\n", 
                              i, parent_dir->entries[i], phys);
-                LOG_ERROR_MSG("  Parent: PID=%u, name=%s, page_dir=%p, page_dir_phys=%x\n",
+                LOG_ERROR_MSG("  Parent: PID=%u, name=%s, page_dir=%p, page_dir_phys=0x%x\n",
                              parent->pid, parent->name, parent_dir, parent->page_dir_phys);
                 // 打印更多 PDE 以帮助诊断
-                LOG_ERROR_MSG("  PDE[0]=%x, PDE[1]=%x, PDE[2]=%x, PDE[3]=%x\n",
+                LOG_ERROR_MSG("  PDE[0]=0x%x, PDE[1]=0x%x, PDE[2]=0x%x, PDE[3]=0x%x\n",
                              parent_dir->entries[0], parent_dir->entries[1],
                              parent_dir->entries[2], parent_dir->entries[3]);
                 interrupts_restore(prev_state);
@@ -389,7 +389,7 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
     // 堆最大值：留出 8MB 给栈
     current->heap_max = current->user_stack_base - (8 * 1024 * 1024);
     
-    LOG_DEBUG_MSG("sys_execve: heap: start=%x, end=%x, max=%x\n", 
+    LOG_DEBUG_MSG("sys_execve: heap: start=0x%x, end=0x%x, max=0x%x\n", 
                  current->heap_start, current->heap_end, current->heap_max);
     
     // ============================================================================
@@ -460,7 +460,7 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
     strncpy(current->name, filename, sizeof(current->name) - 1);
     current->name[sizeof(current->name) - 1] = '\0';
     
-    LOG_DEBUG_MSG("sys_execve: loaded '%s' at entry %x for PID %u\n", 
+    LOG_DEBUG_MSG("sys_execve: loaded '%s' at entry 0x%x for PID %u\n", 
                   path, entry_point, current->pid);
     
     // 设置用户态上下文
@@ -509,7 +509,7 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
         frame[11] = current->user_stack;  // ESP = 用户栈顶
         frame[12] = 0x23;              // SS = 用户栈段 (Ring 3)
         
-        LOG_DEBUG_MSG("sys_execve: modified syscall frame to return to %x\n", entry_point);
+        LOG_DEBUG_MSG("sys_execve: modified syscall frame to return to 0x%x\n", entry_point);
     } else {
         // 如果没有 frame（不应该发生），使用原来的方法
         LOG_WARN_MSG("sys_execve: no frame provided, using fallback method\n");

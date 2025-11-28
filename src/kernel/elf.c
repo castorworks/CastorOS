@@ -89,7 +89,7 @@ bool elf_load(const void *elf_data, uint32_t size, page_directory_t *page_dir,
     const elf32_phdr_t *phdr = (const elf32_phdr_t *)((uint8_t *)elf_data + ehdr->e_phoff);
     
     LOG_INFO_MSG("ELF: Loading executable\n");
-    LOG_INFO_MSG("  Entry point: %x\n", ehdr->e_entry);
+    LOG_INFO_MSG("  Entry point: 0x%x\n", ehdr->e_entry);
     LOG_INFO_MSG("  Program headers: %u\n", ehdr->e_phnum);
     
     uint32_t page_dir_phys = VIRT_TO_PHYS((uint32_t)page_dir);
@@ -111,7 +111,7 @@ bool elf_load(const void *elf_data, uint32_t size, page_directory_t *page_dir,
         }
         
         LOG_DEBUG_MSG("  Segment %u:\n", i);
-        LOG_DEBUG_MSG("    VAddr: %x\n", ph->p_vaddr);
+        LOG_DEBUG_MSG("    VAddr: 0x%x\n", ph->p_vaddr);
         LOG_DEBUG_MSG("    FileSize: %u bytes\n", ph->p_filesz);
         LOG_DEBUG_MSG("    MemSize: %u bytes\n", ph->p_memsz);
         LOG_DEBUG_MSG("    Flags: %c%c%c\n",
@@ -130,7 +130,7 @@ bool elf_load(const void *elf_data, uint32_t size, page_directory_t *page_dir,
         
         // 检查虚拟地址是否在用户空间（< 2GB）
         if (ph->p_vaddr >= KERNEL_VIRTUAL_BASE) {
-            LOG_ERROR_MSG("ELF: Segment in kernel space (vaddr=%x >= %x)\n",
+            LOG_ERROR_MSG("ELF: Segment in kernel space (vaddr=0x%x >= 0x%x)\n",
                          ph->p_vaddr, KERNEL_VIRTUAL_BASE);
             // 清理已分配的页
             cleanup_last_segment_idx = i;
@@ -149,7 +149,7 @@ bool elf_load(const void *elf_data, uint32_t size, page_directory_t *page_dir,
         uint32_t vaddr_end = PAGE_ALIGN_UP(ph->p_vaddr + ph->p_memsz);
         uint32_t num_pages = (vaddr_end - vaddr_start) / PAGE_SIZE;
         
-        LOG_DEBUG_MSG("    Pages: %u (%x - %x)\n", 
+        LOG_DEBUG_MSG("    Pages: %u (0x%x - 0x%x)\n", 
                      num_pages, vaddr_start, vaddr_end);
         
         // 更新程序加载的最高地址
@@ -168,7 +168,7 @@ bool elf_load(const void *elf_data, uint32_t size, page_directory_t *page_dir,
             // 分配物理页
             uint32_t phys = pmm_alloc_frame();
             if (!phys) {
-                LOG_ERROR_MSG("ELF: Failed to allocate physical page at %x\n", vaddr);
+                LOG_ERROR_MSG("ELF: Failed to allocate physical page at 0x%x\n", vaddr);
                 // 清理已分配的页 (cleanup_last_vaddr 指向当前分配失败的地址)
                 cleanup_last_vaddr = vaddr;
                 goto cleanup;
@@ -180,7 +180,7 @@ bool elf_load(const void *elf_data, uint32_t size, page_directory_t *page_dir,
             
             // 映射到进程地址空间
             if (!vmm_map_page_in_directory(page_dir_phys, vaddr, phys, flags)) {
-                LOG_ERROR_MSG("ELF: Failed to map page at %x\n", vaddr);
+                LOG_ERROR_MSG("ELF: Failed to map page at 0x%x\n", vaddr);
                 pmm_free_frame(phys);
                 // 清理已分配的页
                 cleanup_last_vaddr = vaddr;
@@ -217,7 +217,7 @@ bool elf_load(const void *elf_data, uint32_t size, page_directory_t *page_dir,
         *program_end = max_vaddr;
     }
     
-    LOG_INFO_MSG("ELF: Load complete, entry at %x, end at %x\n", *entry_point, max_vaddr);
+    LOG_INFO_MSG("ELF: Load complete, entry at 0x%x, end at 0x%x\n", *entry_point, max_vaddr);
     return true;
 
 cleanup:

@@ -175,92 +175,76 @@ static void print_uint64(uint64_t value, int width, bool zero_pad, bool left_ali
 }
 
 /**
- * 打印十六进制数（内部辅助函数，带智能宽度处理）
+ * 打印十六进制数（内部辅助函数，标准 printf 行为）
+ * 注意：%x 不输出 0x 前缀，只有 %p 才输出
  */
 static void print_hex(uint32_t value, bool uppercase, int width, bool zero_pad, output_target_t target) {
     const char *digits = uppercase ? "0123456789ABCDEF" : "0123456789abcdef";
     
-    // 总是输出 "0x" 前缀
-    output_char('0', target);
-    output_char('x', target);
-    
-    // 计算需要的数字位数
-    int digit_width = (width > 2) ? width - 2 : 8;  // 默认 8 位
-    if (digit_width > 8) digit_width = 8;  // 最多 8 位
-    
-    // 生成十六进制数字
+    // 生成十六进制数字（从右到左）
     char buffer[9];
-    for (int i = 7; i >= 0; i--) {
-        buffer[i] = digits[value & 0xF];
-        value >>= 4;
-    }
-    buffer[8] = '\0';
+    int len = 0;
     
-    // 输出填充的零（如果需要）
-    int start_pos = 8 - digit_width;
-    if (zero_pad && width > 2) {
-        // 从计算的起始位置开始输出
-        for (int i = start_pos; i < 8; i++) {
-            output_char(buffer[i], target);
-        }
+    if (value == 0) {
+        buffer[0] = '0';
+        len = 1;
     } else {
-        // 不使用零填充，找到第一个非零数字
-        int first_non_zero = 0;
-        while (first_non_zero < 7 && buffer[first_non_zero] == '0') {
-            first_non_zero++;
+        uint32_t tmp = value;
+        while (tmp > 0) {
+            buffer[len++] = digits[tmp & 0xF];
+            tmp >>= 4;
         }
-        // 但至少保证 digit_width 位
-        if (8 - first_non_zero < digit_width) {
-            first_non_zero = 8 - digit_width;
-        }
-        for (int i = first_non_zero; i < 8; i++) {
-            output_char(buffer[i], target);
-        }
+    }
+    
+    // 计算需要的填充
+    int pad_count = (width > len) ? (width - len) : 0;
+    
+    // 输出填充（如果需要）
+    char pad_char = zero_pad ? '0' : ' ';
+    for (int i = 0; i < pad_count; i++) {
+        output_char(pad_char, target);
+    }
+    
+    // 逆序输出数字
+    for (int i = len - 1; i >= 0; i--) {
+        output_char(buffer[i], target);
     }
 }
 
 /**
- * 打印 64 位十六进制数（内部辅助函数，带智能宽度处理）
+ * 打印 64 位十六进制数（内部辅助函数，标准 printf 行为）
+ * 注意：%llx 不输出 0x 前缀
  */
 static void print_hex64(uint64_t value, bool uppercase, int width, bool zero_pad, output_target_t target) {
     const char *digits = uppercase ? "0123456789ABCDEF" : "0123456789abcdef";
     
-    // 总是输出 "0x" 前缀
-    output_char('0', target);
-    output_char('x', target);
-    
-    // 计算需要的数字位数
-    int digit_width = (width > 2) ? width - 2 : 16;  // 默认 16 位
-    if (digit_width > 16) digit_width = 16;  // 最多 16 位
-    
-    // 生成十六进制数字
+    // 生成十六进制数字（从右到左）
     char buffer[17];
-    for (int i = 15; i >= 0; i--) {
-        buffer[i] = digits[value & 0xF];
-        value >>= 4;
-    }
-    buffer[16] = '\0';
+    int len = 0;
     
-    // 输出填充的零（如果需要）
-    int start_pos = 16 - digit_width;
-    if (zero_pad && width > 2) {
-        // 从计算的起始位置开始输出
-        for (int i = start_pos; i < 16; i++) {
-            output_char(buffer[i], target);
-        }
+    if (value == 0) {
+        buffer[0] = '0';
+        len = 1;
     } else {
-        // 不使用零填充，找到第一个非零数字
-        int first_non_zero = 0;
-        while (first_non_zero < 15 && buffer[first_non_zero] == '0') {
-            first_non_zero++;
+        uint64_t tmp = value;
+        while (tmp > 0) {
+            buffer[len++] = digits[tmp & 0xF];
+            tmp >>= 4;
         }
-        // 但至少保证 digit_width 位
-        if (16 - first_non_zero < digit_width) {
-            first_non_zero = 16 - digit_width;
-        }
-        for (int i = first_non_zero; i < 16; i++) {
-            output_char(buffer[i], target);
-        }
+    }
+    
+    // 计算需要的填充
+    int pad_count = (width > len) ? (width - len) : 0;
+    
+    // 输出填充（如果需要）
+    char pad_char = zero_pad ? '0' : ' ';
+    for (int i = 0; i < pad_count; i++) {
+        output_char(pad_char, target);
+    }
+    
+    // 逆序输出数字
+    for (int i = len - 1; i >= 0; i--) {
+        output_char(buffer[i], target);
     }
 }
 
@@ -359,9 +343,13 @@ static void vkprintf_internal(const char *fmt, va_list args, output_target_t tar
                     }
                     break;
                 }
-                case 'p': {  // 指针
+                case 'p': {  // 指针（带 0x 前缀）
                     void *ptr = va_arg(args, void *);
-                    print_hex((uint32_t)ptr, false, width, zero_pad, target);
+                    output_char('0', target);
+                    output_char('x', target);
+                    // 指针默认 8 位十六进制，零填充
+                    int ptr_width = (width > 2) ? (width - 2) : 8;
+                    print_hex((uint32_t)ptr, false, ptr_width, true, target);
                     break;
                 }
                 case '%': {  // 百分号字面值

@@ -82,19 +82,19 @@ void isr_handler(registers_t *regs) {
         kprintf("\n================================= KERNEL PANIC =================================\n");
         kprintf("Exception: %s\n", exception_messages[regs->int_no]);
         kprintf("Interrupt number: %u\n", regs->int_no);
-        kprintf("Error code: %x\n", regs->err_code);
+        kprintf("Error code: 0x%x\n", regs->err_code);
         kprintf("Mode: %s\n", from_usermode ? "User (Ring 3)" : "Kernel (Ring 0)");
         kprintf("\nRegisters:\n");
-        kprintf("  EAX=%x  EBX=%x  ECX=%x  EDX=%x\n",
+        kprintf("  EAX=0x%08x  EBX=0x%08x  ECX=0x%08x  EDX=0x%08x\n",
                 regs->eax, regs->ebx, regs->ecx, regs->edx);
-        kprintf("  ESI=%x  EDI=%x  EBP=%x  ESP=%x\n",
+        kprintf("  ESI=0x%08x  EDI=0x%08x  EBP=0x%08x  ESP=0x%08x\n",
                 regs->esi, regs->edi, regs->ebp, regs->esp);
-        kprintf("  EIP=%x  EFLAGS=%x\n", regs->eip, regs->eflags);
-        kprintf("  CS=%x  DS=%x\n", regs->cs, regs->ds);
+        kprintf("  EIP=0x%08x  EFLAGS=0x%08x\n", regs->eip, regs->eflags);
+        kprintf("  CS=0x%04x  DS=0x%04x\n", regs->cs, regs->ds);
         
         /* 只在用户态中断时打印用户栈信息 */
         if (from_usermode) {
-            kprintf("  User ESP=%x  User SS=%x\n", regs->useresp, regs->ss);
+            kprintf("  User ESP=0x%08x  User SS=0x%04x\n", regs->useresp, regs->ss);
         }
         
         kprintf("================================================================================\n\n");
@@ -128,12 +128,12 @@ void isr_handler(registers_t *regs) {
     // 检查中断来源
     bool from_usermode = (regs->cs & 0x3) == 3;
     
-    LOG_ERROR_MSG("Page fault at %x (error: %x)\n", 
+    LOG_ERROR_MSG("Page fault at 0x%x (error: 0x%x)\n", 
                  faulting_address, regs->err_code);
     
     kprintf("\n================================== PAGE FAULT ==================================\n");
-    kprintf("Faulting address: %x\n", faulting_address);
-    kprintf("Error code: %x\n", regs->err_code);
+    kprintf("Faulting address: 0x%08x\n", faulting_address);
+    kprintf("Error code: 0x%x\n", regs->err_code);
     kprintf("\nCause:\n");
     kprintf("  %s\n", pf_info.present ? "Page protection violation" : "Page not present");
     kprintf("  %s operation\n", pf_info.write ? "Write" : "Read");
@@ -146,15 +146,15 @@ void isr_handler(registers_t *regs) {
     }
     
     kprintf("\nRegisters:\n");
-    kprintf("  EIP=%x  ESP=%x  EBP=%x\n", 
+    kprintf("  EIP=0x%08x  ESP=0x%08x  EBP=0x%08x\n", 
             regs->eip, regs->esp, regs->ebp);
-    kprintf("  CS=%x  DS=%x\n", regs->cs, regs->ds);
+    kprintf("  CS=0x%04x  DS=0x%04x\n", regs->cs, regs->ds);
     
     if (from_usermode) {
-        kprintf("  User ESP=%x  User SS=%x\n", regs->useresp, regs->ss);
+        kprintf("  User ESP=0x%08x  User SS=0x%04x\n", regs->useresp, regs->ss);
     }
     
-    kprintf("  EFLAGS=%x\n", regs->eflags);
+    kprintf("  EFLAGS=0x%08x\n", regs->eflags);
     
     /* 未来可以在这里实现按需分页等功能 */
     
@@ -176,9 +176,9 @@ static void general_protection_fault_handler(registers_t *regs) {
     bool from_usermode = (regs->cs & 0x3) == 3;
     
     kprintf("\n=========================== GENERAL PROTECTION FAULT ===========================\n");
-    kprintf("Error code: %x\n", regs->err_code);
+    kprintf("Error code: 0x%x\n", regs->err_code);
     kprintf("\nDetails:\n");
-    kprintf("  Segment: %s[%u] (selector: %x)\n", 
+    kprintf("  Segment: %s[%u] (selector: 0x%x)\n", 
             table_names[gpf_info.table], 
             gpf_info.index,
             (gpf_info.index << 3) | (gpf_info.table << 1) | gpf_info.external);
@@ -186,20 +186,20 @@ static void general_protection_fault_handler(registers_t *regs) {
     kprintf("  Mode: %s\n", from_usermode ? "User (Ring 3)" : "Kernel (Ring 0)");
     
     kprintf("\nRegisters:\n");
-    kprintf("  EIP=%x  ESP=%x  EBP=%x\n", 
+    kprintf("  EIP=0x%08x  ESP=0x%08x  EBP=0x%08x\n", 
             regs->eip, regs->esp, regs->ebp);
-    kprintf("  CS=%x  DS=%x\n", regs->cs, regs->ds);
+    kprintf("  CS=0x%04x  DS=0x%04x\n", regs->cs, regs->ds);
     
     /* 只在用户态中断时打印用户栈信息 */
     if (from_usermode) {
-        kprintf("  User ESP=%x  User SS=%x\n", regs->useresp, regs->ss);
+        kprintf("  User ESP=0x%08x  User SS=0x%04x\n", regs->useresp, regs->ss);
     }
     
-    kprintf("  EAX=%x  EBX=%x  ECX=%x  EDX=%x\n",
+    kprintf("  EAX=0x%08x  EBX=0x%08x  ECX=0x%08x  EDX=0x%08x\n",
             regs->eax, regs->ebx, regs->ecx, regs->edx);
     kprintf("================================================================================\n\n");
     
-    LOG_ERROR_MSG("General protection fault (error: %x)\n", regs->err_code);
+    LOG_ERROR_MSG("General protection fault (error: 0x%x)\n", regs->err_code);
     
     /* 挂起系统 */
     __asm__ volatile("cli; hlt");
@@ -214,18 +214,18 @@ static void double_fault_handler(registers_t *regs) {
     bool from_usermode = (regs->cs & 0x3) == 3;
     
     kprintf("\n!!!!!!!! DOUBLE FAULT !!!!!!!!\n");
-    kprintf("Error code: %x\n", regs->err_code);
+    kprintf("Error code: 0x%x\n", regs->err_code);
     kprintf("Mode: %s\n", from_usermode ? "User (Ring 3)" : "Kernel (Ring 0)");
     kprintf("\nThis is a critical error!\n");
     kprintf("The system attempted to handle an exception\n");
     kprintf("while another exception was being processed.\n");
     kprintf("\nRegisters:\n");
-    kprintf("  EIP=%x  ESP=%x\n", regs->eip, regs->esp);
-    kprintf("  CS=%x  DS=%x\n", regs->cs, regs->ds);
+    kprintf("  EIP=0x%08x  ESP=0x%08x\n", regs->eip, regs->esp);
+    kprintf("  CS=0x%04x  DS=0x%04x\n", regs->cs, regs->ds);
     
     /* 只在用户态中断时打印用户栈信息 */
     if (from_usermode) {
-        kprintf("  User ESP=%x  User SS=%x\n", regs->useresp, regs->ss);
+        kprintf("  User ESP=0x%08x  User SS=0x%04x\n", regs->useresp, regs->ss);
     }
     
     kprintf("================================================================================\n\n");

@@ -192,12 +192,12 @@ TEST_CASE(test_kprintf_format_hex_zero) {
 
 TEST_CASE(test_kprintf_format_hex_padded) {
     reset_test_buffer();
-    kprintf("Padded: %08x", 0x1234);  // 应该输出 00001234
+    kprintf("Padded: %08x", 0x1234);  // 应该输出 00001234 (无前缀)
 }
 
 TEST_CASE(test_kprintf_format_hex_padded_uppercase) {
     reset_test_buffer();
-    kprintf("Padded: %08X", 0xABCD);  // 应该输出 0000ABCD
+    kprintf("Padded: %08X", 0xABCD);  // 应该输出 0000ABCD (无前缀)
 }
 
 TEST_CASE(test_kprintf_format_hex_various_widths) {

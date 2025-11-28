@@ -348,7 +348,7 @@ bool task_setup_user_stack(task_t *task) {
     task->user_stack_base = stack_bottom;
     task->user_stack = stack_top - 4;
     
-    LOG_DEBUG_MSG("task_setup_user_stack: User stack set up at %x-%x\n", 
+    LOG_DEBUG_MSG("task_setup_user_stack: User stack set up at 0x%x-0x%x\n", 
                  stack_bottom, stack_top);
     
     return true;
@@ -554,7 +554,7 @@ uint32_t task_create_user_process(const char *name, uint32_t entry_point,
     // 堆最大值：留出 8MB 给栈（栈在用户空间顶部）
     task->heap_max = task->user_stack_base - (8 * 1024 * 1024);
     
-    LOG_DEBUG_MSG("  Heap: start=%x, end=%x, max=%x\n", 
+    LOG_DEBUG_MSG("  Heap: start=0x%x, end=0x%x, max=0x%x\n", 
                  task->heap_start, task->heap_end, task->heap_max);
     
     // 工作目录
@@ -564,7 +564,7 @@ uint32_t task_create_user_process(const char *name, uint32_t entry_point,
     task->state = TASK_READY;
     ready_queue_add(task);
     
-    LOG_INFO_MSG("Created user process: PID=%u, name=%s, entry=%x\n", 
+    LOG_INFO_MSG("Created user process: PID=%u, name=%s, entry=0x%x\n", 
                  task->pid, task->name, entry_point);
     
     return task->pid;
@@ -765,7 +765,7 @@ void task_schedule(void) {
                 uint32_t phys = get_frame(shell_dir->entries[1]);
                 if (phys == 0 || phys >= 0x80000000) {
                     LOG_ERROR_MSG("Shell PDE[1] corrupted BEFORE switching to it!\n");
-                    LOG_ERROR_MSG("  PDE[0]=%x, PDE[1]=%x, PDE[2]=%x, PDE[3]=%x\n",
+                    LOG_ERROR_MSG("  PDE[0]=0x%x, PDE[1]=0x%x, PDE[2]=0x%x, PDE[3]=0x%x\n",
                                  shell_dir->entries[0], shell_dir->entries[1],
                                  shell_dir->entries[2], shell_dir->entries[3]);
                 }

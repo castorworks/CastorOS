@@ -73,7 +73,7 @@ bool load_user_shell(void) {
         return false;
     }
     
-    LOG_INFO_MSG("Shell: Created page directory at phys %x\n", page_dir_phys);
+    LOG_INFO_MSG("Shell: Created page directory at phys 0x%x\n", page_dir_phys);
     
     page_directory_t *page_dir = (page_directory_t*)PHYS_TO_VIRT(page_dir_phys);
     LOG_DEBUG_MSG("Shell: Page directory virt address: %p\n", page_dir);
@@ -89,7 +89,7 @@ bool load_user_shell(void) {
         return false;
     }
     
-    LOG_DEBUG_MSG("Shell: ELF loaded, entry=%x, program_end=%x\n", entry_point, program_end);
+    LOG_DEBUG_MSG("Shell: ELF loaded, entry=0x%x, program_end=0x%x\n", entry_point, program_end);
     kfree(elf_data);
     
     // 创建用户进程
@@ -103,7 +103,7 @@ bool load_user_shell(void) {
     
     LOG_INFO_MSG("Shell loaded successfully!\n");
     LOG_INFO_MSG("  Process: shell (PID %u)\n", pid);
-    LOG_INFO_MSG("  Entry point: %x\n", entry_point);
+    LOG_INFO_MSG("  Entry point: 0x%x\n", entry_point);
     LOG_INFO_MSG("================================ User Shell Ready ==============================\n");
 
     return true;

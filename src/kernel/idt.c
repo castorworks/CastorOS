@@ -41,6 +41,6 @@ void idt_init(void) {
     idt_flush((uint32_t)&idt_pointer);
 
     LOG_INFO_MSG("IDT initialized successfully\n");
-    LOG_DEBUG_MSG("  IDT base: %x\n", idt_pointer.base);
+    LOG_DEBUG_MSG("  IDT base: 0x%x\n", idt_pointer.base);
     LOG_DEBUG_MSG("  IDT limit: %u bytes\n", idt_pointer.limit + 1);
 }

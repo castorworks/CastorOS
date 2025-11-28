@@ -203,8 +203,8 @@ void _assert_eq_uint(uint32_t expected, uint32_t actual,
         kprintf("    ");
         print_fail("Assertion failed: ");
         kprintf("expected == actual\n");
-        kprintf("    Expected: %u (%x)\n", expected, expected);
-        kprintf("    Actual:   %u (%x)\n", actual, actual);
+        kprintf("    Expected: %u (0x%x)\n", expected, expected);
+        kprintf("    Actual:   %u (0x%x)\n", actual, actual);
         kprintf("    Location: %s:%d\n", file, line);
     }
 }
@@ -218,8 +218,8 @@ void _assert_ne_uint(uint32_t expected, uint32_t actual,
         kprintf("    ");
         print_fail("Assertion failed: ");
         kprintf("expected != actual\n");
-        kprintf("    Expected not: %u (%x)\n", expected, expected);
-        kprintf("    Actual:       %u (%x)\n", actual, actual);
+        kprintf("    Expected not: %u (0x%x)\n", expected, expected);
+        kprintf("    Actual:       %u (0x%x)\n", actual, actual);
         kprintf("    Location:     %s:%d\n", file, line);
     }
 }

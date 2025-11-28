@@ -2347,89 +2347,104 @@ static int string_to_ip(const char *str, uint32_t *ip) {
 }
 
 /**
+ * 显示网络接口信息的辅助函数
+ * 输出格式与 kernel_shell.c 中的 netdev_print_info() 一致
+ */
+static void ifconfig_print_info(struct ifreq *ifr) {
+    char ip_str[16], netmask_str[16], gateway_str[16];
+    
+    // 获取 IP 地址
+    if (ioctl(0, SIOCGIFADDR, ifr) < 0) {
+        printf("Error: Interface '%s' not found or no network available\n", 
+               ifr->ifr_name[0] ? ifr->ifr_name : "default");
+        return;
+    }
+    ip_to_string(ifr->ifr_addr.sin_addr, ip_str);
+    
+    // 获取子网掩码
+    if (ioctl(0, SIOCGIFNETMASK, ifr) == 0) {
+        ip_to_string(ifr->ifr_netmask.sin_addr, netmask_str);
+    } else {
+        strcpy(netmask_str, "0.0.0.0");
+    }
+    
+    // 获取网关地址
+    if (ioctl(0, SIOCGIFGATEWAY, ifr) == 0) {
+        ip_to_string(ifr->ifr_gateway.sin_addr, gateway_str);
+    } else {
+        strcpy(gateway_str, "0.0.0.0");
+    }
+    
+    // 获取接口标志
+    int flags = 0;
+    if (ioctl(0, SIOCGIFFLAGS, ifr) == 0) {
+        flags = ifr->ifr_flags;
+    }
+    
+    // 获取 MTU
+    uint32_t mtu = 1500;
+    if (ioctl(0, SIOCGIFMTU, ifr) == 0) {
+        mtu = (uint32_t)ifr->ifr_mtu;
+    }
+    
+    // 输出格式与 netdev_print_info() 一致
+    printf("%s: flags=%s  mtu %u\n", 
+           ifr->ifr_name[0] ? ifr->ifr_name : "eth0",
+           (flags & IFF_UP) ? "UP" : "DOWN", mtu);
+    printf("        inet %s  netmask %s  gateway %s\n", 
+           ip_str, netmask_str, gateway_str);
+    
+    // 获取并显示 MAC 地址
+    if (ioctl(0, SIOCGIFHWADDR, ifr) == 0) {
+        printf("        ether %02x:%02x:%02x:%02x:%02x:%02x\n",
+               (uint8_t)ifr->ifr_hwaddr.sa_data[0],
+               (uint8_t)ifr->ifr_hwaddr.sa_data[1],
+               (uint8_t)ifr->ifr_hwaddr.sa_data[2],
+               (uint8_t)ifr->ifr_hwaddr.sa_data[3],
+               (uint8_t)ifr->ifr_hwaddr.sa_data[4],
+               (uint8_t)ifr->ifr_hwaddr.sa_data[5]);
+    }
+    
+    // 获取并显示 RX/TX 统计信息
+    struct ifstats stats;
+    memset(&stats, 0, sizeof(stats));
+    strncpy(stats.ifr_name, ifr->ifr_name, sizeof(stats.ifr_name) - 1);
+    if (ioctl(0, SIOCGIFSTATS, &stats) == 0) {
+        printf("        RX packets %llu  bytes %llu\n",
+               (unsigned long long)stats.rx_packets,
+               (unsigned long long)stats.rx_bytes);
+        printf("        TX packets %llu  bytes %llu\n",
+               (unsigned long long)stats.tx_packets,
+               (unsigned long long)stats.tx_bytes);
+    }
+}
+
+/**
  * ifconfig 命令 - 网络接口配置（使用 ioctl）
  */
 static int cmd_ifconfig(int argc, char **argv) {
     struct ifreq ifr;
-    char ip_str[16], netmask_str[16];
     
     memset(&ifr, 0, sizeof(ifr));
     
-    // 设置接口名（空字符串表示默认接口）
-    if (argc >= 2) {
-        strncpy(ifr.ifr_name, argv[1], sizeof(ifr.ifr_name) - 1);
-    }
-    
-    // 显示接口信息
-    if (argc <= 2) {
-        // 获取 IP 地址
-        if (ioctl(0, SIOCGIFADDR, &ifr) < 0) {
-            printf("Error: Interface '%s' not found or no network available\n", 
-                   argc >= 2 ? argv[1] : "default");
-            return -1;
-        }
-        ip_to_string(ifr.ifr_addr.sin_addr, ip_str);
-        
-        // 获取子网掩码
-        if (ioctl(0, SIOCGIFNETMASK, &ifr) == 0) {
-            ip_to_string(ifr.ifr_netmask.sin_addr, netmask_str);
-        } else {
-            strcpy(netmask_str, "0.0.0.0");
-        }
-        
-        // 获取接口标志
-        int flags = 0;
-        if (ioctl(0, SIOCGIFFLAGS, &ifr) == 0) {
-            flags = ifr.ifr_flags;
-        }
-        
-        // 获取 MTU
-        int mtu = 1500;
-        if (ioctl(0, SIOCGIFMTU, &ifr) == 0) {
-            mtu = ifr.ifr_mtu;
-        }
-        
-        printf("%s: flags=%s  mtu %d\n", 
-               ifr.ifr_name[0] ? ifr.ifr_name : "eth0",
-               (flags & IFF_UP) ? "UP" : "DOWN", mtu);
-        printf("        inet %s  netmask %s\n", ip_str, netmask_str);
-        
-        // 获取 MAC 地址
-        if (ioctl(0, SIOCGIFHWADDR, &ifr) == 0) {
-            printf("        ether %02x:%02x:%02x:%02x:%02x:%02x\n",
-                   (uint8_t)ifr.ifr_hwaddr.sa_data[0],
-                   (uint8_t)ifr.ifr_hwaddr.sa_data[1],
-                   (uint8_t)ifr.ifr_hwaddr.sa_data[2],
-                   (uint8_t)ifr.ifr_hwaddr.sa_data[3],
-                   (uint8_t)ifr.ifr_hwaddr.sa_data[4],
-                   (uint8_t)ifr.ifr_hwaddr.sa_data[5]);
-        }
+    // 显示所有接口（默认接口）
+    if (argc == 1) {
+        ifconfig_print_info(&ifr);
         return 0;
     }
     
-    // 启用/禁用接口
-    if (argc == 3) {
-        if (strcmp(argv[2], "up") == 0) {
-            ifr.ifr_flags = IFF_UP;
-            if (ioctl(0, SIOCSIFFLAGS, &ifr) < 0) {
-                printf("Error: Failed to bring up interface %s\n", argv[1]);
-                return -1;
-            }
-            printf("Interface %s is up\n", argv[1]);
-            return 0;
-        } else if (strcmp(argv[2], "down") == 0) {
-            ifr.ifr_flags = 0;
-            if (ioctl(0, SIOCSIFFLAGS, &ifr) < 0) {
-                printf("Error: Failed to bring down interface %s\n", argv[1]);
-                return -1;
-            }
-            printf("Interface %s is down\n", argv[1]);
-            return 0;
-        }
+    // 设置接口名
+    strncpy(ifr.ifr_name, argv[1], sizeof(ifr.ifr_name) - 1);
+    
+    // 显示特定接口
+    if (argc == 2) {
+        ifconfig_print_info(&ifr);
+        return 0;
     }
     
-    // 配置 IP 地址：ifconfig eth0 192.168.1.100 255.255.255.0
-    if (argc >= 4) {
+    // 配置接口 IP 地址
+    // ifconfig eth0 192.168.1.100 255.255.255.0 192.168.1.1
+    if (argc >= 5) {
         // 设置 IP 地址
         uint32_t ip;
         if (string_to_ip(argv[2], &ip) < 0) {
@@ -2456,13 +2471,46 @@ static int cmd_ifconfig(int argc, char **argv) {
             return -1;
         }
         
-        printf("Interface %s configured: %s netmask %s\n",
-               argv[1], argv[2], argv[3]);
+        // 设置网关
+        uint32_t gateway;
+        if (string_to_ip(argv[4], &gateway) < 0) {
+            printf("Error: Invalid gateway '%s'\n", argv[4]);
+            return -1;
+        }
+        ifr.ifr_gateway.sin_family = AF_INET;
+        ifr.ifr_gateway.sin_addr = gateway;
+        if (ioctl(0, SIOCSIFGATEWAY, &ifr) < 0) {
+            printf("Error: Failed to set gateway\n");
+            return -1;
+        }
+        
+        printf("Interface %s configured\n", argv[1]);
         return 0;
     }
     
-    printf("Usage: ifconfig [interface] [ip netmask]\n");
-    printf("       ifconfig interface up|down\n");
+    // 启用/禁用接口
+    if (argc == 3) {
+        if (strcmp(argv[2], "up") == 0) {
+            ifr.ifr_flags = IFF_UP;
+            if (ioctl(0, SIOCSIFFLAGS, &ifr) < 0) {
+                printf("Error: Failed to bring up interface %s\n", argv[1]);
+                return -1;
+            }
+            printf("Interface %s is up\n", argv[1]);
+            return 0;
+        } else if (strcmp(argv[2], "down") == 0) {
+            ifr.ifr_flags = 0;
+            if (ioctl(0, SIOCSIFFLAGS, &ifr) < 0) {
+                printf("Error: Failed to bring down interface %s\n", argv[1]);
+                return -1;
+            }
+            printf("Interface %s is down\n", argv[1]);
+            return 0;
+        }
+    }
+    
+    printf("Usage: ifconfig [iface] [ip netmask gateway]\n");
+    printf("       ifconfig iface up|down\n");
     return -1;
 }
 

@@ -362,7 +362,7 @@ void pci_print_device(pci_device_t *dev) {
     if (!dev) return;
     
     kprintf("PCI %02x:%02x.%x:\n", dev->bus, dev->slot, dev->func);
-    kprintf("  Vendor: %04x  Device: %04x\n", dev->vendor_id, dev->device_id);
+    kprintf("  Vendor: 0x%04x  Device: 0x%04x\n", dev->vendor_id, dev->device_id);
     kprintf("  Class: %02x:%02x:%02x (%s)\n", 
             dev->class_code, dev->subclass, dev->prog_if,
             pci_class_name(dev->class_code));
@@ -373,7 +373,7 @@ void pci_print_device(pci_device_t *dev) {
     for (int i = 0; i < 6; i++) {
         if (dev->bar[i] != 0) {
             uint32_t addr = pci_get_bar_address(dev, i);
-            kprintf("  BAR%d: %08x (%s, %u KB)\n",
+            kprintf("  BAR%d: 0x%08x (%s, %u KB)\n",
                     i, addr,
                     pci_bar_is_io(dev, i) ? "I/O" : "MEM",
                     dev->bar_size[i] / 1024);

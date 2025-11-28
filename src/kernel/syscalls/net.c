@@ -60,6 +60,17 @@ static int32_t netif_ioctl(uint32_t request, struct ifreq *ifr) {
             return netdev_set_ip(dev, dev->ip_addr, 
                                 ifr->ifr_netmask.sin_addr, dev->gateway);
             
+        case SIOCGIFGATEWAY:
+            // 获取网关地址
+            ifr->ifr_gateway.sin_family = AF_INET;
+            ifr->ifr_gateway.sin_addr = dev->gateway;
+            return 0;
+            
+        case SIOCSIFGATEWAY:
+            // 设置网关地址
+            return netdev_set_ip(dev, dev->ip_addr, 
+                                dev->netmask, ifr->ifr_gateway.sin_addr);
+            
         case SIOCGIFFLAGS:
             // 获取接口标志
             ifr->ifr_flags = 0;
@@ -131,6 +142,37 @@ static int32_t arp_ioctl(uint32_t request, struct arpreq *arpreq) {
         default:
             return -1;
     }
+}
+
+/**
+ * @brief 处理网络接口统计信息获取（CastorOS 扩展）
+ */
+static int32_t ifstats_ioctl(struct ifstats *stats) {
+    if (!stats) {
+        return -1;
+    }
+    
+    // 查找网络设备
+    netdev_t *dev = NULL;
+    if (stats->ifr_name[0] != '\0') {
+        dev = netdev_get_by_name(stats->ifr_name);
+    } else {
+        dev = netdev_get_default();
+    }
+    
+    if (!dev) {
+        return -1;
+    }
+    
+    // 填充统计信息
+    strncpy(stats->ifr_name, dev->name, sizeof(stats->ifr_name) - 1);
+    stats->ifr_name[sizeof(stats->ifr_name) - 1] = '\0';
+    stats->rx_packets = dev->rx_packets;
+    stats->tx_packets = dev->tx_packets;
+    stats->rx_bytes = dev->rx_bytes;
+    stats->tx_bytes = dev->tx_bytes;
+    
+    return 0;
 }
 
 /**
@@ -248,7 +290,7 @@ int32_t sys_ioctl(int32_t fd, uint32_t request, void *argp) {
     (void)fd;  // 暂时不使用 fd，直接根据 request 类型处理
     
     // 网络接口 ioctl
-    if (request >= SIOCGIFADDR && request <= SIOCGIFINDEX) {
+    if (request >= SIOCGIFADDR && request <= SIOCSIFGATEWAY) {
         return netif_ioctl(request, (struct ifreq *)argp);
     }
     
@@ -260,6 +302,11 @@ int32_t sys_ioctl(int32_t fd, uint32_t request, void *argp) {
     // Ping ioctl（CastorOS 扩展）
     if (request == SIOCPING) {
         return ping_ioctl((struct ping_req *)argp);
+    }
+    
+    // 网络接口统计 ioctl（CastorOS 扩展）
+    if (request == SIOCGIFSTATS) {
+        return ifstats_ioctl((struct ifstats *)argp);
     }
     
     LOG_WARN_MSG("ioctl: Unsupported request 0x%x\n", request);

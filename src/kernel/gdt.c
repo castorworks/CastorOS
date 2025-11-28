@@ -78,7 +78,7 @@ void tss_init(uint32_t kernel_stack, uint32_t kernel_ss) {
     tss.esp0 = kernel_stack;
     tss.iomap_base = sizeof(tss);
 
-    LOG_DEBUG_MSG("  TSS addr=%x size=%u\n", (uint32_t)&tss, (uint32_t)sizeof(tss));
+    LOG_DEBUG_MSG("  TSS addr=0x%x size=%u\n", (uint32_t)&tss, (uint32_t)sizeof(tss));
 }
 
 /**

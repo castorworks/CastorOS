@@ -119,19 +119,19 @@ static void release_directory_range(page_directory_t *dir, uint32_t start_idx, u
  */
 static void register_page_directory(uint32_t dir_phys) {
     if (active_pd_count >= MAX_PAGE_DIRECTORIES) {
-        LOG_ERROR_MSG("VMM: Too many active page directories! Cannot register %x\n", dir_phys);
+        LOG_ERROR_MSG("VMM: Too many active page directories! Cannot register 0x%x\n", dir_phys);
         return;
     }
     
     // 检查是否已注册
     if (is_active_page_directory(dir_phys)) {
-        LOG_WARN_MSG("VMM: Page directory %x already registered\n", dir_phys);
+        LOG_WARN_MSG("VMM: Page directory 0x%x already registered\n", dir_phys);
         return;
     }
     
     protect_phys_frame(dir_phys);
     active_page_directories[active_pd_count++] = dir_phys;
-    LOG_INFO_MSG("VMM: Registered page directory %x (total: %u)\n", dir_phys, active_pd_count);
+    LOG_INFO_MSG("VMM: Registered page directory 0x%x (total: %u)\n", dir_phys, active_pd_count);
 }
 
 /**
@@ -144,11 +144,11 @@ static void unregister_page_directory(uint32_t dir_phys) {
             unprotect_phys_frame(dir_phys);
             // 用最后一个元素替换当前元素
             active_page_directories[i] = active_page_directories[--active_pd_count];
-            LOG_INFO_MSG("VMM: Unregistered page directory %x (remaining: %u)\n", dir_phys, active_pd_count);
+            LOG_INFO_MSG("VMM: Unregistered page directory 0x%x (remaining: %u)\n", dir_phys, active_pd_count);
             return;
         }
     }
-    LOG_ERROR_MSG("VMM: ERROR: Tried to unregister unknown page directory %x\n", dir_phys);
+    LOG_ERROR_MSG("VMM: ERROR: Tried to unregister unknown page directory 0x%x\n", dir_phys);
 }
 
 /**
@@ -200,7 +200,7 @@ void vmm_init(void) {
     
     LOG_DEBUG_MSG("VMM: Extending high-half kernel mapping\n");
     LOG_DEBUG_MSG("  Physical memory: %u MB\n", max_phys / (1024*1024));
-    LOG_DEBUG_MSG("  Mapping PDEs: %u-%u (virtual: %x-%x)\n",
+    LOG_DEBUG_MSG("  Mapping PDEs: %u-%u (virtual: 0x%x-0x%x)\n",
                  start_pde, end_pde - 1,
                  start_pde << 22, (end_pde << 22) - 1);
     
@@ -249,7 +249,7 @@ void vmm_init(void) {
     protect_directory_range(current_dir, KERNEL_PDE_START, KERNEL_PDE_END);
     
     LOG_INFO_MSG("VMM: High-half kernel mapping extended\n");
-    LOG_INFO_MSG("VMM: Boot page directory registered at phys %x\n", current_dir_phys);
+    LOG_INFO_MSG("VMM: Boot page directory registered at phys 0x%x\n", current_dir_phys);
 }
 
 
@@ -306,7 +306,7 @@ bool vmm_handle_cow_page_fault(uint32_t addr, uint32_t error_code) {
     // error_code bit 0: 页面存在
     // COW 异常应该是：页面存在(bit0=1) + 写入(bit1=1) = 0x3 或 0x7
     if ((error_code & 0x3) != 0x3) {
-        LOG_DEBUG_MSG("COW: Not a COW fault - addr=%x, error=%x\n", addr, error_code);
+        LOG_DEBUG_MSG("COW: Not a COW fault - addr=0x%x, error=0x%x\n", addr, error_code);
         return false;  // 不是写保护异常
     }
     
@@ -318,7 +318,7 @@ bool vmm_handle_cow_page_fault(uint32_t addr, uint32_t error_code) {
     
     // 检查页表是否存在
     if (!is_present(current_dir->entries[pd_idx])) {
-        LOG_DEBUG_MSG("COW: Page table not present - addr=%x\n", addr);
+        LOG_DEBUG_MSG("COW: Page table not present - addr=0x%x\n", addr);
         spinlock_unlock_irqrestore(&vmm_lock, irq_state);
         return false;
     }
@@ -326,7 +326,7 @@ bool vmm_handle_cow_page_fault(uint32_t addr, uint32_t error_code) {
     // 【安全检查】验证页表的物理地址
     uint32_t table_phys = get_frame(current_dir->entries[pd_idx]);
     if (table_phys == 0 || table_phys >= 0x80000000) {
-        LOG_ERROR_MSG("COW: Invalid page table address %x at PDE %u\n", table_phys, pd_idx);
+        LOG_ERROR_MSG("COW: Invalid page table address 0x%x at PDE %u\n", table_phys, pd_idx);
         spinlock_unlock_irqrestore(&vmm_lock, irq_state);
         return false;
     }
@@ -336,7 +336,7 @@ bool vmm_handle_cow_page_fault(uint32_t addr, uint32_t error_code) {
     
     // 检查页面是否存在且标记为 COW
     if (!is_present(*pte) || !(*pte & PAGE_COW)) {
-        LOG_DEBUG_MSG("COW: Not a COW page - addr=%x, pte=%x, present=%d, cow=%d\n",
+        LOG_DEBUG_MSG("COW: Not a COW page - addr=0x%x, pte=0x%x, present=%d, cow=%d\n",
                      addr, *pte, is_present(*pte), (*pte & PAGE_COW) != 0);
         spinlock_unlock_irqrestore(&vmm_lock, irq_state);
         return false;  // 不是 COW 页面
@@ -346,20 +346,20 @@ bool vmm_handle_cow_page_fault(uint32_t addr, uint32_t error_code) {
     
     // 【安全检查】验证旧物理帧地址
     if (old_frame == 0 || old_frame >= 0x80000000) {
-        LOG_ERROR_MSG("COW: Invalid old frame address %x at addr=%x\n", old_frame, addr);
+        LOG_ERROR_MSG("COW: Invalid old frame address 0x%x at addr=0x%x\n", old_frame, addr);
         spinlock_unlock_irqrestore(&vmm_lock, irq_state);
         return false;
     }
     
     uint32_t refcount = pmm_frame_get_refcount(old_frame);
     
-    LOG_INFO_MSG("COW: Handling page fault - addr=%x, old_frame=%x, refcount=%u\n", 
+    LOG_INFO_MSG("COW: Handling page fault - addr=0x%x, old_frame=0x%x, refcount=%u\n", 
                 addr, old_frame, refcount);
     
     if (refcount == 0) {
         // 异常情况：COW 页面但引用计数为 0
         // 这不应该发生，但为了安全，我们恢复写权限并继续
-        LOG_WARN_MSG("COW: Page at %x has refcount=0 but is marked COW, restoring write\n", addr);
+        LOG_WARN_MSG("COW: Page at 0x%x has refcount=0 but is marked COW, restoring write\n", addr);
         *pte = old_frame | ((*pte & 0xFFF) & ~PAGE_COW) | PAGE_WRITE;
         vmm_flush_tlb(addr);
         spinlock_unlock_irqrestore(&vmm_lock, irq_state);
@@ -403,7 +403,7 @@ bool vmm_handle_cow_page_fault(uint32_t addr, uint32_t error_code) {
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
     
-    LOG_DEBUG_MSG("COW: Copied page (refcount was %u), old_frame=%x -> new_frame=%x\n", 
+    LOG_DEBUG_MSG("COW: Copied page (refcount was %u), old_frame=0x%x -> new_frame=0x%x\n", 
                  refcount, old_frame, new_frame);
     return true;
 }
@@ -567,7 +567,7 @@ uint32_t vmm_create_page_directory(void) {
 uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
     // 【安全检查】验证源页目录地址有效
     if (!src_dir_phys || src_dir_phys >= 0x80000000) {
-        LOG_ERROR_MSG("vmm_clone_page_directory: Invalid src_dir_phys %x\n", src_dir_phys);
+        LOG_ERROR_MSG("vmm_clone_page_directory: Invalid src_dir_phys 0x%x\n", src_dir_phys);
         return 0;
     }
     
@@ -577,7 +577,7 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
     
     // 【安全检查】确保新分配的帧不与源相同
     if (new_dir_phys == src_dir_phys) {
-        LOG_ERROR_MSG("vmm_clone_page_directory: CRITICAL! PMM returned same frame as source %x!\n", src_dir_phys);
+        LOG_ERROR_MSG("vmm_clone_page_directory: CRITICAL! PMM returned same frame as source 0x%x!\n", src_dir_phys);
         pmm_free_frame(new_dir_phys);
         return 0;
     }
@@ -593,7 +593,7 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
         if (is_present(src_dir->entries[i])) {
             uint32_t phys = get_frame(src_dir->entries[i]);
             if (phys == 0 || phys >= 0x80000000) {
-                LOG_ERROR_MSG("vmm_clone: CORRUPTED source PDE[%u]=%x before clone!\n", 
+                LOG_ERROR_MSG("vmm_clone: CORRUPTED source PDE[%u]=0x%x before clone!\n", 
                              i, src_dir->entries[i]);
             }
         }
@@ -609,7 +609,7 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
     protect_directory_range(new_dir, KERNEL_PDE_START, KERNEL_PDE_END);
     
     // 复制用户空间映射（COW方式：复制页表，共享物理页，标记只读）
-    LOG_DEBUG_MSG("vmm_clone_cow: Cloning user space with COW (src=%x, new=%x)\n", 
+    LOG_DEBUG_MSG("vmm_clone_cow: Cloning user space with COW (src=0x%x, new=0x%x)\n", 
                  src_dir_phys, new_dir_phys);
     
     // 用于跟踪失败时的回滚信息
@@ -621,7 +621,7 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
             // 【安全检查】验证源页表的物理地址有效性
             uint32_t src_table_phys = get_frame(src_dir->entries[i]);
             if (src_table_phys >= 0x80000000 || src_table_phys == 0) {
-                LOG_ERROR_MSG("vmm_clone_cow: Invalid src_table_phys %x at PDE %u\n",
+                LOG_ERROR_MSG("vmm_clone_cow: Invalid src_table_phys 0x%x at PDE %u\n",
                              src_table_phys, i);
                 clone_failed = true;
                 break;
@@ -655,9 +655,9 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
                         
                         // 调试：记录第一个 COW 页面的详细信息
                         if (cow_pages == 1) {
-                            LOG_DEBUG_MSG("vmm_clone_cow: First COW page: PDE=%u PTE=%u frame=%x flags=%x\n",
+                            LOG_DEBUG_MSG("vmm_clone_cow: First COW page: PDE=%u PTE=%u frame=0x%x flags=0x%x\n",
                                          i, j, src_frame, flags);
-                            LOG_DEBUG_MSG("vmm_clone_cow: src_table_phys=%x new_table_phys=%x\n",
+                            LOG_DEBUG_MSG("vmm_clone_cow: src_table_phys=0x%x new_table_phys=0x%x\n",
                                          src_table_phys, new_table_phys);
                         }
                     }
@@ -673,7 +673,7 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
                 }
             }
             
-            LOG_DEBUG_MSG("vmm_clone_cow: PDE %u cloned, %u pages marked COW (src_table=%x, new_table=%x)\n", 
+            LOG_DEBUG_MSG("vmm_clone_cow: PDE %u cloned, %u pages marked COW (src_table=0x%x, new_table=0x%x)\n", 
                          i, cow_pages, src_table_phys, new_table_phys);
             
             // 子进程使用新的页表
@@ -696,7 +696,7 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
         if (is_present(src_dir->entries[i])) {
             uint32_t phys = get_frame(src_dir->entries[i]);
             if (phys == 0 || phys >= 0x80000000) {
-                LOG_ERROR_MSG("vmm_clone: Source PDE[%u]=%x CORRUPTED after clone!\n", 
+                LOG_ERROR_MSG("vmm_clone: Source PDE[%u]=0x%x CORRUPTED after clone!\n", 
                              i, src_dir->entries[i]);
             }
         }
@@ -755,30 +755,30 @@ static bool is_page_directory_in_use(uint32_t dir_phys) {
 void vmm_free_page_directory(uint32_t dir_phys) {
     if (!dir_phys) return;
     
-    LOG_INFO_MSG("vmm_free_page_directory: Attempting to free page directory %x\n", dir_phys);
+    LOG_INFO_MSG("vmm_free_page_directory: Attempting to free page directory 0x%x\n", dir_phys);
     
     // 【安全检查】防止释放当前正在使用的页目录
     if (dir_phys == current_dir_phys) {
-        LOG_ERROR_MSG("vmm_free_page_directory: BLOCKED! Attempting to free current page directory %x!\n", dir_phys);
+        LOG_ERROR_MSG("vmm_free_page_directory: BLOCKED! Attempting to free current page directory 0x%x!\n", dir_phys);
         return;
     }
     
     // 【安全检查】防止释放主内核页目录
     uint32_t boot_dir_phys = VIRT_TO_PHYS((uint32_t)boot_page_directory);
     if (dir_phys == boot_dir_phys) {
-        LOG_ERROR_MSG("vmm_free_page_directory: BLOCKED! Attempting to free boot page directory %x!\n", dir_phys);
+        LOG_ERROR_MSG("vmm_free_page_directory: BLOCKED! Attempting to free boot page directory 0x%x!\n", dir_phys);
         return;
     }
     
     // 【关键修复】检查页目录是否仍被其他任务使用
     if (is_page_directory_in_use(dir_phys)) {
-        LOG_ERROR_MSG("vmm_free_page_directory: BLOCKED! Page directory %x is still in use by a task!\n", dir_phys);
+        LOG_ERROR_MSG("vmm_free_page_directory: BLOCKED! Page directory 0x%x is still in use by a task!\n", dir_phys);
         return;
     }
     
     // 【新增检查】验证这个页目录是否在活动列表中
     if (!is_active_page_directory(dir_phys)) {
-        LOG_ERROR_MSG("vmm_free_page_directory: WARNING! Page directory %x is not in active list!\n", dir_phys);
+        LOG_ERROR_MSG("vmm_free_page_directory: WARNING! Page directory 0x%x is not in active list!\n", dir_phys);
         LOG_ERROR_MSG("  This might be a double-free or invalid pointer. Proceeding cautiously...\n");
     }
     
@@ -793,7 +793,7 @@ void vmm_free_page_directory(uint32_t dir_phys) {
     // 获取当前的内存使用量
     pmm_info_t info_start = pmm_get_info();
     
-    // LOG_DEBUG_MSG("vmm_free_page_directory: dir_phys=%x\n", dir_phys);
+    // LOG_DEBUG_MSG("vmm_free_page_directory: dir_phys=0x%x\n", dir_phys);
     
     // 只释放用户空间页表（0-511）
     // 内核空间页表（512-1023）是共享的，不释放
@@ -817,7 +817,7 @@ void vmm_free_page_directory(uint32_t dir_phys) {
                     
                     // 基本安全检查
                     if (frame == 0 || frame >= 0x80000000) {
-                        LOG_WARN_MSG("vmm_free: PDE %u PTE %u invalid frame %x\n", i, j, frame);
+                        LOG_WARN_MSG("vmm_free: PDE %u PTE %u invalid frame 0x%x\n", i, j, frame);
                         freed_pages++;
                         pages_in_table++;
                         continue;
@@ -853,11 +853,11 @@ void vmm_free_page_directory(uint32_t dir_phys) {
     if (is_active_page_directory(dir_phys)) {
         unregister_page_directory(dir_phys);
     } else {
-        LOG_WARN_MSG("vmm_free_page_directory: dir %x was not registered\n", dir_phys);
+        LOG_WARN_MSG("vmm_free_page_directory: dir 0x%x was not registered\n", dir_phys);
     }
     
     // 释放页目录本身
-    LOG_DEBUG_MSG("vmm_free_page_directory: freeing page directory at phys %x (virt %x)\n", 
+    LOG_DEBUG_MSG("vmm_free_page_directory: freeing page directory at phys 0x%x (virt 0x%x)\n", 
                   dir_phys, (uint32_t)dir);
     pmm_free_frame(dir_phys);
     
@@ -1011,7 +1011,7 @@ uint32_t vmm_unmap_page_in_directory(uint32_t dir_phys, uint32_t virt) {
             pmm_free_frame(table_frame);
         }
         *pde = 0;
-        LOG_DEBUG_MSG("  Page table at PDE %u (frame=%x) is empty, freed\n", pd, table_frame);
+        LOG_DEBUG_MSG("  Page table at PDE %u (frame=0x%x) is empty, freed\n", pd, table_frame);
         
         // 如果页表被释放，需要刷新整个 TLB，因为 PDE 变了
         if (dir_phys == current_dir_phys) {
@@ -1117,7 +1117,7 @@ uint32_t vmm_map_mmio(uint32_t phys_addr, uint32_t size) {
     uint32_t offset = phys_addr - phys_start;
     uint32_t result = virt_start + offset;
     
-    LOG_INFO_MSG("vmm_map_mmio: mapped phys %x size %x -> virt %x\n", 
+    LOG_INFO_MSG("vmm_map_mmio: mapped phys 0x%x size 0x%x -> virt 0x%x\n", 
                  phys_addr, size, result);
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
@@ -1154,7 +1154,7 @@ void vmm_unmap_mmio(uint32_t virt_addr, uint32_t size) {
         vmm_flush_tlb(virt);
     }
     
-    LOG_INFO_MSG("vmm_unmap_mmio: unmapped virt %x size %x\n", virt_addr, size);
+    LOG_INFO_MSG("vmm_unmap_mmio: unmapped virt 0x%x size 0x%x\n", virt_addr, size);
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
 }
