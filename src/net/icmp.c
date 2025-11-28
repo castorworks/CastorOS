@@ -164,6 +164,7 @@ int icmp_send_echo_request(uint32_t dst_ip, uint16_t id, uint16_t seq,
     last_ping.seq = seq;
     last_ping.send_time = (uint32_t)timer_get_uptime_ms();
     last_ping.waiting = true;
+    last_rtt = -1;  // 重置 RTT，等待新的回复
     
     // 发送
     int ret = ip_output(NULL, buf, dst_ip, IP_PROTO_ICMP);

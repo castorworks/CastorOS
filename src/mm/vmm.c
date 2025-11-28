@@ -1029,3 +1029,168 @@ uint32_t vmm_unmap_page_in_directory(uint32_t dir_phys, uint32_t virt) {
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
     return result;
 }
+
+/* ============================================================================
+ * MMIO 映射
+ * ============================================================================ */
+
+/** MMIO 映射区域起始地址（在内核空间的高地址区域） */
+#define MMIO_VIRT_BASE      0xF0000000
+#define MMIO_VIRT_END       0xFFC00000  // 保留最后 4MB 给递归页表等
+#define PAGE_CACHE_DISABLE  0x010       // PCD: Page Cache Disable
+#define PAGE_WRITE_THROUGH  0x008       // PWT: Page Write Through
+
+/** 当前 MMIO 虚拟地址分配位置 */
+static uint32_t mmio_next_virt = MMIO_VIRT_BASE;
+
+/**
+ * @brief 映射 MMIO 区域
+ * @param phys_addr 物理地址
+ * @param size 映射大小（字节）
+ * @return 成功返回映射的虚拟地址，失败返回 0
+ */
+uint32_t vmm_map_mmio(uint32_t phys_addr, uint32_t size) {
+    if (size == 0) {
+        return 0;
+    }
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    
+    // 计算需要的页数（向上取整）
+    uint32_t phys_start = PAGE_ALIGN_DOWN(phys_addr);
+    uint32_t phys_end = PAGE_ALIGN_UP(phys_addr + size);
+    uint32_t num_pages = (phys_end - phys_start) / PAGE_SIZE;
+    
+    // 分配虚拟地址空间
+    uint32_t virt_start = mmio_next_virt;
+    if (virt_start + num_pages * PAGE_SIZE > MMIO_VIRT_END) {
+        LOG_ERROR_MSG("vmm_map_mmio: No more MMIO virtual address space\n");
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        return 0;
+    }
+    
+    // 映射所有页面（禁用缓存）
+    uint32_t flags = PAGE_PRESENT | PAGE_WRITE | PAGE_CACHE_DISABLE | PAGE_WRITE_THROUGH;
+    
+    for (uint32_t i = 0; i < num_pages; i++) {
+        uint32_t virt = virt_start + i * PAGE_SIZE;
+        uint32_t phys = phys_start + i * PAGE_SIZE;
+        
+        uint32_t pd = pde_idx(virt);
+        uint32_t pt = pte_idx(virt);
+        
+        pde_t *pde = &current_dir->entries[pd];
+        page_table_t *table;
+        
+        // 如果页表不存在，创建新页表
+        if (!is_present(*pde)) {
+            table = create_page_table();
+            if (!table) {
+                // 回滚已映射的页面
+                for (uint32_t j = 0; j < i; j++) {
+                    vmm_unmap_page(virt_start + j * PAGE_SIZE);
+                }
+                spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+                return 0;
+            }
+            uint32_t table_phys = VIRT_TO_PHYS((uint32_t)table);
+            *pde = table_phys | PAGE_PRESENT | PAGE_WRITE;
+            protect_phys_frame(table_phys);
+            
+            // 同步到主内核页目录
+            page_directory_t *k_dir = (page_directory_t *)boot_page_directory;
+            k_dir->entries[pd] = *pde;
+        } else {
+            table = (page_table_t*)PHYS_TO_VIRT(get_frame(*pde));
+        }
+        
+        // 设置页表项
+        table->entries[pt] = phys | flags;
+        vmm_flush_tlb(virt);
+    }
+    
+    // 更新下一个可用的 MMIO 虚拟地址
+    mmio_next_virt = virt_start + num_pages * PAGE_SIZE;
+    
+    // 计算返回地址：虚拟基址 + 物理地址页内偏移
+    uint32_t offset = phys_addr - phys_start;
+    uint32_t result = virt_start + offset;
+    
+    LOG_INFO_MSG("vmm_map_mmio: mapped phys %x size %x -> virt %x\n", 
+                 phys_addr, size, result);
+    
+    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+    return result;
+}
+
+/**
+ * @brief 取消 MMIO 区域映射
+ * @param virt_addr 虚拟地址
+ * @param size 映射大小（字节）
+ */
+void vmm_unmap_mmio(uint32_t virt_addr, uint32_t size) {
+    if (size == 0 || virt_addr < MMIO_VIRT_BASE || virt_addr >= MMIO_VIRT_END) {
+        return;
+    }
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    
+    uint32_t virt_start = PAGE_ALIGN_DOWN(virt_addr);
+    uint32_t virt_end = PAGE_ALIGN_UP(virt_addr + size);
+    
+    for (uint32_t virt = virt_start; virt < virt_end; virt += PAGE_SIZE) {
+        uint32_t pd = pde_idx(virt);
+        uint32_t pt = pte_idx(virt);
+        
+        pde_t *pde = &current_dir->entries[pd];
+        if (!is_present(*pde)) {
+            continue;
+        }
+        
+        page_table_t *table = (page_table_t*)PHYS_TO_VIRT(get_frame(*pde));
+        table->entries[pt] = 0;
+        vmm_flush_tlb(virt);
+    }
+    
+    LOG_INFO_MSG("vmm_unmap_mmio: unmapped virt %x size %x\n", virt_addr, size);
+    
+    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+}
+
+/**
+ * @brief 通过查询页表获取虚拟地址对应的物理地址
+ * @param virt 虚拟地址
+ * @return 物理地址，如果虚拟地址未映射则返回 0
+ */
+uint32_t vmm_virt_to_phys(uint32_t virt) {
+    bool irq_state;
+    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    
+    uint32_t pd = pde_idx(virt);
+    uint32_t pt = pte_idx(virt);
+    
+    // 检查页目录项是否存在
+    pde_t pde = current_dir->entries[pd];
+    if (!is_present(pde)) {
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        return 0;
+    }
+    
+    // 获取页表
+    page_table_t *table = (page_table_t*)PHYS_TO_VIRT(get_frame(pde));
+    
+    // 检查页表项是否存在
+    pte_t pte = table->entries[pt];
+    if (!is_present(pte)) {
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        return 0;
+    }
+    
+    // 物理地址 = 页帧地址 + 页内偏移
+    uint32_t phys = get_frame(pte) | (virt & 0xFFF);
+    
+    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+    return phys;
+}

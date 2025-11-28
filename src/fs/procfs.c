@@ -5,6 +5,7 @@
 #include <fs/procfs.h>
 #include <fs/vfs.h>
 #include <kernel/task.h>
+#include <drivers/pci.h>
 #include <lib/string.h>
 #include <lib/klog.h>
 #include <lib/kprintf.h>
@@ -19,6 +20,7 @@ static struct dirent *procfs_pid_readdir(fs_node_t *node, uint32_t index);
 static fs_node_t *procfs_pid_finddir(fs_node_t *node, const char *name);
 static uint32_t procfs_status_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 static uint32_t procfs_meminfo_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
+static uint32_t procfs_pci_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 
 /* ProcFS 私有数据结构 - 包含 readdir 缓冲区以避免静态变量 */
 typedef struct procfs_private {
@@ -29,6 +31,7 @@ typedef struct procfs_private {
 static fs_node_t *procfs_root = NULL;
 static procfs_private_t *procfs_root_private = NULL;  // 根目录私有数据
 static fs_node_t *procfs_meminfo_file = NULL;
+static fs_node_t *procfs_pci_file = NULL;
 
 /* 注意：不再需要 procfs_lock，因为不再缓存节点 */
 static uint32_t procfs_meminfo_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
@@ -118,6 +121,127 @@ static uint32_t procfs_meminfo_read(fs_node_t *node, uint32_t offset, uint32_t s
     }
     
     memcpy(buffer, meminfo_buf + offset, bytes_to_read);
+    return bytes_to_read;
+}
+
+/**
+ * 获取 PCI 设备类别名称
+ */
+static const char *pci_get_class_name(uint8_t class_code, uint8_t subclass) {
+    switch (class_code) {
+        case 0x00:
+            return "Unclassified";
+        case 0x01:
+            switch (subclass) {
+                case 0x00: return "SCSI Controller";
+                case 0x01: return "IDE Controller";
+                case 0x05: return "ATA Controller";
+                case 0x06: return "SATA Controller";
+                case 0x08: return "NVMe Controller";
+                default: return "Storage Controller";
+            }
+        case 0x02:
+            switch (subclass) {
+                case 0x00: return "Ethernet Controller";
+                case 0x80: return "Network Controller";
+                default: return "Network Controller";
+            }
+        case 0x03:
+            switch (subclass) {
+                case 0x00: return "VGA Controller";
+                case 0x01: return "XGA Controller";
+                case 0x02: return "3D Controller";
+                default: return "Display Controller";
+            }
+        case 0x04:
+            return "Multimedia Controller";
+        case 0x05:
+            return "Memory Controller";
+        case 0x06:
+            switch (subclass) {
+                case 0x00: return "Host Bridge";
+                case 0x01: return "ISA Bridge";
+                case 0x04: return "PCI-to-PCI Bridge";
+                case 0x80: return "Bridge Device";
+                default: return "Bridge Device";
+            }
+        case 0x07:
+            return "Communication Controller";
+        case 0x08:
+            return "System Peripheral";
+        case 0x09:
+            return "Input Device";
+        case 0x0C:
+            switch (subclass) {
+                case 0x03: return "USB Controller";
+                case 0x05: return "SMBus Controller";
+                default: return "Serial Bus Controller";
+            }
+        default:
+            return "Unknown Device";
+    }
+}
+
+/**
+ * 读取 /proc/pci 文件
+ */
+static uint32_t procfs_pci_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
+    (void)node;
+    
+    if (!buffer || size == 0) {
+        return 0;
+    }
+    
+    // 使用较大的缓冲区存储 PCI 设备信息
+    char pci_buf[4096];
+    int len = 0;
+    
+    int device_count = pci_get_device_count();
+    
+    // 表头
+    len += ksnprintf(pci_buf + len, sizeof(pci_buf) - (size_t)len,
+                     "PCI Devices: %d\n"
+                     "================================================================================\n"
+                     "Bus:Slot.Func  Vendor:Device  Class       Description\n"
+                     "--------------------------------------------------------------------------------\n",
+                     device_count);
+    
+    // 遍历所有 PCI 设备
+    for (int i = 0; i < device_count && len < (int)sizeof(pci_buf) - 128; i++) {
+        pci_device_t *dev = pci_get_device(i);
+        if (!dev) continue;
+        
+        const char *class_name = pci_get_class_name(dev->class_code, dev->subclass);
+        
+        len += ksnprintf(pci_buf + len, sizeof(pci_buf) - (size_t)len,
+                         "%02x:%02x.%x     %04x:%04x      %02x:%02x       %s\n",
+                         dev->bus, dev->slot, dev->func,
+                         dev->vendor_id, dev->device_id,
+                         dev->class_code, dev->subclass,
+                         class_name);
+    }
+    
+    // 分隔线
+    if (len < (int)sizeof(pci_buf) - 80) {
+        len += ksnprintf(pci_buf + len, sizeof(pci_buf) - (size_t)len,
+                         "================================================================================\n");
+    }
+    
+    if (len < 0 || len >= (int)sizeof(pci_buf)) {
+        len = (int)sizeof(pci_buf) - 1;
+    }
+    
+    uint32_t file_size = (uint32_t)len;
+    if (offset >= file_size) {
+        return 0;
+    }
+    
+    uint32_t bytes_to_read = size;
+    if (offset + bytes_to_read > file_size) {
+        bytes_to_read = file_size - offset;
+    }
+    
+    memcpy(buffer, pci_buf + offset, bytes_to_read);
     return bytes_to_read;
 }
 
@@ -341,8 +465,18 @@ static struct dirent *procfs_root_readdir(fs_node_t *node, uint32_t index) {
         return dirent;
     }
     
+    /* 返回 pci 文件 */
+    if (index == 3) {
+        strcpy(dirent->d_name, "pci");
+        dirent->d_ino = 0;
+        dirent->d_reclen = sizeof(struct dirent);
+        dirent->d_off = 4;
+        dirent->d_type = DT_REG;
+        return dirent;
+    }
+    
     /* 返回进程目录（PID 目录） */
-    uint32_t pid_index = index - 3;
+    uint32_t pid_index = index - 4;
     
     // 遍历所有任务，找到第 pid_index 个有效进程
     uint32_t found_count = 0;
@@ -387,6 +521,12 @@ static fs_node_t *procfs_root_finddir(fs_node_t *node, const char *name) {
         // 增加引用计数（静态节点也需要引用计数管理）
         vfs_ref_node(procfs_meminfo_file);
         return procfs_meminfo_file;
+    }
+    
+    /* pci 文件 */
+    if (strcmp(name, "pci") == 0) {
+        vfs_ref_node(procfs_pci_file);
+        return procfs_pci_file;
     }
     
     /* 尝试解析为 PID */
@@ -512,6 +652,31 @@ fs_node_t *procfs_init(void) {
     procfs_meminfo_file->mkdir = NULL;
     procfs_meminfo_file->unlink = NULL;
     procfs_meminfo_file->ptr = NULL;
+    
+    /* 创建 pci 文件节点 */
+    procfs_pci_file = (fs_node_t *)kmalloc(sizeof(fs_node_t));
+    if (!procfs_pci_file) {
+        LOG_ERROR_MSG("procfs: Failed to allocate pci node\n");
+        return procfs_root;
+    }
+    
+    memset(procfs_pci_file, 0, sizeof(fs_node_t));
+    strcpy(procfs_pci_file->name, "pci");
+    procfs_pci_file->inode = 0;
+    procfs_pci_file->type = FS_FILE;
+    procfs_pci_file->size = 4096;
+    procfs_pci_file->permissions = FS_PERM_READ;
+    procfs_pci_file->ref_count = 0;
+    procfs_pci_file->read = procfs_pci_read;
+    procfs_pci_file->write = NULL;
+    procfs_pci_file->open = NULL;
+    procfs_pci_file->close = NULL;
+    procfs_pci_file->readdir = NULL;
+    procfs_pci_file->finddir = NULL;
+    procfs_pci_file->create = NULL;
+    procfs_pci_file->mkdir = NULL;
+    procfs_pci_file->unlink = NULL;
+    procfs_pci_file->ptr = NULL;
     
     LOG_INFO_MSG("procfs: Initialized\n");
     

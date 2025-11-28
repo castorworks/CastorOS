@@ -38,8 +38,8 @@ static bool expand(size_t size) {
         uint32_t frame = pmm_alloc_frame();
         if (!frame) {
             // 分配失败：清理已分配的页
-            LOG_ERROR_MSG("heap: expand failed at page %zu/%zu (out of physical memory)\n", 
-                         i + 1, pages);
+            LOG_ERROR_MSG("heap: expand failed at page %u/%u (out of physical memory)\n", 
+                         (unsigned int)(i + 1), (unsigned int)pages);
             for (size_t j = 0; j < i; j++) {
                 uint32_t virt = old_heap_end + j * PAGE_SIZE;
                 uint32_t phys = vmm_unmap_page_in_directory(current_dir_phys, virt);
@@ -52,7 +52,8 @@ static bool expand(size_t size) {
         
         if (!vmm_map_page(heap_end + i * PAGE_SIZE, frame, PAGE_PRESENT | PAGE_WRITE)) {
             // 映射失败：清理已分配的页
-            LOG_ERROR_MSG("heap: expand failed at mapping page %zu/%zu\n", i + 1, pages);
+            LOG_ERROR_MSG("heap: expand failed at mapping page %u/%u\n", 
+                         (unsigned int)(i + 1), (unsigned int)pages);
             pmm_free_frame(frame);
             for (size_t j = 0; j < i; j++) {
                 uint32_t virt = old_heap_end + j * PAGE_SIZE;
@@ -336,6 +337,68 @@ void* kcalloc(size_t num, size_t size) {
 }
 
 /**
+ * @brief 分配对齐内存
+ * @param size 要分配的字节数
+ * @param alignment 对齐边界（必须是 2 的幂）
+ * @return 成功返回对齐的内存地址，失败返回 NULL
+ * 
+ * 实现方式：分配额外空间以确保可以返回对齐的地址，
+ * 并在对齐地址前存储原始指针以便正确释放
+ */
+void* kmalloc_aligned(size_t size, size_t alignment) {
+    if (size == 0 || alignment == 0) {
+        return NULL;
+    }
+    
+    // 检查 alignment 是否为 2 的幂
+    if ((alignment & (alignment - 1)) != 0) {
+        return NULL;
+    }
+    
+    // 确保 alignment 至少为 sizeof(void*)
+    if (alignment < sizeof(void*)) {
+        alignment = sizeof(void*);
+    }
+    
+    // 分配额外空间：alignment - 1 用于对齐，sizeof(void*) 用于存储原始指针
+    size_t extra = alignment - 1 + sizeof(void*);
+    void* raw = kmalloc(size + extra);
+    if (!raw) {
+        return NULL;
+    }
+    
+    // 计算对齐后的地址
+    // 先预留 sizeof(void*) 空间存储原始指针，然后对齐
+    uint32_t raw_addr = (uint32_t)raw + sizeof(void*);
+    uint32_t aligned_addr = (raw_addr + alignment - 1) & ~(alignment - 1);
+    
+    // 在对齐地址前存储原始指针
+    void** ptr_store = (void**)(aligned_addr - sizeof(void*));
+    *ptr_store = raw;
+    
+    return (void*)aligned_addr;
+}
+
+/**
+ * @brief 释放对齐内存
+ * @param ptr 由 kmalloc_aligned 返回的指针
+ * 
+ * 从对齐地址前读取原始指针并释放
+ */
+void kfree_aligned(void* ptr) {
+    if (!ptr) {
+        return;
+    }
+    
+    // 从对齐地址前读取原始指针
+    void** ptr_store = (void**)((uint32_t)ptr - sizeof(void*));
+    void* raw = *ptr_store;
+    
+    // 释放原始分配
+    kfree(raw);
+}
+
+/**
  * @brief 获取堆使用统计信息
  * @param info 输出参数，用于存储堆统计信息
  * @return 成功返回 0，失败返回 -1
@@ -350,10 +413,9 @@ int heap_get_info(heap_info_t *info) {
     
     size_t total = heap_end - heap_start;
     size_t used = 0, free = 0;
-    size_t used_metadata = 0, free_metadata = 0;  // 元数据大小
+    size_t used_metadata = 0, free_metadata = 0;
     uint32_t block_count = 0;
     uint32_t free_block_count = 0;
-    uint32_t used_block_count = 0;
     
     // 遍历所有块统计使用情况
     for (heap_block_t *b = first_block; b; b = b->next) {
@@ -367,22 +429,14 @@ int heap_get_info(heap_info_t *info) {
         } else {
             used += b->size;
             used_metadata += metadata_size;
-            used_block_count++;
         }
     }
-    
-    // total 应该等于 used + free + 所有元数据
-    // 但为了兼容性，我们只报告数据部分
-    size_t metadata_total = block_count * sizeof(heap_block_t);
     
     spinlock_unlock_irqrestore(&heap_lock, irq_state);
     
     info->total = total;
-    // 注意：total = used数据 + free数据 + 所有元数据 + 未分配的剩余空间
-    // used 包含已使用块的数据和元数据
-    // free 包含空闲块的数据（元数据已计入 used_metadata 或 free_metadata）
-    info->used = used + used_metadata;  // 包含已使用块的数据和元数据
-    info->free = free + free_metadata;  // 包含空闲块的数据和元数据
+    info->used = used + used_metadata;   // 已使用块的数据 + 元数据
+    info->free = free + free_metadata;   // 空闲块的数据 + 元数据
     info->max = heap_max - heap_start;
     info->block_count = block_count;
     info->free_block_count = free_block_count;

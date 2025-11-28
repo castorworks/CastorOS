@@ -8,6 +8,8 @@
 #include <drivers/keyboard.h>
 #include <drivers/ata.h>
 #include <drivers/rtc.h>
+#include <drivers/pci.h>
+#include <drivers/e1000.h>
 
 #include <kernel/multiboot.h>
 #include <kernel/version.h>
@@ -27,6 +29,8 @@
 #include <mm/pmm.h>
 #include <mm/vmm.h>
 #include <mm/heap.h>
+
+#include <net/netdev.h>
 
 #include <kernel/loader.h>
 
@@ -169,6 +173,30 @@ void kernel_main(multiboot_info_t* mbi) {
     // 4.4 初始化 RTC（实时时钟）
     rtc_init();
     LOG_INFO_MSG("  [4.4] RTC initialized\n");
+
+    // 4.5 初始化 PCI 总线
+    pci_init();
+    pci_scan_devices();
+    LOG_INFO_MSG("  [4.5] PCI bus scanned\n");
+
+    // 4.6 初始化网络设备子系统
+    netdev_init();
+    LOG_INFO_MSG("  [4.6] Network device subsystem initialized\n");
+
+    // 4.7 初始化 E1000 网卡驱动
+    int e1000_count = e1000_init();
+    if (e1000_count > 0) {
+        LOG_INFO_MSG("  [4.7] E1000 driver initialized (%d device(s))\n", e1000_count);
+        
+        // 如果有网卡，启用第一个网卡
+        netdev_t *eth0 = netdev_get_by_name("eth0");
+        if (eth0) {
+            netdev_up(eth0);
+            LOG_INFO_MSG("  Network: eth0 enabled\n");
+        }
+    } else {
+        LOG_DEBUG_MSG("  [4.7] No E1000 network card found\n");
+    }
 
     // ========================================================================
     // 阶段 5: 高级子系统（Advanced Subsystems）

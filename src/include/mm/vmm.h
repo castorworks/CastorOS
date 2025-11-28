@@ -160,4 +160,33 @@ bool vmm_handle_kernel_page_fault(uint32_t addr);
  */
 bool vmm_handle_cow_page_fault(uint32_t addr, uint32_t error_code);
 
+/**
+ * @brief 映射 MMIO 区域
+ * @param phys_addr 物理地址
+ * @param size 映射大小（字节）
+ * @return 成功返回映射的虚拟地址，失败返回 0
+ * 
+ * 用于映射设备寄存器等内存映射 I/O 区域
+ * 映射的页面标记为不可缓存（Cache-Disable）
+ */
+uint32_t vmm_map_mmio(uint32_t phys_addr, uint32_t size);
+
+/**
+ * @brief 取消 MMIO 区域映射
+ * @param virt_addr 虚拟地址
+ * @param size 映射大小（字节）
+ */
+void vmm_unmap_mmio(uint32_t virt_addr, uint32_t size);
+
+/**
+ * @brief 通过查询页表获取虚拟地址对应的物理地址
+ * @param virt 虚拟地址
+ * @return 物理地址，如果虚拟地址未映射则返回 0
+ * 
+ * 注意：此函数会查询当前页目录的页表来获取真正的物理地址，
+ * 而不是简单地使用 VIRT_TO_PHYS 宏（该宏只对恒等映射有效）。
+ * 对于动态分配的堆内存，必须使用此函数获取物理地址用于 DMA 等操作。
+ */
+uint32_t vmm_virt_to_phys(uint32_t virt);
+
 #endif // _MM_VMM_H_

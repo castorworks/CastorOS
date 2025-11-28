@@ -63,6 +63,20 @@ void* krealloc(void* ptr, size_t size);
 void* kcalloc(size_t num, size_t size);
 
 /**
+ * @brief 分配对齐内存
+ * @param size 要分配的字节数
+ * @param alignment 对齐边界（必须是 2 的幂）
+ * @return 成功返回对齐的内存地址，失败返回 NULL
+ */
+void* kmalloc_aligned(size_t size, size_t alignment);
+
+/**
+ * @brief 释放对齐内存
+ * @param ptr 由 kmalloc_aligned 返回的指针
+ */
+void kfree_aligned(void* ptr);
+
+/**
  * @brief 堆统计信息结构体
  */
 typedef struct {

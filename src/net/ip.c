@@ -181,7 +181,12 @@ int ip_output(netdev_t *dev, netbuf_t *buf, uint32_t dst_ip, uint8_t protocol) {
         if (arp_queue_packet(next_hop, buf) == 0) {
             return 0;  // 返回成功，数据包会在 ARP 解析完成后发送
         } else {
-            // 队列失败，需要释放 buf 并返回错误
+            // 队列失败，可能 ARP 已经解析完成（竞态条件），重试一次
+            ret = arp_cache_lookup(next_hop, dst_mac);
+            if (ret == 0) {
+                // ARP 已解析，直接发送
+                return ethernet_output(dev, buf, dst_mac, ETH_TYPE_IP);
+            }
             LOG_WARN_MSG("ip: Failed to queue packet for ARP resolution\n");
             return -1;  // 调用者需要释放 buf
         }

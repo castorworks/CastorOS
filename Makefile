@@ -104,10 +104,10 @@ disk: $(KERNEL) shell hello tests
 	@bash $(CREATE_SCRIPT)
 
 run-disk: disk
-	qemu-system-i386 -hda $(DISK_IMAGE) -serial stdio
+	qemu-system-i386 -hda $(DISK_IMAGE) -serial stdio -netdev user,id=net0 -device e1000,netdev=net0
 
 debug-disk: disk
-	qemu-system-i386 -hda $(DISK_IMAGE) -serial stdio -s -S
+	qemu-system-i386 -hda $(DISK_IMAGE) -serial stdio -netdev user,id=net0 -device e1000,netdev=net0 -s -S
 
 # 清理
 clean:

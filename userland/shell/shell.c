@@ -574,6 +574,9 @@ static int cmd_ifconfig(int argc, char **argv);
 static int cmd_ping(int argc, char **argv);
 static int cmd_arp(int argc, char **argv);
 
+// 硬件信息命令
+static int cmd_lspci(int argc, char **argv);
+
 static uint32_t shell_parse_meminfo_value(const char *line);
 
 // 管道相关函数声明
@@ -646,6 +649,9 @@ static const shell_command_t commands[] = {
     {"ifconfig", "Configure network interface",   "ifconfig [iface] [ip netmask gw]", cmd_ifconfig},
     {"ping",     "Send ICMP echo requests",       "ping [-c count] host", cmd_ping},
     {"arp",      "Show/manage ARP cache",         "arp [-a] [-d ip]",    cmd_arp},
+    
+    // 硬件信息命令
+    {"lspci",    "List PCI devices",              "lspci [-v]",          cmd_lspci},
     
     {0, 0, 0, 0}
 };
@@ -2557,6 +2563,55 @@ static int cmd_arp(int argc, char **argv) {
     
     printf("Usage: arp [-a] [-d ip]\n");
     return -1;
+}
+
+// ============================================================================
+// 硬件信息命令实现
+// ============================================================================
+
+/**
+ * lspci 命令 - 列出 PCI 设备
+ * 
+ * 用法: lspci [-v]
+ *   无参数: 显示简洁的设备列表
+ *   -v: 显示详细信息（目前未实现）
+ */
+static int cmd_lspci(int argc, char **argv) {
+    int verbose = 0;
+    
+    // 检查 -v 参数
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-v") == 0) {
+            verbose = 1;
+        }
+    }
+    
+    // 打开 /proc/pci 文件
+    int fd = open("/proc/pci", O_RDONLY, 0);
+    if (fd < 0) {
+        printf("Error: Cannot open /proc/pci\n");
+        printf("PCI subsystem may not be available.\n");
+        return -1;
+    }
+    
+    // 读取并显示内容
+    char buffer[4096];
+    int bytes_read = read(fd, buffer, sizeof(buffer) - 1);
+    close(fd);
+    
+    if (bytes_read <= 0) {
+        printf("Error: Failed to read PCI device information\n");
+        return -1;
+    }
+    
+    buffer[bytes_read] = '\0';
+    printf("%s", buffer);
+    
+    if (verbose) {
+        printf("\nNote: Detailed device information (-v) not yet implemented.\n");
+    }
+    
+    return 0;
 }
 
 // ============================================================================
