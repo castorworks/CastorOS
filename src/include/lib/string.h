@@ -191,6 +191,15 @@ void *memcpy(void *dest, const void *src, size_t num);
 int memcmp(const void *ptr1, const void *ptr2, size_t num);
 
 /**
+ * 移动内存区域（支持重叠区域）
+ * @param dest 目标地址
+ * @param src 源地址
+ * @param num 字节数
+ * @return dest
+ */
+void *memmove(void *dest, const void *src, size_t num);
+
+/**
  * 格式化字符串输出（带长度限制）
  * @param str 目标缓冲区
  * @param size 缓冲区大小（包括 '\0'）

@@ -561,12 +561,18 @@ static int cmd_wait(int argc, char **argv);
 // 文件操作命令
 static int cmd_ls(int argc, char **argv);
 static int cmd_cat(int argc, char **argv);
+static int cmd_more(int argc, char **argv);
 static int cmd_touch(int argc, char **argv);
 static int cmd_write(int argc, char **argv);
 static int cmd_rm(int argc, char **argv);
 static int cmd_mv(int argc, char **argv);
 static int cmd_mkdir(int argc, char **argv);
 static int cmd_rmdir(int argc, char **argv);
+
+// 网络命令
+static int cmd_ifconfig(int argc, char **argv);
+static int cmd_ping(int argc, char **argv);
+static int cmd_arp(int argc, char **argv);
 
 static uint32_t shell_parse_meminfo_value(const char *line);
 
@@ -628,12 +634,18 @@ static const shell_command_t commands[] = {
     // 文件操作命令
     {"ls",       "List directory contents",         "ls [path]",         cmd_ls},
     {"cat",      "Display file contents or stdin",  "cat [file]",        cmd_cat},
+    {"more",     "View file contents page by page", "more [file]",       cmd_more},
     {"touch",    "Create an empty file",           "touch <file>",       cmd_touch},
     {"write",    "Write text to file",             "write <file> <text...>", cmd_write},
     {"rm",       "Remove a file",                  "rm <file>",         cmd_rm},
     {"mv",       "Move or rename file/directory", "mv <src> <dst>",    cmd_mv},
     {"mkdir",    "Create a directory",             "mkdir <dir>",       cmd_mkdir},
     {"rmdir",    "Remove a directory",             "rmdir <dir>",        cmd_rmdir},
+    
+    // 网络命令
+    {"ifconfig", "Configure network interface",   "ifconfig [iface] [ip netmask gw]", cmd_ifconfig},
+    {"ping",     "Send ICMP echo requests",       "ping [-c count] host", cmd_ping},
+    {"arp",      "Show/manage ARP cache",         "arp [-a] [-d ip]",    cmd_arp},
     
     {0, 0, 0, 0}
 };
@@ -1672,6 +1684,136 @@ static int cmd_cat(int argc, char **argv) {
 }
 
 /**
+ * more 命令 - 分页查看文件内容
+ * 
+ * 用法: more [file]
+ *   无参数: 从 stdin 读取（支持管道）
+ *   有参数: 从指定文件读取
+ * 
+ * 控制键:
+ *   空格/Enter - 下一页
+ *   q - 退出
+ */
+#define MORE_LINES_PER_PAGE  20
+
+static int cmd_more(int argc, char **argv) {
+    int fd;
+    int should_close = 0;
+    const char *filename = "(stdin)";
+    int is_pipe = 0;  // 是否通过管道输入
+    
+    if (argc < 2) {
+        // 无参数：从 stdin 读取（支持管道）
+        fd = STDIN_FILENO;
+        should_close = 0;
+        is_pipe = 1;  // 假设无参数时是管道输入
+    } else {
+        // 有参数：从文件读取
+        char abs_path[SHELL_MAX_PATH_LENGTH];
+        if (shell_resolve_path(argv[1], abs_path, sizeof(abs_path)) != 0) {
+            printf("Error: Invalid path\n");
+            return -1;
+        }
+        
+        // 打开文件
+        fd = open(abs_path, O_RDONLY, 0);
+        if (fd < 0) {
+            printf("Error: Cannot open file '%s'\n", abs_path);
+            return -1;
+        }
+        should_close = 1;
+        filename = argv[1];
+    }
+    
+    // 打开控制台用于读取用户输入（解决管道场景下的输入问题）
+    int tty_fd = -1;
+    if (is_pipe) {
+        tty_fd = open("/dev/console", O_RDONLY, 0);
+        if (tty_fd < 0) {
+            // 如果无法打开控制台，退回到不分页模式
+            printf("Warning: Cannot open /dev/console, showing all content\n");
+        }
+    }
+    
+    char buffer[4096];
+    char line_buf[512];
+    size_t line_pos = 0;
+    int lines_shown = 0;
+    int quit = 0;
+    int bytes_read;
+    
+    // 读取并分页显示内容
+    while (!quit && (bytes_read = read(fd, buffer, sizeof(buffer))) > 0) {
+        for (int i = 0; i < bytes_read && !quit; i++) {
+            char c = buffer[i];
+            
+            // 收集一行
+            if (c == '\n' || line_pos >= sizeof(line_buf) - 1) {
+                line_buf[line_pos] = '\0';
+                
+                // 输出这一行
+                printf("%s\n", line_buf);
+                lines_shown++;
+                line_pos = 0;
+                
+                // 检查是否需要暂停
+                if (lines_shown >= MORE_LINES_PER_PAGE) {
+                    // 显示提示
+                    printf("\033[7m-- More -- (%s) [Space: next page, Enter: next line, q: quit]\033[0m", filename);
+                    
+                    // 等待用户输入（从 tty 或 stdin）
+                    char input;
+                    int input_fd = (tty_fd >= 0) ? tty_fd : STDIN_FILENO;
+                    int ret = read(input_fd, &input, 1);
+                    
+                    // 清除提示行
+                    printf("\r                                                                        \r");
+                    
+                    if (ret <= 0 || input == 'q' || input == 'Q') {
+                        quit = 1;
+                    } else if (input == '\n' || input == '\r') {
+                        // 显示一行
+                        lines_shown = MORE_LINES_PER_PAGE - 1;
+                    } else {
+                        // 显示一页（空格或其他键）
+                        lines_shown = 0;
+                    }
+                }
+            } else if (c >= 32 && c <= 126) {
+                // 可打印字符
+                line_buf[line_pos++] = c;
+            } else if (c == '\t') {
+                // Tab 转换为空格
+                for (int j = 0; j < 4 && line_pos < sizeof(line_buf) - 1; j++) {
+                    line_buf[line_pos++] = ' ';
+                }
+            }
+            // 忽略其他不可打印字符
+        }
+    }
+    
+    // 输出最后一行（如果没有换行符结尾）
+    if (line_pos > 0 && !quit) {
+        line_buf[line_pos] = '\0';
+        printf("%s\n", line_buf);
+    }
+    
+    if (should_close) {
+        close(fd);
+    }
+    
+    if (tty_fd >= 0) {
+        close(tty_fd);
+    }
+    
+    if (quit) {
+        printf("\n");
+    }
+    
+    return 0;
+}
+
+/**
  * touch 命令 - 创建空文件
  */
 static int cmd_touch(int argc, char **argv) {
@@ -2125,6 +2267,296 @@ static int shell_execute_pipeline(pipe_stage_t *stages, int num_stages) {
     }
     
     return last_status;
+}
+
+// ============================================================================
+// 网络命令实现
+// ============================================================================
+
+/**
+ * 将 IP 地址（网络字节序）转换为字符串
+ */
+static void ip_to_string(uint32_t ip, char *buf) {
+    uint8_t *bytes = (uint8_t *)&ip;
+    snprintf(buf, 16, "%u.%u.%u.%u", bytes[0], bytes[1], bytes[2], bytes[3]);
+}
+
+/**
+ * 将字符串解析为 IP 地址（网络字节序）
+ */
+static int string_to_ip(const char *str, uint32_t *ip) {
+    if (!str || !ip) {
+        return -1;
+    }
+    
+    uint32_t a, b, c, d;
+    int count = 0;
+    const char *p = str;
+    
+    // 解析第一个数字
+    a = 0;
+    while (*p >= '0' && *p <= '9') {
+        a = a * 10 + (uint32_t)(*p - '0');
+        p++;
+        count++;
+    }
+    if (*p != '.' || a > 255 || count == 0) return -1;
+    p++;
+    
+    // 解析第二个数字
+    b = 0;
+    count = 0;
+    while (*p >= '0' && *p <= '9') {
+        b = b * 10 + (uint32_t)(*p - '0');
+        p++;
+        count++;
+    }
+    if (*p != '.' || b > 255 || count == 0) return -1;
+    p++;
+    
+    // 解析第三个数字
+    c = 0;
+    count = 0;
+    while (*p >= '0' && *p <= '9') {
+        c = c * 10 + (uint32_t)(*p - '0');
+        p++;
+        count++;
+    }
+    if (*p != '.' || c > 255 || count == 0) return -1;
+    p++;
+    
+    // 解析第四个数字
+    d = 0;
+    count = 0;
+    while (*p >= '0' && *p <= '9') {
+        d = d * 10 + (uint32_t)(*p - '0');
+        p++;
+        count++;
+    }
+    if (d > 255 || count == 0) return -1;
+    
+    // 构造 IP 地址（网络字节序）
+    *ip = (a) | (b << 8) | (c << 16) | (d << 24);
+    return 0;
+}
+
+/**
+ * ifconfig 命令 - 网络接口配置（使用 ioctl）
+ */
+static int cmd_ifconfig(int argc, char **argv) {
+    struct ifreq ifr;
+    char ip_str[16], netmask_str[16];
+    
+    memset(&ifr, 0, sizeof(ifr));
+    
+    // 设置接口名（空字符串表示默认接口）
+    if (argc >= 2) {
+        strncpy(ifr.ifr_name, argv[1], sizeof(ifr.ifr_name) - 1);
+    }
+    
+    // 显示接口信息
+    if (argc <= 2) {
+        // 获取 IP 地址
+        if (ioctl(0, SIOCGIFADDR, &ifr) < 0) {
+            printf("Error: Interface '%s' not found or no network available\n", 
+                   argc >= 2 ? argv[1] : "default");
+            return -1;
+        }
+        ip_to_string(ifr.ifr_addr.sin_addr, ip_str);
+        
+        // 获取子网掩码
+        if (ioctl(0, SIOCGIFNETMASK, &ifr) == 0) {
+            ip_to_string(ifr.ifr_netmask.sin_addr, netmask_str);
+        } else {
+            strcpy(netmask_str, "0.0.0.0");
+        }
+        
+        // 获取接口标志
+        int flags = 0;
+        if (ioctl(0, SIOCGIFFLAGS, &ifr) == 0) {
+            flags = ifr.ifr_flags;
+        }
+        
+        // 获取 MTU
+        int mtu = 1500;
+        if (ioctl(0, SIOCGIFMTU, &ifr) == 0) {
+            mtu = ifr.ifr_mtu;
+        }
+        
+        printf("%s: flags=%s  mtu %d\n", 
+               ifr.ifr_name[0] ? ifr.ifr_name : "eth0",
+               (flags & IFF_UP) ? "UP" : "DOWN", mtu);
+        printf("        inet %s  netmask %s\n", ip_str, netmask_str);
+        
+        // 获取 MAC 地址
+        if (ioctl(0, SIOCGIFHWADDR, &ifr) == 0) {
+            printf("        ether %02x:%02x:%02x:%02x:%02x:%02x\n",
+                   (uint8_t)ifr.ifr_hwaddr.sa_data[0],
+                   (uint8_t)ifr.ifr_hwaddr.sa_data[1],
+                   (uint8_t)ifr.ifr_hwaddr.sa_data[2],
+                   (uint8_t)ifr.ifr_hwaddr.sa_data[3],
+                   (uint8_t)ifr.ifr_hwaddr.sa_data[4],
+                   (uint8_t)ifr.ifr_hwaddr.sa_data[5]);
+        }
+        return 0;
+    }
+    
+    // 启用/禁用接口
+    if (argc == 3) {
+        if (strcmp(argv[2], "up") == 0) {
+            ifr.ifr_flags = IFF_UP;
+            if (ioctl(0, SIOCSIFFLAGS, &ifr) < 0) {
+                printf("Error: Failed to bring up interface %s\n", argv[1]);
+                return -1;
+            }
+            printf("Interface %s is up\n", argv[1]);
+            return 0;
+        } else if (strcmp(argv[2], "down") == 0) {
+            ifr.ifr_flags = 0;
+            if (ioctl(0, SIOCSIFFLAGS, &ifr) < 0) {
+                printf("Error: Failed to bring down interface %s\n", argv[1]);
+                return -1;
+            }
+            printf("Interface %s is down\n", argv[1]);
+            return 0;
+        }
+    }
+    
+    // 配置 IP 地址：ifconfig eth0 192.168.1.100 255.255.255.0
+    if (argc >= 4) {
+        // 设置 IP 地址
+        uint32_t ip;
+        if (string_to_ip(argv[2], &ip) < 0) {
+            printf("Error: Invalid IP address '%s'\n", argv[2]);
+            return -1;
+        }
+        ifr.ifr_addr.sin_family = AF_INET;
+        ifr.ifr_addr.sin_addr = ip;
+        if (ioctl(0, SIOCSIFADDR, &ifr) < 0) {
+            printf("Error: Failed to set IP address\n");
+            return -1;
+        }
+        
+        // 设置子网掩码
+        uint32_t netmask;
+        if (string_to_ip(argv[3], &netmask) < 0) {
+            printf("Error: Invalid netmask '%s'\n", argv[3]);
+            return -1;
+        }
+        ifr.ifr_netmask.sin_family = AF_INET;
+        ifr.ifr_netmask.sin_addr = netmask;
+        if (ioctl(0, SIOCSIFNETMASK, &ifr) < 0) {
+            printf("Error: Failed to set netmask\n");
+            return -1;
+        }
+        
+        printf("Interface %s configured: %s netmask %s\n",
+               argv[1], argv[2], argv[3]);
+        return 0;
+    }
+    
+    printf("Usage: ifconfig [interface] [ip netmask]\n");
+    printf("       ifconfig interface up|down\n");
+    return -1;
+}
+
+/**
+ * ping 命令 - 网络连通性测试（使用 ioctl）
+ */
+static int cmd_ping(int argc, char **argv) {
+    struct ping_req req;
+    
+    memset(&req, 0, sizeof(req));
+    req.count = 4;           // 默认 ping 4 次
+    req.timeout_ms = 1000;   // 默认 1 秒超时
+    const char *host = NULL;
+    
+    // 解析参数
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) {
+            // 解析 count 参数
+            req.count = 0;
+            const char *p = argv[++i];
+            while (*p >= '0' && *p <= '9') {
+                req.count = req.count * 10 + (*p - '0');
+                p++;
+            }
+            if (req.count <= 0) req.count = 1;
+            if (req.count > 100) req.count = 100;
+        } else {
+            host = argv[i];
+        }
+    }
+    
+    if (!host) {
+        printf("Usage: ping [-c count] host\n");
+        return -1;
+    }
+    
+    // 复制主机地址
+    strncpy(req.host, host, sizeof(req.host) - 1);
+    
+    // 执行 ping（通过 ioctl）
+    if (ioctl(0, SIOCPING, &req) < 0) {
+        printf("Error: ping failed\n");
+        return -1;
+    }
+    
+    return 0;
+}
+
+/**
+ * arp 命令 - ARP 缓存管理（使用 ioctl）
+ */
+static int cmd_arp(int argc, char **argv) {
+    int show_all = 0;
+    const char *delete_ip = NULL;
+    
+    // 解析参数
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-a") == 0) {
+            show_all = 1;
+        } else if (strcmp(argv[i], "-d") == 0 && i + 1 < argc) {
+            delete_ip = argv[++i];
+        }
+    }
+    
+    if (delete_ip) {
+        // 删除指定的 ARP 条目
+        struct arpreq arpreq;
+        memset(&arpreq, 0, sizeof(arpreq));
+        
+        uint32_t ip;
+        if (string_to_ip(delete_ip, &ip) < 0) {
+            printf("Error: Invalid IP address '%s'\n", delete_ip);
+            return -1;
+        }
+        
+        arpreq.arp_pa.sin_family = AF_INET;
+        arpreq.arp_pa.sin_addr = ip;
+        
+        if (ioctl(0, SIOCDARP, &arpreq) == 0) {
+            printf("ARP entry for %s deleted\n", delete_ip);
+        } else {
+            printf("Error: ARP entry for %s not found\n", delete_ip);
+            return -1;
+        }
+        return 0;
+    }
+    
+    // 显示 ARP 缓存
+    // 注意：当前 CastorOS 的 ioctl 不支持批量获取 ARP 缓存
+    // 这里只能显示提示信息
+    if (argc == 1 || show_all) {
+        printf("ARP Cache:\n");
+        printf("%-16s %-18s %-10s\n", "IP Address", "MAC Address", "State");
+        printf("------------------------------------------------\n");
+        printf("(use kernel shell 'arp' command to view full cache)\n");
+        return 0;
+    }
+    
+    printf("Usage: arp [-a] [-d ip]\n");
+    return -1;
 }
 
 // ============================================================================

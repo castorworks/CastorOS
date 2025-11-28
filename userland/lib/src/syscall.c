@@ -2,7 +2,9 @@
 #include <types.h>
 #include <string.h>
 
-// 系统调用封装函数（非内联版本）
+// ============================================================================
+// 进程管理系统调用
+// ============================================================================
 
 void exit(int code) {
     (void)syscall1(SYS_EXIT, (uint32_t)code);
@@ -30,9 +32,12 @@ int waitpid(int pid, int *wstatus, int options) {
 }
 
 int wait(int *wstatus) {
-    // wait() 等价于 waitpid(-1, wstatus, 0)
     return waitpid(-1, wstatus, 0);
 }
+
+// ============================================================================
+// 文件系统系统调用
+// ============================================================================
 
 int open(const char *path, int flags, uint32_t mode) {
     return (int)syscall3(SYS_OPEN, (uint32_t)path, (uint32_t)flags, mode);
@@ -95,7 +100,18 @@ int dup2(int oldfd, int newfd) {
     return (int)syscall2(SYS_DUP2, (uint32_t)oldfd, (uint32_t)newfd);
 }
 
-// 静态变量，用于 sbrk 跟踪当前堆位置
+int ioctl(int fd, unsigned long request, void *argp) {
+    return (int)syscall3(SYS_IOCTL, (uint32_t)fd, (uint32_t)request, (uint32_t)argp);
+}
+
+int rename(const char *oldpath, const char *newpath) {
+    return (int)syscall2(SYS_RENAME, (uint32_t)oldpath, (uint32_t)newpath);
+}
+
+// ============================================================================
+// 内存管理系统调用
+// ============================================================================
+
 static uint32_t _brk_current = 0;
 
 void *brk(void *addr) {
@@ -108,7 +124,6 @@ void *brk(void *addr) {
 }
 
 void *sbrk(int increment) {
-    // 如果还没有初始化，先获取当前堆位置
     if (_brk_current == 0) {
         _brk_current = syscall1(SYS_BRK, 0);
         if (_brk_current == (uint32_t)-1) {
@@ -116,18 +131,13 @@ void *sbrk(int increment) {
         }
     }
     
-    // 保存旧的堆位置
     uint32_t old_brk = _brk_current;
     
-    // 如果 increment 为 0，直接返回当前位置
     if (increment == 0) {
         return (void *)old_brk;
     }
     
-    // 计算新的堆位置
     uint32_t new_brk = old_brk + increment;
-    
-    // 调用 brk 设置新位置
     uint32_t result = syscall1(SYS_BRK, new_brk);
     if (result == (uint32_t)-1) {
         return (void *)-1;
@@ -138,7 +148,6 @@ void *sbrk(int increment) {
 }
 
 void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset) {
-    // 使用 syscall6：6 个参数分别通过 ebx, ecx, edx, esi, edi, ebp 传递
     uint32_t result = syscall6(SYS_MMAP, 
                                (uint32_t)addr, 
                                (uint32_t)length, 
@@ -156,6 +165,10 @@ void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
 int munmap(void *addr, size_t length) {
     return (int)syscall2(SYS_MUNMAP, (uint32_t)addr, (uint32_t)length);
 }
+
+// ============================================================================
+// 系统信息与杂项
+// ============================================================================
 
 size_t strlen_simple(const char *str) {
     if (!str) {
@@ -188,6 +201,70 @@ int uname(struct utsname *buf) {
     return (int)syscall1(SYS_UNAME, (uint32_t)buf);
 }
 
-int rename(const char *oldpath, const char *newpath) {
-    return (int)syscall2(SYS_RENAME, (uint32_t)oldpath, (uint32_t)newpath);
+// ============================================================================
+// BSD Socket API 实现（符合 POSIX.1-2008 标准）
+// ============================================================================
+
+int socket(int domain, int type, int protocol) {
+    return (int)syscall3(SYS_SOCKET, (uint32_t)domain, (uint32_t)type, (uint32_t)protocol);
+}
+
+int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
+    return (int)syscall3(SYS_BIND, (uint32_t)sockfd, (uint32_t)addr, (uint32_t)addrlen);
+}
+
+int listen(int sockfd, int backlog) {
+    return (int)syscall2(SYS_LISTEN, (uint32_t)sockfd, (uint32_t)backlog);
+}
+
+int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
+    return (int)syscall3(SYS_ACCEPT, (uint32_t)sockfd, (uint32_t)addr, (uint32_t)addrlen);
+}
+
+int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
+    return (int)syscall3(SYS_CONNECT, (uint32_t)sockfd, (uint32_t)addr, (uint32_t)addrlen);
+}
+
+ssize_t send(int sockfd, const void *buf, size_t len, int flags) {
+    return (ssize_t)syscall4(SYS_SEND, (uint32_t)sockfd, (uint32_t)buf, (uint32_t)len, (uint32_t)flags);
+}
+
+ssize_t sendto(int sockfd, const void *buf, size_t len, int flags,
+               const struct sockaddr *dest_addr, socklen_t addrlen) {
+    return (ssize_t)syscall6(SYS_SENDTO, (uint32_t)sockfd, (uint32_t)buf, (uint32_t)len, 
+                             (uint32_t)flags, (uint32_t)dest_addr, (uint32_t)addrlen);
+}
+
+ssize_t recv(int sockfd, void *buf, size_t len, int flags) {
+    return (ssize_t)syscall4(SYS_RECV, (uint32_t)sockfd, (uint32_t)buf, (uint32_t)len, (uint32_t)flags);
+}
+
+ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags,
+                 struct sockaddr *src_addr, socklen_t *addrlen) {
+    return (ssize_t)syscall6(SYS_RECVFROM, (uint32_t)sockfd, (uint32_t)buf, (uint32_t)len, 
+                             (uint32_t)flags, (uint32_t)src_addr, (uint32_t)addrlen);
+}
+
+int shutdown(int sockfd, int how) {
+    return (int)syscall2(SYS_SHUTDOWN, (uint32_t)sockfd, (uint32_t)how);
+}
+
+int setsockopt(int sockfd, int level, int optname,
+               const void *optval, socklen_t optlen) {
+    return (int)syscall5(SYS_SETSOCKOPT, (uint32_t)sockfd, (uint32_t)level, 
+                         (uint32_t)optname, (uint32_t)optval, (uint32_t)optlen);
+}
+
+int getsockopt(int sockfd, int level, int optname,
+               void *optval, socklen_t *optlen) {
+    return (int)syscall5(SYS_GETSOCKOPT, (uint32_t)sockfd, (uint32_t)level, 
+                         (uint32_t)optname, (uint32_t)optval, (uint32_t)optlen);
+}
+
+int getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
+    return (int)syscall3(SYS_GETSOCKNAME, (uint32_t)sockfd, (uint32_t)addr, (uint32_t)addrlen);
+}
+
+int getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
+    return (int)syscall3(SYS_GETPEERNAME, (uint32_t)sockfd, (uint32_t)addr, (uint32_t)addrlen);
 }

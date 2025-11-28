@@ -20,6 +20,8 @@
 #include <lib/kprintf.h>
 #include <lib/string.h>
 
+#include <net/net.h>
+
 // ============================================================================
 // Shell 状态
 // ============================================================================
@@ -51,6 +53,11 @@ static int cmd_rmdir(int argc, char **argv);
 static int cmd_pwd(int argc, char **argv);
 static int cmd_cd(int argc, char **argv);
 static int cmd_write(int argc, char **argv);
+
+// 网络命令
+static int cmd_ifconfig(int argc, char **argv);
+static int cmd_ping(int argc, char **argv);
+static int cmd_arp(int argc, char **argv);
 
 // ============================================================================
 // 命令表
@@ -87,6 +94,11 @@ static const shell_command_t commands[] = {
     {"rmdir",    "Remove a directory",                "rmdir <dir>",         cmd_rmdir},
     {"pwd",      "Print working directory",           "pwd",                 cmd_pwd},
     {"cd",       "Change directory",                  "cd [path]",           cmd_cd},
+    
+    // 网络命令
+    {"ifconfig", "Configure network interface",      "ifconfig [iface] [ip netmask gw]", cmd_ifconfig},
+    {"ping",     "Send ICMP echo requests",          "ping [-c count] host", cmd_ping},
+    {"arp",      "Show/manage ARP cache",            "arp [-a] [-d ip]",    cmd_arp},
     
     // 结束标记
     {NULL, NULL, NULL, NULL}
@@ -1285,4 +1297,178 @@ static int cmd_write(int argc, char **argv) {
     kprintf("Written %u bytes to '%s'\n", written, abs_path);
     vfs_release_node(file);  // 释放节点
     return 0;
+}
+
+// ============================================================================
+// 网络命令实现
+// ============================================================================
+
+/**
+ * ifconfig 命令 - 网络接口配置
+ */
+static int cmd_ifconfig(int argc, char **argv) {
+    if (argc == 1) {
+        // 显示所有接口
+        netdev_print_all();
+        return 0;
+    }
+    
+    if (argc == 2) {
+        // 显示特定接口
+        netdev_t *dev = netdev_get_by_name(argv[1]);
+        if (!dev) {
+            vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            kprintf("Error: Interface '%s' not found\n", argv[1]);
+            vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            return -1;
+        }
+        netdev_print_info(dev);
+        return 0;
+    }
+    
+    // 配置接口 IP 地址
+    // ifconfig eth0 192.168.1.100 255.255.255.0 192.168.1.1
+    if (argc >= 5) {
+        netdev_t *dev = netdev_get_by_name(argv[1]);
+        if (!dev) {
+            vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            kprintf("Error: Interface '%s' not found\n", argv[1]);
+            vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            return -1;
+        }
+        
+        if (net_configure(argv[2], argv[3], argv[4]) < 0) {
+            return -1;
+        }
+        
+        kprintf("Interface %s configured\n", argv[1]);
+        return 0;
+    }
+    
+    // 启用/禁用接口
+    if (argc == 3) {
+        netdev_t *dev = netdev_get_by_name(argv[1]);
+        if (!dev) {
+            vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            kprintf("Error: Interface '%s' not found\n", argv[1]);
+            vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            return -1;
+        }
+        
+        if (strcmp(argv[2], "up") == 0) {
+            netdev_up(dev);
+            kprintf("Interface %s is up\n", argv[1]);
+            return 0;
+        } else if (strcmp(argv[2], "down") == 0) {
+            netdev_down(dev);
+            kprintf("Interface %s is down\n", argv[1]);
+            return 0;
+        }
+    }
+    
+    vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+    kprintf("Usage: ifconfig [iface] [ip netmask gateway]\n");
+    kprintf("       ifconfig iface up|down\n");
+    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    return -1;
+}
+
+/**
+ * ping 命令 - 网络连通性测试
+ */
+static int cmd_ping(int argc, char **argv) {
+    int count = 4;  // 默认 ping 4 次
+    const char *host = NULL;
+    
+    // 解析参数
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) {
+            // 解析 count 参数
+            count = 0;
+            const char *p = argv[++i];
+            while (*p >= '0' && *p <= '9') {
+                count = count * 10 + (*p - '0');
+                p++;
+            }
+            if (count <= 0) count = 1;
+            if (count > 100) count = 100;
+        } else {
+            host = argv[i];
+        }
+    }
+    
+    if (!host) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Usage: ping [-c count] host\n");
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    // 检查是否有网络设备
+    netdev_t *dev = netdev_get_default();
+    if (!dev) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: No network device available\n");
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    if (dev->ip_addr == 0) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Network interface not configured\n");
+        kprintf("Use 'ifconfig %s <ip> <netmask> <gateway>' to configure\n", dev->name);
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    return net_ping(host, count);
+}
+
+/**
+ * arp 命令 - ARP 缓存管理
+ */
+static int cmd_arp(int argc, char **argv) {
+    bool show_all = false;
+    const char *delete_ip = NULL;
+    
+    // 解析参数
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-a") == 0) {
+            show_all = true;
+        } else if (strcmp(argv[i], "-d") == 0 && i + 1 < argc) {
+            delete_ip = argv[++i];
+        }
+    }
+    
+    if (delete_ip) {
+        // 删除指定的 ARP 条目
+        uint32_t ip;
+        if (str_to_ip(delete_ip, &ip) < 0) {
+            vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            kprintf("Error: Invalid IP address '%s'\n", delete_ip);
+            vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            return -1;
+        }
+        
+        if (arp_cache_delete(ip) == 0) {
+            kprintf("ARP entry for %s deleted\n", delete_ip);
+        } else {
+            vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            kprintf("Error: ARP entry for %s not found\n", delete_ip);
+            vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            return -1;
+        }
+        return 0;
+    }
+    
+    // 默认显示所有条目
+    if (argc == 1 || show_all) {
+        arp_cache_dump();
+        return 0;
+    }
+    
+    vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+    kprintf("Usage: arp [-a] [-d ip]\n");
+    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    return -1;
 }

@@ -14,6 +14,7 @@
 // 0x03xx - 时间与时钟
 // 0x04xx - 信号与进程控制
 // 0x05xx - 系统信息、杂项
+// 0x06xx - 网络（BSD Socket API）
 // ----------------------------------------------------------------------------
 
 enum {
@@ -46,6 +47,7 @@ enum {
     SYS_PIPE            = 0x010F,  // 创建管道
     SYS_DUP             = 0x0110,  // 复制文件描述符
     SYS_DUP2            = 0x0111,  // 复制文件描述符到指定编号
+    SYS_IOCTL           = 0x0112,  // 设备控制
 
     // -------------------- 内存管理 (0x02xx) --------------------
     SYS_BRK             = 0x0200,
@@ -71,6 +73,23 @@ enum {
     SYS_DEBUG_PRINT     = 0x0502,
     SYS_REBOOT          = 0x0503,
     SYS_POWEROFF        = 0x0504,
+
+    // -------------------- 网络 BSD Socket API (0x06xx) --------------------
+    // 符合 POSIX.1-2008 标准的 socket 系统调用
+    SYS_SOCKET          = 0x0600,  // 创建套接字
+    SYS_BIND            = 0x0601,  // 绑定地址
+    SYS_LISTEN          = 0x0602,  // 监听连接
+    SYS_ACCEPT          = 0x0603,  // 接受连接
+    SYS_CONNECT         = 0x0604,  // 发起连接
+    SYS_SEND            = 0x0605,  // 发送数据
+    SYS_SENDTO          = 0x0606,  // 发送数据到指定地址
+    SYS_RECV            = 0x0607,  // 接收数据
+    SYS_RECVFROM        = 0x0608,  // 接收数据并获取源地址
+    SYS_SHUTDOWN        = 0x0609,  // 关闭连接
+    SYS_SETSOCKOPT      = 0x060A,  // 设置套接字选项
+    SYS_GETSOCKOPT      = 0x060B,  // 获取套接字选项
+    SYS_GETSOCKNAME     = 0x060C,  // 获取本地地址
+    SYS_GETPEERNAME     = 0x060D,  // 获取对端地址
 
     SYS_MAX
 };

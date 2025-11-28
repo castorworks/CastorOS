@@ -30,9 +30,9 @@
 
 ## 下一步安排
 
-+ [ ] [IBM ThinkPad T41 显卡驱动](./docs/12-ibm-thinkpad-t41-graphics.md)
-+ [ ] [网络栈](./docs/13-network.md)
-+ [ ] [intel E1000 网卡驱动](./docs/14-intel-e1000-network-card-driver.md)
++ [ ] [网络栈](./docs/12-network.md)
++ [ ] [intel E1000 网卡驱动](./docs/13-intel-e1000-network-card-driver.md)
++ [ ] [IBM ThinkPad T41 显卡驱动](./docs/14-ibm-thinkpad-t41-graphics.md)
 + [ ] [USB 1.1 驱动](./docs/15-usb-1.1-driver.md)
 
 ## Git 提交格式

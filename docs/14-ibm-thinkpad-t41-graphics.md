@@ -1,4 +1,4 @@
-# 阶段 12: IBM ThinkPad T41 显卡驱动
+# 阶段 14: IBM ThinkPad T41 显卡驱动
 
 ## 概述
 

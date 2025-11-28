@@ -251,6 +251,27 @@ int memcmp(const void *ptr1, const void *ptr2, size_t num) {
     return 0;
 }
 
+void *memmove(void *dest, const void *src, size_t num) {
+    unsigned char *d = (unsigned char *)dest;
+    const unsigned char *s = (const unsigned char *)src;
+    
+    if (d < s) {
+        // 从前向后复制
+        while (num--) {
+            *d++ = *s++;
+        }
+    } else if (d > s) {
+        // 从后向前复制（防止重叠覆盖）
+        d += num;
+        s += num;
+        while (num--) {
+            *--d = *--s;
+        }
+    }
+    
+    return dest;
+}
+
 char *strncpy(char *dest, const char *src, size_t n) {
     char *original_dest = dest;
     size_t i;
