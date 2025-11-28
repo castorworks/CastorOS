@@ -256,12 +256,49 @@ static void pci_scan_slot(uint8_t bus, uint8_t slot) {
     }
 }
 
+/* 前向声明：扫描总线（用于递归扫描） */
+static void pci_scan_bus(uint8_t bus);
+
+/**
+ * @brief 检查并扫描 PCI-to-PCI Bridge 的次级总线
+ */
+static void pci_check_bridge(uint8_t bus, uint8_t slot, uint8_t func) {
+    uint8_t class_code = pci_read_config8(bus, slot, func, PCI_CLASS);
+    uint8_t subclass = pci_read_config8(bus, slot, func, PCI_SUBCLASS);
+    uint8_t header_type = pci_read_config8(bus, slot, func, PCI_HEADER_TYPE);
+    
+    /* 检查是否是 PCI-to-PCI Bridge（Header Type 1）*/
+    if (class_code == PCI_CLASS_BRIDGE && 
+        subclass == PCI_SUBCLASS_PCI_BRIDGE &&
+        (header_type & PCI_HEADER_TYPE_MASK) == PCI_HEADER_TYPE_BRIDGE) {
+        
+        /* 读取次级总线号 */
+        uint8_t secondary_bus = pci_read_config8(bus, slot, func, PCI_SECONDARY_BUS);
+        
+        LOG_DEBUG_MSG("pci: Found PCI-to-PCI Bridge at %02x:%02x.%x, secondary bus: %d\n",
+                      bus, slot, func, secondary_bus);
+        
+        /* 递归扫描次级总线 */
+        if (secondary_bus != 0 && secondary_bus != bus) {
+            pci_scan_bus(secondary_bus);
+        }
+    }
+}
+
 /**
  * @brief 扫描一条总线
  */
 static void pci_scan_bus(uint8_t bus) {
     for (uint8_t slot = 0; slot < PCI_MAX_SLOT; slot++) {
         pci_scan_slot(bus, slot);
+    }
+    
+    /* 扫描完成后，检查是否有 PCI-to-PCI Bridge，并扫描其次级总线 */
+    for (int i = 0; i < pci_device_count; i++) {
+        pci_device_t *dev = &pci_devices[i];
+        if (dev->bus == bus) {
+            pci_check_bridge(dev->bus, dev->slot, dev->func);
+        }
     }
 }
 

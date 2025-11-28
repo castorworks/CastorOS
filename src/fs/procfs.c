@@ -192,8 +192,8 @@ static uint32_t procfs_pci_read(fs_node_t *node, uint32_t offset, uint32_t size,
         return 0;
     }
     
-    // 使用较大的缓冲区存储 PCI 设备信息
-    char pci_buf[4096];
+    // 使用足够大的缓冲区存储 PCI 设备信息（每设备约 100 字节，支持 32 个设备）
+    static char pci_buf[8192];
     int len = 0;
     
     int device_count = pci_get_device_count();

@@ -38,15 +38,27 @@ void uint32_to_str(uint32_t value, char *buffer) {
 
 void uint32_to_hex(uint32_t value, char *buffer, bool uppercase) {
     const char *hex = uppercase ? "0123456789ABCDEF" : "0123456789abcdef";
+    char temp[9];
+    int i = 0;
     
-    buffer[0] = '0';
-    buffer[1] = 'x';
-    
-    for (int i = 0; i < 8; i++) {
-        buffer[2 + i] = hex[(value >> (28 - i * 4)) & 0xF];
+    // 处理 0 的特殊情况
+    if (value == 0) {
+        buffer[0] = '0';
+        buffer[1] = '\0';
+        return;
     }
     
-    buffer[10] = '\0';
+    // 转换为十六进制（逆序）
+    while (value > 0 && i < 8) {
+        temp[i++] = hex[value & 0xF];
+        value >>= 4;
+    }
+    
+    // 反转并复制到输出缓冲区
+    for (int j = 0; j < i; j++) {
+        buffer[j] = temp[i - j - 1];
+    }
+    buffer[i] = '\0';
 }
 
 void uint64_to_str(uint64_t value, char *buffer) {
@@ -82,15 +94,27 @@ void int64_to_str(int64_t value, char *buffer) {
 
 void uint64_to_hex(uint64_t value, char *buffer, bool uppercase) {
     const char *hex = uppercase ? "0123456789ABCDEF" : "0123456789abcdef";
+    char temp[17];
+    int i = 0;
     
-    buffer[0] = '0';
-    buffer[1] = 'x';
-    
-    for (int i = 0; i < 16; i++) {
-        buffer[2 + i] = hex[(value >> (60 - i * 4)) & 0xF];
+    // 处理 0 的特殊情况
+    if (value == 0) {
+        buffer[0] = '0';
+        buffer[1] = '\0';
+        return;
     }
     
-    buffer[18] = '\0';
+    // 转换为十六进制（逆序）
+    while (value > 0 && i < 16) {
+        temp[i++] = hex[value & 0xF];
+        value >>= 4;
+    }
+    
+    // 反转并复制到输出缓冲区
+    for (int j = 0; j < i; j++) {
+        buffer[j] = temp[i - j - 1];
+    }
+    buffer[i] = '\0';
 }
 
 void int64_to_hex(int64_t value, char *buffer, bool uppercase) {
@@ -376,6 +400,42 @@ static int snprintf_putstr(char *buf, size_t size, size_t pos, const char *str) 
     return count;
 }
 
+/**
+ * 内部辅助：将无符号整数转换为十六进制字符串（不带 0x 前缀）
+ */
+static void uint32_to_hex_simple(uint32_t value, char *buffer, bool uppercase, int min_digits) {
+    const char *hex = uppercase ? "0123456789ABCDEF" : "0123456789abcdef";
+    char temp[9];
+    int i = 0;
+    
+    // 处理 0 的特殊情况
+    if (value == 0) {
+        // 填充最小位数的 0
+        for (int j = 0; j < min_digits && j < 8; j++) {
+            buffer[j] = '0';
+        }
+        buffer[min_digits > 0 ? min_digits : 1] = '\0';
+        return;
+    }
+    
+    // 转换为十六进制（逆序）
+    while (value > 0 && i < 8) {
+        temp[i++] = hex[value & 0xF];
+        value >>= 4;
+    }
+    
+    // 如果需要，添加前导零
+    while (i < min_digits && i < 8) {
+        temp[i++] = '0';
+    }
+    
+    // 反转并复制到输出缓冲区
+    for (int j = 0; j < i; j++) {
+        buffer[j] = temp[i - j - 1];
+    }
+    buffer[i] = '\0';
+}
+
 int snprintf(char *str, size_t size, const char *format, ...) {
     va_list args;
     size_t pos = 0;
@@ -398,40 +458,98 @@ int snprintf(char *str, size_t size, const char *format, ...) {
         // 处理格式说明符
         format++; // 跳过 '%'
         
+        // 解析标志
+        bool zero_pad = false;
+        bool is_long_long = false;
+        if (*format == '0') {
+            zero_pad = true;
+            format++;
+        }
+        
+        // 解析宽度
+        int width = 0;
+        while (*format >= '0' && *format <= '9') {
+            width = width * 10 + (*format - '0');
+            format++;
+        }
+        
+        // 解析长度修饰符
+        if (*format == 'l') {
+            format++;
+            if (*format == 'l') {
+                is_long_long = true;
+                format++;
+            }
+        }
+        
         switch (*format) {
             case 'd':
             case 'i': {
                 int32_t val = va_arg(args, int32_t);
                 int32_to_str(val, temp_buf);
+                size_t len = strlen(temp_buf);
+                // 处理宽度和填充
+                while (width > (int)len && pos < size - 1) {
+                    pos += snprintf_putchar(str, size, pos, zero_pad ? '0' : ' ');
+                    width--;
+                }
                 pos += snprintf_putstr(str, size, pos, temp_buf);
                 break;
             }
             case 'u': {
-                uint32_t val = va_arg(args, uint32_t);
-                uint32_to_str(val, temp_buf);
+                if (is_long_long) {
+                    uint64_t val = va_arg(args, uint64_t);
+                    uint64_to_str(val, temp_buf);
+                } else {
+                    uint32_t val = va_arg(args, uint32_t);
+                    uint32_to_str(val, temp_buf);
+                }
+                size_t len = strlen(temp_buf);
+                while (width > (int)len && pos < size - 1) {
+                    pos += snprintf_putchar(str, size, pos, zero_pad ? '0' : ' ');
+                    width--;
+                }
                 pos += snprintf_putstr(str, size, pos, temp_buf);
                 break;
             }
             case 'x': {
                 uint32_t val = va_arg(args, uint32_t);
-                uint32_to_hex(val, temp_buf, false);
+                uint32_to_hex_simple(val, temp_buf, false, zero_pad ? width : 0);
+                size_t len = strlen(temp_buf);
+                while (width > (int)len && pos < size - 1) {
+                    pos += snprintf_putchar(str, size, pos, zero_pad ? '0' : ' ');
+                    width--;
+                }
                 pos += snprintf_putstr(str, size, pos, temp_buf);
                 break;
             }
             case 'X': {
                 uint32_t val = va_arg(args, uint32_t);
-                uint32_to_hex(val, temp_buf, true);
+                uint32_to_hex_simple(val, temp_buf, true, zero_pad ? width : 0);
+                size_t len = strlen(temp_buf);
+                while (width > (int)len && pos < size - 1) {
+                    pos += snprintf_putchar(str, size, pos, zero_pad ? '0' : ' ');
+                    width--;
+                }
                 pos += snprintf_putstr(str, size, pos, temp_buf);
                 break;
             }
             case 'p': {
                 void *val = va_arg(args, void *);
+                // 指针格式保持 0x 前缀
                 uint32_to_hex((uint32_t)val, temp_buf, false);
                 pos += snprintf_putstr(str, size, pos, temp_buf);
                 break;
             }
             case 's': {
                 const char *val = va_arg(args, const char *);
+                if (!val) val = "(null)";
+                size_t len = strlen(val);
+                // 处理宽度
+                while (width > (int)len && pos < size - 1) {
+                    pos += snprintf_putchar(str, size, pos, ' ');
+                    width--;
+                }
                 pos += snprintf_putstr(str, size, pos, val);
                 break;
             }

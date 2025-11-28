@@ -2,7 +2,8 @@
  * @file e1000.h
  * @brief Intel E1000 千兆以太网控制器驱动
  * 
- * 支持型号: 82540EM (QEMU), 82545EM, 82541, 82543GC, 82574L
+ * 支持型号: 82540EM (QEMU), 82540EP-A, 82540EP Mobile (ThinkPad T41), 
+ *          82545EM, 82541, 82541GI (ThinkPad X40), 82543GC, 82574L
  */
 
 #ifndef _DRIVERS_E1000_H_
@@ -19,11 +20,15 @@
 #define E1000_VENDOR_ID         0x8086  ///< Intel
 
 /* 支持的设备 ID 列表 */
-#define E1000_DEV_ID_82540EM    0x100E  ///< QEMU 默认
-#define E1000_DEV_ID_82545EM    0x100F
-#define E1000_DEV_ID_82541      0x1019
-#define E1000_DEV_ID_82543GC    0x1004
-#define E1000_DEV_ID_82574L     0x10D3
+#define E1000_DEV_ID_82540EM        0x100E  ///< QEMU 默认
+#define E1000_DEV_ID_82540EP        0x1017  ///< 82540EP-A
+#define E1000_DEV_ID_82540EP_M      0x101E  ///< 82540EP Mobile (ThinkPad T41)
+#define E1000_DEV_ID_82545EM        0x100F
+#define E1000_DEV_ID_82541          0x1019
+#define E1000_DEV_ID_82541GI        0x1076  ///< ThinkPad X40 等
+#define E1000_DEV_ID_82541GI_LF     0x107C  ///< 82541GI 低功耗版
+#define E1000_DEV_ID_82543GC        0x1004
+#define E1000_DEV_ID_82574L         0x10D3
 
 /* ============================================================================
  * 寄存器偏移

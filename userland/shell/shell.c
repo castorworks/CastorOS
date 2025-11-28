@@ -2642,8 +2642,8 @@ static int cmd_lspci(int argc, char **argv) {
         return -1;
     }
     
-    // 读取并显示内容
-    char buffer[4096];
+    // 读取并显示内容（需要足够大的缓冲区显示所有 PCI 设备）
+    static char buffer[8192];
     int bytes_read = read(fd, buffer, sizeof(buffer) - 1);
     close(fd);
     

@@ -74,7 +74,7 @@ void num_to_str_oct(unsigned long long val, char *tmp, int *len) {
 // 支持标志: -, 0 (左对齐, 零填充)
 // 支持宽度: %5d, %-10s 等
 void printf(const char *format, ...) {
-    char buffer[1024];
+    static char buffer[8192];  // 足够大的静态缓冲区
     size_t pos = 0;
     
     // 使用内置的变参宏

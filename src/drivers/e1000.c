@@ -2,7 +2,8 @@
  * @file e1000.c
  * @brief Intel E1000 千兆以太网控制器驱动
  * 
- * 支持型号: 82540EM (QEMU), 82545EM, 82541, 82543GC, 82574L
+ * 支持型号: 82540EM (QEMU), 82540EP-A, 82540EP Mobile (ThinkPad T41), 
+ *          82545EM, 82541, 82541GI (ThinkPad X40), 82543GC, 82574L
  * 
  * 功能:
  * - PCI 设备检测和初始化
@@ -665,8 +666,12 @@ static int e1000_init_device(pci_device_t *pci_dev) {
 /* 支持的设备 ID 列表 */
 static const uint16_t e1000_device_ids[] = {
     E1000_DEV_ID_82540EM,
+    E1000_DEV_ID_82540EP,     // 82540EP-A
+    E1000_DEV_ID_82540EP_M,   // 82540EP Mobile (ThinkPad T41)
     E1000_DEV_ID_82545EM,
     E1000_DEV_ID_82541,
+    E1000_DEV_ID_82541GI,     // ThinkPad X40 等
+    E1000_DEV_ID_82541GI_LF,
     E1000_DEV_ID_82543GC,
     E1000_DEV_ID_82574L,
     0  // 结束标记

@@ -86,6 +86,28 @@
 #define PCI_CLASS_STORAGE       0x01    ///< 存储控制器
 #define PCI_CLASS_BRIDGE        0x06    ///< 桥接设备
 
+/* 桥接设备子类 */
+#define PCI_SUBCLASS_HOST_BRIDGE    0x00    ///< Host Bridge
+#define PCI_SUBCLASS_ISA_BRIDGE     0x01    ///< ISA Bridge
+#define PCI_SUBCLASS_PCI_BRIDGE     0x04    ///< PCI-to-PCI Bridge
+#define PCI_SUBCLASS_CARDBUS_BRIDGE 0x07    ///< CardBus Bridge
+
+/* ============================================================================
+ * PCI-to-PCI Bridge 配置空间寄存器偏移（Header Type 1）
+ * ============================================================================ */
+
+#define PCI_PRIMARY_BUS         0x18    ///< Primary Bus Number (8 bit)
+#define PCI_SECONDARY_BUS       0x19    ///< Secondary Bus Number (8 bit)
+#define PCI_SUBORDINATE_BUS     0x1A    ///< Subordinate Bus Number (8 bit)
+#define PCI_SEC_LATENCY_TIMER   0x1B    ///< Secondary Latency Timer (8 bit)
+
+/* Header Type 掩码 */
+#define PCI_HEADER_TYPE_MASK    0x7F    ///< Header Type 值掩码（去除多功能标志）
+#define PCI_HEADER_TYPE_NORMAL  0x00    ///< 普通设备（Type 0）
+#define PCI_HEADER_TYPE_BRIDGE  0x01    ///< PCI-to-PCI Bridge（Type 1）
+#define PCI_HEADER_TYPE_CARDBUS 0x02    ///< CardBus Bridge（Type 2）
+#define PCI_HEADER_TYPE_MULTIFUNC 0x80  ///< 多功能设备标志
+
 /* ============================================================================
  * 最大值定义
  * ============================================================================ */
