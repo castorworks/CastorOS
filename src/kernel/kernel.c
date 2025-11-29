@@ -47,8 +47,11 @@ void kernel_main(multiboot_info_t* mbi) {
     vga_init(); // 初始化 VGA
     serial_init(); // 初始化串口
     
-    /* 启用调试日志 */
-    klog_set_level(LOG_DEBUG);
+    // 日志配置：
+    // - 默认级别为 INFO（过滤 DEBUG 信息）
+    // - 同时输出到 VGA 和串口
+    // 如需调试，可取消下行注释：
+    // klog_set_level(LOG_DEBUG);
 
     // ========================================================================
     // 启动信息

@@ -1904,8 +1904,8 @@ fs_node_t *fat32_init(blockdev_t *dev) {
         return NULL;
     }
     
-    LOG_INFO_MSG("fat32: sizeof(fat32_file_t) = %zu, sizeof(struct dirent) = %zu\n",
-                 sizeof(fat32_file_t), sizeof(struct dirent));
+    LOG_INFO_MSG("fat32: sizeof(fat32_file_t) = %u, sizeof(struct dirent) = %u\n",
+                 (uint32_t)sizeof(fat32_file_t), (uint32_t)sizeof(struct dirent));
     
     fat32_file_t *root_file = (fat32_file_t *)kmalloc(sizeof(fat32_file_t));
     if (!root_file) {
