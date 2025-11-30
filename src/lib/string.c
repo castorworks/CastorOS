@@ -1,5 +1,4 @@
 #include <lib/string.h>
-#include <stdarg.h>
 
 void int32_to_str(int32_t value, char *buffer) {
     if (value < 0) {
@@ -247,18 +246,88 @@ int tolower(int c) {
 
 void *memset(void *ptr, int value, size_t num) {
     unsigned char *p = (unsigned char *)ptr;
-    while (num--) {
-        *p++ = (unsigned char)value;
+    unsigned char v = (unsigned char)value;
+    
+    // 处理未对齐的头部
+    while (((uint32_t)p & 3) && num > 0) {
+        *p++ = v;
+        num--;
     }
+    
+    // 32 位字填充（主要部分）
+    if (num >= 4) {
+        uint32_t v32 = v | (v << 8) | (v << 16) | (v << 24);
+        uint32_t *p32 = (uint32_t *)p;
+        size_t count = num / 4;
+        
+        // 展开循环，一次处理 4 个字（16 字节）
+        while (count >= 4) {
+            p32[0] = v32;
+            p32[1] = v32;
+            p32[2] = v32;
+            p32[3] = v32;
+            p32 += 4;
+            count -= 4;
+        }
+        while (count--) {
+            *p32++ = v32;
+        }
+        
+        p = (unsigned char *)p32;
+        num &= 3;
+    }
+    
+    // 处理剩余字节
+    while (num--) {
+        *p++ = v;
+    }
+    
     return ptr;
 }
 
 void *memcpy(void *dest, const void *src, size_t num) {
     unsigned char *d = (unsigned char *)dest;
     const unsigned char *s = (const unsigned char *)src;
+    
+    // 如果源和目标对齐相同，使用 32 位复制
+    if ((((uint32_t)d ^ (uint32_t)s) & 3) == 0) {
+        // 处理未对齐的头部
+        while (((uint32_t)d & 3) && num > 0) {
+            *d++ = *s++;
+            num--;
+        }
+        
+        // 32 位字复制（主要部分）
+        if (num >= 4) {
+            uint32_t *d32 = (uint32_t *)d;
+            const uint32_t *s32 = (const uint32_t *)s;
+            size_t count = num / 4;
+            
+            // 展开循环，一次处理 4 个字（16 字节）
+            while (count >= 4) {
+                d32[0] = s32[0];
+                d32[1] = s32[1];
+                d32[2] = s32[2];
+                d32[3] = s32[3];
+                d32 += 4;
+                s32 += 4;
+                count -= 4;
+            }
+            while (count--) {
+                *d32++ = *s32++;
+            }
+            
+            d = (unsigned char *)d32;
+            s = (const unsigned char *)s32;
+            num &= 3;
+        }
+    }
+    
+    // 处理剩余字节（或未对齐情况）
     while (num--) {
         *d++ = *s++;
     }
+    
     return dest;
 }
 
@@ -279,18 +348,52 @@ void *memmove(void *dest, const void *src, size_t num) {
     unsigned char *d = (unsigned char *)dest;
     const unsigned char *s = (const unsigned char *)src;
     
-    if (d < s) {
-        // 从前向后复制
-        while (num--) {
-            *d++ = *s++;
-        }
-    } else if (d > s) {
-        // 从后向前复制（防止重叠覆盖）
-        d += num;
-        s += num;
-        while (num--) {
+    if (d < s || d >= s + num) {
+        // 不重叠或目标在源之前，可以使用优化的 memcpy
+        return memcpy(dest, src, num);
+    }
+    
+    // 目标和源重叠，需要从后向前复制
+    d += num;
+    s += num;
+    
+    // 如果源和目标对齐相同，使用 32 位复制
+    if ((((uint32_t)d ^ (uint32_t)s) & 3) == 0) {
+        // 处理未对齐的尾部
+        while (((uint32_t)d & 3) && num > 0) {
             *--d = *--s;
+            num--;
         }
+        
+        // 32 位字复制（主要部分）
+        if (num >= 4) {
+            uint32_t *d32 = (uint32_t *)d;
+            const uint32_t *s32 = (const uint32_t *)s;
+            size_t count = num / 4;
+            
+            // 展开循环
+            while (count >= 4) {
+                d32 -= 4;
+                s32 -= 4;
+                d32[3] = s32[3];
+                d32[2] = s32[2];
+                d32[1] = s32[1];
+                d32[0] = s32[0];
+                count -= 4;
+            }
+            while (count--) {
+                *--d32 = *--s32;
+            }
+            
+            d = (unsigned char *)d32;
+            s = (const unsigned char *)s32;
+            num &= 3;
+        }
+    }
+    
+    // 处理剩余字节
+    while (num--) {
+        *--d = *--s;
     }
     
     return dest;
@@ -437,7 +540,7 @@ static void uint32_to_hex_simple(uint32_t value, char *buffer, bool uppercase, i
 }
 
 int snprintf(char *str, size_t size, const char *format, ...) {
-    va_list args;
+    __builtin_va_list args;
     size_t pos = 0;
     char temp_buf[32];
     
@@ -445,7 +548,7 @@ int snprintf(char *str, size_t size, const char *format, ...) {
         return 0;
     }
     
-    va_start(args, format);
+    __builtin_va_start(args, format);
     
     while (*format && pos < size - 1) {
         if (*format != '%') {
@@ -485,7 +588,7 @@ int snprintf(char *str, size_t size, const char *format, ...) {
         switch (*format) {
             case 'd':
             case 'i': {
-                int32_t val = va_arg(args, int32_t);
+                int32_t val = __builtin_va_arg(args, int32_t);
                 int32_to_str(val, temp_buf);
                 size_t len = strlen(temp_buf);
                 // 处理宽度和填充
@@ -498,10 +601,10 @@ int snprintf(char *str, size_t size, const char *format, ...) {
             }
             case 'u': {
                 if (is_long_long) {
-                    uint64_t val = va_arg(args, uint64_t);
+                    uint64_t val = __builtin_va_arg(args, uint64_t);
                     uint64_to_str(val, temp_buf);
                 } else {
-                    uint32_t val = va_arg(args, uint32_t);
+                    uint32_t val = __builtin_va_arg(args, uint32_t);
                     uint32_to_str(val, temp_buf);
                 }
                 size_t len = strlen(temp_buf);
@@ -513,7 +616,7 @@ int snprintf(char *str, size_t size, const char *format, ...) {
                 break;
             }
             case 'x': {
-                uint32_t val = va_arg(args, uint32_t);
+                uint32_t val = __builtin_va_arg(args, uint32_t);
                 uint32_to_hex_simple(val, temp_buf, false, zero_pad ? width : 0);
                 size_t len = strlen(temp_buf);
                 while (width > (int)len && pos < size - 1) {
@@ -524,7 +627,7 @@ int snprintf(char *str, size_t size, const char *format, ...) {
                 break;
             }
             case 'X': {
-                uint32_t val = va_arg(args, uint32_t);
+                uint32_t val = __builtin_va_arg(args, uint32_t);
                 uint32_to_hex_simple(val, temp_buf, true, zero_pad ? width : 0);
                 size_t len = strlen(temp_buf);
                 while (width > (int)len && pos < size - 1) {
@@ -535,14 +638,14 @@ int snprintf(char *str, size_t size, const char *format, ...) {
                 break;
             }
             case 'p': {
-                void *val = va_arg(args, void *);
+                void *val = __builtin_va_arg(args, void *);
                 // 指针格式保持 0x 前缀
                 uint32_to_hex((uint32_t)val, temp_buf, false);
                 pos += snprintf_putstr(str, size, pos, temp_buf);
                 break;
             }
             case 's': {
-                const char *val = va_arg(args, const char *);
+                const char *val = __builtin_va_arg(args, const char *);
                 if (!val) val = "(null)";
                 size_t len = strlen(val);
                 // 处理宽度
@@ -554,7 +657,7 @@ int snprintf(char *str, size_t size, const char *format, ...) {
                 break;
             }
             case 'c': {
-                char val = (char)va_arg(args, int);
+                char val = (char)__builtin_va_arg(args, int);
                 pos += snprintf_putchar(str, size, pos, val);
                 break;
             }
@@ -579,7 +682,7 @@ int snprintf(char *str, size_t size, const char *format, ...) {
         str[size - 1] = '\0';
     }
     
-    va_end(args);
+    __builtin_va_end(args);
     
     return pos;
 }

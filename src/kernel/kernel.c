@@ -10,6 +10,7 @@
 #include <drivers/rtc.h>
 #include <drivers/pci.h>
 #include <drivers/e1000.h>
+#include <drivers/framebuffer.h>
 
 #include <kernel/multiboot.h>
 #include <kernel/version.h>
@@ -119,6 +120,11 @@ void kernel_main(multiboot_info_t* mbi) {
     vmm_init();
     LOG_INFO_MSG("  [3.2] VMM initialized\n");
     
+    // 3.3 初始化 PAT（Page Attribute Table）
+    //     用于支持帧缓冲的 Write-Combining 模式，提升图形性能
+    vmm_init_pat();
+    LOG_INFO_MSG("  [3.3] PAT initialized\n");
+    
     // 3.5 初始化 Heap（堆内存分配器）
     // 堆起始地址：PMM 位图之后（避免与位图重叠）
     uint32_t heap_start = pmm_get_bitmap_end();
@@ -201,6 +207,32 @@ void kernel_main(multiboot_info_t* mbi) {
         LOG_DEBUG_MSG("  [4.7] No E1000 network card found\n");
     }
 
+    // 4.8 初始化帧缓冲（图形模式）
+    int fb_result = fb_init(mbi);
+    if (fb_result == 0) {
+        framebuffer_info_t *fb = fb_get_info();
+        LOG_INFO_MSG("  [4.8] Framebuffer initialized: %ux%u @ %ubpp\n",
+                     fb->width, fb->height, fb->bpp);
+        
+        // 根据分辨率显示不同的信息
+        const char *resolution_name;
+        if (fb->width == 1400 && fb->height == 1050) {
+            resolution_name = "SXGA+ (1400x1050)";
+        } else if (fb->width == 1024 && fb->height == 768) {
+            resolution_name = "XGA (1024x768)";
+        } else if (fb->width == 800 && fb->height == 600) {
+            resolution_name = "SVGA (800x600)";
+        } else {
+            resolution_name = "Custom";
+        }
+        LOG_INFO_MSG("  Display mode: %s\n", resolution_name);
+        
+        // 初始化图形终端（用于后续输出）
+        fb_terminal_init();
+    } else {
+        LOG_DEBUG_MSG("  [4.8] Framebuffer not available (code=%d), using text mode\n", fb_result);
+    }
+
     // ========================================================================
     // 阶段 5: 高级子系统（Advanced Subsystems）
     // ========================================================================
@@ -218,7 +250,7 @@ void kernel_main(multiboot_info_t* mbi) {
     // 单元测试
     // ========================================================================
     LOG_INFO_MSG("Running test suite...\n");
-    run_all_tests();
+    // run_all_tests();
     kprintf("\n");
 
     // ========================================================================

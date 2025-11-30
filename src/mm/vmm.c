@@ -1037,11 +1037,12 @@ uint32_t vmm_unmap_page_in_directory(uint32_t dir_phys, uint32_t virt) {
 /** MMIO 映射区域起始地址（在内核空间的高地址区域） */
 #define MMIO_VIRT_BASE      0xF0000000
 #define MMIO_VIRT_END       0xFFC00000  // 保留最后 4MB 给递归页表等
-#define PAGE_CACHE_DISABLE  0x010       // PCD: Page Cache Disable
-#define PAGE_WRITE_THROUGH  0x008       // PWT: Page Write Through
 
 /** 当前 MMIO 虚拟地址分配位置 */
 static uint32_t mmio_next_virt = MMIO_VIRT_BASE;
+
+/** PAT 初始化标志 */
+static bool pat_initialized = false;
 
 /**
  * @brief 映射 MMIO 区域
@@ -1193,4 +1194,186 @@ uint32_t vmm_virt_to_phys(uint32_t virt) {
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
     return phys;
+}
+
+/* ============================================================================
+ * PAT (Page Attribute Table) 支持
+ * ============================================================================ */
+
+/**
+ * PAT (Page Attribute Table) 内存类型定义
+ * 
+ * PAT 是 Intel 在 Pentium III 引入的机制，用于更灵活地控制内存缓存类型。
+ * PAT 使用页表项中的 3 个位（PAT、PCD、PWT）组合成 3 位索引，
+ * 从 IA32_PAT MSR 中选择内存类型。
+ */
+#define PAT_TYPE_UC     0   // Uncacheable
+#define PAT_TYPE_WC     1   // Write-Combining
+#define PAT_TYPE_WT     4   // Write-Through
+#define PAT_TYPE_WP     5   // Write-Protected
+#define PAT_TYPE_WB     6   // Write-Back
+#define PAT_TYPE_UC_    7   // Uncacheable (UC-)
+
+/** IA32_PAT MSR 地址 */
+#define MSR_IA32_PAT    0x277
+
+/**
+ * @brief 写入 MSR 寄存器
+ */
+static inline void wrmsr(uint32_t msr, uint64_t value) {
+    uint32_t low = value & 0xFFFFFFFF;
+    uint32_t high = value >> 32;
+    __asm__ volatile("wrmsr" : : "c"(msr), "a"(low), "d"(high));
+}
+
+/**
+ * @brief 检查 CPU 是否支持 PAT
+ */
+static bool cpu_has_pat(void) {
+    uint32_t eax, ebx, ecx, edx;
+    __asm__ volatile("cpuid" 
+                     : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                     : "a"(1));
+    return (edx & (1 << 16)) != 0;  // PAT 在 EDX bit 16
+}
+
+/**
+ * @brief 初始化 PAT (Page Attribute Table)
+ * 
+ * 配置 PAT 以支持 Write-Combining 内存类型：
+ * - PAT[0] = WB  (默认，用于普通内存)
+ * - PAT[1] = WT  (Write-Through)
+ * - PAT[2] = UC- (Uncacheable)
+ * - PAT[3] = UC  (Uncacheable)
+ * - PAT[4] = WB  (Write-Back)
+ * - PAT[5] = WT  (Write-Through)
+ * - PAT[6] = UC- (Uncacheable)
+ * - PAT[7] = WC  (Write-Combining - 用于帧缓冲)
+ * 
+ * 页表项组合：
+ * - PAT=0, PCD=0, PWT=0 -> PAT[0] = WB
+ * - PAT=0, PCD=0, PWT=1 -> PAT[1] = WT
+ * - PAT=0, PCD=1, PWT=0 -> PAT[2] = UC-
+ * - PAT=0, PCD=1, PWT=1 -> PAT[3] = UC
+ * - PAT=1, PCD=0, PWT=0 -> PAT[4] = WB
+ * - PAT=1, PCD=0, PWT=1 -> PAT[5] = WT
+ * - PAT=1, PCD=1, PWT=0 -> PAT[6] = UC-
+ * - PAT=1, PCD=1, PWT=1 -> PAT[7] = WC  <-- 用于帧缓冲
+ */
+void vmm_init_pat(void) {
+    if (!cpu_has_pat()) {
+        LOG_WARN_MSG("vmm: PAT not supported by CPU, framebuffer will use UC mode\n");
+        return;
+    }
+    
+    // 构建 PAT 值：每个条目 8 位
+    // PAT[7] = WC (1), PAT[6] = UC- (7), PAT[5] = WT (4), PAT[4] = WB (6)
+    // PAT[3] = UC (0), PAT[2] = UC- (7), PAT[1] = WT (4), PAT[0] = WB (6)
+    uint64_t pat_value = 
+        ((uint64_t)PAT_TYPE_WC  << 56) |  // PAT[7] = WC (Write-Combining)
+        ((uint64_t)PAT_TYPE_UC_ << 48) |  // PAT[6] = UC-
+        ((uint64_t)PAT_TYPE_WT  << 40) |  // PAT[5] = WT
+        ((uint64_t)PAT_TYPE_WB  << 32) |  // PAT[4] = WB
+        ((uint64_t)PAT_TYPE_UC  << 24) |  // PAT[3] = UC
+        ((uint64_t)PAT_TYPE_UC_ << 16) |  // PAT[2] = UC-
+        ((uint64_t)PAT_TYPE_WT  <<  8) |  // PAT[1] = WT
+        ((uint64_t)PAT_TYPE_WB  <<  0);   // PAT[0] = WB
+    
+    wrmsr(MSR_IA32_PAT, pat_value);
+    pat_initialized = true;
+    
+    LOG_INFO_MSG("vmm: PAT initialized (WC mode available for framebuffer)\n");
+}
+
+/**
+ * @brief 映射帧缓冲区域（使用 Write-Combining 模式）
+ * @param phys_addr 物理地址
+ * @param size 映射大小（字节）
+ * @return 成功返回映射的虚拟地址，失败返回 0
+ * 
+ * 使用 PAT[7] = WC 模式，需要设置 PAT=1, PCD=1, PWT=1
+ * 如果 PAT 不可用，回退到 UC 模式
+ */
+uint32_t vmm_map_framebuffer(uint32_t phys_addr, uint32_t size) {
+    if (size == 0) {
+        return 0;
+    }
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    
+    // 计算需要的页数（向上取整）
+    uint32_t phys_start = PAGE_ALIGN_DOWN(phys_addr);
+    uint32_t phys_end = PAGE_ALIGN_UP(phys_addr + size);
+    uint32_t num_pages = (phys_end - phys_start) / PAGE_SIZE;
+    
+    // 分配虚拟地址空间
+    uint32_t virt_start = mmio_next_virt;
+    if (virt_start + num_pages * PAGE_SIZE > MMIO_VIRT_END) {
+        LOG_ERROR_MSG("vmm_map_framebuffer: No more MMIO virtual address space\n");
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        return 0;
+    }
+    
+    // 根据 PAT 是否可用选择页标志
+    uint32_t flags;
+    if (pat_initialized) {
+        // PAT[7] = WC：需要 PAT=1, PCD=1, PWT=1
+        flags = PAGE_PRESENT | PAGE_WRITE | PAGE_PAT | PAGE_CACHE_DISABLE | PAGE_WRITE_THROUGH;
+        LOG_INFO_MSG("vmm_map_framebuffer: using Write-Combining mode\n");
+    } else {
+        // 回退到 UC 模式
+        flags = PAGE_PRESENT | PAGE_WRITE | PAGE_CACHE_DISABLE | PAGE_WRITE_THROUGH;
+        LOG_WARN_MSG("vmm_map_framebuffer: PAT not available, using UC mode\n");
+    }
+    
+    for (uint32_t i = 0; i < num_pages; i++) {
+        uint32_t virt = virt_start + i * PAGE_SIZE;
+        uint32_t phys = phys_start + i * PAGE_SIZE;
+        
+        uint32_t pd = pde_idx(virt);
+        uint32_t pt = pte_idx(virt);
+        
+        pde_t *pde = &current_dir->entries[pd];
+        page_table_t *table;
+        
+        // 如果页表不存在，创建新页表
+        if (!is_present(*pde)) {
+            table = create_page_table();
+            if (!table) {
+                // 回滚已映射的页面
+                for (uint32_t j = 0; j < i; j++) {
+                    vmm_unmap_page(virt_start + j * PAGE_SIZE);
+                }
+                spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+                return 0;
+            }
+            uint32_t table_phys = VIRT_TO_PHYS((uint32_t)table);
+            *pde = table_phys | PAGE_PRESENT | PAGE_WRITE;
+            protect_phys_frame(table_phys);
+            
+            // 同步到主内核页目录
+            page_directory_t *k_dir = (page_directory_t *)boot_page_directory;
+            k_dir->entries[pd] = *pde;
+        } else {
+            table = (page_table_t*)PHYS_TO_VIRT(get_frame(*pde));
+        }
+        
+        // 设置页表项
+        table->entries[pt] = phys | flags;
+        vmm_flush_tlb(virt);
+    }
+    
+    // 更新下一个可用的 MMIO 虚拟地址
+    mmio_next_virt = virt_start + num_pages * PAGE_SIZE;
+    
+    // 计算返回地址：虚拟基址 + 物理地址页内偏移
+    uint32_t offset = phys_addr - phys_start;
+    uint32_t result = virt_start + offset;
+    
+    LOG_INFO_MSG("vmm_map_framebuffer: mapped phys 0x%x size 0x%x -> virt 0x%x\n", 
+                 phys_addr, size, result);
+    
+    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+    return result;
 }

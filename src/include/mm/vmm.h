@@ -16,6 +16,12 @@
 #define PAGE_WRITE      0x002
 /** @brief 用户模式标志 */
 #define PAGE_USER       0x004
+/** @brief Write-Through 标志 */
+#define PAGE_WRITE_THROUGH 0x008
+/** @brief 禁用缓存标志 */
+#define PAGE_CACHE_DISABLE 0x010
+/** @brief PAT 标志（用于页表项）*/
+#define PAGE_PAT        0x080
 /** 
  * @brief Copy-on-Write 标志（使用 x86 Available bit 9）
  * 
@@ -172,11 +178,30 @@ bool vmm_handle_cow_page_fault(uint32_t addr, uint32_t error_code);
 uint32_t vmm_map_mmio(uint32_t phys_addr, uint32_t size);
 
 /**
+ * @brief 映射帧缓冲区域（使用 Write-Combining 模式）
+ * @param phys_addr 物理地址
+ * @param size 映射大小（字节）
+ * @return 成功返回映射的虚拟地址，失败返回 0
+ * 
+ * 帧缓冲区使用 Write-Combining 缓存模式，可以将多个连续写入
+ * 合并为一个操作，大幅提升图形输出性能。
+ */
+uint32_t vmm_map_framebuffer(uint32_t phys_addr, uint32_t size);
+
+/**
  * @brief 取消 MMIO 区域映射
  * @param virt_addr 虚拟地址
  * @param size 映射大小（字节）
  */
 void vmm_unmap_mmio(uint32_t virt_addr, uint32_t size);
+
+/**
+ * @brief 初始化 PAT (Page Attribute Table)
+ * 
+ * 配置 PAT 以支持 Write-Combining 内存类型。
+ * 应在 vmm_init() 后尽早调用。
+ */
+void vmm_init_pat(void);
 
 /**
  * @brief 通过查询页表获取虚拟地址对应的物理地址

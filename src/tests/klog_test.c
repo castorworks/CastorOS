@@ -8,8 +8,8 @@
 #include <tests/ktest.h>
 #include <tests/klog_test.h>
 #include <lib/klog.h>
+#include <lib/kprintf.h>
 #include <lib/string.h>
-#include <drivers/vga.h>
 #include <drivers/serial.h>
 
 // ============================================================================
@@ -314,15 +314,15 @@ TEST_CASE(test_klog_color_preservation) {
 }
 
 TEST_CASE(test_klog_nested_color_changes) {
-    // 测试嵌套的颜色变化场景
-    vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    // 测试嵌套的颜色变化场景（使用 kconsole_set_color 兼容图形/文本模式）
+    kconsole_set_color(KCOLOR_LIGHT_GREEN, KCOLOR_BLACK);
     klog(LOG_INFO, "Log with custom color\n");
     
-    vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+    kconsole_set_color(KCOLOR_YELLOW, KCOLOR_BLACK);
     klog(LOG_WARN, "Another log\n");
     
     // 恢复默认颜色
-    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
 }
 
 // ============================================================================

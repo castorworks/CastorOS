@@ -5,31 +5,30 @@
 #include <tests/ktest.h>
 #include <lib/kprintf.h>
 #include <lib/string.h>
-#include <drivers/vga.h>
 
 // 全局测试上下文
 static test_context_t g_test_ctx;
 
 // ============================================================================
-// 辅助函数：彩色输出
+// 辅助函数：彩色输出（使用 kconsole_set_color 自动适配图形/文本模式）
 // ============================================================================
 
 static void print_pass(const char* msg) {
-    vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    kconsole_set_color(KCOLOR_LIGHT_GREEN, KCOLOR_BLACK);
     kprintf("%s", msg);
-    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
 }
 
 static void print_fail(const char* msg) {
-    vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+    kconsole_set_color(KCOLOR_LIGHT_RED, KCOLOR_BLACK);
     kprintf("%s", msg);
-    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
 }
 
 static void print_info(const char* msg) {
-    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    kconsole_set_color(KCOLOR_LIGHT_CYAN, KCOLOR_BLACK);
     kprintf("%s", msg);
-    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
 }
 
 // ============================================================================
@@ -95,17 +94,17 @@ void unittest_print_summary(void) {
     
     if (g_test_ctx.stats.passed > 0) {
         kprintf("Passed tests:     ");
-        vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        kconsole_set_color(KCOLOR_LIGHT_GREEN, KCOLOR_BLACK);
         kprintf("%u", g_test_ctx.stats.passed);
-        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
         kprintf("\n");
     }
     
     if (g_test_ctx.stats.failed > 0) {
         kprintf("Failed tests:     ");
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kconsole_set_color(KCOLOR_LIGHT_RED, KCOLOR_BLACK);
         kprintf("%u", g_test_ctx.stats.failed);
-        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
         kprintf("\n");
     }
     
@@ -113,14 +112,14 @@ void unittest_print_summary(void) {
     
     kprintf("\nResult: ");
     if (g_test_ctx.stats.failed == 0) {
-        vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        kconsole_set_color(KCOLOR_LIGHT_GREEN, KCOLOR_BLACK);
         kprintf("ALL TESTS PASSED");
-        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
         kprintf("\n");
     } else {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kconsole_set_color(KCOLOR_LIGHT_RED, KCOLOR_BLACK);
         kprintf("SOME TESTS FAILED");
-        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
         kprintf("\n");
     }
     print_info("================================================================================\n\n");

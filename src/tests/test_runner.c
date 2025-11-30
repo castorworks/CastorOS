@@ -17,7 +17,6 @@
 #include <tests/heap_test.h>
 #include <tests/sync_test.h>
 #include <lib/kprintf.h>
-#include <drivers/vga.h>
 
 // ============================================================================
 // 测试用例结构体定义
@@ -73,11 +72,11 @@ static const test_entry_t test_suite[] = {
  */
 void run_all_tests(void) {
     kprintf("\n");
-    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    kconsole_set_color(KCOLOR_LIGHT_CYAN, KCOLOR_BLACK);
     kprintf("================================================================================\n");
     kprintf("|| CastorOS Unit Test Suite\n");
     kprintf("================================================================================\n");
-    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
     kprintf("\n");
     
     size_t test_count = TEST_COUNT;
@@ -85,9 +84,9 @@ void run_all_tests(void) {
     
     // 如果没有测试用例，直接返回
     if (test_count == 0) {
-        vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        kconsole_set_color(KCOLOR_YELLOW, KCOLOR_BLACK);
         kprintf("No test modules registered.\n");
-        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
         return;
     }
     
@@ -103,18 +102,18 @@ void run_all_tests(void) {
         if (test_suite[i].test_func != NULL) {
             test_suite[i].test_func();
         } else {
-            vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+            kconsole_set_color(KCOLOR_YELLOW, KCOLOR_BLACK);
             kprintf("Warning: Test function is NULL\n");
-            vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
         }
     }
     
     kprintf("\n");
-    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    kconsole_set_color(KCOLOR_LIGHT_CYAN, KCOLOR_BLACK);
     kprintf("================================================================================\n");
     kprintf("|| All Tests Completed\n");
     kprintf("================================================================================\n");
-    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
     kprintf("\n");
 }
 

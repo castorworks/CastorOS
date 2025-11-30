@@ -10,6 +10,7 @@
 #include <mm/heap.h>
 #include <drivers/serial.h>
 #include <drivers/rtc.h>
+#include <drivers/framebuffer.h>
 #include <kernel/io.h>
 
 /* 设备节点数量 */
@@ -159,11 +160,20 @@ static uint32_t devconsole_write(fs_node_t *node, uint32_t offset,
                                  uint32_t size, uint8_t *buffer) {
     (void)node; (void)offset;
     
-    // 写入到 VGA 控制台
+    // 写入到控制台（优先使用图形终端，回退到 VGA 文本模式）
     extern void vga_putchar(char c);
     
     for (uint32_t i = 0; i < size; i++) {
-        vga_putchar(buffer[i]);
+        if (fb_is_initialized()) {
+            fb_terminal_putchar(buffer[i]);
+        } else {
+            vga_putchar(buffer[i]);
+        }
+    }
+    
+    // 如果使用图形模式，确保刷新输出
+    if (fb_is_initialized()) {
+        fb_flush();
     }
     
     return size;

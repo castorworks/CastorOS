@@ -6,6 +6,7 @@
 #include <lib/string.h>
 #include <drivers/vga.h>
 #include <drivers/serial.h>
+#include <drivers/framebuffer.h>
 #include <stdarg.h>
 
 /* 输出目标标志 */
@@ -18,25 +19,37 @@ typedef enum {
 
 /**
  * 内部字符输出函数（根据目标输出）
+ * 在图形模式下自动使用帧缓冲终端
  */
 static void output_char(char c, output_target_t target) {
     if (target & OUTPUT_SERIAL) {
         serial_putchar(c);
     }
     if (target & OUTPUT_VGA) {
-        vga_putchar(c);
+        // 优先使用图形终端，回退到 VGA 文本模式
+        if (fb_is_initialized()) {
+            fb_terminal_putchar(c);
+        } else {
+            vga_putchar(c);
+        }
     }
 }
 
 /**
  * 内部字符串输出函数（根据目标输出）
+ * 在图形模式下自动使用帧缓冲终端
  */
 static void output_string(const char *msg, output_target_t target) {
     if (target & OUTPUT_SERIAL) {
         serial_print(msg);
     }
     if (target & OUTPUT_VGA) {
-        vga_print(msg);
+        // 优先使用图形终端，回退到 VGA 文本模式
+        if (fb_is_initialized()) {
+            fb_terminal_write(msg);
+        } else {
+            vga_print(msg);
+        }
     }
 }
 
@@ -367,6 +380,11 @@ static void vkprintf_internal(const char *fmt, va_list args, output_target_t tar
             output_char(*fmt++, target);
         }
     }
+    
+    // 如果输出到 VGA 且使用图形模式，确保刷新
+    if ((target & OUTPUT_VGA) && fb_is_initialized()) {
+        fb_flush();
+    }
 }
 
 /* ============================================================================
@@ -676,6 +694,34 @@ int ksnprintf(char *str, size_t size, const char *fmt, ...) {
     int result = vsnprintf_internal(str, size, fmt, args);
     va_end(args);
     return result;
+}
+
+/* ============================================================================
+ * 控制台颜色和清屏（自动适配 VGA 文本模式和帧缓冲图形模式）
+ * ============================================================================ */
+
+/**
+ * 设置控制台颜色
+ * 自动适配 VGA 文本模式和帧缓冲图形模式
+ */
+void kconsole_set_color(kcolor_t fg, kcolor_t bg) {
+    if (fb_is_initialized()) {
+        fb_terminal_set_vga_color((uint8_t)fg, (uint8_t)bg);
+    } else {
+        vga_set_color((vga_color_t)fg, (vga_color_t)bg);
+    }
+}
+
+/**
+ * 清空控制台屏幕
+ * 自动适配 VGA 文本模式和帧缓冲图形模式
+ */
+void kconsole_clear(void) {
+    if (fb_is_initialized()) {
+        fb_terminal_clear();
+    } else {
+        vga_clear();
+    }
 }
 
 

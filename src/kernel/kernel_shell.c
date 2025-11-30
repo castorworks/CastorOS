@@ -22,11 +22,40 @@
 
 #include <net/net.h>
 
+#include <drivers/framebuffer.h>
+#include <drivers/pci.h>
+
 // ============================================================================
 // Shell 状态
 // ============================================================================
 
 static shell_state_t shell_state;
+
+// ============================================================================
+// 图形兼容层 - 自动选择 VGA 或 FB 输出
+// ============================================================================
+
+/**
+ * 设置控制台颜色（自动选择 VGA 或 FB）
+ */
+static void shell_set_color(vga_color_t fg, vga_color_t bg) {
+    if (fb_is_initialized()) {
+        fb_terminal_set_vga_color((uint8_t)fg, (uint8_t)bg);
+    } else {
+        vga_set_color(fg, bg);
+    }
+}
+
+/**
+ * 清空控制台屏幕（自动选择 VGA 或 FB）
+ */
+static void shell_clear_screen(void) {
+    if (fb_is_initialized()) {
+        fb_terminal_clear();
+    } else {
+        vga_clear();
+    }
+}
 
 // ============================================================================
 // 内建命令声明
@@ -58,6 +87,11 @@ static int cmd_write(int argc, char **argv);
 static int cmd_ifconfig(int argc, char **argv);
 static int cmd_ping(int argc, char **argv);
 static int cmd_arp(int argc, char **argv);
+
+// 图形和设备命令
+static int cmd_lspci(int argc, char **argv);
+static int cmd_fbinfo(int argc, char **argv);
+static int cmd_gfxdemo(int argc, char **argv);
 
 // ============================================================================
 // 命令表
@@ -99,6 +133,11 @@ static const shell_command_t commands[] = {
     {"ifconfig", "Configure network interface",      "ifconfig [iface] [ip netmask gw]", cmd_ifconfig},
     {"ping",     "Send ICMP echo requests",          "ping [-c count] host", cmd_ping},
     {"arp",      "Show/manage ARP cache",            "arp [-a] [-d ip]",    cmd_arp},
+    
+    // 图形和设备命令
+    {"lspci",    "List PCI devices",                 "lspci",               cmd_lspci},
+    {"fbinfo",   "Display framebuffer info",         "fbinfo",              cmd_fbinfo},
+    {"gfxdemo",  "Run graphics demo",                "gfxdemo",             cmd_gfxdemo},
     
     // 结束标记
     {NULL, NULL, NULL, NULL}
@@ -326,7 +365,7 @@ void kernel_shell_init(void) {
  * 显示欢迎信息
  */
 static void shell_print_welcome(void) {
-    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     kprintf("================================================================================\n");
     kprintf("     ____          _              ___  ____\n");
     kprintf("    / ___|__ _ ___| |_ ___  _ __ / _ \\/ ___|\n");
@@ -334,24 +373,24 @@ static void shell_print_welcome(void) {
     kprintf("   | |__| (_| \\__ \\ || (_) | |  | |_| |___) |\n");
     kprintf("    \\____\\__,_|___/\\__\\___/|_|   \\___/|____/\n");
     kprintf("\n");
-    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     kprintf("          CastorOS Kernel Shell v%s\n", KERNEL_VERSION);
     kprintf("\n");
-    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     kprintf("          Welcome to CastorOS!\n");
     kprintf("          Type 'help' for available commands\n");
     kprintf("\n");
     kprintf("================================================================================\n");
-    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
 }
 
 /**
  * 显示提示符
  */
 void shell_print_prompt(void) {
-    vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     kprintf(SHELL_PROMPT);
-    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 }
 
 /**
@@ -431,10 +470,10 @@ int shell_execute_command(int argc, char **argv) {
     
     const shell_command_t *cmd = shell_find_command(argv[0]);
     if (cmd == NULL) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Unknown command '%s'\n", argv[0]);
         kprintf("Type 'help' for a list of available commands.\n");
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
@@ -538,32 +577,32 @@ void kernel_shell_run(void) {
 static int cmd_help(int argc, char **argv) {
     if (argc == 1) {
         // 显示所有命令
-        vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
         kprintf("Available commands:\n");
         kprintf("================================================================================\n");
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         
         for (int i = 0; commands[i].name != NULL; i++) {
             kprintf("  %-12s - %s\n", commands[i].name, commands[i].description);
         }
         
         kprintf("\n");
-        vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
         kprintf("Type 'help <command>' for more information on a specific command.\n");
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     } else {
         // 显示特定命令的帮助
         const shell_command_t *cmd = shell_find_command(argv[1]);
         if (cmd == NULL) {
-            vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             kprintf("Error: Unknown command '%s'\n", argv[1]);
-            vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
             return -1;
         }
         
-        vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
         kprintf("Command: %s\n", cmd->name);
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         kprintf("Description: %s\n", cmd->description);
         kprintf("Usage: %s\n", cmd->usage);
     }
@@ -578,7 +617,7 @@ static int cmd_clear(int argc, char **argv) {
     (void)argc;
     (void)argv;
     
-    vga_clear();
+    shell_clear_screen();
     return 0;
 }
 
@@ -603,9 +642,9 @@ static int cmd_version(int argc, char **argv) {
     (void)argc;
     (void)argv;
     
-    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     kprintf("CastorOS Kernel Version %s\n", KERNEL_VERSION);
-    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     kprintf("Compiled on: %s %s\n", __DATE__, __TIME__);
     kprintf("Architecture: i686 (x86 32-bit)\n");
     return 0;
@@ -639,10 +678,10 @@ static int cmd_free(int argc, char **argv) {
     uint32_t used_mem = pmm_info.used_frames * PAGE_SIZE;
     uint32_t free_mem = pmm_info.free_frames * PAGE_SIZE;
     
-    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     kprintf("Memory Usage\n");
     kprintf("================================================================================\n");
-    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     
     kprintf("              Total          Used          Free\n");
     kprintf("Physical:     %-12u  %-12u  %-12u\n", 
@@ -660,10 +699,10 @@ static int cmd_ps(int argc, char **argv) {
     (void)argc;
     (void)argv;
     
-    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     kprintf("Process List\n");
     kprintf("================================================================================\n");
-    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     
     kprintf("PID   Name              State       Priority  Runtime (ms)\n");
     kprintf("--------------------------------------------------------------------------------\n");
@@ -702,9 +741,9 @@ static int cmd_reboot(int argc, char **argv) {
     (void)argc;
     (void)argv;
     
-    vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
     kprintf("Rebooting system...\n");
-    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     
     system_reboot();
     return 0;
@@ -717,9 +756,9 @@ static int cmd_poweroff(int argc, char **argv) {
     (void)argc;
     (void)argv;
     
-    vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
     kprintf("Powering off system...\n");
-    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     
     system_poweroff();
     return 0;
@@ -732,9 +771,9 @@ static int cmd_exit(int argc, char **argv) {
     (void)argc;
     (void)argv;
     
-    vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
     kprintf("Exiting shell...\n");
-    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     
     shell_state.running = false;
     return 0;
@@ -756,9 +795,9 @@ static int cmd_ls(int argc, char **argv) {
         path = shell_state.cwd;
     } else {
         if (shell_resolve_path(argv[1], abs_path, sizeof(abs_path)) != 0) {
-            vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             kprintf("Error: Invalid path\n");
-            vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
             return -1;
         }
         path = abs_path;
@@ -767,25 +806,25 @@ static int cmd_ls(int argc, char **argv) {
     // 查找目录节点
     fs_node_t *dir = vfs_path_to_node(path);
     if (!dir) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Directory '%s' not found\n", path);
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
     if (dir->type != FS_DIRECTORY) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: '%s' is not a directory\n", path);
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         vfs_release_node(dir);  // 释放节点
         return -1;
     }
     
     // 列出目录内容
-    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     kprintf("Directory: %s\n", path);
     kprintf("================================================================================\n");
-    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     
     uint32_t index = 0;
     struct dirent *entry;
@@ -794,42 +833,42 @@ static int cmd_ls(int argc, char **argv) {
     while ((entry = vfs_readdir(dir, index++)) != NULL) {
         // 使用 d_type 字段判断文件类型（如果可用）
         if (entry->d_type == DT_DIR) {
-            vga_set_color(VGA_COLOR_LIGHT_BLUE, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_LIGHT_BLUE, VGA_COLOR_BLACK);
             kprintf("%-20s <DIR>\n", entry->d_name);
         } else if (entry->d_type == DT_REG) {
             // 对于常规文件，查找节点以获取大小
             fs_node_t *node = vfs_finddir(dir, entry->d_name);
             if (node) {
-                vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                shell_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
                 kprintf("%-20s %u bytes\n", entry->d_name, node->size);
                 vfs_release_node(node);  // 释放节点
             } else {
-                vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                shell_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
                 kprintf("%-20s\n", entry->d_name);
             }
         } else if (entry->d_type == DT_CHR) {
-            vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
             kprintf("%-20s <CHR>\n", entry->d_name);
         } else if (entry->d_type == DT_BLK) {
-            vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
             kprintf("%-20s <BLK>\n", entry->d_name);
         } else if (entry->d_type == DT_LNK) {
-            vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
             kprintf("%-20s <LNK>\n", entry->d_name);
         } else {
             // 未知类型或 d_type 未设置，回退到旧方法
             fs_node_t *node = vfs_finddir(dir, entry->d_name);
             if (node) {
                 if (node->type == FS_DIRECTORY) {
-                    vga_set_color(VGA_COLOR_LIGHT_BLUE, VGA_COLOR_BLACK);
+                    shell_set_color(VGA_COLOR_LIGHT_BLUE, VGA_COLOR_BLACK);
                     kprintf("%-20s <DIR>\n", entry->d_name);
                 } else {
-                    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                    shell_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
                     kprintf("%-20s %u bytes\n", entry->d_name, node->size);
                 }
                 vfs_release_node(node);  // 释放节点
             } else {
-                vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                shell_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
                 kprintf("%-20s\n", entry->d_name);
             }
         }
@@ -840,7 +879,7 @@ static int cmd_ls(int argc, char **argv) {
         kprintf("(empty)\n");
     }
     
-    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     vfs_release_node(dir);  // 释放目录节点
     return 0;
 }
@@ -850,34 +889,34 @@ static int cmd_ls(int argc, char **argv) {
  */
 static int cmd_cat(int argc, char **argv) {
     if (argc < 2) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Usage: cat <file>\n");
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
     char abs_path[SHELL_MAX_PATH_LENGTH];
     if (shell_resolve_path(argv[1], abs_path, sizeof(abs_path)) != 0) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Invalid path\n");
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
     // 查找文件节点
     fs_node_t *file = vfs_path_to_node(abs_path);
     if (!file) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: File '%s' not found\n", abs_path);
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
     // 检查文件类型：支持常规文件和设备文件
     if (file->type != FS_FILE && file->type != FS_CHARDEVICE && file->type != FS_BLOCKDEVICE) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: '%s' is not a readable file or device\n", abs_path);
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         vfs_release_node(file);  // 释放节点
         return -1;
     }
@@ -956,25 +995,25 @@ static int cmd_cat(int argc, char **argv) {
  */
 static int cmd_touch(int argc, char **argv) {
     if (argc < 2) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Usage: touch <file>\n");
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
     char abs_path[SHELL_MAX_PATH_LENGTH];
     if (shell_resolve_path(argv[1], abs_path, sizeof(abs_path)) != 0) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Invalid path\n");
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
     // 创建文件
     if (vfs_create(abs_path) != 0) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Failed to create file '%s'\n", abs_path);
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
@@ -987,33 +1026,33 @@ static int cmd_touch(int argc, char **argv) {
  */
 static int cmd_rm(int argc, char **argv) {
     if (argc < 2) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Usage: rm <file>\n");
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
     char abs_path[SHELL_MAX_PATH_LENGTH];
     if (shell_resolve_path(argv[1], abs_path, sizeof(abs_path)) != 0) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Invalid path\n");
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
     // 检查文件是否存在且是文件
     fs_node_t *file = vfs_path_to_node(abs_path);
     if (!file) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: File '%s' not found\n", abs_path);
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
     if (file->type != FS_FILE) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: '%s' is not a file (use rmdir for directories)\n", abs_path);
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         vfs_release_node(file);  // 释放节点
         return -1;
     }
@@ -1022,9 +1061,9 @@ static int cmd_rm(int argc, char **argv) {
     
     // 删除文件
     if (vfs_unlink(abs_path) != 0) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Failed to remove file '%s'\n", abs_path);
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
@@ -1037,25 +1076,25 @@ static int cmd_rm(int argc, char **argv) {
  */
 static int cmd_mkdir(int argc, char **argv) {
     if (argc < 2) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Usage: mkdir <dir>\n");
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
     char abs_path[SHELL_MAX_PATH_LENGTH];
     if (shell_resolve_path(argv[1], abs_path, sizeof(abs_path)) != 0) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Invalid path\n");
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
     // 创建目录（权限：读写执行）
     if (vfs_mkdir(abs_path, FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC) != 0) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Failed to create directory '%s'\n", abs_path);
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
@@ -1068,41 +1107,41 @@ static int cmd_mkdir(int argc, char **argv) {
  */
 static int cmd_rmdir(int argc, char **argv) {
     if (argc < 2) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Usage: rmdir <dir>\n");
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
     char abs_path[SHELL_MAX_PATH_LENGTH];
     if (shell_resolve_path(argv[1], abs_path, sizeof(abs_path)) != 0) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Invalid path\n");
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
     // 不能删除根目录
     if (strcmp(abs_path, "/") == 0) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Cannot remove root directory\n");
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
     // 检查目录是否存在且是目录
     fs_node_t *dir = vfs_path_to_node(abs_path);
     if (!dir) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Directory '%s' not found\n", abs_path);
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
     if (dir->type != FS_DIRECTORY) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: '%s' is not a directory\n", abs_path);
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         vfs_release_node(dir);  // 释放节点
         return -1;
     }
@@ -1110,9 +1149,9 @@ static int cmd_rmdir(int argc, char **argv) {
     // 检查目录是否为空
     struct dirent *entry = vfs_readdir(dir, 0);
     if (entry != NULL) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Directory '%s' is not empty\n", abs_path);
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         vfs_release_node(dir);  // 释放节点
         return -1;
     }
@@ -1121,9 +1160,9 @@ static int cmd_rmdir(int argc, char **argv) {
     
     // 删除目录
     if (vfs_unlink(abs_path) != 0) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Failed to remove directory '%s'\n", abs_path);
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
@@ -1157,25 +1196,25 @@ static int cmd_cd(int argc, char **argv) {
     
     char abs_path[SHELL_MAX_PATH_LENGTH];
     if (shell_resolve_path(path, abs_path, sizeof(abs_path)) != 0) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Invalid path\n");
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
     // 查找目录节点
     fs_node_t *dir = vfs_path_to_node(abs_path);
     if (!dir) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Directory '%s' not found\n", abs_path);
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
     if (dir->type != FS_DIRECTORY) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: '%s' is not a directory\n", abs_path);
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         vfs_release_node(dir);  // 释放节点
         return -1;
     }
@@ -1194,17 +1233,17 @@ static int cmd_cd(int argc, char **argv) {
  */
 static int cmd_write(int argc, char **argv) {
     if (argc < 3) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Usage: write <file> <text...>\n");
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
     char abs_path[SHELL_MAX_PATH_LENGTH];
     if (shell_resolve_path(argv[1], abs_path, sizeof(abs_path)) != 0) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Invalid path\n");
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
@@ -1215,26 +1254,26 @@ static int cmd_write(int argc, char **argv) {
     if (!file) {
         // 文件不存在，尝试创建（仅对常规文件）
         if (vfs_create(abs_path) != 0) {
-            vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             kprintf("Error: File or device '%s' not found\n", abs_path);
-            vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
             return -1;
         }
         // 重新获取文件节点
         file = vfs_path_to_node(abs_path);
         if (!file) {
-            vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             kprintf("Error: Failed to open file '%s'\n", abs_path);
-            vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
             return -1;
         }
     }
     
     // 检查文件类型：支持常规文件和设备文件
     if (file->type != FS_FILE && file->type != FS_CHARDEVICE && file->type != FS_BLOCKDEVICE) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: '%s' is not a writable file or device\n", abs_path);
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         vfs_release_node(file);  // 释放节点
         return -1;
     }
@@ -1253,9 +1292,9 @@ static int cmd_write(int argc, char **argv) {
     // 分配缓冲区
     char *buffer = (char *)kmalloc(total_len + 1);
     if (!buffer) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Out of memory\n");
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         vfs_release_node(file);  // 释放节点
         return -1;
     }
@@ -1286,10 +1325,10 @@ static int cmd_write(int argc, char **argv) {
     kfree(buffer);
     
     if (written != pos) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Failed to write all data to file '%s'\n", abs_path);
         kprintf("Written: %u bytes, Expected: %u bytes\n", written, (uint32_t)pos);
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         vfs_release_node(file);  // 释放节点
         return -1;
     }
@@ -1317,9 +1356,9 @@ static int cmd_ifconfig(int argc, char **argv) {
         // 显示特定接口
         netdev_t *dev = netdev_get_by_name(argv[1]);
         if (!dev) {
-            vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             kprintf("Error: Interface '%s' not found\n", argv[1]);
-            vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
             return -1;
         }
         netdev_print_info(dev);
@@ -1331,9 +1370,9 @@ static int cmd_ifconfig(int argc, char **argv) {
     if (argc >= 5) {
         netdev_t *dev = netdev_get_by_name(argv[1]);
         if (!dev) {
-            vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             kprintf("Error: Interface '%s' not found\n", argv[1]);
-            vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
             return -1;
         }
         
@@ -1349,9 +1388,9 @@ static int cmd_ifconfig(int argc, char **argv) {
     if (argc == 3) {
         netdev_t *dev = netdev_get_by_name(argv[1]);
         if (!dev) {
-            vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             kprintf("Error: Interface '%s' not found\n", argv[1]);
-            vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
             return -1;
         }
         
@@ -1366,10 +1405,10 @@ static int cmd_ifconfig(int argc, char **argv) {
         }
     }
     
-    vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
     kprintf("Usage: ifconfig [iface] [ip netmask gateway]\n");
     kprintf("       ifconfig iface up|down\n");
-    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     return -1;
 }
 
@@ -1398,26 +1437,26 @@ static int cmd_ping(int argc, char **argv) {
     }
     
     if (!host) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Usage: ping [-c count] host\n");
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
     // 检查是否有网络设备
     netdev_t *dev = netdev_get_default();
     if (!dev) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: No network device available\n");
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
     if (dev->ip_addr == 0) {
-        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Network interface not configured\n");
         kprintf("Use 'ifconfig %s <ip> <netmask> <gateway>' to configure\n", dev->name);
-        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
@@ -1444,18 +1483,18 @@ static int cmd_arp(int argc, char **argv) {
         // 删除指定的 ARP 条目
         uint32_t ip;
         if (str_to_ip(delete_ip, &ip) < 0) {
-            vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             kprintf("Error: Invalid IP address '%s'\n", delete_ip);
-            vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
             return -1;
         }
         
         if (arp_cache_delete(ip) == 0) {
             kprintf("ARP entry for %s deleted\n", delete_ip);
         } else {
-            vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             kprintf("Error: ARP entry for %s not found\n", delete_ip);
-            vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
             return -1;
         }
         return 0;
@@ -1467,8 +1506,74 @@ static int cmd_arp(int argc, char **argv) {
         return 0;
     }
     
-    vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
     kprintf("Usage: arp [-a] [-d ip]\n");
-    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     return -1;
+}
+
+// ============================================================================
+// 图形和设备命令实现
+// ============================================================================
+
+/**
+ * lspci 命令 - 列出 PCI 设备
+ */
+static int cmd_lspci(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    
+    pci_print_all_devices();
+    return 0;
+}
+
+/**
+ * fbinfo 命令 - 显示帧缓冲信息
+ */
+static int cmd_fbinfo(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    
+    if (!fb_is_initialized()) {
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Framebuffer not initialized (text mode)\n");
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    fb_print_info();
+    return 0;
+}
+
+/**
+ * gfxdemo 命令 - 运行图形演示
+ */
+static int cmd_gfxdemo(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    
+    if (!fb_is_initialized()) {
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Framebuffer not initialized (text mode)\n");
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    kprintf("Running graphics demo...\n");
+    kprintf("Press any key to return to shell.\n");
+    
+    // 等待用户确认
+    keyboard_getchar();
+    
+    // 运行图形演示
+    fb_demo();
+    
+    // 等待用户按键返回
+    keyboard_getchar();
+    
+    // 恢复终端
+    fb_terminal_init();
+    shell_print_welcome();
+    
+    return 0;
 }
