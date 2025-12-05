@@ -8,6 +8,17 @@
 #include <lib/kprintf.h>
 #include <drivers/timer.h>
 
+// TCP 定时器回调 ID
+static uint32_t tcp_timer_id = 0;
+
+/**
+ * @brief TCP 定时器回调函数
+ */
+static void net_tcp_timer_callback(void *data) {
+    (void)data;
+    tcp_timer();
+}
+
 void net_init(void) {
     LOG_INFO_MSG("net: Initializing network stack...\n");
     
@@ -34,6 +45,12 @@ void net_init(void) {
     
     // 8. 初始化 Socket 子系统
     socket_init();
+    
+    // 9. 注册 TCP 定时器（每 100ms 调用一次）
+    tcp_timer_id = timer_register_callback(net_tcp_timer_callback, NULL, 100, true);
+    if (tcp_timer_id == 0) {
+        LOG_WARN_MSG("net: Failed to register TCP timer\n");
+    }
     
     LOG_INFO_MSG("net: Network stack initialized\n");
 }

@@ -39,6 +39,11 @@
 #define IP_FLAG_MF          0x2000  ///< More Fragments
 #define IP_FRAG_OFFSET_MASK 0x1FFF  ///< Fragment Offset 掩码
 
+// IP 分片重组常量
+#define IP_REASS_MAX_ENTRIES    8       ///< 最大同时重组条目数
+#define IP_REASS_TIMEOUT        30000   ///< 重组超时（30秒，毫秒）
+#define IP_REASS_MAX_SIZE       65535   ///< 最大 IP 数据包大小
+
 /**
  * @brief IPv4 头部
  */
@@ -56,9 +61,93 @@ typedef struct ip_header {
 } __attribute__((packed)) ip_header_t;
 
 /**
+ * @brief IP 分片结构
+ */
+typedef struct ip_fragment {
+    uint16_t offset;            ///< 分片偏移（字节）
+    uint16_t len;               ///< 分片长度
+    uint8_t *data;              ///< 分片数据
+    struct ip_fragment *next;   ///< 下一个分片
+} ip_fragment_t;
+
+/**
+ * @brief IP 重组条目
+ */
+typedef struct ip_reassembly {
+    uint32_t src_ip;            ///< 源 IP
+    uint32_t dst_ip;            ///< 目的 IP
+    uint16_t id;                ///< 标识
+    uint8_t protocol;           ///< 协议
+    
+    uint16_t total_len;         ///< 总长度（0 表示未知）
+    uint16_t received_len;      ///< 已接收长度
+    
+    ip_fragment_t *fragments;   ///< 分片链表（按偏移排序）
+    
+    uint32_t timeout;           ///< 超时时间
+    bool valid;                 ///< 条目是否有效
+} ip_reassembly_t;
+
+// 路由表大小
+#define IP_ROUTE_MAX        16      ///< 最大路由条目数
+
+/**
+ * @brief 路由条目
+ */
+typedef struct ip_route {
+    uint32_t dest;              ///< 目的网络（网络字节序）
+    uint32_t netmask;           ///< 子网掩码（网络字节序）
+    uint32_t gateway;           ///< 网关（0 表示直连）
+    netdev_t *dev;              ///< 出接口
+    uint32_t metric;            ///< 度量值（跳数）
+    bool valid;                 ///< 条目是否有效
+} ip_route_t;
+
+/**
  * @brief 初始化 IP 协议
  */
 void ip_init(void);
+
+/**
+ * @brief IP 分片重组定时器（清理超时的重组条目）
+ */
+void ip_reass_timer(void);
+
+/**
+ * @brief 路由查找
+ * @param dst_ip 目的 IP 地址（网络字节序）
+ * @param next_hop 输出下一跳地址（网络字节序）
+ * @return 出接口，NULL 表示无路由
+ */
+netdev_t *ip_route_lookup(uint32_t dst_ip, uint32_t *next_hop);
+
+/**
+ * @brief 添加路由
+ * @param dest 目的网络（网络字节序）
+ * @param netmask 子网掩码（网络字节序）
+ * @param gateway 网关（网络字节序，0 表示直连）
+ * @param dev 出接口
+ * @param metric 度量值
+ * @return 0 成功，-1 失败
+ */
+int ip_route_add(uint32_t dest, uint32_t netmask, uint32_t gateway, 
+                 netdev_t *dev, uint32_t metric);
+
+/**
+ * @brief 删除路由
+ * @param dest 目的网络（网络字节序）
+ * @param netmask 子网掩码（网络字节序）
+ * @return 0 成功，-1 失败
+ */
+int ip_route_del(uint32_t dest, uint32_t netmask);
+
+/**
+ * @brief 打印/输出路由表
+ * @param buf 输出缓冲区，NULL 则直接打印到控制台
+ * @param size 缓冲区大小（buf 非 NULL 时有效）
+ * @return 写入/打印的字节数
+ */
+int ip_route_dump(char *buf, size_t size);
 
 /**
  * @brief 处理接收到的 IP 数据包

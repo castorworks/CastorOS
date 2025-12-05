@@ -9,21 +9,420 @@
 #include <net/netdev.h>
 #include <net/netbuf.h>
 #include <net/checksum.h>
+#include <kernel/sync/spinlock.h>
+#include <mm/heap.h>
 #include <lib/string.h>
 #include <lib/klog.h>
 #include <lib/kprintf.h>
+#include <drivers/timer.h>
 
 // IP 标识计数器
 static uint16_t ip_id_counter = 0;
+
+// IP 分片重组表
+static ip_reassembly_t reass_table[IP_REASS_MAX_ENTRIES];
+
+// 路由表
+static ip_route_t route_table[IP_ROUTE_MAX];
+static spinlock_t route_lock;  // 静态变量自动初始化为 0（未锁定状态）
 
 // 前向声明上层协议处理函数
 extern void icmp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip);
 extern void udp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip);
 extern void tcp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip);
 
+// ============================================================================
+// IP 分片重组
+// ============================================================================
+
+/**
+ * @brief 查找或创建重组条目
+ */
+static ip_reassembly_t *ip_reass_find(uint32_t src, uint32_t dst, 
+                                       uint16_t id, uint8_t proto) {
+    // 查找现有条目
+    for (int i = 0; i < IP_REASS_MAX_ENTRIES; i++) {
+        ip_reassembly_t *r = &reass_table[i];
+        if (r->valid && r->src_ip == src && r->dst_ip == dst &&
+            r->id == id && r->protocol == proto) {
+            return r;
+        }
+    }
+    
+    // 创建新条目
+    for (int i = 0; i < IP_REASS_MAX_ENTRIES; i++) {
+        ip_reassembly_t *r = &reass_table[i];
+        if (!r->valid) {
+            memset(r, 0, sizeof(ip_reassembly_t));
+            r->src_ip = src;
+            r->dst_ip = dst;
+            r->id = id;
+            r->protocol = proto;
+            r->timeout = (uint32_t)timer_get_uptime_ms() + IP_REASS_TIMEOUT;
+            r->valid = true;
+            return r;
+        }
+    }
+    
+    // 表满，尝试替换最旧的（超时的）条目
+    uint32_t now = (uint32_t)timer_get_uptime_ms();
+    for (int i = 0; i < IP_REASS_MAX_ENTRIES; i++) {
+        ip_reassembly_t *r = &reass_table[i];
+        if (r->valid && now >= r->timeout) {
+            // 释放旧条目的分片
+            ip_fragment_t *f = r->fragments;
+            while (f) {
+                ip_fragment_t *next = f->next;
+                if (f->data) kfree(f->data);
+                kfree(f);
+                f = next;
+            }
+            
+            // 重用条目
+            memset(r, 0, sizeof(ip_reassembly_t));
+            r->src_ip = src;
+            r->dst_ip = dst;
+            r->id = id;
+            r->protocol = proto;
+            r->timeout = now + IP_REASS_TIMEOUT;
+            r->valid = true;
+            return r;
+        }
+    }
+    
+    return NULL;
+}
+
+/**
+ * @brief 释放重组条目
+ */
+static void ip_reass_free(ip_reassembly_t *r) {
+    if (!r) return;
+    
+    ip_fragment_t *f = r->fragments;
+    while (f) {
+        ip_fragment_t *next = f->next;
+        if (f->data) kfree(f->data);
+        kfree(f);
+        f = next;
+    }
+    
+    r->fragments = NULL;
+    r->valid = false;
+}
+
+/**
+ * @brief 添加分片
+ */
+static int ip_reass_add_fragment(ip_reassembly_t *r, uint16_t offset, 
+                                  uint8_t *data, uint16_t len, bool more_frags) {
+    // 检查是否为最后一个分片
+    if (!more_frags) {
+        r->total_len = offset + len;
+    }
+    
+    // 分配分片结构
+    ip_fragment_t *frag = (ip_fragment_t *)kmalloc(sizeof(ip_fragment_t));
+    if (!frag) return -1;
+    
+    frag->offset = offset;
+    frag->len = len;
+    frag->data = (uint8_t *)kmalloc(len);
+    if (!frag->data) {
+        kfree(frag);
+        return -1;
+    }
+    memcpy(frag->data, data, len);
+    
+    // 按偏移插入链表
+    ip_fragment_t **pp = &r->fragments;
+    while (*pp && (*pp)->offset < offset) {
+        pp = &(*pp)->next;
+    }
+    
+    // 检查重叠（简化处理：有完全重复的则丢弃）
+    if (*pp && (*pp)->offset == offset && (*pp)->len == len) {
+        kfree(frag->data);
+        kfree(frag);
+        return 0;  // 重复分片
+    }
+    
+    frag->next = *pp;
+    *pp = frag;
+    
+    r->received_len += len;
+    
+    return 0;
+}
+
+/**
+ * @brief 检查并重组完整数据包
+ */
+static netbuf_t *ip_reass_complete(ip_reassembly_t *r, netdev_t *dev, uint8_t protocol) {
+    // 检查是否知道总长度
+    if (r->total_len == 0) return NULL;
+    
+    // 检查是否有空洞
+    uint16_t expected_offset = 0;
+    for (ip_fragment_t *f = r->fragments; f != NULL; f = f->next) {
+        if (f->offset != expected_offset) {
+            return NULL;  // 有空洞
+        }
+        expected_offset += f->len;
+    }
+    
+    if (expected_offset != r->total_len) {
+        return NULL;  // 不完整
+    }
+    
+    // 分配缓冲区并重组
+    netbuf_t *buf = netbuf_alloc(r->total_len);
+    if (!buf) return NULL;
+    
+    uint8_t *dest = netbuf_put(buf, r->total_len);
+    for (ip_fragment_t *f = r->fragments; f != NULL; f = f->next) {
+        memcpy(dest + f->offset, f->data, f->len);
+    }
+    
+    buf->dev = dev;
+    
+    LOG_DEBUG_MSG("ip: Reassembled packet id=%u, len=%u, proto=%u\n",
+                  r->id, r->total_len, protocol);
+    
+    // 清理条目
+    ip_reass_free(r);
+    
+    return buf;
+}
+
+/**
+ * @brief 处理 IP 分片
+ */
+static netbuf_t *ip_reassemble(netdev_t *dev, netbuf_t *buf, ip_header_t *ip) {
+    uint16_t flags_frag = ntohs(ip->flags_fragment);
+    uint16_t offset = (flags_frag & IP_FRAG_OFFSET_MASK) * 8;
+    bool more_frags = (flags_frag & IP_FLAG_MF) != 0;
+    
+    // 查找或创建重组条目
+    ip_reassembly_t *r = ip_reass_find(ip->src_addr, ip->dst_addr,
+                                        ntohs(ip->identification), ip->protocol);
+    if (!r) {
+        LOG_WARN_MSG("ip: No reassembly entry available\n");
+        netbuf_free(buf);
+        return NULL;
+    }
+    
+    // 添加分片
+    uint8_t hdr_len = ip_header_len(ip);
+    uint8_t *data = (uint8_t *)ip + hdr_len;
+    uint16_t data_len = ntohs(ip->total_length) - hdr_len;
+    
+    if (ip_reass_add_fragment(r, offset, data, data_len, more_frags) < 0) {
+        netbuf_free(buf);
+        return NULL;
+    }
+    
+    netbuf_free(buf);
+    
+    // 尝试重组
+    return ip_reass_complete(r, dev, ip->protocol);
+}
+
+/**
+ * @brief IP 分片重组定时器
+ */
+void ip_reass_timer(void) {
+    uint32_t now = (uint32_t)timer_get_uptime_ms();
+    
+    for (int i = 0; i < IP_REASS_MAX_ENTRIES; i++) {
+        ip_reassembly_t *r = &reass_table[i];
+        if (r->valid && now >= r->timeout) {
+            LOG_DEBUG_MSG("ip: Reassembly timeout for id=%u\n", r->id);
+            ip_reass_free(r);
+        }
+    }
+}
+
 void ip_init(void) {
     ip_id_counter = 0;
+    
+    // 初始化重组表
+    memset(reass_table, 0, sizeof(reass_table));
+    
+    // 初始化路由表
+    memset(route_table, 0, sizeof(route_table));
+    
     LOG_INFO_MSG("ip: IPv4 protocol initialized\n");
+}
+
+// ============================================================================
+// 路由表
+// ============================================================================
+
+netdev_t *ip_route_lookup(uint32_t dst_ip, uint32_t *next_hop) {
+    netdev_t *best_dev = NULL;
+    uint32_t best_mask = 0;
+    uint32_t best_gateway = 0;
+    uint32_t best_metric = 0xFFFFFFFF;
+    
+    // 查找最长前缀匹配的路由
+    for (int i = 0; i < IP_ROUTE_MAX; i++) {
+        ip_route_t *r = &route_table[i];
+        if (!r->valid) continue;
+        
+        // 检查是否匹配
+        if ((dst_ip & r->netmask) == r->dest) {
+            // 最长前缀匹配（掩码更长的优先）
+            // 如果掩码相同，选择度量值更小的
+            uint32_t mask_len = 0;
+            uint32_t mask = r->netmask;
+            while (mask) {
+                mask_len += (mask & 1);
+                mask >>= 1;
+            }
+            
+            bool better = false;
+            if (best_dev == NULL) {
+                better = true;
+            } else {
+                uint32_t best_mask_len = 0;
+                uint32_t bm = best_mask;
+                while (bm) {
+                    best_mask_len += (bm & 1);
+                    bm >>= 1;
+                }
+                
+                if (mask_len > best_mask_len) {
+                    better = true;
+                } else if (mask_len == best_mask_len && r->metric < best_metric) {
+                    better = true;
+                }
+            }
+            
+            if (better) {
+                best_dev = r->dev;
+                best_mask = r->netmask;
+                best_gateway = r->gateway;
+                best_metric = r->metric;
+            }
+        }
+    }
+    
+    // 如果找到了路由，设置下一跳
+    if (best_dev && next_hop) {
+        if (best_gateway != 0) {
+            *next_hop = best_gateway;
+        } else {
+            *next_hop = dst_ip;  // 直连路由，下一跳就是目的地址
+        }
+    }
+    
+    // 如果没有找到路由，使用默认设备
+    if (!best_dev) {
+        best_dev = netdev_get_default();
+        if (best_dev && next_hop) {
+            // 使用设备的网关作为下一跳
+            if (ip_same_subnet(best_dev->ip_addr, dst_ip, best_dev->netmask)) {
+                *next_hop = dst_ip;
+            } else if (best_dev->gateway != 0) {
+                *next_hop = best_dev->gateway;
+            } else {
+                *next_hop = dst_ip;
+            }
+        }
+    }
+    
+    return best_dev;
+}
+
+int ip_route_add(uint32_t dest, uint32_t netmask, uint32_t gateway, 
+                 netdev_t *dev, uint32_t metric) {
+    // 查找空闲条目或相同路由
+    for (int i = 0; i < IP_ROUTE_MAX; i++) {
+        ip_route_t *r = &route_table[i];
+        
+        // 检查是否已存在相同路由
+        if (r->valid && r->dest == dest && r->netmask == netmask) {
+            // 更新现有路由
+            r->gateway = gateway;
+            r->dev = dev;
+            r->metric = metric;
+            return 0;
+        }
+    }
+    
+    // 查找空闲条目
+    for (int i = 0; i < IP_ROUTE_MAX; i++) {
+        ip_route_t *r = &route_table[i];
+        if (!r->valid) {
+            r->dest = dest;
+            r->netmask = netmask;
+            r->gateway = gateway;
+            r->dev = dev;
+            r->metric = metric;
+            r->valid = true;
+            return 0;
+        }
+    }
+    
+    return -1;  // 路由表满
+}
+
+int ip_route_del(uint32_t dest, uint32_t netmask) {
+    for (int i = 0; i < IP_ROUTE_MAX; i++) {
+        ip_route_t *r = &route_table[i];
+        if (r->valid && r->dest == dest && r->netmask == netmask) {
+            r->valid = false;
+            return 0;
+        }
+    }
+    return -1;  // 路由不存在
+}
+
+int ip_route_dump(char *buf, size_t size) {
+    int len = 0;
+    bool to_buf = (buf != NULL && size > 0);
+    
+    #define OUTPUT(fmt, ...) do { \
+        if (to_buf) { \
+            len += ksnprintf(buf + len, size - (size_t)len, fmt, ##__VA_ARGS__); \
+        } else { \
+            kprintf(fmt, ##__VA_ARGS__); \
+        } \
+    } while(0)
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&route_lock, &irq_state);
+    
+    // 表头
+    OUTPUT("Kernel IP Routing Table\n");
+    OUTPUT("Destination     Gateway         Netmask         Iface    Metric\n");
+    OUTPUT("--------------------------------------------------------------------------------\n");
+    
+    for (int i = 0; i < IP_ROUTE_MAX; i++) {
+        if (to_buf && len >= (int)size - 100) break;
+        
+        ip_route_t *r = &route_table[i];
+        if (!r->valid) continue;
+        
+        char dest_str[16], gw_str[16], mask_str[16];
+        ip_to_str(r->dest, dest_str);
+        if (r->gateway == 0) {
+            strcpy(gw_str, "*");
+        } else {
+            ip_to_str(r->gateway, gw_str);
+        }
+        ip_to_str(r->netmask, mask_str);
+        
+        OUTPUT("%-15s %-15s %-15s %-8s %u\n",
+               dest_str, gw_str, mask_str,
+               r->dev ? r->dev->name : "N/A", r->metric);
+    }
+    
+    spinlock_unlock_irqrestore(&route_lock, irq_state);
+    
+    #undef OUTPUT
+    return len;
 }
 
 void ip_input(netdev_t *dev, netbuf_t *buf) {
@@ -84,23 +483,29 @@ void ip_input(netdev_t *dev, netbuf_t *buf) {
         return;
     }
     
-    // 检查分片（暂不支持分片重组）
+    // 检查分片
     uint16_t flags_frag = ntohs(ip->flags_fragment);
-    if ((flags_frag & IP_FLAG_MF) || (flags_frag & IP_FRAG_OFFSET_MASK)) {
-        LOG_WARN_MSG("ip: Fragmented packets not supported\n");
-        netbuf_free(buf);
-        return;
-    }
-    
-    // 剥离 IP 头部
-    netbuf_pull(buf, hdr_len);
-    buf->transport_header = buf->data;
-    
-    // 根据协议分发到上层处理
+    uint8_t protocol = ip->protocol;
     uint32_t src_ip = ip->src_addr;
     uint32_t dst_ip = ip->dst_addr;
     
-    switch (ip->protocol) {
+    if ((flags_frag & IP_FLAG_MF) || (flags_frag & IP_FRAG_OFFSET_MASK)) {
+        // 分片包，进行重组
+        buf = ip_reassemble(dev, buf, ip);
+        if (!buf) {
+            // 重组未完成或失败，等待更多分片
+            return;
+        }
+        // 重组完成，buf 现在包含完整的上层协议数据
+        buf->transport_header = buf->data;
+    } else {
+        // 非分片包，剥离 IP 头部
+        netbuf_pull(buf, hdr_len);
+        buf->transport_header = buf->data;
+    }
+    
+    // 根据协议分发到上层处理
+    switch (protocol) {
         case IP_PROTO_ICMP:
             icmp_input(dev, buf, src_ip);
             break;
@@ -114,7 +519,7 @@ void ip_input(netdev_t *dev, netbuf_t *buf) {
             break;
             
         default:
-            LOG_DEBUG_MSG("ip: Unknown protocol %u\n", ip->protocol);
+            LOG_DEBUG_MSG("ip: Unknown protocol %u\n", protocol);
             netbuf_free(buf);
             break;
     }
@@ -125,13 +530,18 @@ int ip_output(netdev_t *dev, netbuf_t *buf, uint32_t dst_ip, uint8_t protocol) {
         return -1;
     }
     
-    // 如果未指定设备，使用默认设备
+    uint32_t next_hop = dst_ip;
+    
+    // 如果未指定设备，使用路由表查找
     if (!dev) {
-        dev = netdev_get_default();
+        dev = ip_route_lookup(dst_ip, &next_hop);
         if (!dev) {
-            LOG_ERROR_MSG("ip: No network device available\n");
+            LOG_ERROR_MSG("ip: No route to host\n");
             return -1;
         }
+    } else {
+        // 使用指定设备，但仍需确定下一跳
+        next_hop = ip_get_next_hop(dev, dst_ip);
     }
     
     // 检查设备是否有 IP 地址
@@ -165,9 +575,6 @@ int ip_output(netdev_t *dev, netbuf_t *buf, uint32_t dst_ip, uint8_t protocol) {
     
     // 计算校验和
     ip->checksum = ip_checksum(ip, IP_HEADER_MIN_LEN);
-    
-    // 获取下一跳 IP 地址
-    uint32_t next_hop = ip_get_next_hop(dev, dst_ip);
     
     // 解析下一跳的 MAC 地址
     uint8_t dst_mac[6];

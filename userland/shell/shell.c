@@ -573,6 +573,8 @@ static int cmd_rmdir(int argc, char **argv);
 static int cmd_ifconfig(int argc, char **argv);
 static int cmd_ping(int argc, char **argv);
 static int cmd_arp(int argc, char **argv);
+static int cmd_netstat(int argc, char **argv);
+static int cmd_route(int argc, char **argv);
 
 // 硬件信息命令
 static int cmd_lspci(int argc, char **argv);
@@ -650,6 +652,8 @@ static const shell_command_t commands[] = {
     {"ifconfig", "Configure network interface",   "ifconfig [iface] [ip netmask gw]", cmd_ifconfig},
     {"ping",     "Send ICMP echo requests",       "ping [-c count] host", cmd_ping},
     {"arp",      "Show/manage ARP cache",         "arp [-a] [-d ip]",    cmd_arp},
+    {"netstat",  "Show network connections",      "netstat [-t|-u]",     cmd_netstat},
+    {"route",    "Show/manage routing table",     "route [add|del] ...", cmd_route},
     
     // 硬件信息命令
     {"lspci",    "List PCI devices",              "lspci [-v]",          cmd_lspci},
@@ -2613,6 +2617,120 @@ static int cmd_arp(int argc, char **argv) {
     
     printf("Usage: arp [-a] [-d ip]\n");
     return -1;
+}
+
+/**
+ * netstat 命令 - 显示网络连接状态
+ * 
+ * 通过读取 /proc/net/tcp 和 /proc/net/udp 获取信息
+ * 
+ * 用法: netstat [-t|-u]
+ *   无参数: 显示所有连接
+ *   -t: 仅显示 TCP 连接
+ *   -u: 仅显示 UDP 连接
+ */
+static int cmd_netstat(int argc, char **argv) {
+    int show_tcp = 1;
+    int show_udp = 1;
+    
+    // 解析参数
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-t") == 0) {
+            show_tcp = 1;
+            show_udp = 0;
+        } else if (strcmp(argv[i], "-u") == 0) {
+            show_tcp = 0;
+            show_udp = 1;
+        } else if (strcmp(argv[i], "-a") == 0) {
+            show_tcp = 1;
+            show_udp = 1;
+        }
+    }
+    
+    static char buffer[8192];
+    int bytes_read;
+    
+    // 显示 TCP 连接
+    if (show_tcp) {
+        int fd = open("/proc/net/tcp", O_RDONLY, 0);
+        if (fd >= 0) {
+            bytes_read = read(fd, buffer, sizeof(buffer) - 1);
+            close(fd);
+            
+            if (bytes_read > 0) {
+                buffer[bytes_read] = '\0';
+                printf("%s", buffer);
+            }
+        } else {
+            printf("Error: Cannot open /proc/net/tcp\n");
+            printf("TCP information not available.\n");
+        }
+    }
+    
+    // 显示 UDP 连接
+    if (show_udp) {
+        if (show_tcp) {
+            printf("\n");  // 分隔符
+        }
+        
+        int fd = open("/proc/net/udp", O_RDONLY, 0);
+        if (fd >= 0) {
+            bytes_read = read(fd, buffer, sizeof(buffer) - 1);
+            close(fd);
+            
+            if (bytes_read > 0) {
+                buffer[bytes_read] = '\0';
+                printf("%s", buffer);
+            }
+        } else {
+            printf("Error: Cannot open /proc/net/udp\n");
+            printf("UDP information not available.\n");
+        }
+    }
+    
+    return 0;
+}
+
+/**
+ * route 命令 - 显示/管理路由表
+ * 
+ * 通过读取 /proc/net/route 获取路由表信息
+ * 路由管理需要通过 ioctl（当前仅支持显示）
+ * 
+ * 用法: route
+ *   无参数: 显示路由表
+ */
+static int cmd_route(int argc, char **argv) {
+    // 如果有参数，暂时只提示
+    if (argc > 1) {
+        if (strcmp(argv[1], "add") == 0 || strcmp(argv[1], "del") == 0) {
+            printf("Note: Route management requires kernel shell.\n");
+            printf("Use kernel shell 'route' command to add/delete routes.\n");
+            printf("\n");
+        }
+    }
+    
+    // 显示路由表
+    int fd = open("/proc/net/route", O_RDONLY, 0);
+    if (fd < 0) {
+        printf("Error: Cannot open /proc/net/route\n");
+        printf("Routing information not available.\n");
+        return -1;
+    }
+    
+    static char buffer[4096];
+    int bytes_read = read(fd, buffer, sizeof(buffer) - 1);
+    close(fd);
+    
+    if (bytes_read > 0) {
+        buffer[bytes_read] = '\0';
+        printf("%s", buffer);
+    } else {
+        printf("Error: Failed to read routing table\n");
+        return -1;
+    }
+    
+    return 0;
 }
 
 // ============================================================================

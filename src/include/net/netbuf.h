@@ -45,6 +45,10 @@ typedef struct netbuf {
     // 接收信息
     struct netdev *dev;     ///< 接收数据包的网络设备
     
+    // 源地址信息（用于 recvfrom）
+    uint32_t src_ip;        ///< 源 IP 地址（网络字节序）
+    uint16_t src_port;      ///< 源端口（主机字节序）
+    
     struct netbuf *next;    ///< 链表指针（用于队列）
 } netbuf_t;
 

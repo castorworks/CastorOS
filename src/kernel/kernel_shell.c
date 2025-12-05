@@ -91,6 +91,8 @@ static int cmd_write(int argc, char **argv);
 static int cmd_ifconfig(int argc, char **argv);
 static int cmd_ping(int argc, char **argv);
 static int cmd_arp(int argc, char **argv);
+static int cmd_netstat(int argc, char **argv);
+static int cmd_route(int argc, char **argv);
 
 // 图形和设备命令
 static int cmd_lspci(int argc, char **argv);
@@ -139,6 +141,8 @@ static const shell_command_t commands[] = {
     {"ifconfig", "Configure network interface",      "ifconfig [iface] [ip netmask gw]", cmd_ifconfig},
     {"ping",     "Send ICMP echo requests",          "ping [-c count] host", cmd_ping},
     {"arp",      "Show/manage ARP cache",            "arp [-a] [-d ip]",    cmd_arp},
+    {"netstat",  "Show network connections",         "netstat [-t] [-u]",   cmd_netstat},
+    {"route",    "Show/manage routing table",        "route [add|del dest mask gw]", cmd_route},
     
     // 图形和设备命令
     {"lspci",    "List PCI devices",                 "lspci",               cmd_lspci},
@@ -1516,6 +1520,139 @@ static int cmd_arp(int argc, char **argv) {
     
     shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
     kprintf("Usage: arp [-a] [-d ip]\n");
+    shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    return -1;
+}
+
+/**
+ * netstat 命令 - 显示网络连接状态
+ */
+static int cmd_netstat(int argc, char **argv) {
+    bool show_tcp = true;
+    bool show_udp = true;
+    
+    // 解析参数
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-t") == 0) {
+            show_udp = false;  // 只显示 TCP
+        } else if (strcmp(argv[i], "-u") == 0) {
+            show_tcp = false;  // 只显示 UDP
+        }
+    }
+    
+    shell_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    kprintf("Active Internet connections\n");
+    kprintf("================================================================================\n");
+    shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    
+    // 使用统一的 dump 函数（buf=NULL 表示直接打印到控制台）
+    if (show_tcp) {
+        tcp_pcb_list_dump(NULL, 0);
+    }
+    
+    if (show_udp) {
+        udp_pcb_list_dump(NULL, 0);
+    }
+    
+    return 0;
+}
+
+/**
+ * route 命令 - 路由表管理
+ */
+static int cmd_route(int argc, char **argv) {
+    // 使用 ip.h 中声明的函数
+    extern int ip_route_add(uint32_t dest, uint32_t netmask, uint32_t gateway, 
+                            netdev_t *dev, uint32_t metric);
+    extern int ip_route_del(uint32_t dest, uint32_t netmask);
+    
+    if (argc == 1) {
+        // 显示路由表
+        shell_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+        kprintf("Routing Table\n");
+        kprintf("================================================================================\n");
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        ip_route_dump(NULL, 0);
+        return 0;
+    }
+    
+    if (argc >= 5 && strcmp(argv[1], "add") == 0) {
+        // route add <dest> <netmask> <gateway>
+        uint32_t dest, netmask, gateway;
+        
+        if (str_to_ip(argv[2], &dest) < 0) {
+            shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            kprintf("Error: Invalid destination address '%s'\n", argv[2]);
+            shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            return -1;
+        }
+        
+        if (str_to_ip(argv[3], &netmask) < 0) {
+            shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            kprintf("Error: Invalid netmask '%s'\n", argv[3]);
+            shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            return -1;
+        }
+        
+        if (str_to_ip(argv[4], &gateway) < 0) {
+            shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            kprintf("Error: Invalid gateway '%s'\n", argv[4]);
+            shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            return -1;
+        }
+        
+        netdev_t *dev = netdev_get_default();
+        if (!dev) {
+            shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            kprintf("Error: No network device available\n");
+            shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            return -1;
+        }
+        
+        if (ip_route_add(dest, netmask, gateway, dev, 1) < 0) {
+            shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            kprintf("Error: Failed to add route (table full?)\n");
+            shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            return -1;
+        }
+        
+        kprintf("Route added: %s/%s via %s\n", argv[2], argv[3], argv[4]);
+        return 0;
+    }
+    
+    if (argc >= 4 && strcmp(argv[1], "del") == 0) {
+        // route del <dest> <netmask>
+        uint32_t dest, netmask;
+        
+        if (str_to_ip(argv[2], &dest) < 0) {
+            shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            kprintf("Error: Invalid destination address '%s'\n", argv[2]);
+            shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            return -1;
+        }
+        
+        if (str_to_ip(argv[3], &netmask) < 0) {
+            shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            kprintf("Error: Invalid netmask '%s'\n", argv[3]);
+            shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            return -1;
+        }
+        
+        if (ip_route_del(dest, netmask) < 0) {
+            shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            kprintf("Error: Route not found\n");
+            shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            return -1;
+        }
+        
+        kprintf("Route deleted\n");
+        return 0;
+    }
+    
+    shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+    kprintf("Usage: route                          - Show routing table\n");
+    kprintf("       route add <dest> <mask> <gw>   - Add route\n");
+    kprintf("       route del <dest> <mask>        - Delete route\n");
     shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     return -1;
 }

@@ -38,6 +38,7 @@ typedef struct socket {
     int recv_timeout;       // 接收超时（毫秒）
     int send_timeout;       // 发送超时（毫秒）
     bool reuse_addr;        // 地址重用
+    int flags;              // 文件标志（O_NONBLOCK 等）
     
     // 错误状态
     int error;
@@ -404,19 +405,36 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
 }
 
 ssize_t sys_recv(int sockfd, void *buf, size_t len, int flags) {
-    (void)flags;
-    
     socket_t *sock = socket_get(sockfd);
     if (!sock || !buf) {
         return -1;
     }
     
+    bool nonblock = (sock->flags & O_NONBLOCK) || (flags & MSG_DONTWAIT);
+    
     if (sock->type == SOCK_STREAM) {
-        return tcp_read(sock->pcb.tcp, buf, len);
+        tcp_pcb_t *pcb = sock->pcb.tcp;
+        
+        // 检查是否有数据可读
+        if (pcb->recv_len == 0) {
+            // 检查连接状态
+            if (pcb->state == TCP_CLOSE_WAIT || pcb->state == TCP_CLOSED) {
+                return 0;  // 连接关闭
+            }
+            if (nonblock) {
+                return -EAGAIN;  // 非阻塞模式，无数据
+            }
+            return -1;  // 暂无数据
+        }
+        
+        return tcp_read(pcb, buf, len);
     } else {
         // UDP: 从接收队列获取
         udp_pcb_t *pcb = sock->pcb.udp;
         if (!pcb->recv_queue) {
+            if (nonblock) {
+                return -EAGAIN;  // 非阻塞模式，无数据
+            }
             return -1;  // 暂无数据
         }
         
@@ -434,12 +452,12 @@ ssize_t sys_recv(int sockfd, void *buf, size_t len, int flags) {
 
 ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
                      struct sockaddr *src_addr, socklen_t *addrlen) {
-    (void)flags;
-    
     socket_t *sock = socket_get(sockfd);
     if (!sock || !buf) {
         return -1;
     }
+    
+    bool nonblock = (sock->flags & O_NONBLOCK) || (flags & MSG_DONTWAIT);
     
     // TCP 不支持 recvfrom
     if (sock->type == SOCK_STREAM) {
@@ -449,6 +467,9 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
     // UDP
     udp_pcb_t *pcb = sock->pcb.udp;
     if (!pcb->recv_queue) {
+        if (nonblock) {
+            return -EAGAIN;  // 非阻塞模式，无数据
+        }
         return -1;  // 暂无数据
     }
     
@@ -459,13 +480,13 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
     size_t copy_len = (nbuf->len < len) ? nbuf->len : len;
     memcpy(buf, nbuf->data, copy_len);
     
-    // TODO: 从 nbuf 中获取源地址信息
-    // 当前实现中 UDP 接收不保存源地址，需要改进
+    // 从 nbuf 中获取源地址信息
     if (src_addr && addrlen && *addrlen >= sizeof(struct sockaddr_in)) {
         struct sockaddr_in *sin = (struct sockaddr_in *)src_addr;
         sin->sin_family = AF_INET;
-        sin->sin_port = 0;
-        sin->sin_addr = 0;
+        sin->sin_port = htons(nbuf->src_port);  // 端口转为网络字节序
+        sin->sin_addr = nbuf->src_ip;           // IP 已经是网络字节序
+        memset(sin->sin_zero, 0, sizeof(sin->sin_zero));
         *addrlen = sizeof(struct sockaddr_in);
     }
     
@@ -607,5 +628,145 @@ int sys_getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
     }
     
     return -1;
+}
+
+int sys_fcntl(int sockfd, int cmd, int arg) {
+    socket_t *sock = socket_get(sockfd);
+    if (!sock) {
+        return -1;
+    }
+    
+    switch (cmd) {
+        case F_GETFL:
+            return sock->flags;
+            
+        case F_SETFL:
+            sock->flags = arg;
+            return 0;
+            
+        default:
+            return -1;
+    }
+}
+
+int sys_select(int nfds, fd_set *readfds, fd_set *writefds,
+               fd_set *exceptfds, struct timeval *timeout) {
+    fd_set read_result, write_result, except_result;
+    FD_ZERO(&read_result);
+    FD_ZERO(&write_result);
+    FD_ZERO(&except_result);
+    
+    // 计算超时时间（毫秒）
+    uint32_t timeout_ms;
+    if (timeout) {
+        timeout_ms = (uint32_t)(timeout->tv_sec * 1000 + timeout->tv_usec / 1000);
+    } else {
+        timeout_ms = 0xFFFFFFFF;  // 无限等待
+    }
+    
+    // 需要包含 timer.h
+    extern uint64_t timer_get_uptime_ms(void);
+    uint32_t start = (uint32_t)timer_get_uptime_ms();
+    
+    int ready_count = 0;
+    
+    // 限制 nfds 范围
+    if (nfds > MAX_SOCKETS) {
+        nfds = MAX_SOCKETS;
+    }
+    
+    while (1) {
+        ready_count = 0;
+        
+        for (int fd = 0; fd < nfds; fd++) {
+            socket_t *sock = socket_get(fd);
+            if (!sock) continue;
+            
+            // 检查可读
+            if (readfds && FD_ISSET(fd, readfds)) {
+                bool readable = false;
+                
+                if (sock->type == SOCK_STREAM) {
+                    tcp_pcb_t *pcb = sock->pcb.tcp;
+                    
+                    if (sock->listening) {
+                        // 监听 socket：有待接受的连接
+                        readable = (pcb->accept_queue != NULL);
+                    } else {
+                        // 已连接 socket：有数据或连接关闭
+                        readable = (pcb->recv_len > 0) ||
+                                  (pcb->state == TCP_CLOSE_WAIT) ||
+                                  (pcb->state == TCP_CLOSED);
+                    }
+                } else {
+                    // UDP socket：有数据
+                    udp_pcb_t *pcb = sock->pcb.udp;
+                    readable = (pcb->recv_queue != NULL);
+                }
+                
+                if (readable) {
+                    FD_SET(fd, &read_result);
+                    ready_count++;
+                }
+            }
+            
+            // 检查可写
+            if (writefds && FD_ISSET(fd, writefds)) {
+                bool writable = false;
+                
+                if (sock->type == SOCK_STREAM) {
+                    tcp_pcb_t *pcb = sock->pcb.tcp;
+                    // 发送窗口有空间
+                    if (pcb->state == TCP_ESTABLISHED) {
+                        uint32_t in_flight = pcb->snd_nxt - pcb->snd_una;
+                        uint32_t effective_window = (pcb->snd_wnd < pcb->cwnd) ? 
+                                                    pcb->snd_wnd : pcb->cwnd;
+                        writable = (in_flight < effective_window);
+                    }
+                } else {
+                    // UDP 总是可写
+                    writable = true;
+                }
+                
+                if (writable) {
+                    FD_SET(fd, &write_result);
+                    ready_count++;
+                }
+            }
+            
+            // 检查异常
+            if (exceptfds && FD_ISSET(fd, exceptfds)) {
+                bool has_error = (sock->error != 0);
+                
+                if (sock->type == SOCK_STREAM) {
+                    tcp_pcb_t *pcb = sock->pcb.tcp;
+                    // 连接被重置也算异常
+                    has_error = has_error || (pcb->state == TCP_CLOSED && sock->connected);
+                }
+                
+                if (has_error) {
+                    FD_SET(fd, &except_result);
+                    ready_count++;
+                }
+            }
+        }
+        
+        // 有就绪的描述符，返回
+        if (ready_count > 0) break;
+        
+        // 检查超时
+        uint32_t elapsed = (uint32_t)timer_get_uptime_ms() - start;
+        if (elapsed >= timeout_ms) break;
+        
+        // 让出 CPU（简单忙等待，实际应该使用调度器）
+        // 这里可以调用 task_yield() 但为了简单起见先忙等
+    }
+    
+    // 复制结果
+    if (readfds) memcpy(readfds, &read_result, sizeof(fd_set));
+    if (writefds) memcpy(writefds, &write_result, sizeof(fd_set));
+    if (exceptfds) memcpy(exceptfds, &except_result, sizeof(fd_set));
+    
+    return ready_count;
 }
 

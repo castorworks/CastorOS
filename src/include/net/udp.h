@@ -170,5 +170,13 @@ uint16_t udp_checksum(uint32_t src_ip, uint32_t dst_ip, udp_header_t *udp, uint1
  */
 uint16_t udp_alloc_port(void);
 
+/**
+ * @brief 打印/输出所有 UDP 端点状态（用于 netstat 命令）
+ * @param buf 输出缓冲区，NULL 则直接打印到控制台
+ * @param size 缓冲区大小（buf 非 NULL 时有效）
+ * @return 写入/打印的字节数
+ */
+int udp_pcb_list_dump(char *buf, size_t size);
+
 #endif // _NET_UDP_H_
 

@@ -133,6 +133,10 @@ void udp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
         // 剥离 UDP 头部
         netbuf_pull(buf, UDP_HEADER_LEN);
         
+        // 保存源地址信息到缓冲区（用于 recvfrom）
+        buf->src_ip = src_ip;
+        buf->src_port = src_port;
+        
         // 调用回调函数
         if (pcb->recv_callback) {
             spinlock_unlock_irqrestore(&udp_lock, irq_state);
@@ -427,5 +431,56 @@ uint16_t udp_alloc_port(void) {
     
     spinlock_unlock_irqrestore(&udp_lock, irq_state);
     return 0;  // 没有可用端口
+}
+
+int udp_pcb_list_dump(char *buf, size_t size) {
+    int len = 0;
+    bool to_buf = (buf != NULL && size > 0);
+    
+    #define OUTPUT(fmt, ...) do { \
+        if (to_buf) { \
+            len += ksnprintf(buf + len, size - (size_t)len, fmt, ##__VA_ARGS__); \
+        } else { \
+            kprintf(fmt, ##__VA_ARGS__); \
+        } \
+    } while(0)
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&udp_lock, &irq_state);
+    
+    // 表头
+    OUTPUT("UDP Endpoints:\n");
+    OUTPUT("Proto  Local Address          Remote Address\n");
+    OUTPUT("--------------------------------------------------------------------------------\n");
+    
+    for (udp_pcb_t *pcb = udp_pcbs; pcb != NULL; pcb = pcb->next) {
+        if (to_buf && len >= (int)size - 100) break;
+        
+        char local_ip_str[16], remote_ip_str[16];
+        if (pcb->local_ip == 0) {
+            strcpy(local_ip_str, "0.0.0.0");
+        } else {
+            ip_to_str(pcb->local_ip, local_ip_str);
+        }
+        
+        if (pcb->remote_ip == 0 && pcb->remote_port == 0) {
+            OUTPUT("udp    %s:%-5u          0.0.0.0:*\n",
+                   local_ip_str, pcb->local_port);
+        } else {
+            if (pcb->remote_ip == 0) {
+                strcpy(remote_ip_str, "0.0.0.0");
+            } else {
+                ip_to_str(pcb->remote_ip, remote_ip_str);
+            }
+            OUTPUT("udp    %s:%-5u  %s:%-5u\n",
+                   local_ip_str, pcb->local_port,
+                   remote_ip_str, pcb->remote_port);
+        }
+    }
+    
+    spinlock_unlock_irqrestore(&udp_lock, irq_state);
+    
+    #undef OUTPUT
+    return len;
 }
 

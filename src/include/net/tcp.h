@@ -43,6 +43,15 @@
 #define TCP_MAX_RETRIES         5       ///< 最大重传次数
 #define TCP_TIME_WAIT_TIMEOUT   60000   ///< TIME_WAIT 超时（毫秒）
 
+// RTT 估算常量
+#define TCP_RTO_MIN             200     ///< 最小 RTO（毫秒）
+#define TCP_RTO_MAX             120000  ///< 最大 RTO（120秒）
+#define TCP_SRTT_ALPHA          8       ///< SRTT 平滑因子分母
+#define TCP_RTTVAR_BETA         4       ///< RTTVAR 平滑因子分母
+
+// 乱序队列限制
+#define TCP_MAX_OOSEQ           8       ///< 最大乱序段数量
+
 /**
  * @brief TCP 序列号比较宏（处理 32 位环绕）
  * 
@@ -99,6 +108,31 @@ typedef struct tcp_pseudo_header {
 } __attribute__((packed)) tcp_pseudo_header_t;
 
 /**
+ * @brief 重传段结构 - 存储已发送但未确认的段
+ */
+typedef struct tcp_segment {
+    uint32_t seq;               ///< 段序列号
+    uint32_t len;               ///< 段长度（包括 SYN/FIN 标志）
+    uint8_t *data;              ///< 数据副本
+    uint32_t data_len;          ///< 实际数据长度
+    uint8_t flags;              ///< TCP 标志
+    uint32_t send_time;         ///< 发送时间（毫秒）
+    uint32_t retransmit_time;   ///< 下次重传时间（毫秒）
+    uint8_t retries;            ///< 重传次数
+    struct tcp_segment *next;   ///< 链表指针
+} tcp_segment_t;
+
+/**
+ * @brief 乱序段结构 - 存储乱序到达的数据
+ */
+typedef struct tcp_ooseq {
+    uint32_t seq;               ///< 段起始序列号
+    uint32_t len;               ///< 数据长度
+    uint8_t *data;              ///< 数据
+    struct tcp_ooseq *next;     ///< 下一个段
+} tcp_ooseq_t;
+
+/**
  * @brief TCP 控制块（PCB）- 表示一个 TCP 连接
  */
 typedef struct tcp_pcb {
@@ -128,6 +162,28 @@ typedef struct tcp_pcb {
     uint32_t rto;               ///< 重传超时时间（毫秒）
     uint32_t retransmit_count;  ///< 重传次数
     uint32_t last_send_time;    ///< 最后发送时间
+    
+    // 重传队列
+    tcp_segment_t *unacked;     ///< 未确认段队列
+    
+    // RTT 估算（Jacobson 算法）
+    uint32_t srtt;              ///< 平滑 RTT（毫秒，定点数 × 8）
+    uint32_t rttvar;            ///< RTT 方差（毫秒，定点数 × 4）
+    bool rtt_measuring;         ///< 是否正在测量 RTT
+    uint32_t rtt_seq;           ///< 测量 RTT 的段序列号
+    
+    // 定时器
+    uint32_t timer_retransmit;  ///< 重传定时器到期时间（0 表示未激活）
+    uint32_t timer_time_wait;   ///< TIME_WAIT 定时器到期时间
+    
+    // 乱序队列
+    tcp_ooseq_t *ooseq;         ///< 乱序段链表（按序列号排序）
+    uint32_t ooseq_count;       ///< 乱序段数量
+    
+    // 拥塞控制
+    uint32_t cwnd;              ///< 拥塞窗口
+    uint32_t ssthresh;          ///< 慢启动阈值
+    uint32_t dup_ack_count;     ///< 重复 ACK 计数（用于快速重传）
     
     // 缓冲区
     uint8_t *send_buf;          ///< 发送缓冲区
@@ -290,6 +346,14 @@ uint16_t tcp_alloc_port(void);
  * @brief TCP 定时器处理（需要定期调用）
  */
 void tcp_timer(void);
+
+/**
+ * @brief 打印/输出所有 TCP 连接状态（用于 netstat 命令）
+ * @param buf 输出缓冲区，NULL 则直接打印到控制台
+ * @param size 缓冲区大小（buf 非 NULL 时有效）
+ * @return 写入/打印的字节数
+ */
+int tcp_pcb_list_dump(char *buf, size_t size);
 
 #endif // _NET_TCP_H_
 

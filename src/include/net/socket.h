@@ -53,6 +53,40 @@
 // 错误码
 #define SOCKET_ERROR    (-1)
 
+// fcntl 命令
+#define F_GETFL         3       ///< 获取文件标志
+#define F_SETFL         4       ///< 设置文件标志
+
+// 文件状态标志
+#define O_NONBLOCK      0x0800  ///< 非阻塞模式
+
+// 错误码
+#define EAGAIN          11      ///< 资源暂时不可用
+#define EWOULDBLOCK     EAGAIN  ///< 操作会阻塞
+
+// select() 相关定义
+#define FD_SETSIZE      64      ///< 最大文件描述符数
+
+/**
+ * @brief 文件描述符集合
+ */
+typedef struct fd_set {
+    uint32_t bits[2];           ///< 位图（支持 64 个文件描述符）
+} fd_set;
+
+#define FD_SET(fd, set)     ((set)->bits[(fd)/32] |= (1U << ((fd) % 32)))
+#define FD_CLR(fd, set)     ((set)->bits[(fd)/32] &= ~(1U << ((fd) % 32)))
+#define FD_ISSET(fd, set)   (((set)->bits[(fd)/32] & (1U << ((fd) % 32))) != 0)
+#define FD_ZERO(set)        do { (set)->bits[0] = 0; (set)->bits[1] = 0; } while(0)
+
+/**
+ * @brief 时间结构
+ */
+struct timeval {
+    long tv_sec;                ///< 秒
+    long tv_usec;               ///< 微秒
+};
+
 /**
  * @brief 通用 socket 地址结构
  */
@@ -201,6 +235,27 @@ int sys_getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
  * @brief 获取对端地址
  */
 int sys_getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+
+/**
+ * @brief 控制 socket 属性
+ * @param sockfd socket 描述符
+ * @param cmd 命令（F_GETFL/F_SETFL）
+ * @param arg 参数
+ * @return 成功返回值依赖于命令，-1 失败
+ */
+int sys_fcntl(int sockfd, int cmd, int arg);
+
+/**
+ * @brief 多路复用 I/O
+ * @param nfds 最大文件描述符 + 1
+ * @param readfds 读集合（输入/输出）
+ * @param writefds 写集合（输入/输出）
+ * @param exceptfds 异常集合（输入/输出）
+ * @param timeout 超时时间（NULL 表示无限等待）
+ * @return 就绪的描述符数量，0 超时，-1 错误
+ */
+int sys_select(int nfds, fd_set *readfds, fd_set *writefds,
+               fd_set *exceptfds, struct timeval *timeout);
 
 #endif // _NET_SOCKET_H_
 

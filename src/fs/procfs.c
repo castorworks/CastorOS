@@ -7,6 +7,9 @@
 #include <kernel/task.h>
 #include <drivers/pci.h>
 #include <drivers/usb/usb.h>
+#include <net/tcp.h>
+#include <net/udp.h>
+#include <net/ip.h>
 #include <lib/string.h>
 #include <lib/klog.h>
 #include <lib/kprintf.h>
@@ -24,6 +27,13 @@ static uint32_t procfs_meminfo_read(fs_node_t *node, uint32_t offset, uint32_t s
 static uint32_t procfs_pci_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 static uint32_t procfs_usb_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 
+/* /proc/net/ 目录前向声明 */
+static struct dirent *procfs_net_readdir(fs_node_t *node, uint32_t index);
+static fs_node_t *procfs_net_finddir(fs_node_t *node, const char *name);
+static uint32_t procfs_net_tcp_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
+static uint32_t procfs_net_udp_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
+static uint32_t procfs_net_route_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
+
 /* ProcFS 私有数据结构 - 包含 readdir 缓冲区以避免静态变量 */
 typedef struct procfs_private {
     struct dirent readdir_cache;  // readdir 结果缓冲区
@@ -35,6 +45,13 @@ static procfs_private_t *procfs_root_private = NULL;  // 根目录私有数据
 static fs_node_t *procfs_meminfo_file = NULL;
 static fs_node_t *procfs_pci_file = NULL;
 static fs_node_t *procfs_usb_file = NULL;
+
+/* /proc/net/ 目录及文件节点 */
+static fs_node_t *procfs_net_dir = NULL;
+static procfs_private_t *procfs_net_private = NULL;
+static fs_node_t *procfs_net_tcp_file = NULL;
+static fs_node_t *procfs_net_udp_file = NULL;
+static fs_node_t *procfs_net_route_file = NULL;
 
 /* 注意：不再需要 procfs_lock，因为不再缓存节点 */
 static uint32_t procfs_meminfo_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
@@ -387,6 +404,195 @@ static uint32_t procfs_usb_read(fs_node_t *node, uint32_t offset, uint32_t size,
     return bytes_to_read;
 }
 
+/**
+ * 读取 /proc/net/tcp 文件 - 显示 TCP 连接状态
+ */
+static uint32_t procfs_net_tcp_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
+    (void)node;
+    
+    if (!buffer || size == 0) {
+        return 0;
+    }
+    
+    static char tcp_buf[8192];
+    int len = 0;
+    
+    // 调用 TCP 模块的 dump 函数获取连接状态
+    len = tcp_pcb_list_dump(tcp_buf, sizeof(tcp_buf));
+    
+    if (len < 0 || len >= (int)sizeof(tcp_buf)) {
+        len = (int)sizeof(tcp_buf) - 1;
+    }
+    
+    uint32_t file_size = (uint32_t)len;
+    if (offset >= file_size) {
+        return 0;
+    }
+    
+    uint32_t bytes_to_read = size;
+    if (offset + bytes_to_read > file_size) {
+        bytes_to_read = file_size - offset;
+    }
+    
+    memcpy(buffer, tcp_buf + offset, bytes_to_read);
+    return bytes_to_read;
+}
+
+/**
+ * 读取 /proc/net/udp 文件 - 显示 UDP 绑定状态
+ */
+static uint32_t procfs_net_udp_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
+    (void)node;
+    
+    if (!buffer || size == 0) {
+        return 0;
+    }
+    
+    static char udp_buf[4096];
+    int len = 0;
+    
+    // 调用 UDP 模块的 dump 函数获取绑定状态
+    len = udp_pcb_list_dump(udp_buf, sizeof(udp_buf));
+    
+    if (len < 0 || len >= (int)sizeof(udp_buf)) {
+        len = (int)sizeof(udp_buf) - 1;
+    }
+    
+    uint32_t file_size = (uint32_t)len;
+    if (offset >= file_size) {
+        return 0;
+    }
+    
+    uint32_t bytes_to_read = size;
+    if (offset + bytes_to_read > file_size) {
+        bytes_to_read = file_size - offset;
+    }
+    
+    memcpy(buffer, udp_buf + offset, bytes_to_read);
+    return bytes_to_read;
+}
+
+/**
+ * 读取 /proc/net/route 文件 - 显示路由表
+ */
+static uint32_t procfs_net_route_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
+    (void)node;
+    
+    if (!buffer || size == 0) {
+        return 0;
+    }
+    
+    static char route_buf[4096];
+    int len = 0;
+    
+    // 调用 IP 模块的路由表显示函数
+    len = ip_route_dump(route_buf, sizeof(route_buf));
+    
+    if (len < 0 || len >= (int)sizeof(route_buf)) {
+        len = (int)sizeof(route_buf) - 1;
+    }
+    
+    uint32_t file_size = (uint32_t)len;
+    if (offset >= file_size) {
+        return 0;
+    }
+    
+    uint32_t bytes_to_read = size;
+    if (offset + bytes_to_read > file_size) {
+        bytes_to_read = file_size - offset;
+    }
+    
+    memcpy(buffer, route_buf + offset, bytes_to_read);
+    return bytes_to_read;
+}
+
+/**
+ * 读取 /proc/net/ 目录
+ */
+static struct dirent *procfs_net_readdir(fs_node_t *node, uint32_t index) {
+    procfs_private_t *priv = (procfs_private_t *)node->impl;
+    if (!priv) {
+        return NULL;
+    }
+    struct dirent *dirent = &priv->readdir_cache;
+    
+    switch (index) {
+        case 0:
+            strcpy(dirent->d_name, ".");
+            dirent->d_ino = 0;
+            dirent->d_reclen = sizeof(struct dirent);
+            dirent->d_off = 1;
+            dirent->d_type = DT_DIR;
+            return dirent;
+        case 1:
+            strcpy(dirent->d_name, "..");
+            dirent->d_ino = 0;
+            dirent->d_reclen = sizeof(struct dirent);
+            dirent->d_off = 2;
+            dirent->d_type = DT_DIR;
+            return dirent;
+        case 2:
+            strcpy(dirent->d_name, "tcp");
+            dirent->d_ino = 0;
+            dirent->d_reclen = sizeof(struct dirent);
+            dirent->d_off = 3;
+            dirent->d_type = DT_REG;
+            return dirent;
+        case 3:
+            strcpy(dirent->d_name, "udp");
+            dirent->d_ino = 0;
+            dirent->d_reclen = sizeof(struct dirent);
+            dirent->d_off = 4;
+            dirent->d_type = DT_REG;
+            return dirent;
+        case 4:
+            strcpy(dirent->d_name, "route");
+            dirent->d_ino = 0;
+            dirent->d_reclen = sizeof(struct dirent);
+            dirent->d_off = 5;
+            dirent->d_type = DT_REG;
+            return dirent;
+        default:
+            return NULL;
+    }
+}
+
+/**
+ * 在 /proc/net/ 目录中查找文件
+ */
+static fs_node_t *procfs_net_finddir(fs_node_t *node, const char *name) {
+    if (!name) {
+        return NULL;
+    }
+    
+    if (strcmp(name, ".") == 0) {
+        vfs_ref_node(node);
+        return node;
+    }
+    
+    if (strcmp(name, "..") == 0) {
+        vfs_ref_node(procfs_root);
+        return procfs_root;
+    }
+    
+    if (strcmp(name, "tcp") == 0) {
+        vfs_ref_node(procfs_net_tcp_file);
+        return procfs_net_tcp_file;
+    }
+    
+    if (strcmp(name, "udp") == 0) {
+        vfs_ref_node(procfs_net_udp_file);
+        return procfs_net_udp_file;
+    }
+    
+    if (strcmp(name, "route") == 0) {
+        vfs_ref_node(procfs_net_route_file);
+        return procfs_net_route_file;
+    }
+    
+    return NULL;
+}
+
 
 /* 注意：不再缓存进程目录和状态文件节点
  * 每次请求时动态创建，由 VFS 的引用计数机制管理生命周期
@@ -627,8 +833,18 @@ static struct dirent *procfs_root_readdir(fs_node_t *node, uint32_t index) {
         return dirent;
     }
     
+    /* 返回 net 目录 */
+    if (index == 5) {
+        strcpy(dirent->d_name, "net");
+        dirent->d_ino = 0;
+        dirent->d_reclen = sizeof(struct dirent);
+        dirent->d_off = 6;
+        dirent->d_type = DT_DIR;
+        return dirent;
+    }
+    
     /* 返回进程目录（PID 目录） */
-    uint32_t pid_index = index - 5;
+    uint32_t pid_index = index - 6;
     
     // 遍历所有任务，找到第 pid_index 个有效进程
     uint32_t found_count = 0;
@@ -685,6 +901,12 @@ static fs_node_t *procfs_root_finddir(fs_node_t *node, const char *name) {
     if (strcmp(name, "usb") == 0) {
         vfs_ref_node(procfs_usb_file);
         return procfs_usb_file;
+    }
+    
+    /* net 目录 */
+    if (strcmp(name, "net") == 0) {
+        vfs_ref_node(procfs_net_dir);
+        return procfs_net_dir;
     }
     
     /* 尝试解析为 PID */
@@ -861,7 +1083,117 @@ fs_node_t *procfs_init(void) {
     procfs_usb_file->unlink = NULL;
     procfs_usb_file->ptr = NULL;
     
-    LOG_INFO_MSG("procfs: Initialized\n");
+    /* 创建 /proc/net/ 目录节点 */
+    procfs_net_dir = (fs_node_t *)kmalloc(sizeof(fs_node_t));
+    if (!procfs_net_dir) {
+        LOG_ERROR_MSG("procfs: Failed to allocate net directory node\n");
+        return procfs_root;
+    }
+    
+    procfs_net_private = (procfs_private_t *)kmalloc(sizeof(procfs_private_t));
+    if (!procfs_net_private) {
+        LOG_ERROR_MSG("procfs: Failed to allocate net private data\n");
+        kfree(procfs_net_dir);
+        procfs_net_dir = NULL;
+        return procfs_root;
+    }
+    memset(procfs_net_private, 0, sizeof(procfs_private_t));
+    
+    memset(procfs_net_dir, 0, sizeof(fs_node_t));
+    strcpy(procfs_net_dir->name, "net");
+    procfs_net_dir->inode = 0;
+    procfs_net_dir->type = FS_DIRECTORY;
+    procfs_net_dir->size = 0;
+    procfs_net_dir->permissions = FS_PERM_READ | FS_PERM_EXEC;
+    procfs_net_dir->ref_count = 0;
+    procfs_net_dir->read = NULL;
+    procfs_net_dir->write = NULL;
+    procfs_net_dir->open = NULL;
+    procfs_net_dir->close = NULL;
+    procfs_net_dir->readdir = procfs_net_readdir;
+    procfs_net_dir->finddir = procfs_net_finddir;
+    procfs_net_dir->create = NULL;
+    procfs_net_dir->mkdir = NULL;
+    procfs_net_dir->unlink = NULL;
+    procfs_net_dir->ptr = NULL;
+    procfs_net_dir->impl = procfs_net_private;
+    
+    /* 创建 /proc/net/tcp 文件节点 */
+    procfs_net_tcp_file = (fs_node_t *)kmalloc(sizeof(fs_node_t));
+    if (!procfs_net_tcp_file) {
+        LOG_ERROR_MSG("procfs: Failed to allocate net/tcp node\n");
+        return procfs_root;
+    }
+    
+    memset(procfs_net_tcp_file, 0, sizeof(fs_node_t));
+    strcpy(procfs_net_tcp_file->name, "tcp");
+    procfs_net_tcp_file->inode = 0;
+    procfs_net_tcp_file->type = FS_FILE;
+    procfs_net_tcp_file->size = 8192;
+    procfs_net_tcp_file->permissions = FS_PERM_READ;
+    procfs_net_tcp_file->ref_count = 0;
+    procfs_net_tcp_file->read = procfs_net_tcp_read;
+    procfs_net_tcp_file->write = NULL;
+    procfs_net_tcp_file->open = NULL;
+    procfs_net_tcp_file->close = NULL;
+    procfs_net_tcp_file->readdir = NULL;
+    procfs_net_tcp_file->finddir = NULL;
+    procfs_net_tcp_file->create = NULL;
+    procfs_net_tcp_file->mkdir = NULL;
+    procfs_net_tcp_file->unlink = NULL;
+    procfs_net_tcp_file->ptr = NULL;
+    
+    /* 创建 /proc/net/udp 文件节点 */
+    procfs_net_udp_file = (fs_node_t *)kmalloc(sizeof(fs_node_t));
+    if (!procfs_net_udp_file) {
+        LOG_ERROR_MSG("procfs: Failed to allocate net/udp node\n");
+        return procfs_root;
+    }
+    
+    memset(procfs_net_udp_file, 0, sizeof(fs_node_t));
+    strcpy(procfs_net_udp_file->name, "udp");
+    procfs_net_udp_file->inode = 0;
+    procfs_net_udp_file->type = FS_FILE;
+    procfs_net_udp_file->size = 4096;
+    procfs_net_udp_file->permissions = FS_PERM_READ;
+    procfs_net_udp_file->ref_count = 0;
+    procfs_net_udp_file->read = procfs_net_udp_read;
+    procfs_net_udp_file->write = NULL;
+    procfs_net_udp_file->open = NULL;
+    procfs_net_udp_file->close = NULL;
+    procfs_net_udp_file->readdir = NULL;
+    procfs_net_udp_file->finddir = NULL;
+    procfs_net_udp_file->create = NULL;
+    procfs_net_udp_file->mkdir = NULL;
+    procfs_net_udp_file->unlink = NULL;
+    procfs_net_udp_file->ptr = NULL;
+    
+    /* 创建 /proc/net/route 文件节点 */
+    procfs_net_route_file = (fs_node_t *)kmalloc(sizeof(fs_node_t));
+    if (!procfs_net_route_file) {
+        LOG_ERROR_MSG("procfs: Failed to allocate net/route node\n");
+        return procfs_root;
+    }
+    
+    memset(procfs_net_route_file, 0, sizeof(fs_node_t));
+    strcpy(procfs_net_route_file->name, "route");
+    procfs_net_route_file->inode = 0;
+    procfs_net_route_file->type = FS_FILE;
+    procfs_net_route_file->size = 4096;
+    procfs_net_route_file->permissions = FS_PERM_READ;
+    procfs_net_route_file->ref_count = 0;
+    procfs_net_route_file->read = procfs_net_route_read;
+    procfs_net_route_file->write = NULL;
+    procfs_net_route_file->open = NULL;
+    procfs_net_route_file->close = NULL;
+    procfs_net_route_file->readdir = NULL;
+    procfs_net_route_file->finddir = NULL;
+    procfs_net_route_file->create = NULL;
+    procfs_net_route_file->mkdir = NULL;
+    procfs_net_route_file->unlink = NULL;
+    procfs_net_route_file->ptr = NULL;
+    
+    LOG_INFO_MSG("procfs: Initialized (with /proc/net/ support)\n");
     
     return procfs_root;
 }
