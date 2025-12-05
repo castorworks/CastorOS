@@ -20,6 +20,7 @@ DISK_IMAGE = $(BUILD_DIR)/bootable.img
 
 # 源文件
 C_SOURCES = $(wildcard $(SRC_DIR)/drivers/*.c) \
+	$(wildcard $(SRC_DIR)/drivers/usb/*.c) \
 	$(wildcard $(SRC_DIR)/fs/*.c) \
 	$(wildcard $(SRC_DIR)/kernel/*.c) \
 	$(wildcard $(SRC_DIR)/kernel/sync/*.c) \

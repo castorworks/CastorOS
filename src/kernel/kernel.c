@@ -12,6 +12,9 @@
 #include <drivers/e1000.h>
 #include <drivers/framebuffer.h>
 #include <drivers/acpi.h>
+#include <drivers/usb/usb.h>
+#include <drivers/usb/uhci.h>
+#include <drivers/usb/usb_mass_storage.h>
 
 #include <kernel/multiboot.h>
 #include <kernel/version.h>
@@ -243,6 +246,34 @@ void kernel_main(multiboot_info_t* mbi) {
     } else {
         LOG_DEBUG_MSG("  [4.9] Framebuffer not available (code=%d), using text mode\n", fb_result);
     }
+
+    // 4.10 初始化 USB 子系统
+    LOG_INFO_MSG("  [4.10] Initializing USB subsystem...\n");
+    
+    // 4.10.1 初始化 USB 核心层
+    usb_init();
+    LOG_DEBUG_MSG("    [4.10.1] USB core initialized\n");
+    
+    // 4.10.2 初始化 UHCI 控制器
+    int uhci_count = uhci_init();
+    if (uhci_count > 0) {
+        LOG_INFO_MSG("    [4.10.2] UHCI initialized (%d controller(s))\n", uhci_count);
+    } else {
+        LOG_DEBUG_MSG("    [4.10.2] No UHCI controller found\n");
+    }
+    
+    // 4.10.3 初始化 USB Mass Storage 驱动
+    usb_msc_init();
+    LOG_DEBUG_MSG("    [4.10.3] USB Mass Storage driver initialized\n");
+    
+    // 4.10.4 扫描 USB 设备
+    usb_scan_devices();
+    uhci_sync_port_devices();  // 建立端口到设备的映射（热插拔支持）
+    LOG_INFO_MSG("    [4.10.4] USB device scan complete\n");
+    
+    // 4.10.5 启动 USB 热插拔监控
+    uhci_start_hotplug_monitor();
+    LOG_DEBUG_MSG("    [4.10.5] USB hot-plug monitor started\n");
 
     // ========================================================================
     // 阶段 5: 高级子系统（Advanced Subsystems）

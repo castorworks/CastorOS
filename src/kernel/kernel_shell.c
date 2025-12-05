@@ -25,6 +25,9 @@
 #include <drivers/framebuffer.h>
 #include <drivers/pci.h>
 #include <drivers/acpi.h>
+#include <drivers/usb/usb.h>
+#include <drivers/usb/uhci.h>
+#include <drivers/usb/usb_mass_storage.h>
 
 // ============================================================================
 // Shell 状态
@@ -94,6 +97,7 @@ static int cmd_lspci(int argc, char **argv);
 static int cmd_fbinfo(int argc, char **argv);
 static int cmd_gfxdemo(int argc, char **argv);
 static int cmd_acpi(int argc, char **argv);
+static int cmd_usb(int argc, char **argv);
 
 // ============================================================================
 // 命令表
@@ -141,6 +145,7 @@ static const shell_command_t commands[] = {
     {"fbinfo",   "Display framebuffer info",         "fbinfo",              cmd_fbinfo},
     {"gfxdemo",  "Run graphics demo",                "gfxdemo",             cmd_gfxdemo},
     {"acpi",     "Show ACPI information",            "acpi",                cmd_acpi},
+    {"usb",      "Show USB devices and info",       "usb [scan]",          cmd_usb},
     
     // 结束标记
     {NULL, NULL, NULL, NULL}
@@ -1596,5 +1601,49 @@ static int cmd_acpi(int argc, char **argv) {
     }
     
     acpi_print_info();
+    return 0;
+}
+
+/**
+ * usb 命令 - 显示 USB 设备信息或扫描设备
+ */
+static int cmd_usb(int argc, char **argv) {
+    if (argc >= 2 && strcmp(argv[1], "scan") == 0) {
+        kprintf("Scanning for USB devices...\n");
+        usb_scan_devices();
+        kprintf("Scan complete.\n");
+        return 0;
+    }
+    
+    /* 显示 UHCI 控制器信息 */
+    shell_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    kprintf("\n=== UHCI Controllers ===\n");
+    shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    
+    uhci_controller_t *hc = uhci_get_controller(0);
+    if (hc) {
+        uhci_print_info(hc);
+    } else {
+        kprintf("No UHCI controllers found.\n");
+    }
+    
+    /* 显示 USB Mass Storage 设备 */
+    shell_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    kprintf("\n=== USB Mass Storage Devices ===\n");
+    shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    
+    usb_msc_device_t *msc = usb_msc_get_devices();
+    if (msc) {
+        while (msc) {
+            usb_msc_print_info(msc);
+            kprintf("\n");
+            msc = msc->next;
+        }
+    } else {
+        kprintf("No USB Mass Storage devices found.\n");
+    }
+    
+    kprintf("\nUsage: usb scan  - Rescan USB devices\n");
+    
     return 0;
 }

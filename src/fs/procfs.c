@@ -6,6 +6,7 @@
 #include <fs/vfs.h>
 #include <kernel/task.h>
 #include <drivers/pci.h>
+#include <drivers/usb/usb.h>
 #include <lib/string.h>
 #include <lib/klog.h>
 #include <lib/kprintf.h>
@@ -21,6 +22,7 @@ static fs_node_t *procfs_pid_finddir(fs_node_t *node, const char *name);
 static uint32_t procfs_status_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 static uint32_t procfs_meminfo_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 static uint32_t procfs_pci_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
+static uint32_t procfs_usb_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 
 /* ProcFS 私有数据结构 - 包含 readdir 缓冲区以避免静态变量 */
 typedef struct procfs_private {
@@ -32,6 +34,7 @@ static fs_node_t *procfs_root = NULL;
 static procfs_private_t *procfs_root_private = NULL;  // 根目录私有数据
 static fs_node_t *procfs_meminfo_file = NULL;
 static fs_node_t *procfs_pci_file = NULL;
+static fs_node_t *procfs_usb_file = NULL;
 
 /* 注意：不再需要 procfs_lock，因为不再缓存节点 */
 static uint32_t procfs_meminfo_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
@@ -242,6 +245,145 @@ static uint32_t procfs_pci_read(fs_node_t *node, uint32_t offset, uint32_t size,
     }
     
     memcpy(buffer, pci_buf + offset, bytes_to_read);
+    return bytes_to_read;
+}
+
+/**
+ * 获取 USB 设备类名称
+ */
+static const char *usb_get_class_name(uint8_t class_code, uint8_t subclass) {
+    switch (class_code) {
+        case 0x00:
+            return "Per-Interface";
+        case 0x01:
+            return "Audio";
+        case 0x02:
+            return "Communications";
+        case 0x03:
+            return "HID";
+        case 0x05:
+            return "Physical";
+        case 0x06:
+            return "Image";
+        case 0x07:
+            return "Printer";
+        case 0x08:
+            switch (subclass) {
+                case 0x01: return "RBC Storage";
+                case 0x02: return "ATAPI Storage";
+                case 0x04: return "UFI Storage";
+                case 0x06: return "SCSI Storage";
+                default:   return "Mass Storage";
+            }
+        case 0x09:
+            return "Hub";
+        case 0x0A:
+            return "CDC-Data";
+        case 0x0B:
+            return "Smart Card";
+        case 0x0D:
+            return "Content Security";
+        case 0x0E:
+            return "Video";
+        case 0x0F:
+            return "Personal Healthcare";
+        case 0xDC:
+            return "Diagnostic";
+        case 0xE0:
+            return "Wireless Controller";
+        case 0xEF:
+            return "Miscellaneous";
+        case 0xFE:
+            return "Application Specific";
+        case 0xFF:
+            return "Vendor Specific";
+        default:
+            return "Unknown";
+    }
+}
+
+/**
+ * 读取 /proc/usb 文件
+ */
+static uint32_t procfs_usb_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
+    (void)node;
+    
+    if (!buffer || size == 0) {
+        return 0;
+    }
+    
+    // 使用缓冲区存储 USB 设备信息
+    static char usb_buf[4096];
+    int len = 0;
+    
+    int device_count = usb_get_device_count();
+    
+    // 表头
+    len += ksnprintf(usb_buf + len, sizeof(usb_buf) - (size_t)len,
+                     "USB Devices: %d\n"
+                     "================================================================================\n"
+                     "Bus Addr  VID:PID     Speed   Class       Description\n"
+                     "--------------------------------------------------------------------------------\n",
+                     device_count);
+    
+    // 遍历所有 USB 设备
+    for (int i = 0; i < device_count && len < (int)sizeof(usb_buf) - 128; i++) {
+        usb_device_t *dev = usb_get_device(i);
+        if (!dev) continue;
+        
+        // 获取类别名称（优先使用设备类，否则使用接口类）
+        uint8_t class_code = dev->device_desc.bDeviceClass;
+        uint8_t subclass = dev->device_desc.bDeviceSubClass;
+        
+        // 如果设备类为 0（Per-Interface），使用第一个接口的类
+        if (class_code == 0 && dev->num_interfaces > 0) {
+            class_code = dev->interfaces[0].class_code;
+            subclass = dev->interfaces[0].subclass_code;
+        }
+        
+        const char *class_name = usb_get_class_name(class_code, subclass);
+        const char *speed_str = (dev->speed == USB_SPEED_LOW) ? "Low" : "Full";
+        
+        len += ksnprintf(usb_buf + len, sizeof(usb_buf) - (size_t)len,
+                         "%3d  %3d   %04x:%04x   %-6s  %02x:%02x       %s\n",
+                         dev->port, dev->address,
+                         dev->device_desc.idVendor, dev->device_desc.idProduct,
+                         speed_str,
+                         class_code, subclass,
+                         class_name);
+        
+        // 显示接口信息
+        for (uint8_t j = 0; j < dev->num_interfaces && len < (int)sizeof(usb_buf) - 80; j++) {
+            usb_interface_t *iface = &dev->interfaces[j];
+            len += ksnprintf(usb_buf + len, sizeof(usb_buf) - (size_t)len,
+                             "          Interface %d: %02x:%02x:%02x  EPs: %d\n",
+                             iface->interface_number,
+                             iface->class_code, iface->subclass_code, iface->protocol,
+                             iface->num_endpoints);
+        }
+    }
+    
+    // 分隔线
+    if (len < (int)sizeof(usb_buf) - 80) {
+        len += ksnprintf(usb_buf + len, sizeof(usb_buf) - (size_t)len,
+                         "================================================================================\n");
+    }
+    
+    if (len < 0 || len >= (int)sizeof(usb_buf)) {
+        len = (int)sizeof(usb_buf) - 1;
+    }
+    
+    uint32_t file_size = (uint32_t)len;
+    if (offset >= file_size) {
+        return 0;
+    }
+    
+    uint32_t bytes_to_read = size;
+    if (offset + bytes_to_read > file_size) {
+        bytes_to_read = file_size - offset;
+    }
+    
+    memcpy(buffer, usb_buf + offset, bytes_to_read);
     return bytes_to_read;
 }
 
@@ -475,8 +617,18 @@ static struct dirent *procfs_root_readdir(fs_node_t *node, uint32_t index) {
         return dirent;
     }
     
+    /* 返回 usb 文件 */
+    if (index == 4) {
+        strcpy(dirent->d_name, "usb");
+        dirent->d_ino = 0;
+        dirent->d_reclen = sizeof(struct dirent);
+        dirent->d_off = 5;
+        dirent->d_type = DT_REG;
+        return dirent;
+    }
+    
     /* 返回进程目录（PID 目录） */
-    uint32_t pid_index = index - 4;
+    uint32_t pid_index = index - 5;
     
     // 遍历所有任务，找到第 pid_index 个有效进程
     uint32_t found_count = 0;
@@ -527,6 +679,12 @@ static fs_node_t *procfs_root_finddir(fs_node_t *node, const char *name) {
     if (strcmp(name, "pci") == 0) {
         vfs_ref_node(procfs_pci_file);
         return procfs_pci_file;
+    }
+    
+    /* usb 文件 */
+    if (strcmp(name, "usb") == 0) {
+        vfs_ref_node(procfs_usb_file);
+        return procfs_usb_file;
     }
     
     /* 尝试解析为 PID */
@@ -677,6 +835,31 @@ fs_node_t *procfs_init(void) {
     procfs_pci_file->mkdir = NULL;
     procfs_pci_file->unlink = NULL;
     procfs_pci_file->ptr = NULL;
+    
+    /* 创建 usb 文件节点 */
+    procfs_usb_file = (fs_node_t *)kmalloc(sizeof(fs_node_t));
+    if (!procfs_usb_file) {
+        LOG_ERROR_MSG("procfs: Failed to allocate usb node\n");
+        return procfs_root;
+    }
+    
+    memset(procfs_usb_file, 0, sizeof(fs_node_t));
+    strcpy(procfs_usb_file->name, "usb");
+    procfs_usb_file->inode = 0;
+    procfs_usb_file->type = FS_FILE;
+    procfs_usb_file->size = 4096;
+    procfs_usb_file->permissions = FS_PERM_READ;
+    procfs_usb_file->ref_count = 0;
+    procfs_usb_file->read = procfs_usb_read;
+    procfs_usb_file->write = NULL;
+    procfs_usb_file->open = NULL;
+    procfs_usb_file->close = NULL;
+    procfs_usb_file->readdir = NULL;
+    procfs_usb_file->finddir = NULL;
+    procfs_usb_file->create = NULL;
+    procfs_usb_file->mkdir = NULL;
+    procfs_usb_file->unlink = NULL;
+    procfs_usb_file->ptr = NULL;
     
     LOG_INFO_MSG("procfs: Initialized\n");
     
