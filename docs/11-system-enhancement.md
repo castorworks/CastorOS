@@ -41,8 +41,8 @@
 | `src/include/kernel/syscalls/process.h` | 添加函数声明 |
 | `src/kernel/syscalls/process.c` | 实现 `sys_getppid()` |
 | `src/kernel/syscall.c` | 注册系统调用 |
-| `userland/lib/include/syscall.h` | 添加用户态封装 |
-| `userland/lib/src/syscall.c` | 实现用户态封装 |
+| `user/lib/include/syscall.h` | 添加用户态封装 |
+| `user/lib/src/syscall.c` | 实现用户态封装 |
 
 #### 内核实现
 
@@ -87,7 +87,7 @@ syscall_table[SYS_GETPPID] = sys_getppid_wrapper;
 #### 用户态封装
 
 ```c
-// userland/lib/src/syscall.c
+// user/lib/src/syscall.c
 
 int getppid(void) {
     return (int)syscall0(SYS_GETPPID);
@@ -177,7 +177,7 @@ struct stat {
 | `src/include/kernel/syscalls/fs.h` | 添加函数声明 |
 | `src/kernel/syscalls/fs.c` | 实现 `sys_stat()` 和 `sys_fstat()` |
 | `src/kernel/syscall.c` | 注册系统调用 |
-| `userland/lib/include/syscall.h` | 添加用户态声明 |
+| `user/lib/include/syscall.h` | 添加用户态声明 |
 
 #### 内核实现
 
@@ -275,7 +275,7 @@ uint32_t sys_fstat(int32_t fd, struct stat *buf) {
 ### 2.4 用户态封装
 
 ```c
-// userland/lib/src/syscall.c
+// user/lib/src/syscall.c
 
 int stat(const char *path, struct stat *buf) {
     return (int)syscall2(SYS_STAT, (uint32_t)path, (uint32_t)buf);
@@ -475,7 +475,7 @@ void setup_user_heap(task_t *task, uint32_t program_end) {
 ### 3.4 用户态 malloc 实现
 
 ```c
-// userland/lib/src/malloc.c
+// user/lib/src/malloc.c
 
 static uint32_t heap_start = 0;
 static uint32_t heap_end = 0;

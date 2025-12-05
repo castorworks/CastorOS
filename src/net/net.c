@@ -79,7 +79,9 @@ int net_configure(const char *ip, const char *netmask, const char *gateway) {
         return -1;
     }
     
-    netdev_set_ip(dev, ip_addr, mask_addr, gw_addr);
+    netdev_set_ipaddr(dev, ip_addr);
+    netdev_set_netmask(dev, mask_addr);
+    netdev_set_gateway(dev, gw_addr);
     
     char ip_str[16], mask_str[16], gw_str[16];
     ip_to_str(ip_addr, ip_str);

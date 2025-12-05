@@ -1,4 +1,4 @@
-# CastorOS Userland Library - Makefile
+# CastorOS User Library - Makefile
 
 # 工具链配置
 CC = i686-elf-gcc
@@ -19,12 +19,12 @@ SOURCES = $(wildcard $(SRC_DIR)/*.c)
 OBJECTS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SOURCES))
 
 # 库文件
-LIBRARY = $(BUILD_DIR)/libuserland.a
+LIBRARY = $(BUILD_DIR)/libuser.a
 
 # 默认目标
 all: $(LIBRARY)
 	@echo ""
-	@echo "[OK] Userland library built: $(LIBRARY)"
+	@echo "[OK] User library built: $(LIBRARY)"
 	@echo ""
 
 # 创建库
@@ -41,7 +41,7 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 # 清理
 clean:
 	rm -rf $(BUILD_DIR)
-	@echo "[OK] Cleaned userland library build files"
+	@echo "[OK] Cleaned user library build files"
 
 .PHONY: all clean
 

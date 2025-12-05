@@ -1,4 +1,4 @@
-# CastorOS Userland Shell - Makefile
+# CastorOS User Shell - Makefile
 
 # 工具链配置
 CC = i686-elf-gcc
@@ -15,7 +15,7 @@ LDSCRIPT = user.ld
 
 # 库文件
 LIB_DIR = ../lib
-LIBRARY = $(LIB_DIR)/build/libuserland.a
+LIBRARY = $(LIB_DIR)/build/libuser.a
 
 # 源文件
 SOURCES = shell.c
@@ -29,7 +29,7 @@ BINARY = $(TARGET).bin
 # 默认目标
 all: lib $(ELF)
 	@echo ""
-	@echo "[OK] Userland shell compiled successfully: $(ELF)"
+	@echo "[OK] User shell compiled successfully: $(ELF)"
 	@echo ""
 
 # 构建库
@@ -56,7 +56,7 @@ $(BINARY): $(ELF)
 # 清理
 clean:
 	rm -f $(OBJECTS) $(ELF) $(BINARY)
-	@echo "[OK] Cleaned userland shell build files"
+	@echo "[OK] Cleaned user shell build files"
 
 .PHONY: all lib clean
 

@@ -93,6 +93,8 @@ static int cmd_ping(int argc, char **argv);
 static int cmd_arp(int argc, char **argv);
 static int cmd_netstat(int argc, char **argv);
 static int cmd_route(int argc, char **argv);
+static int cmd_dhcp(int argc, char **argv);
+static int cmd_nslookup(int argc, char **argv);
 
 // 图形和设备命令
 static int cmd_lspci(int argc, char **argv);
@@ -143,6 +145,8 @@ static const shell_command_t commands[] = {
     {"arp",      "Show/manage ARP cache",            "arp [-a] [-d ip]",    cmd_arp},
     {"netstat",  "Show network connections",         "netstat [-t] [-u]",   cmd_netstat},
     {"route",    "Show/manage routing table",        "route [add|del dest mask gw]", cmd_route},
+    {"dhcp",     "DHCP client control",              "dhcp [start|stop|status]", cmd_dhcp},
+    {"nslookup", "DNS lookup",                       "nslookup <hostname>", cmd_nslookup},
     
     // 图形和设备命令
     {"lspci",    "List PCI devices",                 "lspci",               cmd_lspci},
@@ -1655,6 +1659,176 @@ static int cmd_route(int argc, char **argv) {
     kprintf("       route del <dest> <mask>        - Delete route\n");
     shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     return -1;
+}
+
+/**
+ * dhcp 命令 - DHCP 客户端控制
+ */
+static int cmd_dhcp(int argc, char **argv) {
+    netdev_t *dev = netdev_get_default();
+    if (!dev) {
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: No network device available\n");
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    if (argc < 2 || strcmp(argv[1], "status") == 0) {
+        // 显示 DHCP 状态
+        dhcp_info_t info;
+        dhcp_state_t state = dhcp_get_status(dev, &info);
+        
+        shell_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        kprintf("DHCP Status\n");
+        kprintf("================================================================================\n");
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        
+        const char *state_str;
+        switch (state) {
+            case DHCP_STATE_INIT:       state_str = "INIT"; break;
+            case DHCP_STATE_SELECTING:  state_str = "SELECTING"; break;
+            case DHCP_STATE_REQUESTING: state_str = "REQUESTING"; break;
+            case DHCP_STATE_BOUND:      state_str = "BOUND"; break;
+            case DHCP_STATE_RENEWING:   state_str = "RENEWING"; break;
+            case DHCP_STATE_REBINDING:  state_str = "REBINDING"; break;
+            default:                    state_str = "ERROR"; break;
+        }
+        
+        kprintf("State:       %s\n", state_str);
+        
+        if (state == DHCP_STATE_BOUND || state == DHCP_STATE_RENEWING || 
+            state == DHCP_STATE_REBINDING) {
+            char ip_str[16], mask_str[16], gw_str[16], dns_str[16];
+            
+            ip_to_str(info.ip_addr, ip_str);
+            ip_to_str(info.netmask, mask_str);
+            ip_to_str(info.gateway, gw_str);
+            ip_to_str(info.dns_primary, dns_str);
+            
+            kprintf("IP Address:  %s\n", ip_str);
+            kprintf("Netmask:     %s\n", mask_str);
+            kprintf("Gateway:     %s\n", gw_str);
+            kprintf("DNS Server:  %s\n", dns_str);
+            kprintf("Lease Time:  %u seconds\n", info.lease_time);
+        }
+        return 0;
+    }
+    
+    if (strcmp(argv[1], "start") == 0) {
+        kprintf("Starting DHCP client...\n");
+        int ret = dhcp_start(dev);
+        if (ret < 0) {
+            shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            kprintf("Error: Failed to start DHCP client\n");
+            shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            return -1;
+        }
+        kprintf("DHCP discovery started\n");
+        return 0;
+    }
+    
+    if (strcmp(argv[1], "stop") == 0) {
+        dhcp_stop(dev);
+        kprintf("DHCP client stopped\n");
+        return 0;
+    }
+    
+    if (strcmp(argv[1], "release") == 0) {
+        int ret = dhcp_release(dev);
+        if (ret < 0) {
+            shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            kprintf("Error: Failed to release lease\n");
+            shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            return -1;
+        }
+        kprintf("DHCP lease released\n");
+        return 0;
+    }
+    
+    shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+    kprintf("Usage: dhcp [start|stop|release|status]\n");
+    shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    return -1;
+}
+
+/**
+ * nslookup 命令 - DNS 查询
+ */
+static int cmd_nslookup(int argc, char **argv) {
+    if (argc < 2) {
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Usage: nslookup <hostname>\n");
+        kprintf("       nslookup server <ip>   - Set DNS server\n");
+        kprintf("       nslookup cache         - Show DNS cache\n");
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    // 设置 DNS 服务器
+    if (strcmp(argv[1], "server") == 0) {
+        if (argc < 3) {
+            uint32_t primary, secondary;
+            dns_get_server(&primary, &secondary);
+            
+            if (primary) {
+                char ip_str[16];
+                ip_to_str(primary, ip_str);
+                kprintf("DNS Server: %s\n", ip_str);
+            } else {
+                kprintf("No DNS server configured\n");
+            }
+            return 0;
+        }
+        
+        uint32_t server_ip;
+        if (str_to_ip(argv[2], &server_ip) < 0) {
+            shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            kprintf("Error: Invalid IP address '%s'\n", argv[2]);
+            shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            return -1;
+        }
+        
+        dns_set_server(server_ip, 0);
+        kprintf("DNS server set to %s\n", argv[2]);
+        return 0;
+    }
+    
+    // 显示 DNS 缓存
+    if (strcmp(argv[1], "cache") == 0) {
+        dns_cache_dump(NULL, 0);
+        return 0;
+    }
+    
+    // 清除缓存
+    if (strcmp(argv[1], "flush") == 0) {
+        dns_cache_clear();
+        kprintf("DNS cache flushed\n");
+        return 0;
+    }
+    
+    // 解析域名
+    const char *hostname = argv[1];
+    uint32_t ip;
+    
+    kprintf("Looking up %s...\n", hostname);
+    
+    int ret = dns_resolve(hostname, &ip);
+    if (ret < 0) {
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("Error: Failed to resolve '%s'\n", hostname);
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    char ip_str[16];
+    ip_to_str(ip, ip_str);
+    
+    shell_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    kprintf("Name:    %s\n", hostname);
+    kprintf("Address: %s\n", ip_str);
+    shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    
+    return 0;
 }
 
 // ============================================================================

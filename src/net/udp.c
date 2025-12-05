@@ -382,6 +382,35 @@ void udp_recv(udp_pcb_t *pcb,
     }
 }
 
+netbuf_t *udp_recv_poll(udp_pcb_t *pcb) {
+    if (!pcb) return NULL;
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&udp_lock, &irq_state);
+    
+    netbuf_t *buf = NULL;
+    if (pcb->recv_queue) {
+        buf = pcb->recv_queue;
+        pcb->recv_queue = buf->next;
+        pcb->recv_queue_len--;
+        buf->next = NULL;  // 断开链表
+    }
+    
+    spinlock_unlock_irqrestore(&udp_lock, irq_state);
+    return buf;
+}
+
+bool udp_has_data(udp_pcb_t *pcb) {
+    if (!pcb) return false;
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&udp_lock, &irq_state);
+    bool has_data = (pcb->recv_queue != NULL);
+    spinlock_unlock_irqrestore(&udp_lock, irq_state);
+    
+    return has_data;
+}
+
 uint16_t udp_checksum(uint32_t src_ip, uint32_t dst_ip, udp_header_t *udp, uint16_t len) {
     uint32_t sum = 0;
     

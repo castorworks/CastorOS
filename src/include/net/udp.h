@@ -155,6 +155,22 @@ void udp_recv(udp_pcb_t *pcb,
               void *arg);
 
 /**
+ * @brief 从接收队列轮询获取数据包（非阻塞）
+ * @param pcb UDP PCB
+ * @return 数据包缓冲区，NULL 表示队列为空
+ * 
+ * 注意：调用者负责释放返回的 netbuf
+ */
+netbuf_t *udp_recv_poll(udp_pcb_t *pcb);
+
+/**
+ * @brief 检查是否有待接收的数据
+ * @param pcb UDP PCB
+ * @return true 有数据，false 无数据
+ */
+bool udp_has_data(udp_pcb_t *pcb);
+
+/**
  * @brief 计算 UDP 校验和
  * @param src_ip 源 IP 地址（网络字节序）
  * @param dst_ip 目的 IP 地址（网络字节序）

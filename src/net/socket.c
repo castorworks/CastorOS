@@ -431,16 +431,13 @@ ssize_t sys_recv(int sockfd, void *buf, size_t len, int flags) {
     } else {
         // UDP: 从接收队列获取
         udp_pcb_t *pcb = sock->pcb.udp;
-        if (!pcb->recv_queue) {
+        netbuf_t *nbuf = udp_recv_poll(pcb);
+        if (!nbuf) {
             if (nonblock) {
                 return -EAGAIN;  // 非阻塞模式，无数据
             }
             return -1;  // 暂无数据
         }
-        
-        netbuf_t *nbuf = pcb->recv_queue;
-        pcb->recv_queue = nbuf->next;
-        pcb->recv_queue_len--;
         
         size_t copy_len = (nbuf->len < len) ? nbuf->len : len;
         memcpy(buf, nbuf->data, copy_len);
@@ -466,16 +463,13 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
     
     // UDP
     udp_pcb_t *pcb = sock->pcb.udp;
-    if (!pcb->recv_queue) {
+    netbuf_t *nbuf = udp_recv_poll(pcb);
+    if (!nbuf) {
         if (nonblock) {
             return -EAGAIN;  // 非阻塞模式，无数据
         }
         return -1;  // 暂无数据
     }
-    
-    netbuf_t *nbuf = pcb->recv_queue;
-    pcb->recv_queue = nbuf->next;
-    pcb->recv_queue_len--;
     
     size_t copy_len = (nbuf->len < len) ? nbuf->len : len;
     memcpy(buf, nbuf->data, copy_len);
@@ -700,8 +694,7 @@ int sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                     }
                 } else {
                     // UDP socket：有数据
-                    udp_pcb_t *pcb = sock->pcb.udp;
-                    readable = (pcb->recv_queue != NULL);
+                    readable = udp_has_data(sock->pcb.udp);
                 }
                 
                 if (readable) {

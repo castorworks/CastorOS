@@ -46,8 +46,8 @@ static int32_t netif_ioctl(uint32_t request, struct ifreq *ifr) {
             
         case SIOCSIFADDR:
             // 设置 IP 地址
-            return netdev_set_ip(dev, ifr->ifr_addr.sin_addr, 
-                                dev->netmask, dev->gateway);
+            netdev_set_ipaddr(dev, ifr->ifr_addr.sin_addr);
+            return 0;
             
         case SIOCGIFNETMASK:
             // 获取子网掩码
@@ -57,8 +57,8 @@ static int32_t netif_ioctl(uint32_t request, struct ifreq *ifr) {
             
         case SIOCSIFNETMASK:
             // 设置子网掩码
-            return netdev_set_ip(dev, dev->ip_addr, 
-                                ifr->ifr_netmask.sin_addr, dev->gateway);
+            netdev_set_netmask(dev, ifr->ifr_netmask.sin_addr);
+            return 0;
             
         case SIOCGIFGATEWAY:
             // 获取网关地址
@@ -68,8 +68,8 @@ static int32_t netif_ioctl(uint32_t request, struct ifreq *ifr) {
             
         case SIOCSIFGATEWAY:
             // 设置网关地址
-            return netdev_set_ip(dev, dev->ip_addr, 
-                                dev->netmask, ifr->ifr_gateway.sin_addr);
+            netdev_set_gateway(dev, ifr->ifr_gateway.sin_addr);
+            return 0;
             
         case SIOCGIFFLAGS:
             // 获取接口标志
@@ -368,7 +368,10 @@ int32_t netif_set_config(const char *name, uint32_t ip, uint32_t netmask, uint32
         return -1;
     }
     
-    return netdev_set_ip(dev, ip, netmask, gateway);
+    netdev_set_ipaddr(dev, ip);
+    netdev_set_netmask(dev, netmask);
+    netdev_set_gateway(dev, gateway);
+    return 0;
 }
 
 /**

@@ -90,15 +90,15 @@ debug-silent: $(KERNEL)
 
 # 编译 Shell
 shell:
-	@$(MAKE) -C userland/shell
+	@$(MAKE) -C user/shell
 
 # 编译 Hello World
 hello:
-	@$(MAKE) -C userland/helloworld
+	@$(MAKE) -C user/helloworld
 
-# 编译 Userland Tests
+# 编译用户态测试
 tests:
-	@$(MAKE) -C userland/tests
+	@$(MAKE) -C user/tests
 
 # 创建可启动的磁盘镜像
 disk: $(KERNEL) shell hello tests

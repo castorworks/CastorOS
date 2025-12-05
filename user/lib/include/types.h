@@ -20,7 +20,21 @@ typedef signed long long   int64_t;
 
 typedef uint32_t size_t;
 typedef int32_t  ssize_t;
-typedef int32_t  off_t;    // POSIX: 文件偏移量类型（有符号）
+typedef int32_t  off_t;     // POSIX: 文件偏移量类型（有符号）
+typedef uint32_t mode_t;    // POSIX: 文件权限类型
+typedef uint32_t pid_t;     // POSIX: 进程 ID 类型
+typedef uint32_t uid_t;     // POSIX: 用户 ID 类型
+typedef uint32_t gid_t;     // POSIX: 组 ID 类型
+#endif
+
+// bool 类型
+#ifndef __cplusplus
+#ifndef _BOOL_DEFINED
+#define _BOOL_DEFINED
+typedef _Bool bool;
+#define true  1
+#define false 0
+#endif
 #endif
 
 #ifndef _TIME_T_DEFINED

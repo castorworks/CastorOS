@@ -146,14 +146,25 @@ int netdev_transmit(netdev_t *dev, netbuf_t *buf);
 void netdev_receive(netdev_t *dev, netbuf_t *buf);
 
 /**
- * @brief 配置网络设备 IP 地址
+ * @brief 设置网络设备 IP 地址
  * @param dev 设备结构
  * @param ip IP 地址（网络字节序）
- * @param netmask 子网掩码（网络字节序）
- * @param gateway 默认网关（网络字节序）
- * @return 0 成功，-1 失败
  */
-int netdev_set_ip(netdev_t *dev, uint32_t ip, uint32_t netmask, uint32_t gateway);
+void netdev_set_ipaddr(netdev_t *dev, uint32_t ip);
+
+/**
+ * @brief 设置网络设备子网掩码
+ * @param dev 设备结构
+ * @param netmask 子网掩码（网络字节序）
+ */
+void netdev_set_netmask(netdev_t *dev, uint32_t netmask);
+
+/**
+ * @brief 设置网络设备默认网关
+ * @param dev 设备结构
+ * @param gateway 网关地址（网络字节序）
+ */
+void netdev_set_gateway(netdev_t *dev, uint32_t gateway);
 
 /**
  * @brief 获取所有网络设备列表

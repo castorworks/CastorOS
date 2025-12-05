@@ -575,6 +575,8 @@ static int cmd_ping(int argc, char **argv);
 static int cmd_arp(int argc, char **argv);
 static int cmd_netstat(int argc, char **argv);
 static int cmd_route(int argc, char **argv);
+static int cmd_dhcp(int argc, char **argv);
+static int cmd_nslookup(int argc, char **argv);
 
 // 硬件信息命令
 static int cmd_lspci(int argc, char **argv);
@@ -654,6 +656,8 @@ static const shell_command_t commands[] = {
     {"arp",      "Show/manage ARP cache",         "arp [-a] [-d ip]",    cmd_arp},
     {"netstat",  "Show network connections",      "netstat [-t|-u]",     cmd_netstat},
     {"route",    "Show/manage routing table",     "route [add|del] ...", cmd_route},
+    {"dhcp",     "DHCP client control",           "dhcp [status]",       cmd_dhcp},
+    {"nslookup", "DNS lookup",                    "nslookup <hostname>", cmd_nslookup},
     
     // 硬件信息命令
     {"lspci",    "List PCI devices",              "lspci [-v]",          cmd_lspci},
@@ -2365,18 +2369,18 @@ static void ifconfig_print_info(struct ifreq *ifr) {
                ifr->ifr_name[0] ? ifr->ifr_name : "default");
         return;
     }
-    ip_to_string(ifr->ifr_addr.sin_addr, ip_str);
+    ip_to_string(ifr->ifr_addr.sin_addr.s_addr, ip_str);
     
     // 获取子网掩码
     if (ioctl(0, SIOCGIFNETMASK, ifr) == 0) {
-        ip_to_string(ifr->ifr_netmask.sin_addr, netmask_str);
+        ip_to_string(ifr->ifr_netmask.sin_addr.s_addr, netmask_str);
     } else {
         strcpy(netmask_str, "0.0.0.0");
     }
     
     // 获取网关地址
     if (ioctl(0, SIOCGIFGATEWAY, ifr) == 0) {
-        ip_to_string(ifr->ifr_gateway.sin_addr, gateway_str);
+        ip_to_string(ifr->ifr_gateway.sin_addr.s_addr, gateway_str);
     } else {
         strcpy(gateway_str, "0.0.0.0");
     }
@@ -2458,7 +2462,7 @@ static int cmd_ifconfig(int argc, char **argv) {
             return -1;
         }
         ifr.ifr_addr.sin_family = AF_INET;
-        ifr.ifr_addr.sin_addr = ip;
+        ifr.ifr_addr.sin_addr.s_addr = ip;
         if (ioctl(0, SIOCSIFADDR, &ifr) < 0) {
             printf("Error: Failed to set IP address\n");
             return -1;
@@ -2471,7 +2475,7 @@ static int cmd_ifconfig(int argc, char **argv) {
             return -1;
         }
         ifr.ifr_netmask.sin_family = AF_INET;
-        ifr.ifr_netmask.sin_addr = netmask;
+        ifr.ifr_netmask.sin_addr.s_addr = netmask;
         if (ioctl(0, SIOCSIFNETMASK, &ifr) < 0) {
             printf("Error: Failed to set netmask\n");
             return -1;
@@ -2484,7 +2488,7 @@ static int cmd_ifconfig(int argc, char **argv) {
             return -1;
         }
         ifr.ifr_gateway.sin_family = AF_INET;
-        ifr.ifr_gateway.sin_addr = gateway;
+        ifr.ifr_gateway.sin_addr.s_addr = gateway;
         if (ioctl(0, SIOCSIFGATEWAY, &ifr) < 0) {
             printf("Error: Failed to set gateway\n");
             return -1;
@@ -2593,7 +2597,7 @@ static int cmd_arp(int argc, char **argv) {
         }
         
         arpreq.arp_pa.sin_family = AF_INET;
-        arpreq.arp_pa.sin_addr = ip;
+        arpreq.arp_pa.sin_addr.s_addr = ip;
         
         if (ioctl(0, SIOCDARP, &arpreq) == 0) {
             printf("ARP entry for %s deleted\n", delete_ip);
@@ -2729,6 +2733,68 @@ static int cmd_route(int argc, char **argv) {
         printf("Error: Failed to read routing table\n");
         return -1;
     }
+    
+    return 0;
+}
+
+/**
+ * dhcp 命令 - DHCP 客户端状态
+ * 
+ * 用法: dhcp [status]
+ *   无参数或 status: 显示 DHCP 状态
+ *   
+ * 注意: DHCP 控制（start/stop/release）需要使用内核 shell
+ */
+static int cmd_dhcp(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    
+    printf("DHCP Client Status\n");
+    printf("================================================================================\n");
+    printf("Note: DHCP control (start/stop/release) requires kernel shell.\n");
+    printf("      Use kernel shell 'dhcp' command for full functionality.\n\n");
+    
+    // 尝试读取 /proc/net/dhcp（如果存在）
+    int fd = open("/proc/net/dhcp", O_RDONLY, 0);
+    if (fd >= 0) {
+        static char buffer[1024];
+        int bytes_read = read(fd, buffer, sizeof(buffer) - 1);
+        close(fd);
+        
+        if (bytes_read > 0) {
+            buffer[bytes_read] = '\0';
+            printf("%s", buffer);
+        }
+    } else {
+        printf("DHCP status: Not available (use ifconfig to check current configuration)\n");
+    }
+    
+    return 0;
+}
+
+/**
+ * nslookup 命令 - DNS 查询
+ * 
+ * 用法: nslookup <hostname>
+ *   查询域名对应的 IP 地址
+ *   
+ * 注意: DNS 服务器配置需要使用内核 shell
+ */
+static int cmd_nslookup(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Usage: nslookup <hostname>\n");
+        printf("\n");
+        printf("Note: DNS server configuration requires kernel shell.\n");
+        printf("      Use kernel shell 'nslookup server <ip>' to set DNS server.\n");
+        return -1;
+    }
+    
+    printf("Server:  (configured in kernel)\n");
+    printf("\n");
+    printf("Looking up %s...\n", argv[1]);
+    printf("\n");
+    printf("Note: Full DNS lookup requires kernel shell.\n");
+    printf("      Use kernel shell 'nslookup %s' for actual resolution.\n", argv[1]);
     
     return 0;
 }

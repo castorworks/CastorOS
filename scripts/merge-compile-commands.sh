@@ -68,10 +68,10 @@ fi
 
 # 2. Generate shell compilation database
 echo "[2/3] Generating shell compilation database..."
-cd "$PROJECT_ROOT/userland/shell"
+cd "$PROJECT_ROOT/user/shell"
 make clean >/dev/null 2>&1 || true
 
-SHELL_COMPILE_COMMANDS="$PROJECT_ROOT/userland/shell/compile_commands.json"
+SHELL_COMPILE_COMMANDS="$PROJECT_ROOT/user/shell/compile_commands.json"
 if [ "$USE_COMPILEDB" = true ]; then
     compiledb -o "$SHELL_COMPILE_COMMANDS" make 2>&1 | grep -v "warning:" | grep -v "^make" || true
 elif [ "$IS_MACOS" = true ]; then
@@ -90,14 +90,14 @@ if [ -f "$SHELL_COMPILE_COMMANDS" ]; then
     fi
 fi
 
-# 3. Add other userland programs here if needed
+# 3. Add other user programs here if needed
 # Example: helloworld:
-if [ -d "$PROJECT_ROOT/userland/helloworld" ] && [ -f "$PROJECT_ROOT/userland/helloworld/Makefile" ]; then
+if [ -d "$PROJECT_ROOT/user/helloworld" ] && [ -f "$PROJECT_ROOT/user/helloworld/Makefile" ]; then
     echo "[3/3] Generating helloworld compilation database..."
-    cd "$PROJECT_ROOT/userland/helloworld"
+    cd "$PROJECT_ROOT/user/helloworld"
     make clean >/dev/null 2>&1 || true
     
-    HELLOWORLD_COMPILE_COMMANDS="$PROJECT_ROOT/userland/helloworld/compile_commands.json"
+    HELLOWORLD_COMPILE_COMMANDS="$PROJECT_ROOT/user/helloworld/compile_commands.json"
     if [ "$USE_COMPILEDB" = true ]; then
         compiledb -o "$HELLOWORLD_COMPILE_COMMANDS" make 2>&1 | grep -v "warning:" | grep -v "^make" || true
     elif [ "$IS_MACOS" = true ]; then
@@ -118,14 +118,13 @@ else
     echo "[3/3] Skipping helloworld (directory or Makefile not found)"
 fi
 
-# 4. Add userland tests compilation database
-# Example: helloworld:
-if [ -d "$PROJECT_ROOT/userland/tests" ] && [ -f "$PROJECT_ROOT/userland/tests/Makefile" ]; then
-    echo "[4/4] Generating userland tests compilation database..."
-    cd "$PROJECT_ROOT/userland/tests"
+# 4. Add user tests compilation database
+if [ -d "$PROJECT_ROOT/user/tests" ] && [ -f "$PROJECT_ROOT/user/tests/Makefile" ]; then
+    echo "[4/4] Generating user tests compilation database..."
+    cd "$PROJECT_ROOT/user/tests"
     make clean >/dev/null 2>&1 || true
     
-    TESTS_COMPILE_COMMANDS="$PROJECT_ROOT/userland/tests/compile_commands.json"
+    TESTS_COMPILE_COMMANDS="$PROJECT_ROOT/user/tests/compile_commands.json"
     if [ "$USE_COMPILEDB" = true ]; then
         compiledb -o "$TESTS_COMPILE_COMMANDS" make 2>&1 | grep -v "warning:" | grep -v "^make" || true
     elif [ "$IS_MACOS" = true ]; then
@@ -143,7 +142,7 @@ if [ -d "$PROJECT_ROOT/userland/tests" ] && [ -f "$PROJECT_ROOT/userland/tests/M
         fi
     fi
 else
-    echo "[4/4] Skipping userland tests (directory or Makefile not found)"
+    echo "[4/4] Skipping user tests (directory or Makefile not found)"
 fi
 
 # Complete JSON array

@@ -26,8 +26,8 @@ MOUNT_POINT="/tmp/castor_bootable"
 KERNEL_BIN="$PROJECT_ROOT/build/castor.bin"
 GRUB_CFG="$PROJECT_ROOT/grub.cfg"
 
-SHELL_ELF="$PROJECT_ROOT/userland/shell/shell.elf"
-HELLO_ELF="$PROJECT_ROOT/userland/helloworld/hello.elf"
+SHELL_ELF="$PROJECT_ROOT/user/shell/shell.elf"
+HELLO_ELF="$PROJECT_ROOT/user/helloworld/hello.elf"
 
 # ============================================================================
 # 函数定义

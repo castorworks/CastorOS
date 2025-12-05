@@ -90,6 +90,8 @@ enum {
     SYS_GETSOCKOPT      = 0x060B,  // 获取套接字选项
     SYS_GETSOCKNAME     = 0x060C,  // 获取本地地址
     SYS_GETPEERNAME     = 0x060D,  // 获取对端地址
+    SYS_SELECT          = 0x060E,  // I/O 多路复用
+    SYS_FCNTL           = 0x060F,  // 文件控制
 
     SYS_MAX
 };

@@ -270,20 +270,28 @@ void netdev_receive(netdev_t *dev, netbuf_t *buf) {
     ethernet_input(dev, buf);
 }
 
-int netdev_set_ip(netdev_t *dev, uint32_t ip, uint32_t netmask, uint32_t gateway) {
-    if (!dev) {
-        return -1;
-    }
+void netdev_set_ipaddr(netdev_t *dev, uint32_t ip) {
+    if (!dev) return;
     
     mutex_lock(&dev->lock);
-    
     dev->ip_addr = ip;
-    dev->netmask = netmask;
-    dev->gateway = gateway;
-    
     mutex_unlock(&dev->lock);
+}
+
+void netdev_set_netmask(netdev_t *dev, uint32_t netmask) {
+    if (!dev) return;
     
-    return 0;
+    mutex_lock(&dev->lock);
+    dev->netmask = netmask;
+    mutex_unlock(&dev->lock);
+}
+
+void netdev_set_gateway(netdev_t *dev, uint32_t gateway) {
+    if (!dev) return;
+    
+    mutex_lock(&dev->lock);
+    dev->gateway = gateway;
+    mutex_unlock(&dev->lock);
 }
 
 int netdev_get_all(netdev_t **devs, int max_count) {

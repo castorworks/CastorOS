@@ -11,7 +11,7 @@ CastorOS 已实现完整的用户模式支持，建立了特权级分离机制�
    - fork + exec 进程创建模式
    - 独立的用户地址空间
    
-✅ **系统调用接口**（`userland/lib/syscall.h`）
+✅ **系统调用接口**（`user/lib/syscall.h`）
    - 统一的系统调用接口
    - 支持文件 I/O、进程管理等
    - 用户程序无需直接写汇编
@@ -22,8 +22,8 @@ CastorOS 已实现完整的用户模式支持，建立了特权级分离机制�
    - TSS 内核栈管理
 
 ✅ **用户程序示例**
-   - Hello World 程序（`userland/helloworld/`）
-   - 用户态 Shell（`userland/shell/`）
+   - Hello World 程序（`user/helloworld/`）
+   - 用户态 Shell（`user/shell/`）
    - 标准的 `_start()` 入口点
 
 ---
@@ -312,7 +312,7 @@ syscall_handler:
 - **目录操作**：mkdir, chdir, getcwd, readdir
 - **内存管理**：brk, mmap（预留）
 
-#### 3. 用户态封装（`/userland/lib/syscall.h`）
+#### 3. 用户态封装（`/user/lib/syscall.h`）
 
 ```c
 // 系统调用内联函数
@@ -375,7 +375,7 @@ IRET 返回用户态
 
 ### 用户程序示例
 
-#### Hello World 程序（`/userland/helloworld/hello.c`）
+#### Hello World 程序（`/user/helloworld/hello.c`）
 
 ```c
 #include <syscall.h>
@@ -396,7 +396,7 @@ i686-elf-ld hello.o -T user.ld -o hello.elf
 
 在内核 Shell 中：
 ```bash
-CastorOS> exec /userland/helloworld/hello.elf
+CastorOS> exec /user/helloworld/hello.elf
 ```
 
 ### 内存布局

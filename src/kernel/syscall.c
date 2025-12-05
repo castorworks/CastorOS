@@ -386,6 +386,19 @@ static uint32_t sys_getpeername_wrapper(uint32_t *frame, uint32_t sockfd, uint32
     return (uint32_t)sys_getpeername((int)sockfd, (struct sockaddr *)addr, (socklen_t *)addrlen);
 }
 
+static uint32_t sys_select_wrapper(uint32_t *frame, uint32_t nfds, uint32_t readfds, 
+                                   uint32_t writefds, uint32_t exceptfds, uint32_t timeout) {
+    (void)frame;
+    return (uint32_t)sys_select((int)nfds, (fd_set *)readfds, (fd_set *)writefds,
+                                (fd_set *)exceptfds, (struct timeval *)timeout);
+}
+
+static uint32_t sys_fcntl_wrapper(uint32_t *frame, uint32_t sockfd, uint32_t cmd, 
+                                  uint32_t arg, uint32_t p4, uint32_t p5) {
+    (void)frame; (void)p4; (void)p5;
+    return (uint32_t)sys_fcntl((int)sockfd, (int)cmd, (int)arg);
+}
+
 uint32_t syscall_dispatcher(uint32_t syscall_num, uint32_t p1, uint32_t p2, 
                             uint32_t p3, uint32_t p4, uint32_t p5, uint32_t *frame) {
     /* 检查系统调用号是否在有效范围内 */
@@ -479,6 +492,8 @@ void syscall_init(void) {
     syscall_table[SYS_GETSOCKOPT]  = sys_getsockopt_wrapper;
     syscall_table[SYS_GETSOCKNAME] = sys_getsockname_wrapper;
     syscall_table[SYS_GETPEERNAME] = sys_getpeername_wrapper;
+    syscall_table[SYS_SELECT]      = sys_select_wrapper;
+    syscall_table[SYS_FCNTL]       = sys_fcntl_wrapper;
     
     /* 注册 INT 0x80 处理程序 */
     idt_set_gate(0x80, (uint32_t)syscall_handler, GDT_KERNEL_CODE_SEGMENT, IDT_FLAG_PRESENT | IDT_FLAG_RING3 | IDT_FLAG_GATE_TRAP);

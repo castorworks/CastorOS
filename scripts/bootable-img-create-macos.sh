@@ -25,9 +25,9 @@ MOUNT_POINT="/tmp/castor_bootable"
 KERNEL_BIN="$PROJECT_ROOT/build/castor.bin"
 GRUB_CFG="$PROJECT_ROOT/grub.cfg"
 
-SHELL_ELF="$PROJECT_ROOT/userland/shell/shell.elf"
-HELLO_ELF="$PROJECT_ROOT/userland/helloworld/hello.elf"
-TESTS_ELF="$PROJECT_ROOT/userland/tests/tests.elf"
+SHELL_ELF="$PROJECT_ROOT/user/shell/shell.elf"
+HELLO_ELF="$PROJECT_ROOT/user/helloworld/hello.elf"
+TESTS_ELF="$PROJECT_ROOT/user/tests/tests.elf"
 
 # i686-elf-grub 工具链路径(你需要根据自己环境调整)
 GRUB_PREFIX="/opt/homebrew"
