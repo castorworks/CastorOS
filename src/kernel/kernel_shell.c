@@ -24,6 +24,7 @@
 
 #include <drivers/framebuffer.h>
 #include <drivers/pci.h>
+#include <drivers/acpi.h>
 
 // ============================================================================
 // Shell 状态
@@ -92,6 +93,7 @@ static int cmd_arp(int argc, char **argv);
 static int cmd_lspci(int argc, char **argv);
 static int cmd_fbinfo(int argc, char **argv);
 static int cmd_gfxdemo(int argc, char **argv);
+static int cmd_acpi(int argc, char **argv);
 
 // ============================================================================
 // 命令表
@@ -138,6 +140,7 @@ static const shell_command_t commands[] = {
     {"lspci",    "List PCI devices",                 "lspci",               cmd_lspci},
     {"fbinfo",   "Display framebuffer info",         "fbinfo",              cmd_fbinfo},
     {"gfxdemo",  "Run graphics demo",                "gfxdemo",             cmd_gfxdemo},
+    {"acpi",     "Show ACPI information",            "acpi",                cmd_acpi},
     
     // 结束标记
     {NULL, NULL, NULL, NULL}
@@ -1575,5 +1578,23 @@ static int cmd_gfxdemo(int argc, char **argv) {
     fb_terminal_init();
     shell_print_welcome();
     
+    return 0;
+}
+
+/**
+ * acpi 命令 - 显示 ACPI 信息
+ */
+static int cmd_acpi(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    
+    if (!acpi_is_initialized()) {
+        shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        kprintf("ACPI: Not initialized\n");
+        shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    acpi_print_info();
     return 0;
 }

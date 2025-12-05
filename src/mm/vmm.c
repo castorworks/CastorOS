@@ -192,19 +192,22 @@ void vmm_init(void) {
     }
     
     // 计算需要映射的页目录项数量（每个页目录项映射4MB）
-    // 引导时已经映射了前8MB（索引512-513），从索引514开始
-    uint32_t start_pde = 514;  // 对应虚拟地址 0x80800000
+    // 引导时已经映射了前 16MB（索引 512-515），从索引 516 开始
+    uint32_t start_pde = 516;  // 对应虚拟地址 0x81000000
     // 修复：使用向上取整，确保覆盖所有物理内存。如果 max_phys 不是 4MB 对齐，
     // 向下取整会导致末尾的内存无法被映射。
     uint32_t end_pde = 512 + ((max_phys + 0x3FFFFF) >> 22); 
     
-    LOG_DEBUG_MSG("VMM: Extending high-half kernel mapping\n");
-    LOG_DEBUG_MSG("  Physical memory: %u MB\n", max_phys / (1024*1024));
-    LOG_DEBUG_MSG("  Mapping PDEs: %u-%u (virtual: 0x%x-0x%x)\n",
+    LOG_INFO_MSG("VMM: Extending high-half kernel mapping\n");
+    LOG_INFO_MSG("  Physical memory: %u MB\n", max_phys / (1024*1024));
+    LOG_INFO_MSG("  Mapping PDEs: %u-%u (phys: 0x%x-0x%x)\n",
                  start_pde, end_pde - 1,
-                 start_pde << 22, (end_pde << 22) - 1);
+                 (start_pde - 512) << 22, ((end_pde - 512) << 22) - 1);
     
     // 为每个页目录项创建页表并映射
+    // 注意：每映射完一个 PDE 后立即刷新 TLB，这样后续的 pmm_alloc_frame 
+    // 可以使用新映射的内存区域（因为 pmm_alloc_frame 会清零新分配的帧）
+    uint32_t mapped_pdes = 0;
     for (uint32_t pde = start_pde; pde < end_pde; pde++) {
         // 检查页目录项是否已存在
         if (is_present(current_dir->entries[pde])) {
@@ -212,14 +215,23 @@ void vmm_init(void) {
         }
         
         // 分配页表
+        // 注意：pmm_alloc_frame 会清零新分配的帧，需要确保帧在已映射范围内
         uint32_t table_phys = pmm_alloc_frame();
         if (!table_phys) {
             LOG_WARN_MSG("VMM: Failed to allocate page table for PDE %u\n", pde);
             break;  // 分配失败，停止扩展
         }
         
+        // 安全检查：确保页表帧在已映射范围内（引导时映射了前 16MB）
+        // 如果帧超出范围，pmm_alloc_frame 内部的 memset 就会失败
+        // 但由于 PMM 优先分配低地址帧，这种情况不应该发生
+        if (table_phys >= 0x1000000) {  // >= 16MB
+            LOG_ERROR_MSG("VMM: Page table frame 0x%x exceeds boot mapping! This is a bug.\n", table_phys);
+            pmm_free_frame(table_phys);
+            break;
+        }
+        
         page_table_t *table = (page_table_t*)PHYS_TO_VIRT(table_phys);
-        memset(table, 0, sizeof(page_table_t));
         
         // 计算这个页表对应的物理地址范围
         // PDE索引pde对应虚拟地址 pde * 4MB
@@ -227,22 +239,25 @@ void vmm_init(void) {
         uint32_t phys_base = (pde - 512) << 22;  // 物理地址基址
         
         // 填充页表项：每个页表项映射一个4KB页
+        // 映射整个 4MB 区域，包括保留内存（如 ACPI 表）
+        // 这样可以确保所有物理地址都可以通过高半核访问
         for (uint32_t pte = 0; pte < 1024; pte++) {
             uint32_t phys_addr = phys_base + (pte << 12);
-            
-            // 只映射在可用物理内存范围内的页
-            if (phys_addr < max_phys) {
-                // 设置页表项：Present | Read/Write | Supervisor
-                table->entries[pte] = phys_addr | PAGE_PRESENT | PAGE_WRITE;
-            }
+            // 设置页表项：Present | Read/Write | Supervisor
+            table->entries[pte] = phys_addr | PAGE_PRESENT | PAGE_WRITE;
         }
         
         // 设置页目录项：指向页表
         current_dir->entries[pde] = table_phys | PAGE_PRESENT | PAGE_WRITE;
+        
+        // 立即刷新 TLB，使新映射生效
+        // 这样下一次 pmm_alloc_frame 就可以安全地访问更高地址的内存了
+        vmm_flush_tlb(0);
+        mapped_pdes++;
     }
     
-    // 刷新TLB以确保新映射生效
-    vmm_flush_tlb(0);
+    LOG_INFO_MSG("VMM: Extended mapping by %u PDEs (now covers 0-%u MB)\n", 
+                 mapped_pdes, ((end_pde - 512) * 4));
     
     // 注册引导页目录为活动页目录（保护它不被覆盖）
     register_page_directory(current_dir_phys);

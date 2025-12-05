@@ -11,6 +11,7 @@
 #include <drivers/pci.h>
 #include <drivers/e1000.h>
 #include <drivers/framebuffer.h>
+#include <drivers/acpi.h>
 
 #include <kernel/multiboot.h>
 #include <kernel/version.h>
@@ -188,14 +189,24 @@ void kernel_main(multiboot_info_t* mbi) {
     pci_scan_devices();
     LOG_INFO_MSG("  [4.5] PCI bus scanned\n");
 
-    // 4.6 初始化网络设备子系统
-    netdev_init();
-    LOG_INFO_MSG("  [4.6] Network device subsystem initialized\n");
+    // 4.6 初始化 ACPI 子系统
+    int acpi_result = acpi_init();
+    if (acpi_result == 0) {
+        LOG_INFO_MSG("  [4.6] ACPI initialized\n");
+        acpi_print_info();
+    } else {
+        LOG_WARN_MSG("  [4.6] ACPI initialization failed (code=%d)\n", acpi_result);
+        LOG_WARN_MSG("        Power management may not work correctly\n");
+    }
 
-    // 4.7 初始化 E1000 网卡驱动
+    // 4.7 初始化网络设备子系统
+    netdev_init();
+    LOG_INFO_MSG("  [4.7] Network device subsystem initialized\n");
+
+    // 4.8 初始化 E1000 网卡驱动
     int e1000_count = e1000_init();
     if (e1000_count > 0) {
-        LOG_INFO_MSG("  [4.7] E1000 driver initialized (%d device(s))\n", e1000_count);
+        LOG_INFO_MSG("  [4.8] E1000 driver initialized (%d device(s))\n", e1000_count);
         
         // 如果有网卡，启用第一个网卡
         netdev_t *eth0 = netdev_get_by_name("eth0");
@@ -204,14 +215,14 @@ void kernel_main(multiboot_info_t* mbi) {
             LOG_INFO_MSG("  Network: eth0 enabled\n");
         }
     } else {
-        LOG_DEBUG_MSG("  [4.7] No E1000 network card found\n");
+        LOG_DEBUG_MSG("  [4.8] No E1000 network card found\n");
     }
 
-    // 4.8 初始化帧缓冲（图形模式）
+    // 4.9 初始化帧缓冲（图形模式）
     int fb_result = fb_init(mbi);
     if (fb_result == 0) {
         framebuffer_info_t *fb = fb_get_info();
-        LOG_INFO_MSG("  [4.8] Framebuffer initialized: %ux%u @ %ubpp\n",
+        LOG_INFO_MSG("  [4.9] Framebuffer initialized: %ux%u @ %ubpp\n",
                      fb->width, fb->height, fb->bpp);
         
         // 根据分辨率显示不同的信息
@@ -230,7 +241,7 @@ void kernel_main(multiboot_info_t* mbi) {
         // 初始化图形终端（用于后续输出）
         fb_terminal_init();
     } else {
-        LOG_DEBUG_MSG("  [4.8] Framebuffer not available (code=%d), using text mode\n", fb_result);
+        LOG_DEBUG_MSG("  [4.9] Framebuffer not available (code=%d), using text mode\n", fb_result);
     }
 
     // ========================================================================

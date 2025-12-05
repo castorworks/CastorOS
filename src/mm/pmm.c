@@ -458,6 +458,9 @@ uint32_t pmm_alloc_frame(void) {
     }
     
     // 清零页帧内容
+    // 注意：vmm_init 扩展映射期间，高端帧（>16MB）可能尚未映射
+    // 但 vmm_init 有安全检查确保页表帧在 16MB 以下
+    // vmm_init 完成后，所有物理内存都会被映射，后续清零无问题
     memset((void*)PHYS_TO_VIRT(addr), 0, PAGE_SIZE);
     
     spinlock_unlock_irqrestore(&pmm_lock, irq_state);
