@@ -323,6 +323,126 @@ TEST_SUITE(pmm_stress_tests) {
 }
 
 // ============================================================================
+// Property-Based Tests: PMM Page Size Correctness
+// **Feature: multi-arch-support, Property 2: PMM Page Size Correctness**
+// **Validates: Requirements 5.1**
+// ============================================================================
+
+/**
+ * Property Test: All allocated frames are page-aligned
+ * 
+ * *For any* physical memory allocation request, the PMM SHALL return 
+ * addresses that are aligned to the architecture's standard page size 
+ * (4KB for all currently supported architectures).
+ */
+TEST_CASE(test_pbt_pmm_page_alignment) {
+    // Property-based test: allocate many frames and verify all are page-aligned
+    #define PBT_PMM_ITERATIONS 100
+    
+    uint32_t frames[PBT_PMM_ITERATIONS];
+    uint32_t allocated = 0;
+    
+    // Allocate frames
+    for (uint32_t i = 0; i < PBT_PMM_ITERATIONS; i++) {
+        frames[i] = pmm_alloc_frame();
+        if (frames[i] == 0) {
+            // Out of memory, stop allocating
+            break;
+        }
+        allocated++;
+        
+        // Property: frame address must be page-aligned (4KB = 0x1000)
+        ASSERT_EQ_U(frames[i] & (PAGE_SIZE - 1), 0);
+        
+        // Property: frame address must be non-zero
+        ASSERT_NE_U(frames[i], 0);
+    }
+    
+    // Verify we allocated at least some frames
+    ASSERT_TRUE(allocated > 0);
+    
+    // Cleanup: free all allocated frames
+    for (uint32_t i = 0; i < allocated; i++) {
+        pmm_free_frame(frames[i]);
+    }
+}
+
+/**
+ * Property Test: Allocated frames are unique
+ * 
+ * *For any* sequence of allocations without intervening frees,
+ * all returned frame addresses SHALL be unique.
+ */
+TEST_CASE(test_pbt_pmm_frame_uniqueness) {
+    #define PBT_UNIQUE_ITERATIONS 50
+    
+    uint32_t frames[PBT_UNIQUE_ITERATIONS];
+    uint32_t allocated = 0;
+    
+    // Allocate frames
+    for (uint32_t i = 0; i < PBT_UNIQUE_ITERATIONS; i++) {
+        frames[i] = pmm_alloc_frame();
+        if (frames[i] == 0) {
+            break;
+        }
+        allocated++;
+    }
+    
+    // Verify uniqueness: no two frames should be the same
+    for (uint32_t i = 0; i < allocated; i++) {
+        for (uint32_t j = i + 1; j < allocated; j++) {
+            ASSERT_NE_U(frames[i], frames[j]);
+        }
+    }
+    
+    // Cleanup
+    for (uint32_t i = 0; i < allocated; i++) {
+        pmm_free_frame(frames[i]);
+    }
+}
+
+/**
+ * Property Test: Allocation/Free round-trip preserves memory count
+ * 
+ * *For any* sequence of N allocations followed by N frees,
+ * the free frame count SHALL return to its original value.
+ */
+TEST_CASE(test_pbt_pmm_alloc_free_roundtrip) {
+    #define PBT_ROUNDTRIP_ITERATIONS 30
+    
+    pmm_info_t info_before = pmm_get_info();
+    
+    uint32_t frames[PBT_ROUNDTRIP_ITERATIONS];
+    uint32_t allocated = 0;
+    
+    // Allocate frames
+    for (uint32_t i = 0; i < PBT_ROUNDTRIP_ITERATIONS; i++) {
+        frames[i] = pmm_alloc_frame();
+        if (frames[i] == 0) {
+            break;
+        }
+        allocated++;
+    }
+    
+    // Free all frames
+    for (uint32_t i = 0; i < allocated; i++) {
+        pmm_free_frame(frames[i]);
+    }
+    
+    pmm_info_t info_after = pmm_get_info();
+    
+    // Property: free frame count should be restored
+    ASSERT_EQ_U(info_after.free_frames, info_before.free_frames);
+    ASSERT_EQ_U(info_after.used_frames, info_before.used_frames);
+}
+
+TEST_SUITE(pmm_property_tests) {
+    RUN_TEST(test_pbt_pmm_page_alignment);
+    RUN_TEST(test_pbt_pmm_frame_uniqueness);
+    RUN_TEST(test_pbt_pmm_alloc_free_roundtrip);
+}
+
+// ============================================================================
 // 运行所有测试
 // ============================================================================
 
@@ -335,6 +455,11 @@ void run_pmm_tests(void) {
     RUN_SUITE(pmm_free_tests);
     RUN_SUITE(pmm_info_tests);
     RUN_SUITE(pmm_stress_tests);
+    
+    // Property-based tests
+    // **Feature: multi-arch-support, Property 2: PMM Page Size Correctness**
+    // **Validates: Requirements 5.1**
+    RUN_SUITE(pmm_property_tests);
     
     // 打印测试摘要
     unittest_print_summary();

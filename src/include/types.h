@@ -16,6 +16,17 @@ typedef uint32_t size_t;
 typedef int32_t  ssize_t;
 typedef int32_t  off_t;    // POSIX: 文件偏移量类型（有符号）
 
+// 指针大小的整数类型 (架构相关)
+// i686: 32-bit, x86_64/arm64: 64-bit
+#if defined(ARCH_X86_64) || defined(ARCH_ARM64)
+typedef uint64_t uintptr_t;
+typedef int64_t  intptr_t;
+#else
+// 默认 i686 (32-bit)
+typedef uint32_t uintptr_t;
+typedef int32_t  intptr_t;
+#endif
+
 #define UINT32_MAX ((uint32_t)0xFFFFFFFF)
 #define INT32_MAX ((int32_t)0x7FFFFFFF)
 

@@ -1,6 +1,15 @@
 // ============================================================================
 // kernel.c - 内核主函数
 // ============================================================================
+//
+// This file implements the kernel main entry point. It uses the Hardware
+// Abstraction Layer (HAL) for architecture-specific initialization, allowing
+// the same kernel code to work across different architectures (i686, x86_64,
+// ARM64).
+//
+// **Feature: multi-arch-support**
+// **Validates: Requirements 1.1**
+// ============================================================================
 
 #include <drivers/vga.h>
 #include <drivers/serial.h>
@@ -22,10 +31,12 @@
 #include <lib/kprintf.h>
 #include <lib/klog.h>
 
+/* HAL interface for architecture-independent initialization */
+#include <hal/hal.h>
+
+/* Architecture-specific headers (only needed for stack_top reference) */
 #include <kernel/gdt.h>
-#include <kernel/idt.h>
-#include <kernel/irq.h>
-#include <kernel/isr.h>
+
 #include <kernel/task.h>
 #include <kernel/kernel_shell.h>
 #include <kernel/fs_bootstrap.h>
@@ -70,36 +81,36 @@ void kernel_main(multiboot_info_t* mbi) {
     // ========================================================================
     // 阶段 1: CPU 基础架构（CPU Architecture）
     // ========================================================================
-    LOG_INFO_MSG("[Stage 1] Initializing CPU architecture...\n");
+    // Use HAL for architecture-independent CPU initialization
+    // This dispatches to the appropriate architecture-specific code:
+    //   - i686: GDT, TSS initialization
+    //   - x86_64: GDT64, TSS64 initialization
+    //   - ARM64: Exception Level configuration
+    // Requirements: 1.1 - HAL initialization dispatch
+    // ========================================================================
+    LOG_INFO_MSG("[Stage 1] Initializing CPU architecture via HAL...\n");
     
-    /* 使用内核引导栈作为临时内核栈（位于 BSS 段，安全可靠） */
-    uint32_t temp_kernel_stack = (uint32_t)&stack_top;
-    uint16_t kernel_ss = GDT_KERNEL_DATA_SEGMENT; /* 一般为 0x10 */
-
-    gdt_init_all_with_tss(temp_kernel_stack, kernel_ss);
-
-    LOG_INFO_MSG("  [1.1] GDT and TSS installed\n");
+    hal_cpu_init();
+    LOG_INFO_MSG("  [1.1] CPU initialized via HAL (%s)\n", hal_arch_name());
     
     // ========================================================================
     // 阶段 2: 中断系统（Interrupt System）
     // ========================================================================
-    LOG_INFO_MSG("[Stage 2] Initializing interrupt system...\n");
+    // Use HAL for architecture-independent interrupt initialization
+    // This dispatches to the appropriate architecture-specific code:
+    //   - i686/x86_64: IDT, ISR, IRQ (PIC/APIC)
+    //   - ARM64: Exception vectors, GIC
+    // Requirements: 1.1 - HAL initialization dispatch
+    // ========================================================================
+    LOG_INFO_MSG("[Stage 2] Initializing interrupt system via HAL...\n");
     
-    // 2.1 初始化 IDT（Interrupt Descriptor Table）
-    idt_init();
-    LOG_INFO_MSG("  [2.1] IDT initialized\n");
+    hal_interrupt_init();
+    LOG_INFO_MSG("  [2.1] Interrupt system initialized via HAL\n");
     
-    // 2.2 初始化 ISR（Interrupt Service Routines - 异常处理）
-    isr_init();
-    LOG_INFO_MSG("  [2.2] ISR initialized (Exception handlers)\n");
-    
-    // 2.3 初始化 IRQ（Hardware Interrupt Requests - 硬件中断）
-    irq_init();
-    LOG_INFO_MSG("  [2.3] IRQ initialized (Hardware interrupts)\n");
-    
-    // 2.4 初始化系统调用（System Calls）
+    // 2.2 初始化系统调用（System Calls）
+    // syscall_init() internally uses HAL for architecture-specific setup
     syscall_init();
-    LOG_INFO_MSG("  [2.4] System calls initialized\n");
+    LOG_INFO_MSG("  [2.2] System calls initialized\n");
 
     // ========================================================================
     // 阶段 3: 内存管理（Memory Management）
@@ -292,7 +303,7 @@ void kernel_main(multiboot_info_t* mbi) {
     // 单元测试
     // ========================================================================
     LOG_INFO_MSG("Running test suite...\n");
-    // run_all_tests();
+    run_all_tests();
     kprintf("\n");
 
     // ========================================================================
@@ -319,7 +330,8 @@ void kernel_main(multiboot_info_t* mbi) {
     // 触发首次调度，切换到用户进程
     task_schedule();
     
+    // Idle loop - use HAL for architecture-independent CPU halt
     while (1) {
-        __asm__ volatile ("hlt");
+        hal_cpu_halt();
     }
 }

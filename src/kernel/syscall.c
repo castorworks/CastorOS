@@ -1,5 +1,13 @@
 // ============================================================================
-// syscall.c - 系统调用实现
+// syscall.c - System Call Dispatcher (Architecture-Independent)
+// ============================================================================
+//
+// This file implements the architecture-independent system call dispatcher.
+// The actual system call entry mechanism is implemented in architecture-specific
+// code under src/arch/{arch}/syscall/.
+//
+// **Feature: multi-arch-support**
+// **Validates: Requirements 8.1**
 // ============================================================================
 
 #include <kernel/syscall.h>
@@ -11,9 +19,7 @@
 #include <kernel/syscalls/net.h>
 #include <kernel/utsname.h>
 #include <kernel/task.h>
-#include <kernel/idt.h>
-#include <kernel/gdt.h>
-#include <kernel/isr.h>
+#include <hal/hal.h>
 #include <net/socket.h>
 #include <lib/klog.h>
 #include <lib/kprintf.h>
@@ -417,21 +423,26 @@ uint32_t syscall_dispatcher(uint32_t syscall_num, uint32_t p1, uint32_t p2,
 }
 
 /**
- * 初始化系统调用
+ * syscall_init - Initialize system call subsystem
+ *
+ * This function initializes the system call table and sets up the
+ * architecture-specific system call entry mechanism through the HAL.
+ *
+ * Requirements: 8.1 - System call entry mechanism
  */
 void syscall_init(void) {
     LOG_INFO_MSG("Initializing system calls...\n");
     
-    /* 清空系统调用表 */
+    /* Clear system call table */
     for (uint32_t i = 0; i < SYS_MAX; i++) {
         syscall_table[i] = NULL;
     }
     
     /* ========================================================================
-     * 注册系统调用包装器函数
+     * Register system call wrapper functions
      * ======================================================================== */
     
-    /* 进程生命周期 */
+    /* Process lifecycle */
     syscall_table[SYS_EXIT]        = sys_exit_wrapper;   
     syscall_table[SYS_FORK]        = sys_fork_wrapper;   
     syscall_table[SYS_EXECVE]      = sys_execve_wrapper;
@@ -440,10 +451,10 @@ void syscall_init(void) {
     syscall_table[SYS_GETPPID]     = sys_getppid_wrapper;
     syscall_table[SYS_SCHED_YIELD] = sys_yield_wrapper;
     
-    /* 信号与进程控制 */
+    /* Signal and process control */
     syscall_table[SYS_KILL]        = sys_kill_wrapper;
     
-    /* 文件系统操作 */
+    /* File system operations */
     syscall_table[SYS_OPEN]        = sys_open_wrapper;   
     syscall_table[SYS_CLOSE]       = sys_close_wrapper;  
     syscall_table[SYS_READ]        = sys_read_wrapper;   
@@ -463,16 +474,16 @@ void syscall_init(void) {
     syscall_table[SYS_DUP2]        = sys_dup2_wrapper;
     syscall_table[SYS_IOCTL]       = sys_ioctl_wrapper;
     
-    /* 时间相关 */
+    /* Time related */
     syscall_table[SYS_TIME]        = sys_time_wrapper;
     syscall_table[SYS_NANOSLEEP]   = sys_nanosleep_wrapper;
     
-    /* 内存管理 */
+    /* Memory management */
     syscall_table[SYS_BRK]         = sys_brk_wrapper;
     syscall_table[SYS_MMAP]        = sys_mmap_wrapper;
     syscall_table[SYS_MUNMAP]      = sys_munmap_wrapper;
     
-    /* 杂项 / 系统控制 */
+    /* Miscellaneous / System control */
     syscall_table[SYS_REBOOT]      = sys_reboot_wrapper;
     syscall_table[SYS_POWEROFF]    = sys_poweroff_wrapper;
     syscall_table[SYS_UNAME]       = sys_uname_wrapper;
@@ -495,8 +506,8 @@ void syscall_init(void) {
     syscall_table[SYS_SELECT]      = sys_select_wrapper;
     syscall_table[SYS_FCNTL]       = sys_fcntl_wrapper;
     
-    /* 注册 INT 0x80 处理程序 */
-    idt_set_gate(0x80, (uint32_t)syscall_handler, GDT_KERNEL_CODE_SEGMENT, IDT_FLAG_PRESENT | IDT_FLAG_RING3 | IDT_FLAG_GATE_TRAP);
+    /* Initialize architecture-specific system call entry mechanism via HAL */
+    hal_syscall_init(NULL);
     
     LOG_INFO_MSG("System calls initialized (POSIX-compliant BSD Socket API enabled)\n");
 }

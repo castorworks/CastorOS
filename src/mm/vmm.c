@@ -2,7 +2,10 @@
  * @file vmm.c
  * @brief 虚拟内存管理器实现
  * 
- * 实现x86分页机制，管理虚拟地址到物理地址的映射
+ * 实现分页机制，管理虚拟地址到物理地址的映射
+ * 核心逻辑保持架构无关，通过 HAL 接口调用架构特定操作
+ * 
+ * Requirements: 5.1, 5.2
  */
 
 #include <mm/vmm.h>
@@ -11,6 +14,7 @@
 #include <lib/string.h>
 #include <kernel/sync/spinlock.h>
 #include <kernel/task.h>
+#include <hal/hal.h>
 
 static page_directory_t *current_dir = NULL;  ///< 当前页目录虚拟地址
 static uint32_t current_dir_phys = 0;          ///< 当前页目录物理地址
@@ -174,11 +178,10 @@ void vmm_init(void) {
     current_dir = (page_directory_t*)boot_page_directory;
     current_dir_phys = VIRT_TO_PHYS((uint32_t)current_dir);
     
-    // 检查并更新CR3寄存器
-    uint32_t cr3;
-    __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
-    if (cr3 != current_dir_phys)
-        __asm__ volatile("mov %0, %%cr3" : : "r"(current_dir_phys));
+    // 检查并更新页表基址寄存器 (通过 HAL 接口)
+    uintptr_t current_page_table = hal_mmu_get_current_page_table();
+    if (current_page_table != current_dir_phys)
+        hal_mmu_switch_space(current_dir_phys);
     
     // 扩展高半核映射以覆盖所有可用的物理内存
     // 引导时已经映射了前8MB（页目录项512-513）
@@ -516,14 +519,15 @@ void vmm_unmap_page(uint32_t virt) {
  * @param virt 虚拟地址（0表示刷新全部TLB）
  * 
  * 当修改页表后需要刷新TLB以确保CPU使用最新的页表项
+ * 通过 HAL 接口调用架构特定的 TLB 刷新操作
  */
 void vmm_flush_tlb(uint32_t virt) {
     if (virt == 0) {
-        // 刷新整个TLB：重新加载CR3
-        __asm__ volatile("mov %%cr3, %%eax; mov %%eax, %%cr3" ::: "eax");
+        // 刷新整个TLB
+        hal_mmu_flush_tlb_all();
     } else {
-        // 刷新单个页：使用invlpg指令
-        __asm__ volatile("invlpg (%0)" : : "r"(virt) : "memory");
+        // 刷新单个页
+        hal_mmu_flush_tlb((uintptr_t)virt);
     }
 }
 
@@ -906,6 +910,8 @@ void vmm_sync_current_dir(uint32_t dir_phys) {
 /**
  * @brief 切换到指定的页目录
  * @param dir_phys 页目录的物理地址
+ * 
+ * 通过 HAL 接口切换地址空间
  */
 void vmm_switch_page_directory(uint32_t dir_phys) {
     if (!dir_phys) return;
@@ -916,8 +922,8 @@ void vmm_switch_page_directory(uint32_t dir_phys) {
     current_dir_phys = dir_phys;
     current_dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
     
-    // 加载到 CR3 寄存器
-    __asm__ volatile("mov %0, %%cr3" : : "r"(dir_phys) : "memory");
+    // 通过 HAL 接口切换地址空间
+    hal_mmu_switch_space((uintptr_t)dir_phys);
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
 }

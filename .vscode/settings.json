@@ -3,5 +3,6 @@
         "kfree",
         "KLOG",
         "kmalloc"
-    ]
+    ],
+    "kiroAgent.configureMCP": "Disabled"
 }

@@ -16,6 +16,9 @@
 #include <tests/task_test.h>
 #include <tests/heap_test.h>
 #include <tests/sync_test.h>
+#include <tests/arch_types_test.h>
+#include <tests/syscall_test.h>
+#include <tests/hal_test.h>
 #include <lib/kprintf.h>
 
 // ============================================================================
@@ -54,6 +57,15 @@ static const test_entry_t test_suite[] = {
     TEST_ENTRY("Virtual Memory Manager Tests", run_vmm_tests),
     TEST_ENTRY("Heap Allocator Tests", run_heap_tests),
     TEST_ENTRY("Task Manager Tests", run_task_tests),
+    
+    // 架构类型测试 (Property 17: User Library Data Type Size Correctness)
+    TEST_ENTRY("Architecture Type Size Tests", run_arch_types_tests),
+    
+    // 系统调用测试 (Property 12: System Call Round-Trip Correctness)
+    TEST_ENTRY("System Call Property Tests", run_syscall_tests),
+    
+    // HAL 测试 (Property 1: HAL Initialization Dispatch, Property 14: MMIO Memory Barrier)
+    TEST_ENTRY("HAL Property Tests", run_hal_tests),
     
     // ========== 在下方添加新的测试 ==========
     // TEST_ENTRY("Synchronization Primitive Tests", run_sync_tests),
