@@ -505,14 +505,32 @@ void hal_mmu_parse_fault_with_error(hal_page_fault_info_t *info, uint32_t error_
  * @see Requirements 4.2
  */
 hal_addr_space_t hal_mmu_create_space(void) {
-    extern uintptr_t vmm_create_page_directory(void);
-    uintptr_t new_dir_phys = vmm_create_page_directory();
-    
-    if (new_dir_phys == 0) {
+    /* Allocate a new page directory */
+    paddr_t dir_phys = pmm_alloc_frame();
+    if (dir_phys == PADDR_INVALID) {
         return HAL_ADDR_SPACE_INVALID;
     }
     
-    return (hal_addr_space_t)new_dir_phys;
+    /* Get virtual address for access */
+    page_directory_t *new_dir = (page_directory_t*)PHYS_TO_VIRT((uintptr_t)dir_phys);
+    
+    /* Clear the entire page directory */
+    memset(new_dir, 0, sizeof(page_directory_t));
+    
+    /* Get the master kernel page directory (boot_page_directory) */
+    extern uint32_t boot_page_directory[];
+    page_directory_t *master_dir = (page_directory_t *)boot_page_directory;
+    
+    /* Copy kernel space mappings (512-1023, i.e., 0x80000000-0xFFFFFFFF) */
+    /* This ensures the new process gets the complete kernel mappings */
+    for (uint32_t i = 512; i < 1024; i++) {
+        new_dir->entries[i] = master_dir->entries[i];
+    }
+    
+    LOG_DEBUG_MSG("hal_mmu_create_space: Created new page directory at phys 0x%llx\n",
+                  (unsigned long long)dir_phys);
+    
+    return (hal_addr_space_t)dir_phys;
 }
 
 /**
@@ -542,6 +560,8 @@ void hal_mmu_destroy_space(hal_addr_space_t space) {
 /**
  * @brief 映射虚拟页到物理页 (i686)
  * 
+ * 直接操作页表结构，不回调 VMM 函数以避免循环依赖。
+ * 
  * @param space 地址空间句柄 (HAL_ADDR_SPACE_CURRENT 表示当前)
  * @param virt 虚拟地址 (必须页对齐)
  * @param phys 物理地址 (必须页对齐)
@@ -553,24 +573,63 @@ void hal_mmu_destroy_space(hal_addr_space_t space) {
  * @see Requirements 4.1
  */
 bool hal_mmu_map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags) {
+    /* Check page alignment */
+    if (((uint32_t)virt | (uint32_t)phys) & (PAGE_SIZE - 1)) {
+        return false;
+    }
+    
     /* Convert HAL flags to i686 flags */
     uint32_t i686_flags = hal_flags_to_i686(flags);
     
-    if (space == HAL_ADDR_SPACE_CURRENT || space == 0) {
-        /* Map in current address space */
-        extern bool vmm_map_page(uintptr_t virt, uintptr_t phys, uint32_t flags);
-        return vmm_map_page((uintptr_t)virt, (uintptr_t)phys, i686_flags);
+    /* Get page directory */
+    page_directory_t *dir = get_page_directory(space);
+    
+    uint32_t pd_idx = i686_pde_index((uint32_t)virt);
+    uint32_t pt_idx = i686_pte_index((uint32_t)virt);
+    
+    /* Check if page table exists, create if not */
+    pde_t *pde = &dir->entries[pd_idx];
+    page_table_t *table;
+    
+    if (!i686_is_present(*pde)) {
+        /* Allocate new page table */
+        paddr_t table_phys = pmm_alloc_frame();
+        if (table_phys == PADDR_INVALID) {
+            return false;
+        }
+        
+        /* Map the new page table and clear it */
+        table = (page_table_t*)PHYS_TO_VIRT((uintptr_t)table_phys);
+        memset(table, 0, PAGE_SIZE);
+        
+        /* Set PDE with appropriate flags */
+        /* PDE needs PRESENT, WRITE, and USER if mapping user pages */
+        uint32_t pde_flags = PAGE_PRESENT | PAGE_WRITE;
+        if (i686_flags & PAGE_USER) {
+            pde_flags |= PAGE_USER;
+        }
+        *pde = (uint32_t)table_phys | pde_flags;
     } else {
-        /* Map in specified address space */
-        extern bool vmm_map_page_in_directory(uintptr_t dir_phys, uintptr_t virt, 
-                                              uintptr_t phys, uint32_t flags);
-        return vmm_map_page_in_directory((uintptr_t)space, (uintptr_t)virt, 
-                                         (uintptr_t)phys, i686_flags);
+        /* Get existing page table */
+        paddr_t table_phys = i686_get_frame(*pde);
+        table = (page_table_t*)PHYS_TO_VIRT((uintptr_t)table_phys);
+        
+        /* If mapping user page, ensure PDE has USER flag */
+        if ((i686_flags & PAGE_USER) && !(*pde & PAGE_USER)) {
+            *pde |= PAGE_USER;
+        }
     }
+    
+    /* Set page table entry */
+    table->entries[pt_idx] = (uint32_t)phys | i686_flags;
+    
+    return true;
 }
 
 /**
  * @brief 取消虚拟页映射 (i686)
+ * 
+ * 直接操作页表结构，不回调 VMM 函数以避免循环依赖。
  * 
  * @param space 地址空间句柄 (HAL_ADDR_SPACE_CURRENT 表示当前)
  * @param virt 虚拟地址
@@ -579,21 +638,38 @@ bool hal_mmu_map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t fl
  * @note 调用者需要在取消映射后调用 hal_mmu_flush_tlb()
  */
 paddr_t hal_mmu_unmap(hal_addr_space_t space, vaddr_t virt) {
-    /* First query to get the physical address */
-    paddr_t phys;
-    if (!hal_mmu_query(space, virt, &phys, NULL)) {
+    /* Check page alignment */
+    if ((uint32_t)virt & (PAGE_SIZE - 1)) {
         return PADDR_INVALID;
     }
     
-    if (space == HAL_ADDR_SPACE_CURRENT || space == 0) {
-        /* Unmap from current address space */
-        extern void vmm_unmap_page(uintptr_t virt);
-        vmm_unmap_page((uintptr_t)virt);
-    } else {
-        /* Unmap from specified address space */
-        extern uintptr_t vmm_unmap_page_in_directory(uintptr_t dir_phys, uintptr_t virt);
-        vmm_unmap_page_in_directory((uintptr_t)space, (uintptr_t)virt);
+    /* Get page directory */
+    page_directory_t *dir = get_page_directory(space);
+    
+    uint32_t pd_idx = i686_pde_index((uint32_t)virt);
+    uint32_t pt_idx = i686_pte_index((uint32_t)virt);
+    
+    /* Check if page directory entry is present */
+    pde_t pde = dir->entries[pd_idx];
+    if (!i686_is_present(pde)) {
+        return PADDR_INVALID;
     }
+    
+    /* Get page table */
+    paddr_t table_phys = i686_get_frame(pde);
+    page_table_t *table = (page_table_t*)PHYS_TO_VIRT((uintptr_t)table_phys);
+    
+    /* Check if page table entry is present */
+    pte_t *pte = &table->entries[pt_idx];
+    if (!i686_is_present(*pte)) {
+        return PADDR_INVALID;
+    }
+    
+    /* Get physical address before clearing */
+    paddr_t phys = (paddr_t)i686_get_frame(*pte);
+    
+    /* Clear the page table entry */
+    *pte = 0;
     
     return phys;
 }

@@ -87,6 +87,7 @@ static inline bool is_present(pde_t e) { return e & PAGE_PRESENT; }
  * @param frame 物理帧地址
  * @return 是活动页目录返回 true，否则返回 false
  */
+__attribute__((unused))
 static bool is_active_page_directory(uintptr_t frame) {
     for (uint32_t i = 0; i < active_pd_count; i++) {
         if (active_page_directories[i] == frame) {
@@ -371,9 +372,102 @@ bool vmm_handle_kernel_page_fault(uintptr_t addr) {
  */
 bool vmm_handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
 #if defined(ARCH_X86_64)
-    // x86_64: COW 暂不支持
-    (void)addr; (void)error_code;
-    return false;
+    // x86_64: 使用 HAL 接口实现通用 COW 处理
+    // error_code bit 1: 写入导致的异常
+    // error_code bit 0: 页面存在
+    // COW 异常应该是：页面存在(bit0=1) + 写入(bit1=1) = 0x3 或 0x7
+    if ((error_code & 0x3) != 0x3) {
+        LOG_DEBUG_MSG("COW x64: Not a COW fault - addr=0x%llx, error=0x%x\n", 
+                     (unsigned long long)addr, error_code);
+        return false;  // 不是写保护异常
+    }
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    
+    // 使用 HAL 接口查询页面映射
+    paddr_t old_frame;
+    uint32_t hal_flags;
+    if (!hal_mmu_query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)addr, &old_frame, &hal_flags)) {
+        LOG_DEBUG_MSG("COW x64: Page not mapped - addr=0x%llx\n", (unsigned long long)addr);
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        return false;
+    }
+    
+    // 检查页面是否标记为 COW
+    if (!(hal_flags & HAL_PAGE_COW)) {
+        LOG_DEBUG_MSG("COW x64: Not a COW page - addr=0x%llx, flags=0x%x\n",
+                     (unsigned long long)addr, hal_flags);
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        return false;
+    }
+    
+    // 【安全检查】验证旧物理帧地址
+    if (old_frame == PADDR_INVALID || old_frame == 0) {
+        LOG_ERROR_MSG("COW x64: Invalid old frame address 0x%llx at addr=0x%llx\n", 
+                     (unsigned long long)old_frame, (unsigned long long)addr);
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        return false;
+    }
+    
+    uint32_t refcount = pmm_frame_get_refcount(old_frame);
+    
+    LOG_INFO_MSG("COW x64: Handling page fault - addr=0x%llx, old_frame=0x%llx, refcount=%u\n", 
+                (unsigned long long)addr, (unsigned long long)old_frame, refcount);
+    
+    if (refcount == 0) {
+        // 异常情况：COW 页面但引用计数为 0
+        // 这不应该发生，但为了安全，我们恢复写权限并继续
+        LOG_WARN_MSG("COW x64: Page at 0x%llx has refcount=0 but is marked COW, restoring write\n", 
+                    (unsigned long long)addr);
+        hal_mmu_protect(HAL_ADDR_SPACE_CURRENT, (vaddr_t)addr, 
+                       HAL_PAGE_WRITE, HAL_PAGE_COW);
+        hal_mmu_flush_tlb((vaddr_t)addr);
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        return true;
+    }
+    
+    if (refcount == 1) {
+        // 只有当前进程引用，直接恢复写权限，无需复制
+        hal_mmu_protect(HAL_ADDR_SPACE_CURRENT, (vaddr_t)addr, 
+                       HAL_PAGE_WRITE, HAL_PAGE_COW);
+        hal_mmu_flush_tlb((vaddr_t)addr);
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        LOG_DEBUG_MSG("COW x64: Single reference (refcount=1), restored write permission\n");
+        return true;
+    }
+    
+    // 多个进程共享（refcount > 1），需要复制页面
+    paddr_t new_frame = pmm_alloc_frame();
+    if (new_frame == PADDR_INVALID) {
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        LOG_ERROR_MSG("COW x64: Failed to allocate frame for COW copy (out of memory)\n");
+        return false;
+    }
+    
+    // 复制页面内容
+    void *src_virt = (void*)PHYS_TO_VIRT((uintptr_t)old_frame);
+    void *dst_virt = (void*)PHYS_TO_VIRT((uintptr_t)new_frame);
+    memcpy(dst_virt, src_virt, PAGE_SIZE);
+    
+    // 计算新的标志：去掉 COW，恢复写权限
+    uint32_t new_flags = (hal_flags & ~HAL_PAGE_COW) | HAL_PAGE_WRITE;
+    
+    // 取消旧映射并创建新映射
+    hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, (vaddr_t)(addr & ~(PAGE_SIZE - 1)));
+    hal_mmu_map(HAL_ADDR_SPACE_CURRENT, (vaddr_t)(addr & ~(PAGE_SIZE - 1)), new_frame, new_flags);
+    
+    // 刷新 TLB
+    hal_mmu_flush_tlb((vaddr_t)addr);
+    
+    // 减少旧页面的引用计数
+    pmm_frame_ref_dec(old_frame);
+    
+    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+    
+    LOG_DEBUG_MSG("COW x64: Copied page (refcount was %u), old_frame=0x%llx -> new_frame=0x%llx\n", 
+                 refcount, (unsigned long long)old_frame, (unsigned long long)new_frame);
+    return true;
 #else
     // error_code bit 1: 写入导致的异常
     // error_code bit 0: 页面存在
@@ -483,105 +577,103 @@ bool vmm_handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
 }
 
 /**
+ * @brief 将 VMM 页标志转换为 HAL 页标志
+ * @param vmm_flags VMM 页标志 (PAGE_*)
+ * @return HAL 页标志 (HAL_PAGE_*)
+ */
+static uint32_t vmm_flags_to_hal(uint32_t vmm_flags) {
+    uint32_t hal_flags = 0;
+    
+    if (vmm_flags & PAGE_PRESENT)       hal_flags |= HAL_PAGE_PRESENT;
+    if (vmm_flags & PAGE_WRITE)         hal_flags |= HAL_PAGE_WRITE;
+    if (vmm_flags & PAGE_USER)          hal_flags |= HAL_PAGE_USER;
+    if (vmm_flags & PAGE_CACHE_DISABLE) hal_flags |= HAL_PAGE_NOCACHE;
+    if (vmm_flags & PAGE_COW)           hal_flags |= HAL_PAGE_COW;
+    
+    return hal_flags;
+}
+
+/**
+ * @brief 将 HAL 页标志转换为 VMM 页标志
+ * @param hal_flags HAL 页标志 (HAL_PAGE_*)
+ * @return VMM 页标志 (PAGE_*)
+ */
+__attribute__((unused))
+static uint32_t hal_flags_to_vmm(uint32_t hal_flags) {
+    uint32_t vmm_flags = 0;
+    
+    if (hal_flags & HAL_PAGE_PRESENT)   vmm_flags |= PAGE_PRESENT;
+    if (hal_flags & HAL_PAGE_WRITE)     vmm_flags |= PAGE_WRITE;
+    if (hal_flags & HAL_PAGE_USER)      vmm_flags |= PAGE_USER;
+    if (hal_flags & HAL_PAGE_NOCACHE)   vmm_flags |= PAGE_CACHE_DISABLE;
+    if (hal_flags & HAL_PAGE_COW)       vmm_flags |= PAGE_COW;
+    
+    return vmm_flags;
+}
+
+/**
  * @brief 映射虚拟页到物理页
  * @param virt 虚拟地址（页对齐）
  * @param phys 物理地址（页对齐）
  * @param flags 页标志（PAGE_PRESENT, PAGE_WRITE, PAGE_USER）
  * @return 成功返回 true，失败返回 false
+ * 
+ * 使用 HAL MMU 接口实现跨架构页面映射
  */
 bool vmm_map_page(uintptr_t virt, uintptr_t phys, uint32_t flags) {
-#if defined(ARCH_X86_64)
-    // x86_64: 暂不支持动态页表映射，使用引导时的静态映射
-    // TODO: 实现 4 级页表动态映射
-    (void)virt; (void)phys; (void)flags;
-    LOG_WARN_MSG("VMM: vmm_map_page not implemented for x86_64\n");
-    return false;
-#else
     // 检查页对齐
     if ((virt | phys) & (PAGE_SIZE-1)) return false;
     
     bool irq_state;
     spinlock_lock_irqsave(&vmm_lock, &irq_state);
     
-    uint32_t pd = pde_idx(virt);  // 页目录索引
-    uint32_t pt = pte_idx(virt);  // 页表索引
+    // 转换为 HAL 标志
+    uint32_t hal_flags = vmm_flags_to_hal(flags);
     
-    pde_t *pde = &current_dir->entries[pd];
-    page_table_t *table;
+    // 使用 HAL 接口映射页面
+    bool result = hal_mmu_map(HAL_ADDR_SPACE_CURRENT, (vaddr_t)virt, (paddr_t)phys, hal_flags);
     
-    // 如果页表不存在，创建新页表
-    if (!is_present(*pde)) {
-        table = create_page_table();
-        if (!table) {
-            spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-            return false;
-        }
-        uintptr_t table_phys = VIRT_TO_PHYS((uintptr_t)table);
+    if (result) {
+        // 刷新 TLB
+        hal_mmu_flush_tlb((vaddr_t)virt);
         
-        // 创建页表时，权限应该根据目标虚拟地址决定
-        // 如果是内核空间（>= 0x80000000），则不应设置 PAGE_USER
-        // 否则（用户空间），通常需要 PAGE_USER 允许用户进程访问其内容
-        uint32_t pde_flags = PAGE_PRESENT | PAGE_WRITE;
-        if (virt < KERNEL_VIRTUAL_BASE) {
-            pde_flags |= PAGE_USER;
-        }
-        
-        pde_t new_pde = table_phys | pde_flags;
-        *pde = new_pde;
-        protect_phys_frame(table_phys);
-        
-        // 关键修复：如果是内核空间的新页表，必须同步到主内核页目录 (boot_page_directory)
+#if !defined(ARCH_X86_64)
+        // i686: 如果是内核空间的新映射，同步到主内核页目录
         // 这样其他进程可以通过 page fault handler 同步这个新映射
         if (virt >= KERNEL_VIRTUAL_BASE) {
             page_directory_t *k_dir = (page_directory_t *)boot_page_directory;
-            k_dir->entries[pd] = new_pde;
-            if (k_dir != current_dir) {
-                protect_phys_frame(table_phys);
+            uint32_t pd = pde_idx(virt);
+            if (k_dir != current_dir && is_present(current_dir->entries[pd])) {
+                k_dir->entries[pd] = current_dir->entries[pd];
             }
         }
-    } else {
-        table = (page_table_t*)PHYS_TO_VIRT(get_frame(*pde));
+#endif
     }
     
-    // 设置页表项
-    table->entries[pt] = phys | flags;
-    vmm_flush_tlb(virt);
-    
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-    return true;
-#endif
+    return result;
 }
 
 /**
  * @brief 取消虚拟页映射
  * @param virt 虚拟地址（页对齐）
+ * 
+ * 使用 HAL MMU 接口实现跨架构页面取消映射
  */
 void vmm_unmap_page(uintptr_t virt) {
-#if defined(ARCH_X86_64)
-    // x86_64: 暂不支持动态页表操作
-    (void)virt;
-    return;
-#else
     // 检查页对齐
     if (virt & (PAGE_SIZE-1)) return;
     
     bool irq_state;
     spinlock_lock_irqsave(&vmm_lock, &irq_state);
     
-    pde_t *pde = &current_dir->entries[pde_idx(virt)];
-    // 如果页表不存在，直接返回
-    if (!is_present(*pde)) {
-        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-        return;
-    }
+    // 使用 HAL 接口取消映射
+    hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, (vaddr_t)virt);
     
-    // 清除页表项
-    page_table_t *table = (page_table_t*)PHYS_TO_VIRT(get_frame(*pde));
-    table->entries[pte_idx(virt)] = 0;
-    vmm_flush_tlb(virt);
+    // 刷新 TLB
+    hal_mmu_flush_tlb((vaddr_t)virt);
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-#endif
 }
 
 /**
@@ -612,41 +704,30 @@ uintptr_t vmm_get_page_directory(void) {
 /**
  * @brief 创建新的页目录（用于新进程）
  * @return 成功返回页目录的物理地址，失败返回 0
+ * 
+ * 使用 HAL MMU 接口实现跨架构地址空间创建
  */
 uintptr_t vmm_create_page_directory(void) {
-#if defined(ARCH_X86_64)
-    // x86_64: 暂不支持创建新页目录
-    LOG_WARN_MSG("VMM: vmm_create_page_directory not implemented for x86_64\n");
-    return 0;
-#else
-    // 分配页目录的物理页
-    paddr_t dir_phys = pmm_alloc_frame();
-    if (dir_phys == PADDR_INVALID) return 0;
-    
     bool irq_state;
     spinlock_lock_irqsave(&vmm_lock, &irq_state);
     
-    // 获取虚拟地址访问
-    page_directory_t *new_dir = (page_directory_t*)PHYS_TO_VIRT((uintptr_t)dir_phys);
+    // 使用 HAL 接口创建新地址空间
+    hal_addr_space_t new_space = hal_mmu_create_space();
     
-    // 清空整个页目录
-    memset(new_dir, 0, sizeof(page_directory_t));
-    
-    // 复制内核空间映射（512-1023，即 0x80000000-0xFFFFFFFF）
-    // 关键修改：从主内核页目录 (boot_page_directory) 复制，而不是从当前页目录复制
-    // 这确保新进程总是获得最完整、最新的内核映射
-    page_directory_t *master_dir = (page_directory_t *)boot_page_directory;
-    for (uint32_t i = 512; i < 1024; i++) {
-        new_dir->entries[i] = master_dir->entries[i];
+    if (new_space == HAL_ADDR_SPACE_INVALID) {
+        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        return 0;
     }
-    protect_directory_range(new_dir, KERNEL_PDE_START, KERNEL_PDE_END);
     
-    // 注册为活动页目录
-    register_page_directory((uintptr_t)dir_phys);
+#if !defined(ARCH_X86_64)
+    // i686: 注册为活动页目录并保护内核页表
+    page_directory_t *new_dir = (page_directory_t*)PHYS_TO_VIRT((uintptr_t)new_space);
+    protect_directory_range(new_dir, KERNEL_PDE_START, KERNEL_PDE_END);
+    register_page_directory((uintptr_t)new_space);
+#endif
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-    return (uintptr_t)dir_phys;
-#endif /* !ARCH_X86_64 */
+    return (uintptr_t)new_space;
 }
 
 /**
@@ -658,13 +739,28 @@ uintptr_t vmm_create_page_directory(void) {
  * - 父子进程共享物理页，但页表是独立的
  * - 共享的可写页面被标记为只读 + COW
  * - 首次写入时触发 page fault，由 vmm_handle_cow_page_fault 处理
+ * 
+ * 使用 HAL MMU 接口实现跨架构地址空间克隆
  */
 uintptr_t vmm_clone_page_directory(uintptr_t src_dir_phys) {
 #if defined(ARCH_X86_64)
-    // x86_64: 暂不支持克隆页目录
-    (void)src_dir_phys;
-    LOG_WARN_MSG("VMM: vmm_clone_page_directory not implemented for x86_64\n");
-    return 0;
+    // x86_64: 使用 HAL 接口克隆地址空间
+    bool irq_state;
+    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    
+    hal_addr_space_t src_space = (src_dir_phys == 0) 
+                                 ? HAL_ADDR_SPACE_CURRENT 
+                                 : (hal_addr_space_t)src_dir_phys;
+    
+    hal_addr_space_t new_space = hal_mmu_clone_space(src_space);
+    
+    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+    
+    if (new_space == HAL_ADDR_SPACE_INVALID) {
+        return 0;
+    }
+    
+    return (uintptr_t)new_space;
 #else
     // 【安全检查】验证源页目录地址有效
     if (!src_dir_phys || src_dir_phys >= 0x80000000) {
@@ -855,13 +951,28 @@ static bool is_page_directory_in_use(uintptr_t dir_phys) {
  * @param dir_phys 页目录的物理地址
  * 
  * 注意：由于 fork 现在使用深拷贝，所以需要释放所有物理页
+ * 
+ * 使用 HAL MMU 接口实现跨架构地址空间销毁
  */
 void vmm_free_page_directory(uintptr_t dir_phys) {
     if (!dir_phys) return;
     
 #if defined(ARCH_X86_64)
-    // x86_64: 暂不支持释放页目录
-    LOG_WARN_MSG("VMM: vmm_free_page_directory not implemented for x86_64\n");
+    // x86_64: 使用 HAL 接口销毁地址空间
+    
+    // 【安全检查】防止释放当前正在使用的页目录
+    if (dir_phys == current_dir_phys) {
+        LOG_ERROR_MSG("vmm_free_page_directory: BLOCKED! Attempting to free current page directory 0x%llx!\n", 
+                     (unsigned long long)dir_phys);
+        return;
+    }
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    
+    hal_mmu_destroy_space((hal_addr_space_t)dir_phys);
+    
+    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
     return;
 #else
     LOG_INFO_MSG("vmm_free_page_directory: Attempting to free page directory 0x%lx\n", (unsigned long)dir_phys);
@@ -1026,70 +1137,37 @@ void vmm_switch_page_directory(uintptr_t dir_phys) {
  * @param phys 物理地址
  * @param flags 页标志
  * @return 成功返回 true，失败返回 false
+ * 
+ * 使用 HAL MMU 接口实现跨架构页面映射
  */
 bool vmm_map_page_in_directory(uintptr_t dir_phys, uintptr_t virt, 
                                 uintptr_t phys, uint32_t flags) {
-#if defined(ARCH_X86_64)
-    // x86_64: 暂不支持
-    (void)dir_phys; (void)virt; (void)phys; (void)flags;
-    return false;
-#else
     // 检查页对齐
     if ((virt | phys) & (PAGE_SIZE-1)) return false;
     
     bool irq_state;
     spinlock_lock_irqsave(&vmm_lock, &irq_state);
     
-    page_directory_t *dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
+    // 转换为 HAL 标志
+    uint32_t hal_flags = vmm_flags_to_hal(flags);
     
-    uint32_t pd = pde_idx(virt);
-    uint32_t pt = pte_idx(virt);
+    // 使用 HAL 接口映射页面
+    hal_addr_space_t space = (dir_phys == current_dir_phys) 
+                             ? HAL_ADDR_SPACE_CURRENT 
+                             : (hal_addr_space_t)dir_phys;
     
-    pde_t *pde = &dir->entries[pd];
-    page_table_t *table;
-    
-    // 如果页表不存在，创建新页表
-    if (!is_present(*pde)) {
-        paddr_t table_phys = pmm_alloc_frame();
-        if (table_phys == PADDR_INVALID) {
-            spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-            return false;
-        }
-        
-        table = (page_table_t*)PHYS_TO_VIRT((uintptr_t)table_phys);
-        memset(table, 0, sizeof(page_table_t));
-        
-        // 权限逻辑同上：如果是内核空间地址，不加 PAGE_USER
-        uint32_t pde_flags = PAGE_PRESENT | PAGE_WRITE;
-        if (virt < KERNEL_VIRTUAL_BASE) {
-            pde_flags |= PAGE_USER;
-        }
-
-        *pde = (uint32_t)table_phys | pde_flags;
-        protect_phys_frame(table_phys);
-    } else {
-        table = (page_table_t*)PHYS_TO_VIRT((uintptr_t)get_frame(*pde));
-    }
-    
-    // 设置页表项
-    table->entries[pt] = phys | flags;
+    bool result = hal_mmu_map(space, (vaddr_t)virt, (paddr_t)phys, hal_flags);
     
     // 如果是当前页目录，刷新 TLB
-    if (dir_phys == current_dir_phys) {
-        vmm_flush_tlb(virt);
+    if (result && dir_phys == current_dir_phys) {
+        hal_mmu_flush_tlb((vaddr_t)virt);
     }
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-    return true;
-#endif
+    return result;
 }
 
 uintptr_t vmm_unmap_page_in_directory(uintptr_t dir_phys, uintptr_t virt) {
-#if defined(ARCH_X86_64)
-    // x86_64: 暂不支持
-    (void)dir_phys; (void)virt;
-    return 0;
-#else
     if (virt & (PAGE_SIZE - 1)) {
         return 0;
     }
@@ -1097,61 +1175,27 @@ uintptr_t vmm_unmap_page_in_directory(uintptr_t dir_phys, uintptr_t virt) {
     bool irq_state;
     spinlock_lock_irqsave(&vmm_lock, &irq_state);
 
-    page_directory_t *dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
-    uint32_t pd = pde_idx(virt);
-    uint32_t pt = pte_idx(virt);
-
-    pde_t *pde = &dir->entries[pd];
-    if (!is_present(*pde)) {
+    // 使用 HAL 接口查询原物理地址
+    hal_addr_space_t space = (dir_phys == current_dir_phys) 
+                             ? HAL_ADDR_SPACE_CURRENT 
+                             : (hal_addr_space_t)dir_phys;
+    
+    paddr_t old_phys;
+    if (!hal_mmu_query(space, (vaddr_t)virt, &old_phys, NULL)) {
         spinlock_unlock_irqrestore(&vmm_lock, irq_state);
         return 0;
     }
 
-    page_table_t *table = (page_table_t*)PHYS_TO_VIRT(get_frame(*pde));
-    uint32_t old_entry = table->entries[pt];
-    if (!is_present(old_entry)) {
-        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-        return 0;
+    // 使用 HAL 接口取消映射
+    hal_mmu_unmap(space, (vaddr_t)virt);
+
+    // 如果是当前页目录，刷新 TLB
+    if (dir_phys == current_dir_phys) {
+        hal_mmu_flush_tlb((vaddr_t)virt);
     }
 
-    table->entries[pt] = 0;
-
-    // 检查页表是否为空（所有条目都为0）
-    bool empty = true;
-    for (uint32_t i = 0; i < 1024; i++) {
-        if (is_present(table->entries[i])) {
-            empty = false;
-            break;
-        }
-    }
-
-    if (empty) {
-        paddr_t table_frame = get_frame(*pde);
-        if (table_frame == 0) {
-            LOG_ERROR_MSG("vmm_unmap_page_in_directory: PDE %u has zero frame, skipping free\n", pd);
-        } else {
-            unprotect_phys_frame(table_frame);
-            pmm_free_frame(table_frame);
-        }
-        *pde = 0;
-        LOG_DEBUG_MSG("  Page table at PDE %u (frame=0x%llx) is empty, freed\n", pd, (unsigned long long)table_frame);
-        
-        // 如果页表被释放，需要刷新整个 TLB，因为 PDE 变了
-        if (dir_phys == current_dir_phys) {
-            vmm_flush_tlb(0);
-        }
-    } else {
-        LOG_DEBUG_MSG("  Page table at PDE %u still has entries\n", pd);
-        // 只有当页表没有被释放时，才只需要刷新单个页面的 TLB
-        if (dir_phys == current_dir_phys) {
-            vmm_flush_tlb(virt);
-        }
-    }
-
-    uintptr_t result = get_frame(old_entry);
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-    return result;
-#endif /* !ARCH_X86_64 */
+    return (uintptr_t)old_phys;
 }
 
 /* ============================================================================
@@ -1179,14 +1223,10 @@ static bool pat_initialized = false;
  * @param phys_addr 物理地址
  * @param size 映射大小（字节）
  * @return 成功返回映射的虚拟地址，失败返回 0
+ * 
+ * 使用 HAL MMU 接口实现跨架构 MMIO 映射
  */
 uintptr_t vmm_map_mmio(uintptr_t phys_addr, size_t size) {
-#if defined(ARCH_X86_64)
-    // x86_64: 暂不支持 MMIO 映射
-    (void)phys_addr; (void)size;
-    LOG_WARN_MSG("VMM: vmm_map_mmio not implemented for x86_64\n");
-    return 0;
-#else
     if (size == 0) {
         return 0;
     }
@@ -1195,56 +1235,35 @@ uintptr_t vmm_map_mmio(uintptr_t phys_addr, size_t size) {
     spinlock_lock_irqsave(&vmm_lock, &irq_state);
     
     // 计算需要的页数（向上取整）
-    uint32_t phys_start = PAGE_ALIGN_DOWN(phys_addr);
-    uint32_t phys_end = PAGE_ALIGN_UP(phys_addr + size);
+    uintptr_t phys_start = PAGE_ALIGN_DOWN(phys_addr);
+    uintptr_t phys_end = PAGE_ALIGN_UP(phys_addr + size);
     uint32_t num_pages = (phys_end - phys_start) / PAGE_SIZE;
     
     // 分配虚拟地址空间
-    uint32_t virt_start = mmio_next_virt;
+    uintptr_t virt_start = mmio_next_virt;
     if (virt_start + num_pages * PAGE_SIZE > MMIO_VIRT_END) {
         LOG_ERROR_MSG("vmm_map_mmio: No more MMIO virtual address space\n");
         spinlock_unlock_irqrestore(&vmm_lock, irq_state);
         return 0;
     }
     
-    // 映射所有页面（禁用缓存）
-    uint32_t flags = PAGE_PRESENT | PAGE_WRITE | PAGE_CACHE_DISABLE | PAGE_WRITE_THROUGH;
+    // 使用 HAL 标志：PRESENT + WRITE + NOCACHE
+    uint32_t hal_flags = HAL_PAGE_PRESENT | HAL_PAGE_WRITE | HAL_PAGE_NOCACHE;
     
     for (uint32_t i = 0; i < num_pages; i++) {
-        uint32_t virt = virt_start + i * PAGE_SIZE;
-        uint32_t phys = phys_start + i * PAGE_SIZE;
+        uintptr_t virt = virt_start + i * PAGE_SIZE;
+        uintptr_t phys = phys_start + i * PAGE_SIZE;
         
-        uint32_t pd = pde_idx(virt);
-        uint32_t pt = pte_idx(virt);
-        
-        pde_t *pde = &current_dir->entries[pd];
-        page_table_t *table;
-        
-        // 如果页表不存在，创建新页表
-        if (!is_present(*pde)) {
-            table = create_page_table();
-            if (!table) {
-                // 回滚已映射的页面
-                for (uint32_t j = 0; j < i; j++) {
-                    vmm_unmap_page(virt_start + j * PAGE_SIZE);
-                }
-                spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-                return 0;
+        // 使用 HAL 接口映射页面
+        if (!hal_mmu_map(HAL_ADDR_SPACE_CURRENT, (vaddr_t)virt, (paddr_t)phys, hal_flags)) {
+            // 回滚已映射的页面
+            for (uint32_t j = 0; j < i; j++) {
+                hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, (vaddr_t)(virt_start + j * PAGE_SIZE));
             }
-            paddr_t table_phys = VIRT_TO_PHYS((uintptr_t)table);
-            *pde = (uint32_t)table_phys | PAGE_PRESENT | PAGE_WRITE;
-            protect_phys_frame(table_phys);
-            
-            // 同步到主内核页目录
-            page_directory_t *k_dir = (page_directory_t *)boot_page_directory;
-            k_dir->entries[pd] = *pde;
-        } else {
-            table = (page_table_t*)PHYS_TO_VIRT((uintptr_t)get_frame(*pde));
+            spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+            return 0;
         }
-        
-        // 设置页表项
-        table->entries[pt] = phys | flags;
-        vmm_flush_tlb(virt);
+        hal_mmu_flush_tlb((vaddr_t)virt);
     }
     
     // 更新下一个可用的 MMIO 虚拟地址
@@ -1259,20 +1278,16 @@ uintptr_t vmm_map_mmio(uintptr_t phys_addr, size_t size) {
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
     return result;
-#endif /* !ARCH_X86_64 */
 }
 
 /**
  * @brief 取消 MMIO 区域映射
  * @param virt_addr 虚拟地址
  * @param size 映射大小（字节）
+ * 
+ * 使用 HAL MMU 接口实现跨架构 MMIO 取消映射
  */
 void vmm_unmap_mmio(uintptr_t virt_addr, size_t size) {
-#if defined(ARCH_X86_64)
-    // x86_64: 暂不支持
-    (void)virt_addr; (void)size;
-    return;
-#else
     if (size == 0 || virt_addr < MMIO_VIRT_BASE || virt_addr >= MMIO_VIRT_END) {
         return;
     }
@@ -1280,72 +1295,41 @@ void vmm_unmap_mmio(uintptr_t virt_addr, size_t size) {
     bool irq_state;
     spinlock_lock_irqsave(&vmm_lock, &irq_state);
     
-    uint32_t virt_start = PAGE_ALIGN_DOWN(virt_addr);
-    uint32_t virt_end = PAGE_ALIGN_UP(virt_addr + size);
+    uintptr_t virt_start = PAGE_ALIGN_DOWN(virt_addr);
+    uintptr_t virt_end = PAGE_ALIGN_UP(virt_addr + size);
     
-    for (uint32_t virt = virt_start; virt < virt_end; virt += PAGE_SIZE) {
-        uint32_t pd = pde_idx(virt);
-        uint32_t pt = pte_idx(virt);
-        
-        pde_t *pde = &current_dir->entries[pd];
-        if (!is_present(*pde)) {
-            continue;
-        }
-        
-        page_table_t *table = (page_table_t*)PHYS_TO_VIRT(get_frame(*pde));
-        table->entries[pt] = 0;
-        vmm_flush_tlb(virt);
+    for (uintptr_t virt = virt_start; virt < virt_end; virt += PAGE_SIZE) {
+        hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, (vaddr_t)virt);
+        hal_mmu_flush_tlb((vaddr_t)virt);
     }
     
     LOG_INFO_MSG("vmm_unmap_mmio: unmapped virt 0x%lx size 0x%lx\n", (unsigned long)virt_addr, (unsigned long)size);
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-#endif /* !ARCH_X86_64 */
 }
 
 /**
  * @brief 通过查询页表获取虚拟地址对应的物理地址
  * @param virt 虚拟地址
  * @return 物理地址，如果虚拟地址未映射则返回 0
+ * 
+ * 使用 HAL MMU 接口实现跨架构地址转换
  */
 uintptr_t vmm_virt_to_phys(uintptr_t virt) {
-#if defined(ARCH_X86_64)
-    // x86_64: 对于高半核地址，使用简单的线性映射
-    if (virt >= KERNEL_VIRTUAL_BASE) {
-        return VIRT_TO_PHYS(virt);
-    }
-    // 用户空间地址暂不支持
-    return 0;
-#else
     bool irq_state;
     spinlock_lock_irqsave(&vmm_lock, &irq_state);
     
-    uint32_t pd = pde_idx(virt);
-    uint32_t pt = pte_idx(virt);
-    
-    // 检查页目录项是否存在
-    pde_t pde = current_dir->entries[pd];
-    if (!is_present(pde)) {
-        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-        return 0;
-    }
-    
-    // 获取页表
-    page_table_t *table = (page_table_t*)PHYS_TO_VIRT(get_frame(pde));
-    
-    // 检查页表项是否存在
-    pte_t pte = table->entries[pt];
-    if (!is_present(pte)) {
+    paddr_t phys;
+    if (!hal_mmu_query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)virt, &phys, NULL)) {
         spinlock_unlock_irqrestore(&vmm_lock, irq_state);
         return 0;
     }
     
     // 物理地址 = 页帧地址 + 页内偏移
-    uintptr_t phys = get_frame(pte) | (virt & 0xFFF);
+    uintptr_t result = (uintptr_t)phys | (virt & (PAGE_SIZE - 1));
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-    return phys;
-#endif
+    return result;
 }
 
 /* ============================================================================
@@ -1445,14 +1429,10 @@ void vmm_init_pat(void) {
  * 
  * 使用 PAT[7] = WC 模式，需要设置 PAT=1, PCD=1, PWT=1
  * 如果 PAT 不可用，回退到 UC 模式
+ * 
+ * 使用 HAL MMU 接口实现跨架构帧缓冲映射
  */
 uintptr_t vmm_map_framebuffer(uintptr_t phys_addr, size_t size) {
-#if defined(ARCH_X86_64)
-    // x86_64: 暂不支持帧缓冲映射
-    (void)phys_addr; (void)size;
-    LOG_WARN_MSG("VMM: vmm_map_framebuffer not implemented for x86_64\n");
-    return 0;
-#else
     if (size == 0) {
         return 0;
     }
@@ -1473,15 +1453,15 @@ uintptr_t vmm_map_framebuffer(uintptr_t phys_addr, size_t size) {
         return 0;
     }
     
-    // 根据 PAT 是否可用选择页标志
-    uint32_t flags;
+    // 根据 PAT 是否可用选择 HAL 标志
+    uint32_t hal_flags;
     if (pat_initialized) {
-        // PAT[7] = WC：需要 PAT=1, PCD=1, PWT=1
-        flags = PAGE_PRESENT | PAGE_WRITE | PAGE_PAT | PAGE_CACHE_DISABLE | PAGE_WRITE_THROUGH;
+        // Write-Combining 模式
+        hal_flags = HAL_PAGE_PRESENT | HAL_PAGE_WRITE | HAL_PAGE_WRITECOMB;
         LOG_INFO_MSG("vmm_map_framebuffer: using Write-Combining mode\n");
     } else {
         // 回退到 UC 模式
-        flags = PAGE_PRESENT | PAGE_WRITE | PAGE_CACHE_DISABLE | PAGE_WRITE_THROUGH;
+        hal_flags = HAL_PAGE_PRESENT | HAL_PAGE_WRITE | HAL_PAGE_NOCACHE;
         LOG_WARN_MSG("vmm_map_framebuffer: PAT not available, using UC mode\n");
     }
     
@@ -1489,37 +1469,16 @@ uintptr_t vmm_map_framebuffer(uintptr_t phys_addr, size_t size) {
         uintptr_t virt = virt_start + i * PAGE_SIZE;
         uintptr_t phys = phys_start + i * PAGE_SIZE;
         
-        uint32_t pd = pde_idx(virt);
-        uint32_t pt = pte_idx(virt);
-        
-        pde_t *pde = &current_dir->entries[pd];
-        page_table_t *table;
-        
-        // 如果页表不存在，创建新页表
-        if (!is_present(*pde)) {
-            table = create_page_table();
-            if (!table) {
-                // 回滚已映射的页面
-                for (uint32_t j = 0; j < i; j++) {
-                    vmm_unmap_page(virt_start + j * PAGE_SIZE);
-                }
-                spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-                return 0;
+        // 使用 HAL 接口映射页面
+        if (!hal_mmu_map(HAL_ADDR_SPACE_CURRENT, (vaddr_t)virt, (paddr_t)phys, hal_flags)) {
+            // 回滚已映射的页面
+            for (uint32_t j = 0; j < i; j++) {
+                hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, (vaddr_t)(virt_start + j * PAGE_SIZE));
             }
-            paddr_t table_phys = VIRT_TO_PHYS((uintptr_t)table);
-            *pde = (uint32_t)table_phys | PAGE_PRESENT | PAGE_WRITE;
-            protect_phys_frame(table_phys);
-            
-            // 同步到主内核页目录
-            page_directory_t *k_dir = (page_directory_t *)boot_page_directory;
-            k_dir->entries[pd] = *pde;
-        } else {
-            table = (page_table_t*)PHYS_TO_VIRT((uintptr_t)get_frame(*pde));
+            spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+            return 0;
         }
-        
-        // 设置页表项
-        table->entries[pt] = phys | flags;
-        vmm_flush_tlb(virt);
+        hal_mmu_flush_tlb((vaddr_t)virt);
     }
     
     // 更新下一个可用的 MMIO 虚拟地址
@@ -1534,5 +1493,4 @@ uintptr_t vmm_map_framebuffer(uintptr_t phys_addr, size_t size) {
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
     return result;
-#endif /* !ARCH_X86_64 */
 }

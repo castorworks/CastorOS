@@ -93,85 +93,85 @@
     - **Property 9: Address Space Switch Consistency**
     - **Validates: Requirements 4.5**
 
-- [ ] 8. Checkpoint - 验证 i686 HAL MMU
+- [x] 8. Checkpoint - 验证 i686 HAL MMU
   - Ensure all tests pass, ask the user if questions arise.
 
 
 ## Phase 4: x86_64 完整 VMM 实现
 
-- [ ] 9. 实现 x86_64 动态页表操作
-  - [ ] 9.1 更新 `src/arch/x86_64/mm/paging64.c`
+- [x] 9. 实现 x86_64 动态页表操作
+  - [x] 9.1 更新 `src/arch/x86_64/mm/paging64.c`
     - 实现 `hal_mmu_map()` 4 级页表映射
     - 实现 `hal_mmu_unmap()` 取消映射
     - 实现 `hal_mmu_query()` 页表查询
     - 实现 `hal_mmu_protect()` 修改页属性
     - _Requirements: 5.1_
-  - [ ] 9.2 Write property test for x86_64 map-query
+  - [x] 9.2 Write property test for x86_64 map-query
     - **Property 8: HAL MMU Map-Query Round-Trip (x86_64)**
     - **Validates: Requirements 5.1**
 
-- [ ] 10. 实现 x86_64 地址空间管理
-  - [ ] 10.1 实现 `hal_mmu_create_space()` for x86_64
+- [x] 10. 实现 x86_64 地址空间管理
+  - [x] 10.1 实现 `hal_mmu_create_space()` for x86_64
     - 分配 PML4
     - 复制内核空间映射 (PML4[256..511])
     - _Requirements: 5.2_
-  - [ ] 10.2 实现 `hal_mmu_clone_space()` for x86_64
+  - [x] 10.2 实现 `hal_mmu_clone_space()` for x86_64
     - 实现 COW 语义
     - 复制用户空间页表结构
     - 共享物理页并设置只读
     - _Requirements: 5.3_
-  - [ ] 10.3 实现 `hal_mmu_destroy_space()` for x86_64
+  - [x] 10.3 实现 `hal_mmu_destroy_space()` for x86_64
     - 释放所有用户空间页表
     - 递减共享物理页引用计数
     - _Requirements: 5.5_
-  - [ ] 10.4 Write property test for x86_64 COW
+  - [x] 10.4 Write property test for x86_64 COW
     - **Property 10: COW Clone Shares Physical Pages**
     - **Property 11: COW Write Triggers Copy**
     - **Validates: Requirements 5.3**
-  - [ ] 10.5 Write property test for x86_64 space destruction
+  - [x] 10.5 Write property test for x86_64 space destruction
     - **Property 15: Address Space Destruction Frees Memory**
     - **Validates: Requirements 5.5**
 
-- [ ] 11. 实现 x86_64 页错误处理
-  - [ ] 11.1 实现 `hal_mmu_parse_fault()` for x86_64
+- [x] 11. 实现 x86_64 页错误处理
+  - [x] 11.1 实现 `hal_mmu_parse_fault()` for x86_64
     - 解析 CR2 和错误码
     - 填充 `hal_page_fault_info_t`
     - _Requirements: 5.4_
-  - [ ] 11.2 更新 `vmm_handle_cow_page_fault()` 支持 x86_64
+  - [x] 11.2 更新 `vmm_handle_cow_page_fault()` 支持 x86_64
     - 移除 `#if defined(ARCH_X86_64)` stub
     - 使用 HAL 接口实现通用 COW 处理
     - _Requirements: 5.4_
 
-- [ ] 12. Checkpoint - 验证 x86_64 VMM
+- [x] 12. Checkpoint - 验证 x86_64 VMM
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Phase 5: VMM 通用层重构
 
-- [ ] 13. 重构 VMM 使用 HAL 接口
-  - [ ] 13.1 更新 `src/mm/vmm.c`
+- [x] 13. 重构 VMM 使用 HAL 接口
+  - [x] 13.1 更新 `src/mm/vmm.c`
     - 移除架构特定条件编译
     - 使用 `hal_mmu_*` 接口替代直接页表操作
     - 统一 `vmm_map_page()` 实现
     - 统一 `vmm_create_page_directory()` 实现
     - 统一 `vmm_clone_page_directory()` 实现
     - _Requirements: 4.1, 4.2, 4.4_
-  - [ ] 13.2 Write property test for kernel space sharing
+  - [x] 13.2 Write property test for kernel space sharing
     - **Property 12: Kernel Space Shared Across Address Spaces**
     - **Validates: Requirements 7.2**
-  - [ ] 13.3 Write property test for user mapping flags
+  - [x] 13.3 Write property test for user mapping flags
     - **Property 13: User Mapping Has User Flag**
     - **Validates: Requirements 7.3**
 
-- [ ] 14. 实现 MMIO 映射
-  - [ ] 14.1 更新 `vmm_map_mmio()` 使用 HAL 接口
+- [x] 14. 实现 MMIO 映射
+  - [x] 14.1 更新 `vmm_map_mmio()` 使用 HAL 接口
     - 使用 `HAL_PTE_NOCACHE` 标志
     - 支持所有架构
     - _Requirements: 9.1, 9.2_
-  - [ ] 14.2 Write property test for MMIO flags
+  - [x] 14.2 Write property test for MMIO flags
     - **Property 14: MMIO Mapping Has No-Cache Flag**
     - **Validates: Requirements 9.1**
 
-- [ ] 15. Checkpoint - 验证 VMM 重构
+- [x] 15. Checkpoint - 验证 VMM 重构
   - Ensure all tests pass, ask the user if questions arise.
 
 

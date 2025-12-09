@@ -134,7 +134,7 @@ void hal_mmu_flush_tlb_all(void) {
  * @brief 切换地址空间 (x86_64)
  * @param page_table_phys 新 PML4 的物理地址
  */
-void hal_mmu_switch_space(uintptr_t page_table_phys) {
+void hal_mmu_switch_space(paddr_t page_table_phys) {
     __asm__ volatile("mov %0, %%cr3" : : "r"((uint64_t)page_table_phys) : "memory");
 }
 
@@ -142,20 +142,20 @@ void hal_mmu_switch_space(uintptr_t page_table_phys) {
  * @brief 获取页错误地址 (x86_64)
  * @return CR2 寄存器中的错误地址
  */
-uintptr_t hal_mmu_get_fault_addr(void) {
+vaddr_t hal_mmu_get_fault_addr(void) {
     uint64_t fault_addr;
     __asm__ volatile("mov %%cr2, %0" : "=r"(fault_addr));
-    return (uintptr_t)fault_addr;
+    return (vaddr_t)fault_addr;
 }
 
 /**
  * @brief 获取当前 PML4 物理地址 (x86_64)
  * @return CR3 寄存器的值
  */
-uintptr_t hal_mmu_get_current_page_table(void) {
+paddr_t hal_mmu_get_current_page_table(void) {
     uint64_t cr3;
     __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
-    return (uintptr_t)cr3;
+    return (paddr_t)cr3;
 }
 
 /**
@@ -370,5 +370,873 @@ const char* x86_64_page_fault_type_str(uint64_t error_code) {
                              : "Kernel read protection violation";
         }
     }
+}
+
+
+/* ============================================================================
+ * HAL MMU 扩展接口实现 - x86_64
+ * 
+ * 实现 Requirements 4.1, 4.3, 5.1
+ * ========================================================================== */
+
+#include <mm/pmm.h>
+#include <mm/mm_types.h>
+
+/**
+ * @brief 获取当前地址空间 (x86_64)
+ * @return 当前 PML4 的物理地址
+ * 
+ * @see Requirements 4.5
+ */
+hal_addr_space_t hal_mmu_current_space(void) {
+    return (hal_addr_space_t)hal_mmu_get_current_page_table();
+}
+
+/**
+ * @brief 将 HAL 页标志转换为 x86_64 页表项标志
+ * @param hal_flags HAL 页标志 (HAL_PAGE_*)
+ * @return x86_64 页表项标志
+ */
+static uint64_t hal_flags_to_x64(uint32_t hal_flags) {
+    uint64_t x64_flags = 0;
+    
+    if (hal_flags & HAL_PAGE_PRESENT)   x64_flags |= PTE64_PRESENT;
+    if (hal_flags & HAL_PAGE_WRITE)     x64_flags |= PTE64_WRITE;
+    if (hal_flags & HAL_PAGE_USER)      x64_flags |= PTE64_USER;
+    if (hal_flags & HAL_PAGE_NOCACHE)   x64_flags |= PTE64_CACHE_DISABLE;
+    if (hal_flags & HAL_PAGE_COW)       x64_flags |= PTE64_COW;
+    if (!(hal_flags & HAL_PAGE_EXEC))   x64_flags |= PTE64_NX;  /* NX = not executable */
+    /* HAL_PAGE_DIRTY/ACCESSED: set by hardware, not by software */
+    
+    return x64_flags;
+}
+
+/**
+ * @brief 将 x86_64 页表项标志转换为 HAL 页标志
+ * @param x64_flags x86_64 页表项标志
+ * @return HAL 页标志 (HAL_PAGE_*)
+ */
+static uint32_t x64_flags_to_hal(uint64_t x64_flags) {
+    uint32_t hal_flags = 0;
+    
+    if (x64_flags & PTE64_PRESENT)       hal_flags |= HAL_PAGE_PRESENT;
+    if (x64_flags & PTE64_WRITE)         hal_flags |= HAL_PAGE_WRITE;
+    if (x64_flags & PTE64_USER)          hal_flags |= HAL_PAGE_USER;
+    if (x64_flags & PTE64_CACHE_DISABLE) hal_flags |= HAL_PAGE_NOCACHE;
+    if (x64_flags & PTE64_COW)           hal_flags |= HAL_PAGE_COW;
+    if (x64_flags & PTE64_DIRTY)         hal_flags |= HAL_PAGE_DIRTY;
+    if (x64_flags & PTE64_ACCESSED)      hal_flags |= HAL_PAGE_ACCESSED;
+    if (!(x64_flags & PTE64_NX))         hal_flags |= HAL_PAGE_EXEC;
+    
+    return hal_flags;
+}
+
+/**
+ * @brief 获取指定地址空间的 PML4 虚拟地址
+ * @param space 地址空间句柄 (HAL_ADDR_SPACE_CURRENT 表示当前)
+ * @return PML4 的虚拟地址
+ */
+static pte64_t* get_pml4(hal_addr_space_t space) {
+    paddr_t pml4_phys;
+    
+    if (space == HAL_ADDR_SPACE_CURRENT || space == 0) {
+        pml4_phys = hal_mmu_get_current_page_table();
+    } else {
+        pml4_phys = space;
+    }
+    
+    return (pte64_t*)PADDR_TO_KVADDR(pml4_phys);
+}
+
+/**
+ * @brief 分配并清零一个页表页
+ * @return 物理地址，失败返回 PADDR_INVALID
+ */
+static paddr_t alloc_page_table(void) {
+    paddr_t frame = pmm_alloc_frame();
+    if (frame == PADDR_INVALID) {
+        return PADDR_INVALID;
+    }
+    
+    /* Clear the page table */
+    void *virt = (void*)PADDR_TO_KVADDR(frame);
+    memset(virt, 0, PAGE_SIZE);
+    
+    return frame;
+}
+
+/**
+ * @brief 查询虚拟地址映射 (x86_64)
+ * 
+ * 遍历 4 级页表结构 (PML4 -> PDPT -> PD -> PT)，
+ * 获取虚拟地址对应的物理地址和标志。
+ * 
+ * @param space 地址空间句柄 (HAL_ADDR_SPACE_CURRENT 表示当前)
+ * @param virt 虚拟地址
+ * @param[out] phys 物理地址 (可为 NULL)
+ * @param[out] flags HAL 页标志 (可为 NULL)
+ * @return true 如果映射存在，false 如果未映射
+ * 
+ * @see Requirements 4.1, 5.1
+ */
+bool hal_mmu_query(hal_addr_space_t space, vaddr_t virt, paddr_t *phys, uint32_t *flags) {
+    /* Validate canonical address */
+    if (!x86_64_is_canonical_address((uint64_t)virt)) {
+        return false;
+    }
+    
+    pte64_t *pml4 = get_pml4(space);
+    
+    /* Get indices for each level */
+    uint64_t pml4_idx = pml4_index((uint64_t)virt);
+    uint64_t pdpt_idx = pdpt_index((uint64_t)virt);
+    uint64_t pd_idx = pd_index((uint64_t)virt);
+    uint64_t pt_idx = pt_index((uint64_t)virt);
+    
+    /* Level 4: PML4 */
+    pte64_t pml4e = pml4[pml4_idx];
+    if (!pte64_is_present(pml4e)) {
+        return false;
+    }
+    
+    /* Level 3: PDPT */
+    pte64_t *pdpt = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pml4e));
+    pte64_t pdpte = pdpt[pdpt_idx];
+    if (!pte64_is_present(pdpte)) {
+        return false;
+    }
+    
+    /* Check for 1GB huge page */
+    if (pte64_is_huge(pdpte)) {
+        if (phys != NULL) {
+            /* 1GB page: bits 29:0 are offset */
+            *phys = pte64_get_frame(pdpte) | ((uint64_t)virt & 0x3FFFFFFFULL);
+        }
+        if (flags != NULL) {
+            *flags = x64_flags_to_hal(pdpte);
+        }
+        return true;
+    }
+    
+    /* Level 2: PD */
+    pte64_t *pd = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pdpte));
+    pte64_t pde = pd[pd_idx];
+    if (!pte64_is_present(pde)) {
+        return false;
+    }
+    
+    /* Check for 2MB huge page */
+    if (pte64_is_huge(pde)) {
+        if (phys != NULL) {
+            /* 2MB page: bits 20:0 are offset */
+            *phys = pte64_get_frame(pde) | ((uint64_t)virt & 0x1FFFFFULL);
+        }
+        if (flags != NULL) {
+            *flags = x64_flags_to_hal(pde);
+        }
+        return true;
+    }
+    
+    /* Level 1: PT */
+    pte64_t *pt = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pde));
+    pte64_t pte = pt[pt_idx];
+    if (!pte64_is_present(pte)) {
+        return false;
+    }
+    
+    /* Extract physical address and flags */
+    if (phys != NULL) {
+        *phys = pte64_get_frame(pte);
+    }
+    
+    if (flags != NULL) {
+        *flags = x64_flags_to_hal(pte);
+    }
+    
+    return true;
+}
+
+/**
+ * @brief 映射虚拟页到物理页 (x86_64)
+ * 
+ * 在 4 级页表中创建映射，自动分配中间页表级别。
+ * 
+ * @param space 地址空间句柄 (HAL_ADDR_SPACE_CURRENT 表示当前)
+ * @param virt 虚拟地址 (必须页对齐)
+ * @param phys 物理地址 (必须页对齐)
+ * @param flags HAL 页标志
+ * @return true 成功，false 失败
+ * 
+ * @note 调用者需要在映射后调用 hal_mmu_flush_tlb()
+ * 
+ * @see Requirements 4.1, 5.1
+ */
+bool hal_mmu_map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags) {
+    /* Validate addresses */
+    if (!IS_VADDR_ALIGNED(virt) || !IS_PADDR_ALIGNED(phys)) {
+        LOG_ERROR_MSG("hal_mmu_map: addresses not page-aligned\n");
+        return false;
+    }
+    
+    if (!x86_64_is_canonical_address((uint64_t)virt)) {
+        LOG_ERROR_MSG("hal_mmu_map: non-canonical address\n");
+        return false;
+    }
+    
+    pte64_t *pml4 = get_pml4(space);
+    
+    /* Get indices for each level */
+    uint64_t pml4_idx = pml4_index((uint64_t)virt);
+    uint64_t pdpt_idx = pdpt_index((uint64_t)virt);
+    uint64_t pd_idx = pd_index((uint64_t)virt);
+    uint64_t pt_idx = pt_index((uint64_t)virt);
+    
+    /* Convert HAL flags to x86_64 flags */
+    uint64_t x64_flags = hal_flags_to_x64(flags);
+    
+    /* Intermediate table flags: present, writable, user (if user page) */
+    uint64_t table_flags = PTE64_PRESENT | PTE64_WRITE;
+    if (flags & HAL_PAGE_USER) {
+        table_flags |= PTE64_USER;
+    }
+    
+    /* Level 4: PML4 -> PDPT */
+    pte64_t *pdpt;
+    if (!pte64_is_present(pml4[pml4_idx])) {
+        paddr_t pdpt_phys = alloc_page_table();
+        if (pdpt_phys == PADDR_INVALID) {
+            return false;
+        }
+        pml4[pml4_idx] = pdpt_phys | table_flags;
+    }
+    pdpt = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pml4[pml4_idx]));
+    
+    /* Level 3: PDPT -> PD */
+    pte64_t *pd;
+    if (!pte64_is_present(pdpt[pdpt_idx])) {
+        paddr_t pd_phys = alloc_page_table();
+        if (pd_phys == PADDR_INVALID) {
+            return false;
+        }
+        pdpt[pdpt_idx] = pd_phys | table_flags;
+    } else if (pte64_is_huge(pdpt[pdpt_idx])) {
+        /* Cannot map 4KB page over 1GB huge page */
+        LOG_ERROR_MSG("hal_mmu_map: cannot map over 1GB huge page\n");
+        return false;
+    }
+    pd = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pdpt[pdpt_idx]));
+    
+    /* Level 2: PD -> PT */
+    pte64_t *pt;
+    if (!pte64_is_present(pd[pd_idx])) {
+        paddr_t pt_phys = alloc_page_table();
+        if (pt_phys == PADDR_INVALID) {
+            return false;
+        }
+        pd[pd_idx] = pt_phys | table_flags;
+    } else if (pte64_is_huge(pd[pd_idx])) {
+        /* Cannot map 4KB page over 2MB huge page */
+        LOG_ERROR_MSG("hal_mmu_map: cannot map over 2MB huge page\n");
+        return false;
+    }
+    pt = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pd[pd_idx]));
+    
+    /* Level 1: PT entry */
+    pt[pt_idx] = phys | x64_flags;
+    
+    return true;
+}
+
+/**
+ * @brief 取消虚拟页映射 (x86_64)
+ * 
+ * @param space 地址空间句柄 (HAL_ADDR_SPACE_CURRENT 表示当前)
+ * @param virt 虚拟地址
+ * @return 原物理地址，未映射返回 PADDR_INVALID
+ * 
+ * @note 调用者需要在取消映射后调用 hal_mmu_flush_tlb()
+ * @note 此函数不释放中间页表级别
+ * 
+ * @see Requirements 4.1, 5.1
+ */
+paddr_t hal_mmu_unmap(hal_addr_space_t space, vaddr_t virt) {
+    /* Validate canonical address */
+    if (!x86_64_is_canonical_address((uint64_t)virt)) {
+        return PADDR_INVALID;
+    }
+    
+    pte64_t *pml4 = get_pml4(space);
+    
+    /* Get indices for each level */
+    uint64_t pml4_idx = pml4_index((uint64_t)virt);
+    uint64_t pdpt_idx = pdpt_index((uint64_t)virt);
+    uint64_t pd_idx = pd_index((uint64_t)virt);
+    uint64_t pt_idx = pt_index((uint64_t)virt);
+    
+    /* Level 4: PML4 */
+    pte64_t pml4e = pml4[pml4_idx];
+    if (!pte64_is_present(pml4e)) {
+        return PADDR_INVALID;
+    }
+    
+    /* Level 3: PDPT */
+    pte64_t *pdpt = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pml4e));
+    pte64_t pdpte = pdpt[pdpt_idx];
+    if (!pte64_is_present(pdpte)) {
+        return PADDR_INVALID;
+    }
+    
+    /* Cannot unmap 1GB huge page with this function */
+    if (pte64_is_huge(pdpte)) {
+        LOG_ERROR_MSG("hal_mmu_unmap: cannot unmap 1GB huge page\n");
+        return PADDR_INVALID;
+    }
+    
+    /* Level 2: PD */
+    pte64_t *pd = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pdpte));
+    pte64_t pde = pd[pd_idx];
+    if (!pte64_is_present(pde)) {
+        return PADDR_INVALID;
+    }
+    
+    /* Cannot unmap 2MB huge page with this function */
+    if (pte64_is_huge(pde)) {
+        LOG_ERROR_MSG("hal_mmu_unmap: cannot unmap 2MB huge page\n");
+        return PADDR_INVALID;
+    }
+    
+    /* Level 1: PT */
+    pte64_t *pt = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pde));
+    pte64_t pte = pt[pt_idx];
+    if (!pte64_is_present(pte)) {
+        return PADDR_INVALID;
+    }
+    
+    /* Get physical address before clearing */
+    paddr_t phys = pte64_get_frame(pte);
+    
+    /* Clear the entry */
+    pt[pt_idx] = 0;
+    
+    return phys;
+}
+
+/**
+ * @brief 修改页表项标志 (x86_64)
+ * 
+ * 修改现有映射的标志，不改变物理地址。
+ * 用于实现 COW（清除写标志）和权限变更。
+ * 
+ * @param space 地址空间句柄 (HAL_ADDR_SPACE_CURRENT 表示当前)
+ * @param virt 虚拟地址
+ * @param set_flags 要设置的 HAL 标志
+ * @param clear_flags 要清除的 HAL 标志
+ * @return true 成功，false 如果映射不存在
+ * 
+ * @note 调用者需要在修改后调用 hal_mmu_flush_tlb()
+ * 
+ * @see Requirements 4.1, 5.1
+ */
+bool hal_mmu_protect(hal_addr_space_t space, vaddr_t virt, 
+                     uint32_t set_flags, uint32_t clear_flags) {
+    /* Validate canonical address */
+    if (!x86_64_is_canonical_address((uint64_t)virt)) {
+        return false;
+    }
+    
+    pte64_t *pml4 = get_pml4(space);
+    
+    /* Get indices for each level */
+    uint64_t pml4_idx = pml4_index((uint64_t)virt);
+    uint64_t pdpt_idx = pdpt_index((uint64_t)virt);
+    uint64_t pd_idx = pd_index((uint64_t)virt);
+    uint64_t pt_idx = pt_index((uint64_t)virt);
+    
+    /* Level 4: PML4 */
+    pte64_t pml4e = pml4[pml4_idx];
+    if (!pte64_is_present(pml4e)) {
+        return false;
+    }
+    
+    /* Level 3: PDPT */
+    pte64_t *pdpt = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pml4e));
+    pte64_t pdpte = pdpt[pdpt_idx];
+    if (!pte64_is_present(pdpte)) {
+        return false;
+    }
+    
+    /* Handle 1GB huge page */
+    if (pte64_is_huge(pdpte)) {
+        uint64_t x64_set = hal_flags_to_x64(set_flags);
+        uint64_t x64_clear = hal_flags_to_x64(clear_flags);
+        
+        paddr_t frame = pte64_get_frame(pdpte);
+        uint64_t current_flags = pdpte & ~PTE64_ADDR_MASK;
+        
+        current_flags |= x64_set;
+        current_flags &= ~x64_clear;
+        
+        pdpt[pdpt_idx] = frame | current_flags;
+        return true;
+    }
+    
+    /* Level 2: PD */
+    pte64_t *pd = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pdpte));
+    pte64_t pde = pd[pd_idx];
+    if (!pte64_is_present(pde)) {
+        return false;
+    }
+    
+    /* Handle 2MB huge page */
+    if (pte64_is_huge(pde)) {
+        uint64_t x64_set = hal_flags_to_x64(set_flags);
+        uint64_t x64_clear = hal_flags_to_x64(clear_flags);
+        
+        paddr_t frame = pte64_get_frame(pde);
+        uint64_t current_flags = pde & ~PTE64_ADDR_MASK;
+        
+        current_flags |= x64_set;
+        current_flags &= ~x64_clear;
+        
+        pd[pd_idx] = frame | current_flags;
+        return true;
+    }
+    
+    /* Level 1: PT */
+    pte64_t *pt = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pde));
+    pte64_t *pte = &pt[pt_idx];
+    if (!pte64_is_present(*pte)) {
+        return false;
+    }
+    
+    /* Convert HAL flags to x86_64 flags */
+    uint64_t x64_set = hal_flags_to_x64(set_flags);
+    uint64_t x64_clear = hal_flags_to_x64(clear_flags);
+    
+    /* Modify flags: set new flags, clear specified flags */
+    paddr_t frame = pte64_get_frame(*pte);
+    uint64_t current_flags = *pte & ~PTE64_ADDR_MASK;
+    
+    current_flags |= x64_set;
+    current_flags &= ~x64_clear;
+    
+    *pte = frame | current_flags;
+    
+    return true;
+}
+
+/**
+ * @brief 解析页错误信息 (x86_64)
+ * 
+ * 从 CR2 寄存器和错误码中提取页错误详细信息。
+ * 
+ * @param[out] info 页错误信息结构
+ * 
+ * @see Requirements 4.3
+ */
+void hal_mmu_parse_fault(hal_page_fault_info_t *info) {
+    if (info == NULL) {
+        return;
+    }
+    
+    /* Get fault address from CR2 */
+    info->fault_addr = hal_mmu_get_fault_addr();
+    
+    /* Default values - caller should update raw_error if available */
+    info->raw_error = 0;
+    info->is_present = false;
+    info->is_write = false;
+    info->is_user = false;
+    info->is_exec = false;
+    info->is_reserved = false;
+}
+
+/**
+ * @brief 使用错误码解析页错误信息 (x86_64)
+ * 
+ * 此函数应由页错误 ISR 调用，传入 CPU 推送的错误码。
+ * 
+ * @param[out] info 页错误信息结构
+ * @param error_code CPU 推送的错误码
+ * 
+ * @see Requirements 4.3
+ */
+void hal_mmu_parse_fault_with_error(hal_page_fault_info_t *info, uint64_t error_code) {
+    if (info == NULL) {
+        return;
+    }
+    
+    /* Get fault address from CR2 */
+    info->fault_addr = hal_mmu_get_fault_addr();
+    
+    /* Parse error code */
+    info->raw_error = (uint32_t)error_code;
+    info->is_present = (error_code & 0x01) != 0;   /* Bit 0: Present */
+    info->is_write = (error_code & 0x02) != 0;     /* Bit 1: Write */
+    info->is_user = (error_code & 0x04) != 0;      /* Bit 2: User */
+    info->is_reserved = (error_code & 0x08) != 0;  /* Bit 3: Reserved bit set */
+    info->is_exec = (error_code & 0x10) != 0;      /* Bit 4: Instruction fetch (NX) */
+}
+
+/**
+ * @brief 虚拟地址转物理地址 (x86_64)
+ * 
+ * 便捷函数，查询当前地址空间中虚拟地址对应的物理地址。
+ * 
+ * @param virt 虚拟地址
+ * @return 物理地址，未映射返回 PADDR_INVALID
+ */
+paddr_t hal_mmu_virt_to_phys(vaddr_t virt) {
+    paddr_t phys;
+    if (hal_mmu_query(HAL_ADDR_SPACE_CURRENT, virt, &phys, NULL)) {
+        return phys;
+    }
+    return PADDR_INVALID;
+}
+
+
+/* ============================================================================
+ * x86_64 地址空间管理实现
+ * 
+ * 实现 Requirements 5.2, 5.3, 5.5
+ * ========================================================================== */
+
+/** @brief 内核空间 PML4 索引起始 (256 = 0xFFFF800000000000) */
+#define KERNEL_PML4_START   256
+
+/** @brief 内核空间 PML4 索引结束 (512) */
+#define KERNEL_PML4_END     512
+
+/** @brief 用户空间 PML4 索引起始 (0) */
+#define USER_PML4_START     0
+
+/** @brief 用户空间 PML4 索引结束 (256) */
+#define USER_PML4_END       256
+
+/**
+ * @brief 创建新地址空间 (x86_64)
+ * 
+ * 分配并初始化新的 PML4，内核空间映射从当前 PML4 复制。
+ * 
+ * x86_64 地址空间布局：
+ *   - PML4[0..255]: 用户空间 (0x0000000000000000 - 0x00007FFFFFFFFFFF)
+ *   - PML4[256..511]: 内核空间 (0xFFFF800000000000 - 0xFFFFFFFFFFFFFFFF)
+ * 
+ * @return 新地址空间句柄 (PML4 物理地址)，失败返回 HAL_ADDR_SPACE_INVALID
+ * 
+ * @see Requirements 5.2
+ */
+hal_addr_space_t hal_mmu_create_space(void) {
+    /* Allocate a new PML4 */
+    paddr_t pml4_phys = alloc_page_table();
+    if (pml4_phys == PADDR_INVALID) {
+        LOG_ERROR_MSG("hal_mmu_create_space: Failed to allocate PML4\n");
+        return HAL_ADDR_SPACE_INVALID;
+    }
+    
+    pte64_t *new_pml4 = (pte64_t*)PADDR_TO_KVADDR(pml4_phys);
+    
+    /* Get current PML4 for copying kernel mappings */
+    pte64_t *current_pml4 = get_pml4(HAL_ADDR_SPACE_CURRENT);
+    
+    /* Clear user space entries (PML4[0..255]) */
+    for (uint32_t i = USER_PML4_START; i < USER_PML4_END; i++) {
+        new_pml4[i] = 0;
+    }
+    
+    /* Copy kernel space entries (PML4[256..511]) */
+    /* These are shared across all address spaces */
+    for (uint32_t i = KERNEL_PML4_START; i < KERNEL_PML4_END; i++) {
+        new_pml4[i] = current_pml4[i];
+    }
+    
+    LOG_DEBUG_MSG("hal_mmu_create_space: Created new PML4 at phys 0x%llx\n", 
+                  (unsigned long long)pml4_phys);
+    
+    return (hal_addr_space_t)pml4_phys;
+}
+
+/**
+ * @brief 递归释放页表结构 (x86_64)
+ * 
+ * 释放指定级别的页表及其所有子页表。
+ * 对于叶子页表项（物理页），递减引用计数。
+ * 
+ * @param table_phys 页表物理地址
+ * @param level 页表级别 (3=PDPT, 2=PD, 1=PT)
+ * @param is_user 是否为用户空间页表
+ */
+static void free_page_table_recursive(paddr_t table_phys, int level, bool is_user) {
+    if (table_phys == PADDR_INVALID || table_phys == 0) {
+        return;
+    }
+    
+    pte64_t *table = (pte64_t*)PADDR_TO_KVADDR(table_phys);
+    
+    for (uint32_t i = 0; i < PTE64_ENTRIES; i++) {
+        pte64_t entry = table[i];
+        
+        if (!pte64_is_present(entry)) {
+            continue;
+        }
+        
+        paddr_t frame = pte64_get_frame(entry);
+        
+        if (level == 1) {
+            /* Level 1 (PT): entries point to physical pages */
+            /* Decrement reference count for shared pages (COW) */
+            uint32_t refcount = pmm_frame_get_refcount(frame);
+            if (refcount > 0) {
+                pmm_frame_ref_dec(frame);
+                /* If refcount becomes 0, the frame is freed by pmm_frame_ref_dec */
+                if (refcount == 1) {
+                    /* This was the last reference, frame is now free */
+                    LOG_DEBUG_MSG("free_page_table_recursive: Freed physical page 0x%llx\n",
+                                  (unsigned long long)frame);
+                }
+            }
+        } else if (!pte64_is_huge(entry)) {
+            /* Not a huge page, recurse into child table */
+            free_page_table_recursive(frame, level - 1, is_user);
+        } else {
+            /* Huge page (2MB or 1GB) - decrement refcount */
+            uint32_t refcount = pmm_frame_get_refcount(frame);
+            if (refcount > 0) {
+                pmm_frame_ref_dec(frame);
+            }
+        }
+    }
+    
+    /* Free this page table itself */
+    pmm_free_frame(table_phys);
+}
+
+/**
+ * @brief 销毁地址空间 (x86_64)
+ * 
+ * 释放 PML4 和所有用户空间页表，递减共享物理页的引用计数。
+ * 内核空间页表是共享的，不释放。
+ * 
+ * @param space 要销毁的地址空间句柄
+ * 
+ * @warning 不能销毁当前活动的地址空间
+ * 
+ * @see Requirements 5.5
+ */
+void hal_mmu_destroy_space(hal_addr_space_t space) {
+    if (space == HAL_ADDR_SPACE_INVALID || space == 0) {
+        return;
+    }
+    
+    /* Don't destroy current address space */
+    hal_addr_space_t current = hal_mmu_current_space();
+    if (space == current) {
+        LOG_ERROR_MSG("hal_mmu_destroy_space: Cannot destroy current address space\n");
+        return;
+    }
+    
+    pte64_t *pml4 = (pte64_t*)PADDR_TO_KVADDR(space);
+    
+    LOG_DEBUG_MSG("hal_mmu_destroy_space: Destroying address space at phys 0x%llx\n",
+                  (unsigned long long)space);
+    
+    /* Free user space page tables (PML4[0..255]) */
+    for (uint32_t i = USER_PML4_START; i < USER_PML4_END; i++) {
+        pte64_t pml4e = pml4[i];
+        
+        if (!pte64_is_present(pml4e)) {
+            continue;
+        }
+        
+        paddr_t pdpt_phys = pte64_get_frame(pml4e);
+        
+        /* Recursively free PDPT and its children */
+        /* Level 3 = PDPT, Level 2 = PD, Level 1 = PT */
+        free_page_table_recursive(pdpt_phys, 3, true);
+    }
+    
+    /* Free the PML4 itself */
+    pmm_free_frame(space);
+    
+    LOG_DEBUG_MSG("hal_mmu_destroy_space: Address space destroyed\n");
+}
+
+/**
+ * @brief 递归克隆页表结构 (x86_64, COW 语义)
+ * 
+ * 克隆指定级别的页表，对于叶子页表项：
+ * - 可写页面被标记为只读 + COW
+ * - 物理页的引用计数增加
+ * 
+ * @param src_table_phys 源页表物理地址
+ * @param level 页表级别 (3=PDPT, 2=PD, 1=PT)
+ * @param[out] dst_table_phys 目标页表物理地址
+ * @return true 成功，false 失败
+ */
+static bool clone_page_table_recursive(paddr_t src_table_phys, int level, 
+                                        paddr_t *dst_table_phys) {
+    if (src_table_phys == PADDR_INVALID || src_table_phys == 0) {
+        *dst_table_phys = 0;
+        return true;
+    }
+    
+    /* Allocate new page table */
+    paddr_t new_table_phys = alloc_page_table();
+    if (new_table_phys == PADDR_INVALID) {
+        return false;
+    }
+    
+    pte64_t *src_table = (pte64_t*)PADDR_TO_KVADDR(src_table_phys);
+    pte64_t *dst_table = (pte64_t*)PADDR_TO_KVADDR(new_table_phys);
+    
+    for (uint32_t i = 0; i < PTE64_ENTRIES; i++) {
+        pte64_t entry = src_table[i];
+        
+        if (!pte64_is_present(entry)) {
+            dst_table[i] = 0;
+            continue;
+        }
+        
+        paddr_t frame = pte64_get_frame(entry);
+        uint64_t flags = entry & ~PTE64_ADDR_MASK;
+        
+        if (level == 1) {
+            /* Level 1 (PT): entries point to physical pages */
+            /* Apply COW semantics: mark writable pages as read-only + COW */
+            if (flags & PTE64_WRITE) {
+                flags &= ~PTE64_WRITE;  /* Remove write permission */
+                flags |= PTE64_COW;     /* Mark as COW */
+                
+                /* Update source entry as well (both parent and child are COW) */
+                src_table[i] = frame | flags;
+            }
+            
+            /* Increment reference count for shared physical page */
+            pmm_frame_ref_inc(frame);
+            
+            /* Copy entry to destination */
+            dst_table[i] = frame | flags;
+            
+        } else if (pte64_is_huge(entry)) {
+            /* Huge page (2MB or 1GB) - apply COW semantics */
+            if (flags & PTE64_WRITE) {
+                flags &= ~PTE64_WRITE;
+                flags |= PTE64_COW;
+                src_table[i] = frame | flags;
+            }
+            
+            pmm_frame_ref_inc(frame);
+            dst_table[i] = frame | flags;
+            
+        } else {
+            /* Not a leaf entry, recurse into child table */
+            paddr_t child_dst_phys;
+            if (!clone_page_table_recursive(frame, level - 1, &child_dst_phys)) {
+                /* Clone failed, need to clean up */
+                /* Free already cloned entries */
+                for (uint32_t j = 0; j < i; j++) {
+                    if (pte64_is_present(dst_table[j])) {
+                        paddr_t child_phys = pte64_get_frame(dst_table[j]);
+                        if (level > 2 || !pte64_is_huge(dst_table[j])) {
+                            free_page_table_recursive(child_phys, level - 1, true);
+                        } else {
+                            pmm_frame_ref_dec(child_phys);
+                        }
+                    }
+                }
+                pmm_free_frame(new_table_phys);
+                return false;
+            }
+            
+            /* Copy flags from source, point to new child table */
+            dst_table[i] = child_dst_phys | (flags & 0xFFF);
+        }
+    }
+    
+    *dst_table_phys = new_table_phys;
+    return true;
+}
+
+/**
+ * @brief 克隆地址空间 (x86_64, COW 语义)
+ * 
+ * 创建地址空间的副本，用户空间页面使用 Copy-on-Write 语义：
+ * - 用户页面被标记为只读 + COW
+ * - 物理页面的引用计数增加
+ * - 内核空间直接共享（不复制）
+ * 
+ * @param src 源地址空间句柄
+ * @return 新地址空间句柄，失败返回 HAL_ADDR_SPACE_INVALID
+ * 
+ * @see Requirements 5.3
+ */
+hal_addr_space_t hal_mmu_clone_space(hal_addr_space_t src) {
+    /* Validate source address space */
+    if (src == HAL_ADDR_SPACE_INVALID) {
+        return HAL_ADDR_SPACE_INVALID;
+    }
+    
+    /* Get source PML4 */
+    paddr_t src_phys = (src == HAL_ADDR_SPACE_CURRENT || src == 0) 
+                       ? hal_mmu_get_current_page_table() 
+                       : src;
+    
+    /* Allocate new PML4 */
+    paddr_t new_pml4_phys = alloc_page_table();
+    if (new_pml4_phys == PADDR_INVALID) {
+        LOG_ERROR_MSG("hal_mmu_clone_space: Failed to allocate PML4\n");
+        return HAL_ADDR_SPACE_INVALID;
+    }
+    
+    pte64_t *src_pml4 = (pte64_t*)PADDR_TO_KVADDR(src_phys);
+    pte64_t *new_pml4 = (pte64_t*)PADDR_TO_KVADDR(new_pml4_phys);
+    
+    LOG_DEBUG_MSG("hal_mmu_clone_space: Cloning address space from 0x%llx to 0x%llx\n",
+                  (unsigned long long)src_phys, (unsigned long long)new_pml4_phys);
+    
+    /* Clone user space (PML4[0..255]) with COW semantics */
+    for (uint32_t i = USER_PML4_START; i < USER_PML4_END; i++) {
+        pte64_t pml4e = src_pml4[i];
+        
+        if (!pte64_is_present(pml4e)) {
+            new_pml4[i] = 0;
+            continue;
+        }
+        
+        paddr_t src_pdpt_phys = pte64_get_frame(pml4e);
+        uint64_t pml4e_flags = pml4e & 0xFFF;
+        
+        /* Recursively clone PDPT and its children */
+        paddr_t new_pdpt_phys;
+        if (!clone_page_table_recursive(src_pdpt_phys, 3, &new_pdpt_phys)) {
+            LOG_ERROR_MSG("hal_mmu_clone_space: Failed to clone PDPT at index %u\n", i);
+            
+            /* Clean up already cloned entries */
+            for (uint32_t j = USER_PML4_START; j < i; j++) {
+                if (pte64_is_present(new_pml4[j])) {
+                    paddr_t pdpt_phys = pte64_get_frame(new_pml4[j]);
+                    free_page_table_recursive(pdpt_phys, 3, true);
+                }
+            }
+            pmm_free_frame(new_pml4_phys);
+            return HAL_ADDR_SPACE_INVALID;
+        }
+        
+        new_pml4[i] = new_pdpt_phys | pml4e_flags;
+    }
+    
+    /* Copy kernel space entries (PML4[256..511]) - shared, not cloned */
+    for (uint32_t i = KERNEL_PML4_START; i < KERNEL_PML4_END; i++) {
+        new_pml4[i] = src_pml4[i];
+    }
+    
+    /* Flush TLB for source address space (we modified COW flags) */
+    if (src_phys == hal_mmu_get_current_page_table()) {
+        hal_mmu_flush_tlb_all();
+    }
+    
+    LOG_DEBUG_MSG("hal_mmu_clone_space: Clone complete\n");
+    
+    return (hal_addr_space_t)new_pml4_phys;
 }
 

@@ -11,6 +11,7 @@
 #include <mm/vmm.h>
 #include <mm/pmm.h>
 #include <mm/mm_types.h>
+#include <hal/hal.h>
 #include <lib/string.h>
 #include <types.h>
 
@@ -940,11 +941,311 @@ TEST_CASE(test_pbt_vmm_page_directory_isolation) {
     vmm_free_page_directory(dir2);
 }
 
+// ============================================================================
+// Property-Based Tests: Kernel Space Sharing
+// **Feature: mm-refactor, Property 12: Kernel Space Shared Across Address Spaces**
+// **Validates: Requirements 7.2**
+// ============================================================================
+
+/**
+ * Property Test: Kernel space shared across address spaces
+ * 
+ * *For any* two address spaces, kernel virtual addresses SHALL map 
+ * to the same physical addresses.
+ * 
+ * This property ensures that kernel mappings are consistent across all
+ * address spaces, which is essential for the kernel to function correctly
+ * when switching between processes.
+ */
+TEST_CASE(test_pbt_vmm_kernel_space_shared) {
+    #define PBT_KERNEL_ITERATIONS 10
+    
+    // Create multiple page directories
+    uintptr_t dirs[PBT_KERNEL_ITERATIONS];
+    uint32_t created = 0;
+    
+    for (uint32_t i = 0; i < PBT_KERNEL_ITERATIONS; i++) {
+        dirs[i] = vmm_create_page_directory();
+        if (dirs[i] == 0) {
+            break;
+        }
+        created++;
+    }
+    
+    // Verify we created at least 2 directories
+    ASSERT_TRUE(created >= 2);
+    
+    // Get the current (boot) page directory for comparison
+    uintptr_t boot_dir = vmm_get_page_directory();
+    ASSERT_NE_U(boot_dir, 0);
+    
+    // Property: For each created directory, kernel space entries should match boot directory
+    // We check the kernel space page directory entries (indices 512-1023 for i686)
+    // These should point to the same page tables
+    page_directory_t *boot_pd = (page_directory_t*)PHYS_TO_VIRT(boot_dir);
+    
+    for (uint32_t i = 0; i < created; i++) {
+        page_directory_t *new_pd = (page_directory_t*)PHYS_TO_VIRT(dirs[i]);
+        
+        // Check kernel space entries (512-1023 for i686, 256-511 for x86_64)
+#if defined(ARCH_X86_64)
+        uint32_t kernel_start = 256;
+        uint32_t kernel_end = 512;
+#else
+        uint32_t kernel_start = 512;
+        uint32_t kernel_end = 1024;
+#endif
+        
+        for (uint32_t j = kernel_start; j < kernel_end; j++) {
+            // Property: Kernel PDE entries must match between all address spaces
+            ASSERT_EQ_U(new_pd->entries[j], boot_pd->entries[j]);
+        }
+    }
+    
+    // Cleanup
+    for (uint32_t i = 0; i < created; i++) {
+        vmm_free_page_directory(dirs[i]);
+    }
+}
+
+// ============================================================================
+// Property-Based Tests: User Mapping Flags
+// **Feature: mm-refactor, Property 13: User Mapping Has User Flag**
+// **Validates: Requirements 7.3**
+// ============================================================================
+
+/**
+ * Property Test: User mapping has user flag
+ * 
+ * *For any* mapping in user address space (below KERNEL_VIRTUAL_BASE), 
+ * the page table entry SHALL have PAGE_USER flag set.
+ * 
+ * This property ensures that user-space mappings are properly marked
+ * as accessible from user mode, which is essential for process isolation.
+ */
+TEST_CASE(test_pbt_vmm_user_mapping_flags) {
+    #define PBT_USER_FLAG_ITERATIONS 20
+    
+    // Create a new page directory for testing
+    uintptr_t dir = vmm_create_page_directory();
+    ASSERT_NE_U(dir, 0);
+    
+    paddr_t frames[PBT_USER_FLAG_ITERATIONS];
+    uintptr_t virt_addrs[PBT_USER_FLAG_ITERATIONS];
+    uint32_t mapped = 0;
+    
+    // Map pages in user space with USER flag
+    for (uint32_t i = 0; i < PBT_USER_FLAG_ITERATIONS; i++) {
+        frames[i] = pmm_alloc_frame();
+        if (frames[i] == PADDR_INVALID) {
+            break;
+        }
+        
+        // Use different virtual addresses in user space (below KERNEL_VIRTUAL_BASE)
+        virt_addrs[i] = TEST_VIRT_ADDR3 + (i * PAGE_SIZE);
+        
+        // Map with USER flag
+        bool result = vmm_map_page_in_directory(dir, virt_addrs[i], (uintptr_t)frames[i],
+                                                 PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+        ASSERT_TRUE(result);
+        mapped++;
+    }
+    
+    // Verify we mapped at least some pages
+    ASSERT_TRUE(mapped > 0);
+    
+    // Property: All user space mappings should have USER flag set
+    // We verify this by checking the page table entries
+    page_directory_t *pd = (page_directory_t*)PHYS_TO_VIRT(dir);
+    
+    for (uint32_t i = 0; i < mapped; i++) {
+        uintptr_t virt = virt_addrs[i];
+        
+        // Property: Virtual address must be in user space
+        ASSERT_TRUE(virt < KERNEL_VIRTUAL_BASE);
+        
+#if !defined(ARCH_X86_64)
+        // For i686, we can directly check the page table entries
+        uint32_t pd_idx = virt >> 22;
+        uint32_t pt_idx = (virt >> 12) & 0x3FF;
+        
+        // Check PDE has USER flag (for user space, PDE should allow user access)
+        pde_t pde = pd->entries[pd_idx];
+        ASSERT_TRUE((pde & PAGE_PRESENT) != 0);
+        ASSERT_TRUE((pde & PAGE_USER) != 0);
+        
+        // Check PTE has USER flag
+        page_table_t *pt = (page_table_t*)PHYS_TO_VIRT(pde & 0xFFFFF000);
+        pte_t pte = pt->entries[pt_idx];
+        ASSERT_TRUE((pte & PAGE_PRESENT) != 0);
+        ASSERT_TRUE((pte & PAGE_USER) != 0);
+#endif
+    }
+    
+    // Cleanup
+    vmm_free_page_directory(dir);
+}
+
+/**
+ * Property Test: Kernel mapping does NOT have user flag
+ * 
+ * *For any* mapping in kernel address space (>= KERNEL_VIRTUAL_BASE),
+ * the page table entry SHALL NOT have PAGE_USER flag set.
+ * 
+ * This is the complement of Property 13, ensuring kernel space
+ * is protected from user-mode access.
+ */
+TEST_CASE(test_pbt_vmm_kernel_mapping_no_user_flag) {
+    // Get the current page directory
+    uintptr_t dir = vmm_get_page_directory();
+    ASSERT_NE_U(dir, 0);
+    
+    page_directory_t *pd = (page_directory_t*)PHYS_TO_VIRT(dir);
+    
+#if !defined(ARCH_X86_64)
+    // Check kernel space entries (512-1023 for i686)
+    // Property: Kernel PDEs should NOT have USER flag
+    for (uint32_t i = 512; i < 1024; i++) {
+        pde_t pde = pd->entries[i];
+        if (pde & PAGE_PRESENT) {
+            // Property: Kernel PDE must NOT have USER flag
+            ASSERT_TRUE((pde & PAGE_USER) == 0);
+        }
+    }
+#endif
+    
+    // Property: Kernel virtual addresses should be >= KERNEL_VIRTUAL_BASE
+    ASSERT_TRUE(KERNEL_VIRTUAL_BASE >= 0x80000000);
+}
+
+// ============================================================================
+// Property-Based Tests: MMIO Mapping Flags
+// **Feature: mm-refactor, Property 14: MMIO Mapping Has No-Cache Flag**
+// **Validates: Requirements 9.1**
+// ============================================================================
+
+/**
+ * Property Test: MMIO mapping has no-cache flag
+ * 
+ * *For any* MMIO mapping, the page table entry SHALL have the cache-disable
+ * flag set (HAL_PAGE_NOCACHE).
+ * 
+ * This property ensures that device memory is not cached, which is essential
+ * for correct device I/O behavior. Caching device registers could cause
+ * stale reads or coalesced writes that break device protocols.
+ */
+TEST_CASE(test_pbt_vmm_mmio_nocache_flag) {
+    #define PBT_MMIO_TEST_SIZE  (PAGE_SIZE * 3)  // Test with 3 pages
+    
+    // Use a fake physical address for MMIO (we won't actually access it)
+    // This simulates mapping a device's MMIO region
+    uintptr_t fake_mmio_phys = 0xFEE00000;  // Typical APIC region
+    
+    // Map the MMIO region
+    uintptr_t mmio_virt = vmm_map_mmio(fake_mmio_phys, PBT_MMIO_TEST_SIZE);
+    
+    // Property: MMIO mapping should succeed
+    ASSERT_NE_U(mmio_virt, 0);
+    
+    // Property: MMIO virtual address should be page-aligned
+    ASSERT_EQ_U(mmio_virt & (PAGE_SIZE - 1), fake_mmio_phys & (PAGE_SIZE - 1));
+    
+    // Property: Verify the mapping has NOCACHE flag by querying via HAL
+    // We check each page in the mapped region
+    uintptr_t virt_base = mmio_virt & ~(PAGE_SIZE - 1);
+    uint32_t num_pages = (PBT_MMIO_TEST_SIZE + PAGE_SIZE - 1) / PAGE_SIZE;
+    
+    for (uint32_t i = 0; i < num_pages; i++) {
+        uintptr_t virt = virt_base + (i * PAGE_SIZE);
+        paddr_t phys;
+        uint32_t flags;
+        
+        // Query the mapping
+        bool mapped = hal_mmu_query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)virt, &phys, &flags);
+        
+        // Property: Page should be mapped
+        ASSERT_TRUE(mapped);
+        
+        // Property: Page should be present
+        ASSERT_TRUE((flags & HAL_PAGE_PRESENT) != 0);
+        
+        // Property: Page should have NOCACHE flag (critical for MMIO)
+        ASSERT_TRUE((flags & HAL_PAGE_NOCACHE) != 0);
+        
+        // Property: Page should be writable (MMIO typically needs write access)
+        ASSERT_TRUE((flags & HAL_PAGE_WRITE) != 0);
+    }
+    
+    // Cleanup
+    vmm_unmap_mmio(mmio_virt, PBT_MMIO_TEST_SIZE);
+    
+    // Property: After unmapping, pages should no longer be mapped
+    for (uint32_t i = 0; i < num_pages; i++) {
+        uintptr_t virt = virt_base + (i * PAGE_SIZE);
+        paddr_t phys;
+        
+        bool still_mapped = hal_mmu_query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)virt, &phys, NULL);
+        ASSERT_FALSE(still_mapped);
+    }
+}
+
+/**
+ * Property Test: Multiple MMIO mappings are independent
+ * 
+ * *For any* two MMIO mappings, they SHALL be at different virtual addresses
+ * and both SHALL have the NOCACHE flag set.
+ */
+TEST_CASE(test_pbt_vmm_mmio_multiple_mappings) {
+    // Map two different MMIO regions
+    uintptr_t phys1 = 0xFEC00000;  // Typical I/O APIC
+    uintptr_t phys2 = 0xFEE00000;  // Typical Local APIC
+    size_t size1 = PAGE_SIZE;
+    size_t size2 = PAGE_SIZE * 2;
+    
+    uintptr_t virt1 = vmm_map_mmio(phys1, size1);
+    uintptr_t virt2 = vmm_map_mmio(phys2, size2);
+    
+    // Property: Both mappings should succeed
+    ASSERT_NE_U(virt1, 0);
+    ASSERT_NE_U(virt2, 0);
+    
+    // Property: Mappings should be at different virtual addresses
+    ASSERT_NE_U(virt1, virt2);
+    
+    // Property: Both should have NOCACHE flag
+    paddr_t p1, p2;
+    uint32_t f1, f2;
+    
+    ASSERT_TRUE(hal_mmu_query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)(virt1 & ~(PAGE_SIZE-1)), &p1, &f1));
+    ASSERT_TRUE(hal_mmu_query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)(virt2 & ~(PAGE_SIZE-1)), &p2, &f2));
+    
+    ASSERT_TRUE((f1 & HAL_PAGE_NOCACHE) != 0);
+    ASSERT_TRUE((f2 & HAL_PAGE_NOCACHE) != 0);
+    
+    // Cleanup
+    vmm_unmap_mmio(virt1, size1);
+    vmm_unmap_mmio(virt2, size2);
+}
+
 TEST_SUITE(vmm_property_tests) {
     RUN_TEST(test_pbt_vmm_page_table_format);
     RUN_TEST(test_pbt_vmm_page_table_levels);
     RUN_TEST(test_pbt_vmm_kernel_address_range);
     RUN_TEST(test_pbt_vmm_page_directory_isolation);
+    
+    /* Property 12: Kernel Space Shared Across Address Spaces */
+    /* **Validates: Requirements 7.2** */
+    RUN_TEST(test_pbt_vmm_kernel_space_shared);
+    
+    /* Property 13: User Mapping Has User Flag */
+    /* **Validates: Requirements 7.3** */
+    RUN_TEST(test_pbt_vmm_user_mapping_flags);
+    RUN_TEST(test_pbt_vmm_kernel_mapping_no_user_flag);
+    
+    /* Property 14: MMIO Mapping Has No-Cache Flag */
+    /* **Validates: Requirements 9.1** */
+    RUN_TEST(test_pbt_vmm_mmio_nocache_flag);
+    RUN_TEST(test_pbt_vmm_mmio_multiple_mappings);
 }
 
 // ============================================================================
