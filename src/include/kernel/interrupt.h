@@ -9,10 +9,17 @@
  */
 static inline bool interrupts_disable(void) __attribute__((unused));
 static inline bool interrupts_disable(void) {
+#if defined(ARCH_X86_64)
+    uint64_t rflags;
+    __asm__ volatile("pushfq; popq %0" : "=r"(rflags));
+    __asm__ volatile("cli");
+    return (rflags & 0x200) != 0;  // IF 标志
+#else
     uint32_t eflags;
     __asm__ volatile("pushf; pop %0" : "=r"(eflags));
     __asm__ volatile("cli");
     return (eflags & 0x200) != 0;  // IF 标志
+#endif
 }
 
 /**

@@ -9,7 +9,7 @@
 #if defined(ARCH_I686)
     #include <isr.h>  // src/arch/i686/include/isr.h
 #elif defined(ARCH_X86_64)
-    #include <isr.h>  // src/arch/x86_64/include/isr.h (to be implemented)
+    #include <isr64.h>  // src/arch/x86_64/include/isr64.h
 #elif defined(ARCH_ARM64)
     // ARM64 uses different exception handling - provide stub definitions
     #include <types.h>

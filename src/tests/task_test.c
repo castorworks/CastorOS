@@ -7,6 +7,10 @@
 #include <lib/string.h>
 #include <lib/kprintf.h>
 
+#if defined(ARCH_X86_64)
+#include <context64.h>
+#endif
+
 #define TEST_PDE_IDX(v) ((v) >> 22)
 #define ENTRY_PRESENT(e) ((e) & PAGE_PRESENT)
 
@@ -97,8 +101,9 @@ TEST_CASE(test_pbt_context_size) {
 #if defined(ARCH_I686)
     ASSERT_EQ_U(ctx_size, 72);
 #elif defined(ARCH_X86_64)
-    // x86_64 context would be larger (not implemented yet)
-    ASSERT_TRUE(ctx_size >= 72);
+    // x86_64 context should be 168 bytes (21 x 8-byte fields)
+    // This includes: r15-rax (15x8), rip, cs, rflags, rsp, ss, cr3 (6x8)
+    ASSERT_EQ_U(ctx_size, 168);
 #elif defined(ARCH_ARM64)
     // ARM64 context would be different (not implemented yet)
     ASSERT_TRUE(ctx_size >= 72);
@@ -115,6 +120,7 @@ TEST_CASE(test_pbt_context_size) {
  * correctly for the specified privilege level (kernel or user).
  */
 TEST_CASE(test_pbt_context_init_segments) {
+#if defined(ARCH_I686)
     cpu_context_t kernel_ctx;
     cpu_context_t user_ctx;
     
@@ -124,7 +130,6 @@ TEST_CASE(test_pbt_context_init_segments) {
     // Initialize user context
     hal_context_init((hal_context_t*)&user_ctx, 0x00100000, 0x7FFFF000, true);
     
-#if defined(ARCH_I686)
     // Kernel context: CS should be 0x08 (kernel code segment)
     ASSERT_EQ_U(kernel_ctx.cs, 0x08);
     // Kernel context: DS should be 0x10 (kernel data segment)
@@ -138,6 +143,29 @@ TEST_CASE(test_pbt_context_init_segments) {
     // Both contexts should have interrupts enabled (IF flag in EFLAGS)
     ASSERT_TRUE((kernel_ctx.eflags & 0x200) != 0);
     ASSERT_TRUE((user_ctx.eflags & 0x200) != 0);
+#elif defined(ARCH_X86_64)
+    x86_64_context_t kernel_ctx;
+    x86_64_context_t user_ctx;
+    
+    // Initialize kernel context (use 64-bit addresses)
+    hal_context_init((hal_context_t*)&kernel_ctx, 0xFFFF800000100000ULL, 0xFFFF800000200000ULL, false);
+    
+    // Initialize user context
+    hal_context_init((hal_context_t*)&user_ctx, 0x00400000ULL, 0x7FFFFFFFE000ULL, true);
+    
+    // Kernel context: CS should be 0x08 (kernel code segment)
+    ASSERT_EQ_U(kernel_ctx.cs, 0x08);
+    // Kernel context: SS should be 0x10 (kernel data segment)
+    ASSERT_EQ_U(kernel_ctx.ss, 0x10);
+    
+    // User context: CS should be 0x1B (user code segment with RPL=3)
+    ASSERT_EQ_U(user_ctx.cs, 0x1B);
+    // User context: SS should be 0x23 (user data segment with RPL=3)
+    ASSERT_EQ_U(user_ctx.ss, 0x23);
+    
+    // Both contexts should have interrupts enabled (IF flag in RFLAGS)
+    ASSERT_TRUE((kernel_ctx.rflags & 0x200) != 0);
+    ASSERT_TRUE((user_ctx.rflags & 0x200) != 0);
 #endif
 }
 
@@ -148,6 +176,7 @@ TEST_CASE(test_pbt_context_init_segments) {
  * the context SHALL contain the correct entry point and stack values.
  */
 TEST_CASE(test_pbt_context_init_entry_stack) {
+#if defined(ARCH_I686)
     cpu_context_t ctx;
     
     // Test with user context (simpler - entry point is directly in EIP)
@@ -156,11 +185,23 @@ TEST_CASE(test_pbt_context_init_entry_stack) {
     
     hal_context_init((hal_context_t*)&ctx, test_entry, test_stack, true);
     
-#if defined(ARCH_I686)
     // For user context, EIP should be the entry point
     ASSERT_EQ_U(ctx.eip, test_entry);
     // ESP should be the stack pointer
     ASSERT_EQ_U(ctx.esp, test_stack);
+#elif defined(ARCH_X86_64)
+    x86_64_context_t ctx;
+    
+    // Test with user context (simpler - entry point is directly in RIP)
+    uint64_t test_entry = 0x00400000ULL;
+    uint64_t test_stack = 0x7FFFFFFFE000ULL;
+    
+    hal_context_init((hal_context_t*)&ctx, test_entry, test_stack, true);
+    
+    // For user context, RIP should be the entry point
+    ASSERT_EQ_U(ctx.rip, test_entry);
+    // RSP should be the stack pointer
+    ASSERT_EQ_U(ctx.rsp, test_stack);
 #endif
 }
 
@@ -171,12 +212,12 @@ TEST_CASE(test_pbt_context_init_entry_stack) {
  * what the assembly code expects.
  */
 TEST_CASE(test_pbt_context_field_offsets) {
+#if defined(ARCH_I686)
     cpu_context_t ctx;
     
     // Calculate offsets using pointer arithmetic
     uintptr_t base = (uintptr_t)&ctx;
     
-#if defined(ARCH_I686)
     // Verify critical field offsets match assembly expectations
     // gs at offset 0
     ASSERT_EQ_U((uintptr_t)&ctx.gs - base, 0);
@@ -196,6 +237,37 @@ TEST_CASE(test_pbt_context_field_offsets) {
     ASSERT_EQ_U((uintptr_t)&ctx.esp - base, 60);
     // cr3 at offset 68
     ASSERT_EQ_U((uintptr_t)&ctx.cr3 - base, 68);
+#elif defined(ARCH_X86_64)
+    x86_64_context_t ctx;
+    
+    // Calculate offsets using pointer arithmetic
+    uintptr_t base = (uintptr_t)&ctx;
+    
+    // Verify critical field offsets match assembly expectations
+    // r15 at offset 0
+    ASSERT_EQ_U((uintptr_t)&ctx.r15 - base, 0);
+    // r14 at offset 8
+    ASSERT_EQ_U((uintptr_t)&ctx.r14 - base, 8);
+    // r8 at offset 56
+    ASSERT_EQ_U((uintptr_t)&ctx.r8 - base, 56);
+    // rbp at offset 64
+    ASSERT_EQ_U((uintptr_t)&ctx.rbp - base, 64);
+    // rdi at offset 72
+    ASSERT_EQ_U((uintptr_t)&ctx.rdi - base, 72);
+    // rax at offset 112
+    ASSERT_EQ_U((uintptr_t)&ctx.rax - base, 112);
+    // rip at offset 120
+    ASSERT_EQ_U((uintptr_t)&ctx.rip - base, 120);
+    // cs at offset 128
+    ASSERT_EQ_U((uintptr_t)&ctx.cs - base, 128);
+    // rflags at offset 136
+    ASSERT_EQ_U((uintptr_t)&ctx.rflags - base, 136);
+    // rsp at offset 144
+    ASSERT_EQ_U((uintptr_t)&ctx.rsp - base, 144);
+    // ss at offset 152
+    ASSERT_EQ_U((uintptr_t)&ctx.ss - base, 152);
+    // cr3 at offset 160 (for address space switching)
+    ASSERT_EQ_U((uintptr_t)&ctx.cr3 - base, 160);
 #endif
 }
 
@@ -237,6 +309,105 @@ TEST_CASE(test_pbt_pointer_size) {
 #endif
 }
 
+// ============================================================================
+// Property-Based Tests: Address Space Switch Correctness (x86_64)
+// **Feature: multi-arch-support, Property 10: Address Space Switch Correctness (x86_64)**
+// **Validates: Requirements 7.3**
+// ============================================================================
+
+#if defined(ARCH_X86_64)
+/**
+ * Property Test: x86_64 context CR3 field is correctly positioned for address space switch
+ * 
+ * *For any* address space switch during task switching, the correct architecture-specific
+ * page table base register (CR3 on x86) SHALL be updated to point to the new task's page table.
+ * 
+ * This test verifies:
+ * 1. CR3 field exists at the correct offset in the context structure
+ * 2. CR3 is initialized to 0 by default (to be set by caller)
+ * 3. CR3 can store a valid 64-bit physical address
+ */
+TEST_CASE(test_pbt_x86_64_address_space_switch_cr3_offset) {
+    x86_64_context_t ctx;
+    uintptr_t base = (uintptr_t)&ctx;
+    
+    // CR3 must be at offset 160 for the assembly code to work correctly
+    ASSERT_EQ_U((uintptr_t)&ctx.cr3 - base, 160);
+    
+    // CR3 field must be 8 bytes (64-bit)
+    ASSERT_EQ_U(sizeof(ctx.cr3), 8);
+}
+
+/**
+ * Property Test: x86_64 context initialization sets CR3 to zero
+ * 
+ * *For any* newly initialized context, CR3 SHALL be set to 0,
+ * indicating that the caller must set the page table address.
+ */
+TEST_CASE(test_pbt_x86_64_address_space_switch_cr3_init) {
+    x86_64_context_t ctx;
+    
+    // Initialize a user context
+    hal_context_init((hal_context_t*)&ctx, 0x00400000ULL, 0x7FFFFFFFE000ULL, true);
+    
+    // CR3 should be 0 after initialization (caller sets it)
+    ASSERT_EQ_U(ctx.cr3, 0);
+    
+    // Initialize a kernel context
+    hal_context_init((hal_context_t*)&ctx, 0xFFFF800000100000ULL, 0xFFFF800000200000ULL, false);
+    
+    // CR3 should still be 0 after initialization
+    ASSERT_EQ_U(ctx.cr3, 0);
+}
+
+/**
+ * Property Test: x86_64 context CR3 can store valid page table addresses
+ * 
+ * *For any* valid page table physical address, the CR3 field SHALL be able
+ * to store it correctly. Page table addresses must be 4KB aligned.
+ */
+TEST_CASE(test_pbt_x86_64_address_space_switch_cr3_storage) {
+    x86_64_context_t ctx;
+    
+    // Test various page table addresses (must be 4KB aligned)
+    uint64_t test_addresses[] = {
+        0x0000000000001000ULL,  // Low memory
+        0x0000000000100000ULL,  // 1MB
+        0x0000000010000000ULL,  // 256MB
+        0x0000000100000000ULL,  // 4GB (above 32-bit)
+        0x0000001000000000ULL,  // 64GB
+    };
+    
+    for (size_t i = 0; i < sizeof(test_addresses) / sizeof(test_addresses[0]); i++) {
+        // Initialize context
+        hal_context_init((hal_context_t*)&ctx, 0x00400000ULL, 0x7FFFFFFFE000ULL, true);
+        
+        // Set CR3 to test address
+        ctx.cr3 = test_addresses[i];
+        
+        // Verify CR3 stores the address correctly
+        ASSERT_EQ_U(ctx.cr3, test_addresses[i]);
+        
+        // Verify address is 4KB aligned (required for page tables)
+        ASSERT_EQ_U(ctx.cr3 & 0xFFF, 0);
+    }
+}
+
+/**
+ * Property Test: x86_64 context structure size includes CR3
+ * 
+ * *For any* x86_64 context, the structure size SHALL be exactly 168 bytes,
+ * which includes all registers plus CR3 for address space switching.
+ */
+TEST_CASE(test_pbt_x86_64_address_space_switch_context_size) {
+    // Context size must be 168 bytes (21 x 8-byte fields)
+    ASSERT_EQ_U(sizeof(x86_64_context_t), 168);
+    
+    // Verify this matches what hal_context_size() returns
+    ASSERT_EQ_U(hal_context_size(), 168);
+}
+#endif /* ARCH_X86_64 */
+
 TEST_SUITE(task_context_property_tests) {
     RUN_TEST(test_pbt_context_size);
     RUN_TEST(test_pbt_context_init_segments);
@@ -244,6 +415,14 @@ TEST_SUITE(task_context_property_tests) {
     RUN_TEST(test_pbt_context_field_offsets);
     RUN_TEST(test_pbt_arch_name);
     RUN_TEST(test_pbt_pointer_size);
+#if defined(ARCH_X86_64)
+    // **Feature: multi-arch-support, Property 10: Address Space Switch Correctness (x86_64)**
+    // **Validates: Requirements 7.3**
+    RUN_TEST(test_pbt_x86_64_address_space_switch_cr3_offset);
+    RUN_TEST(test_pbt_x86_64_address_space_switch_cr3_init);
+    RUN_TEST(test_pbt_x86_64_address_space_switch_cr3_storage);
+    RUN_TEST(test_pbt_x86_64_address_space_switch_context_size);
+#endif
 }
 
 // ============================================================================

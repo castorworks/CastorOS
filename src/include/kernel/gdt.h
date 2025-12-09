@@ -9,7 +9,7 @@
 #if defined(ARCH_I686)
     #include <gdt.h>  // src/arch/i686/include/gdt.h
 #elif defined(ARCH_X86_64)
-    #include <gdt.h>  // src/arch/x86_64/include/gdt.h (to be implemented)
+    #include <gdt64.h>  // src/arch/x86_64/include/gdt64.h
 #elif defined(ARCH_ARM64)
     // ARM64 does not use GDT - provide stub or empty definitions
     #include <types.h>

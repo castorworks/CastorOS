@@ -9,7 +9,7 @@
 #if defined(ARCH_I686)
     #include <idt.h>  // src/arch/i686/include/idt.h
 #elif defined(ARCH_X86_64)
-    #include <idt.h>  // src/arch/x86_64/include/idt.h (to be implemented)
+    #include <idt64.h>  // src/arch/x86_64/include/idt64.h
 #elif defined(ARCH_ARM64)
     // ARM64 does not use IDT - provide stub or empty definitions
     #include <types.h>

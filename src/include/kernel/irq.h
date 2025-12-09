@@ -11,7 +11,7 @@
 #if defined(ARCH_I686)
     #include <irq.h>  // src/arch/i686/include/irq.h
 #elif defined(ARCH_X86_64)
-    #include <irq.h>  // src/arch/x86_64/include/irq.h (to be implemented)
+    #include <irq64.h>  // src/arch/x86_64/include/irq64.h
 #elif defined(ARCH_ARM64)
     // ARM64 uses GIC instead of PIC - provide stub definitions
     #include <types.h>

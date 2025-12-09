@@ -19,6 +19,9 @@
 #include <tests/arch_types_test.h>
 #include <tests/syscall_test.h>
 #include <tests/hal_test.h>
+#include <tests/isr64_test.h>
+#include <tests/paging64_test.h>
+#include <tests/usermode_test.h>
 #include <lib/kprintf.h>
 
 // ============================================================================
@@ -66,6 +69,17 @@ static const test_entry_t test_suite[] = {
     
     // HAL 测试 (Property 1: HAL Initialization Dispatch, Property 14: MMIO Memory Barrier)
     TEST_ENTRY("HAL Property Tests", run_hal_tests),
+    
+#ifdef ARCH_X86_64
+    // x86_64 ISR 测试 (Property 7: Interrupt Register State Preservation)
+    TEST_ENTRY("x86_64 ISR Register Preservation Tests", run_isr64_tests),
+    
+    // x86_64 分页测试 (Property 4: VMM Kernel Mapping Range, Property 5: Page Fault Interpretation)
+    TEST_ENTRY("x86_64 Paging Property Tests", run_paging64_tests),
+    
+    // x86_64 用户模式切换测试 (Property 11: User Mode Transition Correctness)
+    TEST_ENTRY("x86_64 User Mode Transition Tests", run_usermode_tests),
+#endif
     
     // ========== 在下方添加新的测试 ==========
     // TEST_ENTRY("Synchronization Primitive Tests", run_sync_tests),

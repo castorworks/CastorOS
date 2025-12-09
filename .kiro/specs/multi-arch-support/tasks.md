@@ -144,75 +144,75 @@
     - 配置段布局
     - _Requirements: 3.1_
 
-- [ ] 12. 实现 x86_64 CPU 初始化
-  - [ ] 12.1 创建 `src/arch/x86_64/cpu/gdt64.c`
+- [x] 12. 实现 x86_64 CPU 初始化
+  - [x] 12.1 创建 `src/arch/x86_64/cpu/gdt64.c`
     - 实现 64 位 GDT 结构
     - 实现 64 位 TSS 结构
     - _Requirements: 3.3_
-  - [ ] 12.2 创建 `src/arch/x86_64/cpu/idt64.c`
+  - [x] 12.2 创建 `src/arch/x86_64/cpu/idt64.c`
     - 实现 64 位 IDT 结构
     - 支持 IST (Interrupt Stack Table)
     - _Requirements: 3.4_
 
-- [ ] 13. 实现 x86_64 中断处理
-  - [ ] 13.1 创建 `src/arch/x86_64/interrupt/isr64.asm`
+- [x] 13. 实现 x86_64 中断处理
+  - [x] 13.1 创建 `src/arch/x86_64/interrupt/isr64.asm`
     - 实现 64 位异常处理入口
     - 保存/恢复 64 位寄存器
     - _Requirements: 6.1_
-  - [ ] 13.2 创建 `src/arch/x86_64/interrupt/apic.c`
+  - [x] 13.2 创建 `src/arch/x86_64/interrupt/apic.c`
     - 实现 Local APIC 初始化
     - 实现 I/O APIC 初始化
     - _Requirements: 6.3_
-  - [ ] 13.3 Write property test for x86_64 interrupt register preservation
+  - [x] 13.3 Write property test for x86_64 interrupt register preservation
     - **Property 7: Interrupt Register State Preservation (x86_64)**
     - **Validates: Requirements 6.1**
 
-- [ ] 14. 实现 x86_64 内存管理
-  - [ ] 14.1 创建 `src/arch/x86_64/mm/paging64.c`
+- [x] 14. 实现 x86_64 内存管理
+  - [x] 14.1 创建 `src/arch/x86_64/mm/paging64.c`
     - 实现 4 级页表操作 (PML4, PDPT, PD, PT)
     - 实现 HAL MMU 接口
     - _Requirements: 5.2_
-  - [ ] 14.2 实现 x86_64 页错误处理
+  - [x] 14.2 实现 x86_64 页错误处理
     - 解析 64 位错误码
     - 读取 CR2 获取错误地址
     - _Requirements: 5.4_
-  - [ ] 14.3 Write property test for x86_64 kernel mapping range
+  - [x] 14.3 Write property test for x86_64 kernel mapping range
     - **Property 4: VMM Kernel Mapping Range Correctness (x86_64)**
     - **Validates: Requirements 5.3**
-  - [ ] 14.4 Write property test for x86_64 page fault interpretation
+  - [x] 14.4 Write property test for x86_64 page fault interpretation
     - **Property 5: VMM Page Fault Interpretation (x86_64)**
     - **Validates: Requirements 5.4**
 
-- [ ] 15. 实现 x86_64 任务切换
-  - [ ] 15.1 创建 `src/arch/x86_64/task/context64.asm`
+- [x] 15. 实现 x86_64 任务切换
+  - [x] 15.1 创建 `src/arch/x86_64/task/context64.asm`
     - 保存/恢复 64 位通用寄存器 (RAX-R15)
     - 处理 CR3 切换
     - _Requirements: 7.1, 7.3_
-  - [ ] 15.2 创建 x86_64 上下文结构
+  - [x] 15.2 创建 x86_64 上下文结构
     - 定义 64 位 hal_context_t
     - _Requirements: 7.1_
-  - [ ] 15.3 Write property test for x86_64 address space switch
+  - [x] 15.3 Write property test for x86_64 address space switch
     - **Property 10: Address Space Switch Correctness (x86_64)**
     - **Validates: Requirements 7.3**
 
-- [ ] 16. 实现 x86_64 系统调用
-  - [ ] 16.1 创建 `src/arch/x86_64/syscall/syscall64.asm`
+- [x] 16. 实现 x86_64 系统调用
+  - [x] 16.1 创建 `src/arch/x86_64/syscall/syscall64_asm.asm`
     - 实现 SYSCALL/SYSRET 机制
     - 配置 MSR 寄存器
     - _Requirements: 7.5, 8.1_
-  - [ ] 16.2 实现 x86_64 用户模式切换
+  - [x] 16.2 实现 x86_64 用户模式切换
     - 实现 IRETQ 返回用户态
     - _Requirements: 7.4_
-  - [ ] 16.3 Write property test for x86_64 user mode transition
+  - [x] 16.3 Write property test for x86_64 user mode transition
     - **Property 11: User Mode Transition Correctness (x86_64)**
     - **Validates: Requirements 7.4**
 
-- [ ] 17. 实现 x86_64 HAL 适配
-  - [ ] 17.1 创建 `src/arch/x86_64/hal.c`
+- [x] 17. 实现 x86_64 HAL 适配
+  - [x] 17.1 创建 `src/arch/x86_64/hal.c`
     - 实现所有 HAL 接口
     - _Requirements: 1.1_
 
-- [ ] 18. Checkpoint - 验证 x86_64 基础功能
+- [x] 18. Checkpoint - 验证 x86_64 基础功能
   - Ensure all tests pass, ask the user if questions arise.
 
 

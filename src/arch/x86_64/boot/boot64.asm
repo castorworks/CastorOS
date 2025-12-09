@@ -315,7 +315,9 @@ section .bss
 align 4096
 
 global boot_pml4
+global boot_page_directory  ; Alias for compatibility with vmm.c
 boot_pml4:
+boot_page_directory:        ; boot_page_directory points to PML4 on x86_64
     resb 4096
 
 global boot_pdpt
