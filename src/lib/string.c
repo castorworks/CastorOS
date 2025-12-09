@@ -249,7 +249,7 @@ void *memset(void *ptr, int value, size_t num) {
     unsigned char v = (unsigned char)value;
     
     // 处理未对齐的头部
-    while (((uint32_t)p & 3) && num > 0) {
+    while (((uintptr_t)p & 3) && num > 0) {
         *p++ = v;
         num--;
     }
@@ -290,9 +290,9 @@ void *memcpy(void *dest, const void *src, size_t num) {
     const unsigned char *s = (const unsigned char *)src;
     
     // 如果源和目标对齐相同，使用 32 位复制
-    if ((((uint32_t)d ^ (uint32_t)s) & 3) == 0) {
+    if ((((uintptr_t)d ^ (uintptr_t)s) & 3) == 0) {
         // 处理未对齐的头部
-        while (((uint32_t)d & 3) && num > 0) {
+        while (((uintptr_t)d & 3) && num > 0) {
             *d++ = *s++;
             num--;
         }
@@ -358,9 +358,9 @@ void *memmove(void *dest, const void *src, size_t num) {
     s += num;
     
     // 如果源和目标对齐相同，使用 32 位复制
-    if ((((uint32_t)d ^ (uint32_t)s) & 3) == 0) {
+    if ((((uintptr_t)d ^ (uintptr_t)s) & 3) == 0) {
         // 处理未对齐的尾部
-        while (((uint32_t)d & 3) && num > 0) {
+        while (((uintptr_t)d & 3) && num > 0) {
             *--d = *--s;
             num--;
         }

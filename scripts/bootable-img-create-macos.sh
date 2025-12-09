@@ -18,12 +18,21 @@ error()   { echo "$1" >&2; exit 1; }
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-DISK_IMG="$PROJECT_ROOT/build/bootable.img"
+# 支持多架构：从环境变量获取 ARCH，默认为 i686
+ARCH="${ARCH:-i686}"
+
+DISK_IMG="$PROJECT_ROOT/build/$ARCH/bootable.img"
 DISK_SIZE_MB=${1:-128}
 
 MOUNT_POINT="/tmp/castor_bootable"
-KERNEL_BIN="$PROJECT_ROOT/build/castor.bin"
-GRUB_CFG="$PROJECT_ROOT/grub.cfg"
+KERNEL_BIN="$PROJECT_ROOT/build/$ARCH/castor.bin"
+
+# 根据架构选择 grub.cfg (x86_64 使用 multiboot2)
+if [ "$ARCH" = "x86_64" ] && [ -f "$PROJECT_ROOT/grub_x86_64.cfg" ]; then
+    GRUB_CFG="$PROJECT_ROOT/grub_x86_64.cfg"
+else
+    GRUB_CFG="$PROJECT_ROOT/grub.cfg"
+fi
 
 SHELL_ELF="$PROJECT_ROOT/user/shell/shell.elf"
 HELLO_ELF="$PROJECT_ROOT/user/helloworld/hello.elf"
@@ -202,13 +211,14 @@ EOF
 
     # 创建 core.img，包含必要的模块和嵌入式配置
     # 确保包含所有必要的文件系统和分区模块
+    # multiboot2 模块用于 x86_64 架构
     "$GRUB_MKIMAGE" \
         -O i386-pc \
         -o core.img \
         -c grub_early.cfg \
         -p '/boot/grub' \
         biosdisk part_msdos fat \
-        multiboot normal configfile \
+        multiboot multiboot2 normal configfile \
         ls cat echo test
 
     info "  Writing boot.img to MBR (440 bytes)"
@@ -259,6 +269,7 @@ main() {
     echo "======================================"
     echo " CastorOS bootable image creator (macOS)"
     echo " Using i686-elf-grub (manual BIOS mode)"
+    echo " Architecture: $ARCH"
     echo "======================================"
 
     check_tools

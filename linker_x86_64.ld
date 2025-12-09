@@ -8,27 +8,29 @@ KERNEL_VIRTUAL_BASE = 0xFFFF800000000000;
 
 SECTIONS
 {
-    /* 内核虚拟地址起始于高半核区域 */
     /* 物理地址从 1MB (0x100000) 开始 */
-    . = KERNEL_VIRTUAL_BASE + 0x100000;
+    /* 32 位引导代码必须使用物理地址，因为 GRUB 在 32 位模式下加载 */
+    . = 0x100000;
 
     /* 保存内核起始地址 */
     _kernel_start = .;
 
-    /* Multiboot2 头部必须在文件前 32KB 内 */
-    /* 使用 8 字节对齐 (Multiboot2 要求) */
-    .multiboot ALIGN(8) : AT(ADDR(.multiboot) - KERNEL_VIRTUAL_BASE)
+    /* Multiboot 头部必须在文件前 8KB 内 */
+    .multiboot ALIGN(4) : AT(ADDR(.multiboot))
     {
         *(.multiboot)
     }
 
-    /* 32 位引导代码 (在启用分页前执行) */
-    .text.boot ALIGN(4K) : AT(ADDR(.text.boot) - KERNEL_VIRTUAL_BASE)
+    /* 32 位引导代码 (在启用分页前执行，使用物理地址) */
+    .text.boot ALIGN(4K) : AT(ADDR(.text.boot))
     {
         *(.text.boot)
     }
 
-    /* .text 段：64 位代码段 */
+    /* 切换到高半核虚拟地址 */
+    . = KERNEL_VIRTUAL_BASE + .;
+
+    /* .text 段：64 位代码段 (高半核地址) */
     .text ALIGN(4K) : AT(ADDR(.text) - KERNEL_VIRTUAL_BASE)
     {
         *(.text)
@@ -51,13 +53,16 @@ SECTIONS
     /* .bss 段：未初始化数据 */
     .bss ALIGN(4K) : AT(ADDR(.bss) - KERNEL_VIRTUAL_BASE)
     {
+        _bss_start = .;
         *(COMMON)
         *(.bss)
         *(.bss.*)
         *(.bootstrap_stack)
+        _bss_end = .;
     }
 
-    /* 保存内核结束地址 */
+    /* 保存内核结束地址 - 必须在 BSS 段之后 */
+    . = ALIGN(4K);
     _kernel_end = .;
 
     /* 丢弃不需要的段 */

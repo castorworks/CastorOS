@@ -12,19 +12,21 @@ typedef signed short       int16_t;
 typedef signed int         int32_t;
 typedef signed long long   int64_t;
 
-typedef uint32_t size_t;
-typedef int32_t  ssize_t;
-typedef int32_t  off_t;    // POSIX: 文件偏移量类型（有符号）
-
-// 指针大小的整数类型 (架构相关)
+// 指针大小的整数类型和 size_t (架构相关)
 // i686: 32-bit, x86_64/arm64: 64-bit
 #if defined(ARCH_X86_64) || defined(ARCH_ARM64)
 typedef uint64_t uintptr_t;
 typedef int64_t  intptr_t;
+typedef uint64_t size_t;
+typedef int64_t  ssize_t;
+typedef int64_t  off_t;    // POSIX: 文件偏移量类型（有符号）
 #else
 // 默认 i686 (32-bit)
 typedef uint32_t uintptr_t;
 typedef int32_t  intptr_t;
+typedef uint32_t size_t;
+typedef int32_t  ssize_t;
+typedef int32_t  off_t;    // POSIX: 文件偏移量类型（有符号）
 #endif
 
 #define UINT32_MAX ((uint32_t)0xFFFFFFFF)
@@ -57,11 +59,26 @@ typedef unsigned char bool;
 
 #define PAGE_SIZE           4096
 #define PAGE_SHIFT          12
-#define PAGE_MASK           0xFFFFF000
-#define KERNEL_VIRTUAL_BASE 0x80000000
 
-#define VIRT_TO_PHYS(addr)  ((uint32_t)(addr) - KERNEL_VIRTUAL_BASE)
-#define PHYS_TO_VIRT(addr)  ((uint32_t)(addr) + KERNEL_VIRTUAL_BASE)
+/* 架构相关的内核虚拟地址基址和页掩码 */
+#if defined(ARCH_X86_64)
+    #define KERNEL_VIRTUAL_BASE 0xFFFF800000000000ULL
+    #define PAGE_MASK           0xFFFFFFFFFFFFF000ULL
+    #define VIRT_TO_PHYS(addr)  ((uintptr_t)(addr) - KERNEL_VIRTUAL_BASE)
+    #define PHYS_TO_VIRT(addr)  ((uintptr_t)(addr) + KERNEL_VIRTUAL_BASE)
+#elif defined(ARCH_ARM64)
+    #define KERNEL_VIRTUAL_BASE 0xFFFF000000000000ULL
+    #define PAGE_MASK           0xFFFFFFFFFFFFF000ULL
+    #define VIRT_TO_PHYS(addr)  ((uintptr_t)(addr) - KERNEL_VIRTUAL_BASE)
+    #define PHYS_TO_VIRT(addr)  ((uintptr_t)(addr) + KERNEL_VIRTUAL_BASE)
+#else
+    /* i686 (32-bit) */
+    #define KERNEL_VIRTUAL_BASE 0x80000000
+    #define PAGE_MASK           0xFFFFF000
+    #define VIRT_TO_PHYS(addr)  ((uint32_t)(addr) - KERNEL_VIRTUAL_BASE)
+    #define PHYS_TO_VIRT(addr)  ((uint32_t)(addr) + KERNEL_VIRTUAL_BASE)
+#endif
+
 #define PAGE_ALIGN_DOWN(addr) ((addr) & PAGE_MASK)
 #define PAGE_ALIGN_UP(addr)   (((addr) + PAGE_SIZE - 1) & PAGE_MASK)
 

@@ -853,15 +853,15 @@ TEST_CASE(test_pbt_vmm_page_table_levels) {
     // Address in PDE 0x40 (virtual 0x10000000)
     uint32_t virt1 = 0x10000000;
     // Address in PDE 0x41 (virtual 0x10400000, 4MB boundary)
-    uint32_t virt2 = 0x10400000;
+    uintptr_t virt2 = 0x10400000;
     
     // Property: Both addresses should map successfully
     ASSERT_TRUE(vmm_map_page(virt1, frame1, PAGE_PRESENT | PAGE_WRITE));
     ASSERT_TRUE(vmm_map_page(virt2, frame2, PAGE_PRESENT | PAGE_WRITE));
     
     // Property: Data written to each address should be independent
-    uint32_t *ptr1 = (uint32_t*)virt1;
-    uint32_t *ptr2 = (uint32_t*)virt2;
+    uint32_t *ptr1 = (uint32_t*)(uintptr_t)virt1;
+    uint32_t *ptr2 = (uint32_t*)(uintptr_t)virt2;
     *ptr1 = 0xAAAAAAAA;
     *ptr2 = 0xBBBBBBBB;
     
@@ -883,21 +883,25 @@ TEST_CASE(test_pbt_vmm_page_table_levels) {
  * (≥0x80000000 for i686).
  */
 TEST_CASE(test_pbt_vmm_kernel_address_range) {
-    // Property: KERNEL_VIRTUAL_BASE must be 0x80000000 for i686
+    // Property: KERNEL_VIRTUAL_BASE must be architecture-appropriate
+#if defined(ARCH_X86_64)
+    ASSERT_TRUE(KERNEL_VIRTUAL_BASE == 0xFFFF800000000000ULL);
+#else
     ASSERT_EQ_U(KERNEL_VIRTUAL_BASE, 0x80000000);
+#endif
     
     // Property: PHYS_TO_VIRT should produce addresses >= KERNEL_VIRTUAL_BASE
-    uint32_t test_phys_addrs[] = {0x0, 0x1000, 0x100000, 0x1000000, 0x10000000};
+    uintptr_t test_phys_addrs[] = {0x0, 0x1000, 0x100000, 0x1000000, 0x10000000};
     for (uint32_t i = 0; i < sizeof(test_phys_addrs)/sizeof(test_phys_addrs[0]); i++) {
-        uint32_t virt = PHYS_TO_VIRT(test_phys_addrs[i]);
+        uintptr_t virt = PHYS_TO_VIRT(test_phys_addrs[i]);
         ASSERT_TRUE(virt >= KERNEL_VIRTUAL_BASE);
     }
     
     // Property: VIRT_TO_PHYS should be the inverse of PHYS_TO_VIRT
     for (uint32_t i = 0; i < sizeof(test_phys_addrs)/sizeof(test_phys_addrs[0]); i++) {
-        uint32_t virt = PHYS_TO_VIRT(test_phys_addrs[i]);
-        uint32_t phys_back = VIRT_TO_PHYS(virt);
-        ASSERT_EQ_U(phys_back, test_phys_addrs[i]);
+        uintptr_t virt = PHYS_TO_VIRT(test_phys_addrs[i]);
+        uintptr_t phys_back = VIRT_TO_PHYS(virt);
+        ASSERT_TRUE(phys_back == test_phys_addrs[i]);
     }
 }
 

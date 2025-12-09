@@ -189,9 +189,9 @@ void task_free(task_t *task) {
     // 注意：不能在持有 spinlock 时调用可能阻塞的函数（kfree、vmm_free_page_directory）
     // 所以先在锁外释放资源，最后在锁内清理 PCB
     
-    uint32_t kernel_stack_base = task->kernel_stack_base;
+    uintptr_t kernel_stack_base = task->kernel_stack_base;
     bool is_user = task->is_user_process;
-    uint32_t page_dir_phys = task->page_dir_phys;
+    uintptr_t page_dir_phys = task->page_dir_phys;
     
     // 释放内核栈（在锁外执行）
     if (kernel_stack_base) {
@@ -395,7 +395,7 @@ uint32_t task_create_kernel_thread(void (*entry)(void), const char *name) {
     task->is_user_process = false;
     
     // 分配内核栈
-    task->kernel_stack_base = (uint32_t)kmalloc(KERNEL_STACK_SIZE);
+    task->kernel_stack_base = (uintptr_t)kmalloc(KERNEL_STACK_SIZE);
     if (!task->kernel_stack_base) {
         LOG_ERROR_MSG("task_create_kernel_thread: Failed to allocate kernel stack\n");
         task_free(task);
@@ -414,17 +414,20 @@ uint32_t task_create_kernel_thread(void (*entry)(void), const char *name) {
     
     // 设置段寄存器（内核段）
     task->context.cs = GDT_KERNEL_CODE_SEGMENT;  // 0x08
-    task->context.ds = GDT_KERNEL_DATA_SEGMENT;  // 0x10
+    task->context.ss = GDT_KERNEL_DATA_SEGMENT;  // 0x10
+#if !defined(ARCH_X86_64)
+    // i686: 需要设置所有段寄存器
+    task->context.ds = GDT_KERNEL_DATA_SEGMENT;
     task->context.es = GDT_KERNEL_DATA_SEGMENT;
     task->context.fs = GDT_KERNEL_DATA_SEGMENT;
     task->context.gs = GDT_KERNEL_DATA_SEGMENT;
-    task->context.ss = GDT_KERNEL_DATA_SEGMENT;
+#endif
     
     // 设置栈指针
     task->context.esp = task->kernel_stack;
     
     // 设置入口点（通过 task_enter_kernel_thread 包装）
-    task->context.eip = (uint32_t)task_enter_kernel_thread;
+    task->context.eip = (uintptr_t)task_enter_kernel_thread;
     
     // 设置 EFLAGS（启用中断）
     task->context.eflags = 0x202;  // IF=1
@@ -433,10 +436,10 @@ uint32_t task_create_kernel_thread(void (*entry)(void), const char *name) {
     task->context.cr3 = task->page_dir_phys;
     
     // 在栈上压入入口函数地址（task_enter_kernel_thread 会从栈顶获取）
-    // task_enter_kernel_thread 执行 pop eax，所以栈顶应该是入口函数地址
-    uint32_t *stack_ptr = (uint32_t*)task->kernel_stack;
-    stack_ptr[-1] = (uint32_t)entry;       // 入口函数
-    task->context.esp = (uint32_t)&stack_ptr[-1];  // ESP 指向入口函数
+    // task_enter_kernel_thread 执行 pop eax/rax，所以栈顶应该是入口函数地址
+    uintptr_t *stack_ptr = (uintptr_t*)task->kernel_stack;
+    stack_ptr[-1] = (uintptr_t)entry;       // 入口函数
+    task->context.esp = (uintptr_t)&stack_ptr[-1];  // ESP/RSP 指向入口函数
     
     // 文件描述符表（内核线程不需要）
     task->fd_table = NULL;
@@ -479,7 +482,7 @@ uint32_t task_create_user_process(const char *name, uint32_t entry_point,
     task->user_entry = entry_point;
     
     // 分配内核栈
-    task->kernel_stack_base = (uint32_t)kmalloc(KERNEL_STACK_SIZE);
+    task->kernel_stack_base = (uintptr_t)kmalloc(KERNEL_STACK_SIZE);
     if (!task->kernel_stack_base) {
         LOG_ERROR_MSG("task_create_user_process: Failed to allocate kernel stack\n");
         task_free(task);
@@ -489,7 +492,7 @@ uint32_t task_create_user_process(const char *name, uint32_t entry_point,
     task->kernel_stack = task->kernel_stack_base + KERNEL_STACK_SIZE;
     
     // 设置页目录
-    task->page_dir_phys = VIRT_TO_PHYS((uint32_t)page_dir);
+    task->page_dir_phys = VIRT_TO_PHYS((uintptr_t)page_dir);
     task->page_dir = page_dir;
     
     // 设置用户栈
@@ -505,11 +508,14 @@ uint32_t task_create_user_process(const char *name, uint32_t entry_point,
     
     // 设置段寄存器（用户段，Ring 3）
     task->context.cs = GDT_USER_CODE_SEGMENT | 3;  // 0x1B
-    task->context.ds = GDT_USER_DATA_SEGMENT | 3;  // 0x23
+    task->context.ss = GDT_USER_DATA_SEGMENT | 3;  // 0x23
+#if !defined(ARCH_X86_64)
+    // i686: 需要设置所有段寄存器
+    task->context.ds = GDT_USER_DATA_SEGMENT | 3;
     task->context.es = GDT_USER_DATA_SEGMENT | 3;
     task->context.fs = GDT_USER_DATA_SEGMENT | 3;
     task->context.gs = GDT_USER_DATA_SEGMENT | 3;
-    task->context.ss = GDT_USER_DATA_SEGMENT | 3;
+#endif
     
     // 设置用户栈指针
     task->context.esp = task->user_stack;
@@ -608,7 +614,7 @@ static bool task_create_idle(void) {
     idle_task->is_user_process = false;
     
     // 分配内核栈
-    idle_task->kernel_stack_base = (uint32_t)kmalloc(KERNEL_STACK_SIZE);
+    idle_task->kernel_stack_base = (uintptr_t)kmalloc(KERNEL_STACK_SIZE);
     if (!idle_task->kernel_stack_base) {
         LOG_ERROR_MSG("task_create_idle: Failed to allocate kernel stack\n");
         return false;
@@ -624,23 +630,26 @@ static bool task_create_idle(void) {
     memset(&idle_task->context, 0, sizeof(cpu_context_t));
     
     idle_task->context.cs = GDT_KERNEL_CODE_SEGMENT;
+    idle_task->context.ss = GDT_KERNEL_DATA_SEGMENT;
+#if !defined(ARCH_X86_64)
+    // i686: 需要设置所有段寄存器
     idle_task->context.ds = GDT_KERNEL_DATA_SEGMENT;
     idle_task->context.es = GDT_KERNEL_DATA_SEGMENT;
     idle_task->context.fs = GDT_KERNEL_DATA_SEGMENT;
     idle_task->context.gs = GDT_KERNEL_DATA_SEGMENT;
-    idle_task->context.ss = GDT_KERNEL_DATA_SEGMENT;
+#endif
     
     idle_task->context.esp = idle_task->kernel_stack;
-    idle_task->context.eip = (uint32_t)task_enter_kernel_thread;
+    idle_task->context.eip = (uintptr_t)task_enter_kernel_thread;
     idle_task->context.eflags = 0x202;
     idle_task->context.cr3 = idle_task->page_dir_phys;
     
     // 在栈上压入入口函数
-    // task_enter_kernel_thread 会执行 pop eax 获取入口函数
+    // task_enter_kernel_thread 会执行 pop eax/rax 获取入口函数
     // 所以栈顶应该是入口函数地址
-    uint32_t *stack_ptr = (uint32_t*)idle_task->kernel_stack;
-    stack_ptr[-1] = (uint32_t)idle_task_loop;  // 入口函数地址
-    idle_task->context.esp = (uint32_t)&stack_ptr[-1];  // ESP 指向入口函数
+    uintptr_t *stack_ptr = (uintptr_t*)idle_task->kernel_stack;
+    stack_ptr[-1] = (uintptr_t)idle_task_loop;  // 入口函数地址
+    idle_task->context.esp = (uintptr_t)&stack_ptr[-1];  // ESP/RSP 指向入口函数
     
     idle_task->fd_table = NULL;
     strcpy(idle_task->cwd, "/");
@@ -675,9 +684,9 @@ void task_schedule(void) {
                      task_to_cleanup->pid, task_to_cleanup->name);
         
         // 保存需要释放的资源信息（在 task_free 会清空 PCB）
-        uint32_t kernel_stack_base = task_to_cleanup->kernel_stack_base;
+        uintptr_t kernel_stack_base = task_to_cleanup->kernel_stack_base;
         bool is_user = task_to_cleanup->is_user_process;
-        uint32_t page_dir_phys = task_to_cleanup->page_dir_phys;
+        uintptr_t page_dir_phys = task_to_cleanup->page_dir_phys;
         fd_table_t *fd_table = task_to_cleanup->fd_table;
         
         // 先在锁内清空 PCB
@@ -762,12 +771,14 @@ void task_schedule(void) {
         if (next_task->pid == 1) {
             page_directory_t *shell_dir = next_task->page_dir;
             if (is_present(shell_dir->entries[1])) {
-                uint32_t phys = get_frame(shell_dir->entries[1]);
-                if (phys == 0 || phys >= 0x80000000) {
+                uintptr_t phys = get_frame(shell_dir->entries[1]);
+                if (phys == 0 || phys >= KERNEL_VIRTUAL_BASE) {
                     LOG_ERROR_MSG("Shell PDE[1] corrupted BEFORE switching to it!\n");
-                    LOG_ERROR_MSG("  PDE[0]=0x%x, PDE[1]=0x%x, PDE[2]=0x%x, PDE[3]=0x%x\n",
-                                 shell_dir->entries[0], shell_dir->entries[1],
-                                 shell_dir->entries[2], shell_dir->entries[3]);
+                    LOG_ERROR_MSG("  PDE[0]=0x%llx, PDE[1]=0x%llx, PDE[2]=0x%llx, PDE[3]=0x%llx\n",
+                                 (unsigned long long)shell_dir->entries[0], 
+                                 (unsigned long long)shell_dir->entries[1],
+                                 (unsigned long long)shell_dir->entries[2], 
+                                 (unsigned long long)shell_dir->entries[3]);
                 }
             }
         }

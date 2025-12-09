@@ -158,7 +158,7 @@ uint32_t sys_fork(uint32_t *frame) {
     child->page_dir = (page_directory_t*)PHYS_TO_VIRT(child->page_dir_phys);
     
     // 分配内核栈
-    child->kernel_stack_base = (uint32_t)kmalloc(KERNEL_STACK_SIZE);
+    child->kernel_stack_base = (uintptr_t)kmalloc(KERNEL_STACK_SIZE);
     if (!child->kernel_stack_base) {
         LOG_ERROR_MSG("sys_fork: Failed to allocate kernel stack\n");
         vmm_free_page_directory(child->page_dir_phys);
@@ -204,10 +204,13 @@ uint32_t sys_fork(uint32_t *frame) {
     // 不信任用户提供的段选择子，强制设置为用户态段
     child->context.cs = 0x1B;  // 用户代码段（Ring 3）
     child->context.ss = 0x23;  // 用户栈段（Ring 3）
+#if !defined(ARCH_X86_64)
+    // i686: 需要设置所有段寄存器
     child->context.ds = 0x23;  // 用户数据段（Ring 3）
     child->context.es = 0x23;
     child->context.fs = 0x23;
     child->context.gs = 0x23;
+#endif
     
     // 分配并复制文件描述符表
     if (parent->fd_table) {
@@ -466,11 +469,14 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
     // 设置用户态上下文
     current->context.eip = entry_point;
     current->context.cs = 0x1B;  // 用户代码段（Ring 3）
+    current->context.ss = 0x23;  // 用户栈段（Ring 3）
+#if !defined(ARCH_X86_64)
+    // i686: 需要设置所有段寄存器
     current->context.ds = 0x23;  // 用户数据段（Ring 3）
     current->context.es = 0x23;
     current->context.fs = 0x23;
     current->context.gs = 0x23;
-    current->context.ss = 0x23;  // 用户栈段（Ring 3）
+#endif
     current->context.esp = current->user_stack;
     current->context.eflags = 0x202;  // 中断使能
     current->context.cr3 = current->page_dir_phys;

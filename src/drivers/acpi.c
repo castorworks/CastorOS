@@ -130,7 +130,7 @@ static acpi_sdt_header_t *acpi_find_table(const char *signature) {
     
     // 计算 RSDT 中表指针的数量
     uint32_t entries = (acpi_info.rsdt->header.length - sizeof(acpi_sdt_header_t)) / 4;
-    uint32_t *table_ptrs = (uint32_t *)((uint32_t)acpi_info.rsdt + sizeof(acpi_sdt_header_t));
+    uint32_t *table_ptrs = (uint32_t *)((uintptr_t)acpi_info.rsdt + sizeof(acpi_sdt_header_t));
     
     LOG_DEBUG_MSG("ACPI: RSDT has %u entries\n", entries);
     

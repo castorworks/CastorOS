@@ -215,9 +215,13 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.S
 # ============================================================================
 
 # 运行 QEMU
+# Note: x86_64 requires GRUB bootloader, so we use disk image
 run: $(KERNEL)
 ifeq ($(ARCH),arm64)
 	$(QEMU) $(QEMU_FLAGS) $(KERNEL) -nographic -serial mon:stdio
+else ifeq ($(ARCH),x86_64)
+	@echo "x86_64 requires bootable disk image with GRUB..."
+	@$(MAKE) run-disk ARCH=x86_64
 else
 	$(QEMU) $(QEMU_FLAGS) $(KERNEL) -serial stdio
 endif
@@ -225,6 +229,9 @@ endif
 run-silent: $(KERNEL)
 ifeq ($(ARCH),arm64)
 	$(QEMU) $(QEMU_FLAGS) $(KERNEL) -nographic -serial mon:stdio
+else ifeq ($(ARCH),x86_64)
+	@echo "x86_64 requires bootable disk image with GRUB..."
+	@$(MAKE) run-disk ARCH=x86_64
 else
 	$(QEMU) $(QEMU_FLAGS) $(KERNEL) -serial stdio -display none
 endif
@@ -233,6 +240,9 @@ endif
 debug: $(KERNEL)
 ifeq ($(ARCH),arm64)
 	$(QEMU) $(QEMU_FLAGS) $(KERNEL) -nographic -serial mon:stdio -s -S
+else ifeq ($(ARCH),x86_64)
+	@echo "x86_64 requires bootable disk image with GRUB..."
+	@$(MAKE) debug-disk ARCH=x86_64
 else
 	$(QEMU) $(QEMU_FLAGS) $(KERNEL) -serial stdio -s -S
 endif
@@ -240,6 +250,9 @@ endif
 debug-silent: $(KERNEL)
 ifeq ($(ARCH),arm64)
 	$(QEMU) $(QEMU_FLAGS) $(KERNEL) -nographic -serial mon:stdio -s -S
+else ifeq ($(ARCH),x86_64)
+	@echo "x86_64 requires bootable disk image with GRUB..."
+	@$(MAKE) debug-disk ARCH=x86_64
 else
 	$(QEMU) $(QEMU_FLAGS) $(KERNEL) -serial stdio -s -S -display none
 endif

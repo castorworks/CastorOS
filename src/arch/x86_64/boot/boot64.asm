@@ -1,98 +1,62 @@
 ; ============================================================================
 ; boot64.asm - 内核引导代码 (x86_64)
 ; ============================================================================
-; 这个文件包含 x86_64 内核的第一段执行代码
-; 主要任务：
-;   1. 验证 Multiboot2 引导
-;   2. 检查 CPU 是否支持长模式
-;   3. 建立临时 4 级页表（支持高半核）
-;   4. 启用 PAE 和长模式
-;   5. 跳转到 64 位代码
-;   6. 设置栈并调用 C 内核入口
+; 32 位和 64 位混合代码，使用绝对寻址避免 RIP-relative 问题
+; ============================================================================
+
+; 强制使用绝对寻址 (不使用 RIP-relative)
+default abs
 
 ; ============================================================================
 ; 常量定义
 ; ============================================================================
 
-; 内核虚拟地址基址 (高半核)
 KERNEL_VMA              equ 0xFFFF800000000000
-KERNEL_LMA              equ 0x100000            ; 物理加载地址 (1MB)
 
-; 页表相关常量
 PAGE_PRESENT            equ (1 << 0)
 PAGE_WRITE              equ (1 << 1)
-PAGE_SIZE_2MB           equ (1 << 7)            ; 2MB 大页
+PAGE_SIZE_2MB           equ (1 << 7)
 
-; CR0 标志
-CR0_PG                  equ (1 << 31)           ; 分页启用
-CR0_WP                  equ (1 << 16)           ; 写保护
+CR0_PG                  equ (1 << 31)
+CR0_WP                  equ (1 << 16)
+CR4_PAE                 equ (1 << 5)
 
-; CR4 标志
-CR4_PAE                 equ (1 << 5)            ; 物理地址扩展
-
-; EFER MSR
 MSR_EFER                equ 0xC0000080
-EFER_LME                equ (1 << 8)            ; 长模式启用
-EFER_NXE                equ (1 << 11)           ; NX 位启用
+EFER_LME                equ (1 << 8)
+EFER_NXE                equ (1 << 11)
 
-; CPUID 相关
 CPUID_EXT_FUNC          equ 0x80000000
 CPUID_EXT_FEATURES      equ 0x80000001
-CPUID_LM_BIT            equ (1 << 29)           ; 长模式支持位
+CPUID_LM_BIT            equ (1 << 29)
 
-; Multiboot2 常量
-MULTIBOOT2_MAGIC        equ 0xE85250D6
-MULTIBOOT2_ARCH_I386    equ 0
-MULTIBOOT2_HEADER_LEN   equ (multiboot2_header_end - multiboot2_header)
-MULTIBOOT2_CHECKSUM     equ -(MULTIBOOT2_MAGIC + MULTIBOOT2_ARCH_I386 + MULTIBOOT2_HEADER_LEN)
+MULTIBOOT_MAGIC         equ 0x1BADB002
+MULTIBOOT_PAGE_ALIGN    equ (1 << 0)
+MULTIBOOT_MEMORY_INFO   equ (1 << 1)
+MULTIBOOT_VIDEO_MODE    equ (1 << 2)
+MULTIBOOT_FLAGS         equ (MULTIBOOT_PAGE_ALIGN | MULTIBOOT_MEMORY_INFO | MULTIBOOT_VIDEO_MODE)
+MULTIBOOT_CHECKSUM      equ -(MULTIBOOT_MAGIC + MULTIBOOT_FLAGS)
+MULTIBOOT_BOOTLOADER_MAGIC equ 0x2BADB002
 
-; Multiboot2 引导魔数 (由 bootloader 放入 EAX)
-MULTIBOOT2_BOOTLOADER_MAGIC equ 0x36D76289
+BOOT_PML4_PHYS          equ 0x200000
+BOOT_PDPT_PHYS          equ 0x201000
+BOOT_PD_PHYS            equ 0x202000
 
 ; ============================================================================
-; Multiboot2 头部
+; Multiboot1 头部
 ; ============================================================================
 
 section .multiboot
-align 8
+align 4
 
-multiboot2_header:
-    dd MULTIBOOT2_MAGIC                 ; 魔数
-    dd MULTIBOOT2_ARCH_I386             ; 架构 (i386 保护模式)
-    dd MULTIBOOT2_HEADER_LEN            ; 头部长度
-    dd MULTIBOOT2_CHECKSUM              ; 校验和
-
-    ; ---- 信息请求标签 ----
-    align 8
-    .tag_info_request:
-        dw 1                            ; 类型: 信息请求
-        dw 0                            ; 标志
-        dd .tag_info_request_end - .tag_info_request
-        dd 6                            ; 请求内存映射
-        dd 8                            ; 请求帧缓冲信息
-    .tag_info_request_end:
-
-    ; ---- 帧缓冲标签 ----
-    align 8
-    .tag_framebuffer:
-        dw 5                            ; 类型: 帧缓冲
-        dw 0                            ; 标志
-        dd 20                           ; 大小
-        dd 0                            ; 宽度 (0 = 让 bootloader 选择)
-        dd 0                            ; 高度 (0 = 让 bootloader 选择)
-        dd 32                           ; 位深度
-
-    ; ---- 结束标签 ----
-    align 8
-    .tag_end:
-        dw 0                            ; 类型: 结束
-        dw 0                            ; 标志
-        dd 8                            ; 大小
-
-multiboot2_header_end:
+multiboot_header:
+    dd MULTIBOOT_MAGIC
+    dd MULTIBOOT_FLAGS
+    dd MULTIBOOT_CHECKSUM
+    dd 0, 0, 0, 0, 0
+    dd 0, 0, 0, 32
 
 ; ============================================================================
-; 32 位引导代码段
+; 32 位引导代码
 ; ============================================================================
 
 [BITS 32]
@@ -102,137 +66,125 @@ section .text.boot
 global _start
 extern kernel_main
 
-; 32 位入口点 (GRUB 跳转到这里)
 _start:
-    ; 禁用中断
     cli
+    mov edi, eax
+    mov esi, ebx
 
-    ; 保存 Multiboot2 信息
-    mov edi, eax                        ; 保存魔数到 EDI
-    mov esi, ebx                        ; 保存 MBI 地址到 ESI
+    cmp edi, MULTIBOOT_BOOTLOADER_MAGIC
+    jne near no_multiboot
 
-    ; 验证 Multiboot2 魔数
-    cmp edi, MULTIBOOT2_BOOTLOADER_MAGIC
-    jne .no_multiboot
-
-    ; 检查 CPU 是否支持长模式
     call check_long_mode
     test eax, eax
-    jz .no_long_mode
+    jz near no_long_mode
 
-    ; 设置临时页表
     call setup_page_tables
 
-    ; 启用 PAE
     mov eax, cr4
     or eax, CR4_PAE
     mov cr4, eax
 
-    ; 加载 PML4 物理地址到 CR3
-    mov eax, boot_pml4 - KERNEL_VMA
+    mov eax, BOOT_PML4_PHYS
     mov cr3, eax
 
-    ; 启用长模式 (设置 EFER.LME)
     mov ecx, MSR_EFER
     rdmsr
     or eax, EFER_LME | EFER_NXE
     wrmsr
 
-    ; 启用分页 (CR0.PG)
     mov eax, cr0
     or eax, CR0_PG | CR0_WP
     mov cr0, eax
 
-    ; 加载 64 位 GDT
-    lgdt [gdt64_ptr32 - KERNEL_VMA]
+    ; 使用绝对地址加载 GDT
+    mov eax, gdt64_ptr_low
+    lgdt [eax]
+    
+    ; 使用间接远跳转
+    jmp dword 0x08:long_mode_entry_low
 
-    ; 远跳转到 64 位代码段 (使用物理地址)
-    jmp 0x08:(long_mode_entry - KERNEL_VMA)
+no_multiboot:
+    mov dword [0xB8000], 0x4F524F45
+    mov dword [0xB8004], 0x4F3A4F52
+    mov dword [0xB8008], 0x4F424F4D
+    jmp halt32
 
-.no_multiboot:
-    mov dword [0xB8000], 0x4F524F45     ; "ER"
-    mov dword [0xB8004], 0x4F3A4F52     ; "R:"
-    mov dword [0xB8008], 0x4F424F4D     ; "MB"
-    jmp .halt
+no_long_mode:
+    mov dword [0xB8000], 0x4F524F45
+    mov dword [0xB8004], 0x4F3A4F52
+    mov dword [0xB8008], 0x4F4D4F4C
 
-.no_long_mode:
-    mov dword [0xB8000], 0x4F524F45     ; "ER"
-    mov dword [0xB8004], 0x4F3A4F52     ; "R:"
-    mov dword [0xB8008], 0x4F4D4F4C     ; "LM"
-
-.halt:
+halt32:
     hlt
-    jmp .halt
+    jmp halt32
 
-; ============================================================================
-; 检查 CPU 是否支持长模式
-; ============================================================================
 check_long_mode:
     mov eax, CPUID_EXT_FUNC
     cpuid
     cmp eax, CPUID_EXT_FEATURES
     jb .no_lm
-
     mov eax, CPUID_EXT_FEATURES
     cpuid
     test edx, CPUID_LM_BIT
     jz .no_lm
-
     mov eax, 1
     ret
-
 .no_lm:
     xor eax, eax
     ret
 
-; ============================================================================
-; 设置临时 4 级页表
-; 映射:
-;   1. 恒等映射: 0x00000000 - 0x40000000 (1GB)
-;   2. 高半核映射: 0xFFFF800000000000 - 0xFFFF800040000000 (1GB)
-; ============================================================================
 setup_page_tables:
     ; 清零页表
-    mov edi, boot_pml4 - KERNEL_VMA
-    mov ecx, 4096 * 4 / 4
+    mov edi, BOOT_PML4_PHYS
+    mov ecx, 4096 * 3 / 4
     xor eax, eax
     rep stosd
 
-    ; PML4[0] -> PDPT (恒等映射)
-    mov eax, (boot_pdpt - KERNEL_VMA) + PAGE_PRESENT + PAGE_WRITE
-    mov [boot_pml4 - KERNEL_VMA], eax
-
-    ; PML4[256] -> PDPT (高半核映射)
-    mov [boot_pml4 - KERNEL_VMA + 256 * 8], eax
-
+    ; PML4[0] -> PDPT (使用寄存器间接寻址避免 RIP-relative)
+    mov edi, BOOT_PML4_PHYS
+    mov eax, BOOT_PDPT_PHYS + PAGE_PRESENT + PAGE_WRITE
+    mov [edi], eax
+    
+    ; PML4[256] -> PDPT
+    mov edi, BOOT_PML4_PHYS + 256 * 8
+    mov [edi], eax
+    
     ; PDPT[0] -> PD
-    mov eax, (boot_pd - KERNEL_VMA) + PAGE_PRESENT + PAGE_WRITE
-    mov [boot_pdpt - KERNEL_VMA], eax
+    mov edi, BOOT_PDPT_PHYS
+    mov eax, BOOT_PD_PHYS + PAGE_PRESENT + PAGE_WRITE
+    mov [edi], eax
 
-    ; PD: 映射前 1GB (512 个 2MB 页)
-    mov edi, boot_pd - KERNEL_VMA
+    ; PD: 映射前 1GB
+    mov edi, BOOT_PD_PHYS
     mov eax, PAGE_PRESENT | PAGE_WRITE | PAGE_SIZE_2MB
     mov ecx, 512
 .fill_pd:
     mov [edi], eax
-    mov dword [edi + 4], 0              ; 高 32 位为 0
+    mov dword [edi + 4], 0
     add eax, 0x200000
     add edi, 8
     loop .fill_pd
-
     ret
 
+; 32 位模式 GDT
+align 16
+gdt64_low:
+    dq 0
+    dq 0x00209A0000000000
+    dq 0x0000920000000000
+gdt64_low_end:
+
+gdt64_ptr_low:
+    dw gdt64_low_end - gdt64_low - 1
+    dd gdt64_low
 
 ; ============================================================================
-; 64 位代码段
+; 64 位入口 (物理地址，在 .text.boot 段)
 ; ============================================================================
 
 [BITS 64]
 
-section .text
-
-long_mode_entry:
-    ; 加载数据段选择子
+long_mode_entry_low:
     mov ax, 0x10
     mov ds, ax
     mov es, ax
@@ -240,102 +192,108 @@ long_mode_entry:
     mov gs, ax
     mov ss, ax
 
-    ; 跳转到高半核地址
-    mov rax, .higher_half
+    ; 调试: 在 VGA 显示 "64" 表示进入了 64 位模式
+    mov dword [0xB8000], 0x2F362F36  ; "66" in green
+    mov dword [0xB8004], 0x2F342F34  ; "44" in green
+
+    ; 跳转到高半核
+    mov rax, long_mode_entry_high
     jmp rax
 
-.higher_half:
-    ; 现在运行在高半核地址空间
+; ============================================================================
+; 64 位代码 (高半核地址)
+; ============================================================================
 
-    ; 加载高半核 GDT (使用绝对地址)
+section .text
+
+long_mode_entry_high:
+    ; 调试: 显示 "HI" 表示进入高半核
+    mov rax, 0xB8008 + KERNEL_VMA
+    mov dword [rax], 0x2F482F48      ; "HH"
+    mov dword [rax + 4], 0x2F492F49  ; "II"
+
+    ; 加载高半核 GDT
     mov rax, gdt64_ptr
     lgdt [rax]
 
-    ; 取消恒等映射 (清除 PML4[0])
-    mov rax, boot_pml4
+    ; 取消恒等映射
+    mov rax, KERNEL_VMA + BOOT_PML4_PHYS
     mov qword [rax], 0
 
     ; 刷新 TLB
     mov rax, cr3
     mov cr3, rax
 
-    ; 设置栈指针 (使用绝对地址)
+    ; 设置栈
     mov rax, stack_top
     mov rsp, rax
 
-    ; 准备调用 kernel_main
-    ; RDI = Multiboot2 信息结构地址 (转换为高半核地址)
+    ; 调试: 显示 "OK" 表示栈设置完成
+    mov rax, 0xB8010 + KERNEL_VMA
+    mov dword [rax], 0x2F4F2F4F      ; "OO"
+    mov dword [rax + 4], 0x2F4B2F4B  ; "KK"
+
+    ; kernel_main 参数
     xor rdi, rdi
     mov edi, esi
     mov rax, KERNEL_VMA
     add rdi, rax
 
-    ; 调用 C 内核入口 (使用绝对地址)
+    ; 调用内核
     mov rax, kernel_main
     call rax
 
-    ; 如果返回，进入死循环
     cli
 .hang:
     hlt
     jmp .hang
 
 ; ============================================================================
-; 64 位 GDT
+; 64 位 GDT (高半核)
 ; ============================================================================
 
 section .rodata
 align 16
 
 gdt64:
-    dq 0                                ; 空描述符
-    dq 0x00209A0000000000               ; 64-bit 代码段 (ring 0)
-    dq 0x0000920000000000               ; 64-bit 数据段 (ring 0)
-    dq 0x0020FA0000000000               ; 64-bit 代码段 (ring 3)
-    dq 0x0000F20000000000               ; 64-bit 数据段 (ring 3)
+    dq 0
+    dq 0x00209A0000000000
+    dq 0x0000920000000000
+    dq 0x0020FA0000000000
+    dq 0x0000F20000000000
 gdt64_end:
 
-; GDT 指针 (高半核地址)
 gdt64_ptr:
     dw gdt64_end - gdt64 - 1
     dq gdt64
 
-; GDT 指针 (物理地址，用于 32 位模式)
+; ============================================================================
+; 数据
+; ============================================================================
+
 section .data
-align 8
-gdt64_ptr32:
-    dw gdt64_end - gdt64 - 1
-    dq gdt64 - KERNEL_VMA
-
-; ============================================================================
-; 页表 (4KB 对齐)
-; ============================================================================
-
-section .bss
-align 4096
 
 global boot_pml4
-global boot_page_directory  ; Alias for compatibility with vmm.c
+global boot_page_directory
 boot_pml4:
-boot_page_directory:        ; boot_page_directory points to PML4 on x86_64
-    resb 4096
+boot_page_directory:
+    dq KERNEL_VMA + BOOT_PML4_PHYS
 
 global boot_pdpt
 boot_pdpt:
-    resb 4096
+    dq KERNEL_VMA + BOOT_PDPT_PHYS
 
 global boot_pd
 boot_pd:
-    resb 4096
-
-boot_pt:
-    resb 4096
+    dq KERNEL_VMA + BOOT_PD_PHYS
 
 ; ============================================================================
-; 内核栈 (32KB)
+; 栈
 ; ============================================================================
 
+section .bss
 align 16
+
 global stack_bottom
 global stack_top
 

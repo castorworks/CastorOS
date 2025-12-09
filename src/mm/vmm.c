@@ -17,52 +17,77 @@
 #include <hal/hal.h>
 
 static page_directory_t *current_dir = NULL;  ///< 当前页目录虚拟地址
-static uint32_t current_dir_phys = 0;          ///< 当前页目录物理地址
-extern uint32_t boot_page_directory[];         ///< 引导时的页目录
+static uintptr_t current_dir_phys = 0;         ///< 当前页目录物理地址
+#if defined(ARCH_X86_64)
+extern uint64_t boot_page_directory[];         ///< 引导时的 PML4 (x86_64)
+#else
+extern uint32_t boot_page_directory[];         ///< 引导时的页目录 (i686)
+#endif
 static spinlock_t vmm_lock;                    ///< VMM 自旋锁，保护页表操作
 
-#define KERNEL_PDE_START 512
+#if defined(ARCH_X86_64)
+#define KERNEL_PDE_START 256   // x86_64: PML4 entry 256 = 0xFFFF800000000000
+#define KERNEL_PDE_END   512
+#else
+#define KERNEL_PDE_START 512   // i686: PDE 512 = 0x80000000
 #define KERNEL_PDE_END   1024
+#endif
 
 // 活动页目录跟踪（防止页目录被意外覆盖）
 #define MAX_PAGE_DIRECTORIES 64
-static uint32_t active_page_directories[MAX_PAGE_DIRECTORIES];
+static uintptr_t active_page_directories[MAX_PAGE_DIRECTORIES];
 static uint32_t active_pd_count = 0;
 
+#if defined(ARCH_X86_64)
+/* x86_64: 4-level paging address decomposition */
+static inline uint32_t pml4_idx(uintptr_t v) { return (v >> 39) & 0x1FF; }
+static inline uint32_t pdpt_idx(uintptr_t v) { return (v >> 30) & 0x1FF; }
+static inline uint32_t pd_idx(uintptr_t v)   { return (v >> 21) & 0x1FF; }
+static inline uint32_t pt_idx(uintptr_t v)   { return (v >> 12) & 0x1FF; }
+static inline uintptr_t get_frame64(uint64_t e) { return e & 0x000FFFFFFFFFF000ULL; }
+static inline bool is_present64(uint64_t e) { return e & PAGE_PRESENT; }
+/* Compatibility aliases for x86_64 */
+#define pde_idx(v) pml4_idx(v)
+#define pte_idx(v) pt_idx(v)
+#define get_frame(e) get_frame64(e)
+#define is_present(e) is_present64(e)
+#else
+/* i686: 2-level paging address decomposition */
 /**
  * @brief 获取页目录索引
  * @param v 虚拟地址
  * @return 页目录索引（高10位）
  */
-static inline uint32_t pde_idx(uint32_t v) { return v >> 22; }
+static inline uint32_t pde_idx(uintptr_t v) { return v >> 22; }
 
 /**
  * @brief 获取页表索引
  * @param v 虚拟地址
  * @return 页表索引（中间10位）
  */
-static inline uint32_t pte_idx(uint32_t v) { return (v >> 12) & 0x3FF; }
+static inline uint32_t pte_idx(uintptr_t v) { return (v >> 12) & 0x3FF; }
 
 /**
  * @brief 从页表项/页目录项中提取物理地址
  * @param e 页表项或页目录项
  * @return 物理地址（页对齐）
  */
-static inline uint32_t get_frame(uint32_t e) { return e & 0xFFFFF000; }
+static inline uintptr_t get_frame(pde_t e) { return e & 0xFFFFF000; }
 
 /**
  * @brief 检查页表项/页目录项是否存在
  * @param e 页表项或页目录项
  * @return 存在返回 true，否则返回 false
  */
-static inline bool is_present(uint32_t e) { return e & PAGE_PRESENT; }
+static inline bool is_present(pde_t e) { return e & PAGE_PRESENT; }
+#endif
 
 /**
  * @brief 检查物理帧是否是活动页目录
  * @param frame 物理帧地址
  * @return 是活动页目录返回 true，否则返回 false
  */
-static bool is_active_page_directory(uint32_t frame) {
+static bool is_active_page_directory(uintptr_t frame) {
     for (uint32_t i = 0; i < active_pd_count; i++) {
         if (active_page_directories[i] == frame) {
             return true;
@@ -71,23 +96,25 @@ static bool is_active_page_directory(uint32_t frame) {
     return false;
 }
 
-static inline void protect_phys_frame(uint32_t frame) {
+static inline void protect_phys_frame(uintptr_t frame) {
     if (frame) {
-        pmm_protect_frame(frame);
+        pmm_protect_frame((uint32_t)frame);  // PMM still uses 32-bit
     }
 }
 
-static inline void unprotect_phys_frame(uint32_t frame) {
+static inline void unprotect_phys_frame(uintptr_t frame) {
     if (frame) {
-        pmm_unprotect_frame(frame);
+        pmm_unprotect_frame((uint32_t)frame);  // PMM still uses 32-bit
     }
 }
 
+#if !defined(ARCH_X86_64)
+/* i686-only helper functions - x86_64 uses boot page tables directly */
 static void protect_directory_range(page_directory_t *dir, uint32_t start_idx, uint32_t end_idx) {
     for (uint32_t i = start_idx; i < end_idx; i++) {
         pde_t entry = dir->entries[i];
         if (is_present(entry)) {
-            uint32_t frame = get_frame(entry);
+            uintptr_t frame = get_frame(entry);
             if (frame == 0) {
                 LOG_ERROR_MSG("VMM: protect_directory_range detected zero frame at PDE %u\n", i);
                 continue;
@@ -101,7 +128,7 @@ static void release_directory_range(page_directory_t *dir, uint32_t start_idx, u
     for (uint32_t i = start_idx; i < end_idx; i++) {
         pde_t entry = dir->entries[i];
         if (is_present(entry)) {
-            uint32_t frame = get_frame(entry);
+            uintptr_t frame = get_frame(entry);
             if (frame == 0) {
                 LOG_ERROR_MSG("VMM: release_directory_range detected zero frame at PDE %u\n", i);
                 if (clear_entries) {
@@ -121,42 +148,44 @@ static void release_directory_range(page_directory_t *dir, uint32_t start_idx, u
  * @brief 注册活动页目录
  * @param dir_phys 页目录的物理地址
  */
-static void register_page_directory(uint32_t dir_phys) {
+static void register_page_directory(uintptr_t dir_phys) {
     if (active_pd_count >= MAX_PAGE_DIRECTORIES) {
-        LOG_ERROR_MSG("VMM: Too many active page directories! Cannot register 0x%x\n", dir_phys);
+        LOG_ERROR_MSG("VMM: Too many active page directories! Cannot register 0x%lx\n", (unsigned long)dir_phys);
         return;
     }
     
     // 检查是否已注册
     if (is_active_page_directory(dir_phys)) {
-        LOG_WARN_MSG("VMM: Page directory 0x%x already registered\n", dir_phys);
+        LOG_WARN_MSG("VMM: Page directory 0x%lx already registered\n", (unsigned long)dir_phys);
         return;
     }
     
     protect_phys_frame(dir_phys);
     active_page_directories[active_pd_count++] = dir_phys;
-    LOG_INFO_MSG("VMM: Registered page directory 0x%x (total: %u)\n", dir_phys, active_pd_count);
+    LOG_INFO_MSG("VMM: Registered page directory 0x%lx (total: %u)\n", (unsigned long)dir_phys, active_pd_count);
 }
 
 /**
  * @brief 注销活动页目录
  * @param dir_phys 页目录的物理地址
  */
-static void unregister_page_directory(uint32_t dir_phys) {
+static void unregister_page_directory(uintptr_t dir_phys) {
     for (uint32_t i = 0; i < active_pd_count; i++) {
         if (active_page_directories[i] == dir_phys) {
             unprotect_phys_frame(dir_phys);
             // 用最后一个元素替换当前元素
             active_page_directories[i] = active_page_directories[--active_pd_count];
-            LOG_INFO_MSG("VMM: Unregistered page directory 0x%x (remaining: %u)\n", dir_phys, active_pd_count);
+            LOG_INFO_MSG("VMM: Unregistered page directory 0x%lx (remaining: %u)\n", (unsigned long)dir_phys, active_pd_count);
             return;
         }
     }
-    LOG_ERROR_MSG("VMM: ERROR: Tried to unregister unknown page directory 0x%x\n", dir_phys);
+    LOG_ERROR_MSG("VMM: ERROR: Tried to unregister unknown page directory 0x%lx\n", (unsigned long)dir_phys);
 }
+#endif /* !ARCH_X86_64 */
 
+#if !defined(ARCH_X86_64)
 /**
- * @brief 创建新的页表
+ * @brief 创建新的页表 (i686 only)
  * @return 成功返回页表虚拟地址，失败返回 NULL
  */
 static page_table_t* create_page_table(void) {
@@ -164,6 +193,7 @@ static page_table_t* create_page_table(void) {
     if (!frame) return NULL;
     return (page_table_t*)PHYS_TO_VIRT(frame);
 }
+#endif
 
 /**
  * @brief 初始化虚拟内存管理器
@@ -175,8 +205,24 @@ void vmm_init(void) {
     // 初始化 VMM 自旋锁
     spinlock_init(&vmm_lock);
     
+#if defined(ARCH_X86_64)
+    // x86_64: 引导代码已经设置了 4 级页表，映射了前 1GB
+    // 暂时不扩展映射，直接使用引导时的页表
+    // boot_page_directory 在 x86_64 上是指向 PML4 的指针
+    current_dir_phys = hal_mmu_get_current_page_table();
+    current_dir = (page_directory_t*)PHYS_TO_VIRT(current_dir_phys);
+    
+    LOG_INFO_MSG("VMM: x86_64 mode - using boot page tables\n");
+    LOG_INFO_MSG("VMM: PML4 at phys 0x%llx, virt 0x%llx\n", 
+                 (unsigned long long)current_dir_phys, (unsigned long long)current_dir);
+    LOG_INFO_MSG("VMM: Boot mapping covers first 1GB of physical memory\n");
+    
+    // x86_64 暂时不需要扩展映射，引导代码已经映射了足够的内存
+    // TODO: 实现完整的 x86_64 VMM，支持动态页表管理
+#else
+    // i686: 原有的 32 位实现
     current_dir = (page_directory_t*)boot_page_directory;
-    current_dir_phys = VIRT_TO_PHYS((uint32_t)current_dir);
+    current_dir_phys = VIRT_TO_PHYS((uintptr_t)current_dir);
     
     // 检查并更新页表基址寄存器 (通过 HAL 接口)
     uintptr_t current_page_table = hal_mmu_get_current_page_table();
@@ -268,18 +314,21 @@ void vmm_init(void) {
     
     LOG_INFO_MSG("VMM: High-half kernel mapping extended\n");
     LOG_INFO_MSG("VMM: Boot page directory registered at phys 0x%x\n", current_dir_phys);
+#endif
 }
 
-
-// 声明引导页目录（作为内核主页目录参考）
-extern uint32_t boot_page_directory[];
 
 /**
  * @brief 处理内核空间缺页异常（同步内核页目录）
  * @param addr 缺页地址
  * @return 是否成功处理
  */
-bool vmm_handle_kernel_page_fault(uint32_t addr) {
+bool vmm_handle_kernel_page_fault(uintptr_t addr) {
+#if defined(ARCH_X86_64)
+    // x86_64: 引导时已映射所有内核空间，不需要同步
+    (void)addr;
+    return false;
+#else
     // 必须是内核空间地址
     if (addr < KERNEL_VIRTUAL_BASE) return false;
     
@@ -302,6 +351,7 @@ bool vmm_handle_kernel_page_fault(uint32_t addr) {
     }
     
     return false;
+#endif
 }
 
 /**
@@ -319,7 +369,12 @@ bool vmm_handle_kernel_page_fault(uint32_t addr) {
  * 
  * COW 异常特征：页面存在(P=1) + 写操作(W=1) + 页面有 PAGE_COW 标志
  */
-bool vmm_handle_cow_page_fault(uint32_t addr, uint32_t error_code) {
+bool vmm_handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
+#if defined(ARCH_X86_64)
+    // x86_64: COW 暂不支持
+    (void)addr; (void)error_code;
+    return false;
+#else
     // error_code bit 1: 写入导致的异常
     // error_code bit 0: 页面存在
     // COW 异常应该是：页面存在(bit0=1) + 写入(bit1=1) = 0x3 或 0x7
@@ -424,6 +479,7 @@ bool vmm_handle_cow_page_fault(uint32_t addr, uint32_t error_code) {
     LOG_DEBUG_MSG("COW: Copied page (refcount was %u), old_frame=0x%x -> new_frame=0x%x\n", 
                  refcount, old_frame, new_frame);
     return true;
+#endif /* !ARCH_X86_64 */
 }
 
 /**
@@ -433,7 +489,14 @@ bool vmm_handle_cow_page_fault(uint32_t addr, uint32_t error_code) {
  * @param flags 页标志（PAGE_PRESENT, PAGE_WRITE, PAGE_USER）
  * @return 成功返回 true，失败返回 false
  */
-bool vmm_map_page(uint32_t virt, uint32_t phys, uint32_t flags) {
+bool vmm_map_page(uintptr_t virt, uintptr_t phys, uint32_t flags) {
+#if defined(ARCH_X86_64)
+    // x86_64: 暂不支持动态页表映射，使用引导时的静态映射
+    // TODO: 实现 4 级页表动态映射
+    (void)virt; (void)phys; (void)flags;
+    LOG_WARN_MSG("VMM: vmm_map_page not implemented for x86_64\n");
+    return false;
+#else
     // 检查页对齐
     if ((virt | phys) & (PAGE_SIZE-1)) return false;
     
@@ -453,7 +516,7 @@ bool vmm_map_page(uint32_t virt, uint32_t phys, uint32_t flags) {
             spinlock_unlock_irqrestore(&vmm_lock, irq_state);
             return false;
         }
-        uint32_t table_phys = VIRT_TO_PHYS((uint32_t)table);
+        uintptr_t table_phys = VIRT_TO_PHYS((uintptr_t)table);
         
         // 创建页表时，权限应该根据目标虚拟地址决定
         // 如果是内核空间（>= 0x80000000），则不应设置 PAGE_USER
@@ -463,7 +526,7 @@ bool vmm_map_page(uint32_t virt, uint32_t phys, uint32_t flags) {
             pde_flags |= PAGE_USER;
         }
         
-        uint32_t new_pde = table_phys | pde_flags;
+        pde_t new_pde = table_phys | pde_flags;
         *pde = new_pde;
         protect_phys_frame(table_phys);
         
@@ -486,13 +549,19 @@ bool vmm_map_page(uint32_t virt, uint32_t phys, uint32_t flags) {
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
     return true;
+#endif
 }
 
 /**
  * @brief 取消虚拟页映射
  * @param virt 虚拟地址（页对齐）
  */
-void vmm_unmap_page(uint32_t virt) {
+void vmm_unmap_page(uintptr_t virt) {
+#if defined(ARCH_X86_64)
+    // x86_64: 暂不支持动态页表操作
+    (void)virt;
+    return;
+#else
     // 检查页对齐
     if (virt & (PAGE_SIZE-1)) return;
     
@@ -512,6 +581,7 @@ void vmm_unmap_page(uint32_t virt) {
     vmm_flush_tlb(virt);
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+#endif
 }
 
 /**
@@ -521,13 +591,13 @@ void vmm_unmap_page(uint32_t virt) {
  * 当修改页表后需要刷新TLB以确保CPU使用最新的页表项
  * 通过 HAL 接口调用架构特定的 TLB 刷新操作
  */
-void vmm_flush_tlb(uint32_t virt) {
+void vmm_flush_tlb(uintptr_t virt) {
     if (virt == 0) {
         // 刷新整个TLB
         hal_mmu_flush_tlb_all();
     } else {
         // 刷新单个页
-        hal_mmu_flush_tlb((uintptr_t)virt);
+        hal_mmu_flush_tlb(virt);
     }
 }
 
@@ -535,7 +605,7 @@ void vmm_flush_tlb(uint32_t virt) {
  * @brief 获取当前页目录的物理地址
  * @return 页目录的物理地址
  */
-uint32_t vmm_get_page_directory(void) {
+uintptr_t vmm_get_page_directory(void) {
     return current_dir_phys;
 }
 
@@ -543,7 +613,12 @@ uint32_t vmm_get_page_directory(void) {
  * @brief 创建新的页目录（用于新进程）
  * @return 成功返回页目录的物理地址，失败返回 0
  */
-uint32_t vmm_create_page_directory(void) {
+uintptr_t vmm_create_page_directory(void) {
+#if defined(ARCH_X86_64)
+    // x86_64: 暂不支持创建新页目录
+    LOG_WARN_MSG("VMM: vmm_create_page_directory not implemented for x86_64\n");
+    return 0;
+#else
     // 分配页目录的物理页
     uint32_t dir_phys = pmm_alloc_frame();
     if (!dir_phys) return 0;
@@ -571,6 +646,7 @@ uint32_t vmm_create_page_directory(void) {
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
     return dir_phys;
+#endif /* !ARCH_X86_64 */
 }
 
 /**
@@ -583,7 +659,13 @@ uint32_t vmm_create_page_directory(void) {
  * - 共享的可写页面被标记为只读 + COW
  * - 首次写入时触发 page fault，由 vmm_handle_cow_page_fault 处理
  */
-uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
+uintptr_t vmm_clone_page_directory(uintptr_t src_dir_phys) {
+#if defined(ARCH_X86_64)
+    // x86_64: 暂不支持克隆页目录
+    (void)src_dir_phys;
+    LOG_WARN_MSG("VMM: vmm_clone_page_directory not implemented for x86_64\n");
+    return 0;
+#else
     // 【安全检查】验证源页目录地址有效
     if (!src_dir_phys || src_dir_phys >= 0x80000000) {
         LOG_ERROR_MSG("vmm_clone_page_directory: Invalid src_dir_phys 0x%x\n", src_dir_phys);
@@ -741,14 +823,16 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
     return new_dir_phys;
+#endif /* !ARCH_X86_64 */
 }
 
+#if !defined(ARCH_X86_64)
 /**
- * @brief 检查页目录是否被任何任务使用
+ * @brief 检查页目录是否被任何任务使用 (i686 only)
  * @param dir_phys 页目录的物理地址
  * @return 如果被使用返回 true，否则返回 false
  */
-static bool is_page_directory_in_use(uint32_t dir_phys) {
+static bool is_page_directory_in_use(uintptr_t dir_phys) {
     // task_pool 在 task.h 中声明，在 task.c 中定义
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         // 只有活跃状态的任务才算"在使用"页目录
@@ -764,6 +848,7 @@ static bool is_page_directory_in_use(uint32_t dir_phys) {
     }
     return false;
 }
+#endif
 
 /**
  * @brief 释放页目录及其用户空间页表和物理页
@@ -771,10 +856,15 @@ static bool is_page_directory_in_use(uint32_t dir_phys) {
  * 
  * 注意：由于 fork 现在使用深拷贝，所以需要释放所有物理页
  */
-void vmm_free_page_directory(uint32_t dir_phys) {
+void vmm_free_page_directory(uintptr_t dir_phys) {
     if (!dir_phys) return;
     
-    LOG_INFO_MSG("vmm_free_page_directory: Attempting to free page directory 0x%x\n", dir_phys);
+#if defined(ARCH_X86_64)
+    // x86_64: 暂不支持释放页目录
+    LOG_WARN_MSG("VMM: vmm_free_page_directory not implemented for x86_64\n");
+    return;
+#else
+    LOG_INFO_MSG("vmm_free_page_directory: Attempting to free page directory 0x%lx\n", (unsigned long)dir_phys);
     
     // 【安全检查】防止释放当前正在使用的页目录
     if (dir_phys == current_dir_phys) {
@@ -886,6 +976,7 @@ void vmm_free_page_directory(uint32_t dir_phys) {
                   (int)info_start.used_frames - (int)info_end.used_frames, freed_tables);
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+#endif /* !ARCH_X86_64 */
 }
 
 /**
@@ -895,7 +986,7 @@ void vmm_free_page_directory(uint32_t dir_phys) {
  * 仅更新内部状态变量，不修改 CR3 寄存器
  * 用于在 task_switch_context 已经切换 CR3 后同步状态
  */
-void vmm_sync_current_dir(uint32_t dir_phys) {
+void vmm_sync_current_dir(uintptr_t dir_phys) {
     if (!dir_phys) return;
     
     bool irq_state;
@@ -913,7 +1004,7 @@ void vmm_sync_current_dir(uint32_t dir_phys) {
  * 
  * 通过 HAL 接口切换地址空间
  */
-void vmm_switch_page_directory(uint32_t dir_phys) {
+void vmm_switch_page_directory(uintptr_t dir_phys) {
     if (!dir_phys) return;
     
     bool irq_state;
@@ -923,7 +1014,7 @@ void vmm_switch_page_directory(uint32_t dir_phys) {
     current_dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
     
     // 通过 HAL 接口切换地址空间
-    hal_mmu_switch_space((uintptr_t)dir_phys);
+    hal_mmu_switch_space(dir_phys);
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
 }
@@ -936,8 +1027,13 @@ void vmm_switch_page_directory(uint32_t dir_phys) {
  * @param flags 页标志
  * @return 成功返回 true，失败返回 false
  */
-bool vmm_map_page_in_directory(uint32_t dir_phys, uint32_t virt, 
-                                uint32_t phys, uint32_t flags) {
+bool vmm_map_page_in_directory(uintptr_t dir_phys, uintptr_t virt, 
+                                uintptr_t phys, uint32_t flags) {
+#if defined(ARCH_X86_64)
+    // x86_64: 暂不支持
+    (void)dir_phys; (void)virt; (void)phys; (void)flags;
+    return false;
+#else
     // 检查页对齐
     if ((virt | phys) & (PAGE_SIZE-1)) return false;
     
@@ -985,9 +1081,15 @@ bool vmm_map_page_in_directory(uint32_t dir_phys, uint32_t virt,
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
     return true;
+#endif
 }
 
-uint32_t vmm_unmap_page_in_directory(uint32_t dir_phys, uint32_t virt) {
+uintptr_t vmm_unmap_page_in_directory(uintptr_t dir_phys, uintptr_t virt) {
+#if defined(ARCH_X86_64)
+    // x86_64: 暂不支持
+    (void)dir_phys; (void)virt;
+    return 0;
+#else
     if (virt & (PAGE_SIZE - 1)) {
         return 0;
     }
@@ -1046,21 +1148,28 @@ uint32_t vmm_unmap_page_in_directory(uint32_t dir_phys, uint32_t virt) {
         }
     }
 
-    uint32_t result = get_frame(old_entry);
+    uintptr_t result = get_frame(old_entry);
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
     return result;
+#endif /* !ARCH_X86_64 */
 }
 
 /* ============================================================================
  * MMIO 映射
  * ============================================================================ */
 
+#if defined(ARCH_X86_64)
+/** MMIO 映射区域起始地址（在内核空间的高地址区域） */
+#define MMIO_VIRT_BASE      0xFFFF800040000000ULL
+#define MMIO_VIRT_END       0xFFFF8000C0000000ULL
+#else
 /** MMIO 映射区域起始地址（在内核空间的高地址区域） */
 #define MMIO_VIRT_BASE      0xF0000000
 #define MMIO_VIRT_END       0xFFC00000  // 保留最后 4MB 给递归页表等
+#endif
 
 /** 当前 MMIO 虚拟地址分配位置 */
-static uint32_t mmio_next_virt = MMIO_VIRT_BASE;
+static uintptr_t mmio_next_virt = MMIO_VIRT_BASE;
 
 /** PAT 初始化标志 */
 static bool pat_initialized = false;
@@ -1071,7 +1180,13 @@ static bool pat_initialized = false;
  * @param size 映射大小（字节）
  * @return 成功返回映射的虚拟地址，失败返回 0
  */
-uint32_t vmm_map_mmio(uint32_t phys_addr, uint32_t size) {
+uintptr_t vmm_map_mmio(uintptr_t phys_addr, size_t size) {
+#if defined(ARCH_X86_64)
+    // x86_64: 暂不支持 MMIO 映射
+    (void)phys_addr; (void)size;
+    LOG_WARN_MSG("VMM: vmm_map_mmio not implemented for x86_64\n");
+    return 0;
+#else
     if (size == 0) {
         return 0;
     }
@@ -1136,14 +1251,15 @@ uint32_t vmm_map_mmio(uint32_t phys_addr, uint32_t size) {
     mmio_next_virt = virt_start + num_pages * PAGE_SIZE;
     
     // 计算返回地址：虚拟基址 + 物理地址页内偏移
-    uint32_t offset = phys_addr - phys_start;
-    uint32_t result = virt_start + offset;
+    uintptr_t offset = phys_addr - phys_start;
+    uintptr_t result = virt_start + offset;
     
-    LOG_INFO_MSG("vmm_map_mmio: mapped phys 0x%x size 0x%x -> virt 0x%x\n", 
-                 phys_addr, size, result);
+    LOG_INFO_MSG("vmm_map_mmio: mapped phys 0x%lx size 0x%lx -> virt 0x%lx\n", 
+                 (unsigned long)phys_addr, (unsigned long)size, (unsigned long)result);
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
     return result;
+#endif /* !ARCH_X86_64 */
 }
 
 /**
@@ -1151,7 +1267,12 @@ uint32_t vmm_map_mmio(uint32_t phys_addr, uint32_t size) {
  * @param virt_addr 虚拟地址
  * @param size 映射大小（字节）
  */
-void vmm_unmap_mmio(uint32_t virt_addr, uint32_t size) {
+void vmm_unmap_mmio(uintptr_t virt_addr, size_t size) {
+#if defined(ARCH_X86_64)
+    // x86_64: 暂不支持
+    (void)virt_addr; (void)size;
+    return;
+#else
     if (size == 0 || virt_addr < MMIO_VIRT_BASE || virt_addr >= MMIO_VIRT_END) {
         return;
     }
@@ -1176,9 +1297,10 @@ void vmm_unmap_mmio(uint32_t virt_addr, uint32_t size) {
         vmm_flush_tlb(virt);
     }
     
-    LOG_INFO_MSG("vmm_unmap_mmio: unmapped virt 0x%x size 0x%x\n", virt_addr, size);
+    LOG_INFO_MSG("vmm_unmap_mmio: unmapped virt 0x%lx size 0x%lx\n", (unsigned long)virt_addr, (unsigned long)size);
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+#endif /* !ARCH_X86_64 */
 }
 
 /**
@@ -1186,7 +1308,15 @@ void vmm_unmap_mmio(uint32_t virt_addr, uint32_t size) {
  * @param virt 虚拟地址
  * @return 物理地址，如果虚拟地址未映射则返回 0
  */
-uint32_t vmm_virt_to_phys(uint32_t virt) {
+uintptr_t vmm_virt_to_phys(uintptr_t virt) {
+#if defined(ARCH_X86_64)
+    // x86_64: 对于高半核地址，使用简单的线性映射
+    if (virt >= KERNEL_VIRTUAL_BASE) {
+        return VIRT_TO_PHYS(virt);
+    }
+    // 用户空间地址暂不支持
+    return 0;
+#else
     bool irq_state;
     spinlock_lock_irqsave(&vmm_lock, &irq_state);
     
@@ -1211,10 +1341,11 @@ uint32_t vmm_virt_to_phys(uint32_t virt) {
     }
     
     // 物理地址 = 页帧地址 + 页内偏移
-    uint32_t phys = get_frame(pte) | (virt & 0xFFF);
+    uintptr_t phys = get_frame(pte) | (virt & 0xFFF);
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
     return phys;
+#endif
 }
 
 /* ============================================================================
@@ -1315,7 +1446,13 @@ void vmm_init_pat(void) {
  * 使用 PAT[7] = WC 模式，需要设置 PAT=1, PCD=1, PWT=1
  * 如果 PAT 不可用，回退到 UC 模式
  */
-uint32_t vmm_map_framebuffer(uint32_t phys_addr, uint32_t size) {
+uintptr_t vmm_map_framebuffer(uintptr_t phys_addr, size_t size) {
+#if defined(ARCH_X86_64)
+    // x86_64: 暂不支持帧缓冲映射
+    (void)phys_addr; (void)size;
+    LOG_WARN_MSG("VMM: vmm_map_framebuffer not implemented for x86_64\n");
+    return 0;
+#else
     if (size == 0) {
         return 0;
     }
@@ -1324,12 +1461,12 @@ uint32_t vmm_map_framebuffer(uint32_t phys_addr, uint32_t size) {
     spinlock_lock_irqsave(&vmm_lock, &irq_state);
     
     // 计算需要的页数（向上取整）
-    uint32_t phys_start = PAGE_ALIGN_DOWN(phys_addr);
-    uint32_t phys_end = PAGE_ALIGN_UP(phys_addr + size);
+    uintptr_t phys_start = PAGE_ALIGN_DOWN(phys_addr);
+    uintptr_t phys_end = PAGE_ALIGN_UP(phys_addr + size);
     uint32_t num_pages = (phys_end - phys_start) / PAGE_SIZE;
     
     // 分配虚拟地址空间
-    uint32_t virt_start = mmio_next_virt;
+    uintptr_t virt_start = mmio_next_virt;
     if (virt_start + num_pages * PAGE_SIZE > MMIO_VIRT_END) {
         LOG_ERROR_MSG("vmm_map_framebuffer: No more MMIO virtual address space\n");
         spinlock_unlock_irqrestore(&vmm_lock, irq_state);
@@ -1349,8 +1486,8 @@ uint32_t vmm_map_framebuffer(uint32_t phys_addr, uint32_t size) {
     }
     
     for (uint32_t i = 0; i < num_pages; i++) {
-        uint32_t virt = virt_start + i * PAGE_SIZE;
-        uint32_t phys = phys_start + i * PAGE_SIZE;
+        uintptr_t virt = virt_start + i * PAGE_SIZE;
+        uintptr_t phys = phys_start + i * PAGE_SIZE;
         
         uint32_t pd = pde_idx(virt);
         uint32_t pt = pte_idx(virt);
@@ -1369,7 +1506,7 @@ uint32_t vmm_map_framebuffer(uint32_t phys_addr, uint32_t size) {
                 spinlock_unlock_irqrestore(&vmm_lock, irq_state);
                 return 0;
             }
-            uint32_t table_phys = VIRT_TO_PHYS((uint32_t)table);
+            uintptr_t table_phys = VIRT_TO_PHYS((uintptr_t)table);
             *pde = table_phys | PAGE_PRESENT | PAGE_WRITE;
             protect_phys_frame(table_phys);
             
@@ -1389,12 +1526,13 @@ uint32_t vmm_map_framebuffer(uint32_t phys_addr, uint32_t size) {
     mmio_next_virt = virt_start + num_pages * PAGE_SIZE;
     
     // 计算返回地址：虚拟基址 + 物理地址页内偏移
-    uint32_t offset = phys_addr - phys_start;
-    uint32_t result = virt_start + offset;
+    uintptr_t offset = phys_addr - phys_start;
+    uintptr_t result = virt_start + offset;
     
-    LOG_INFO_MSG("vmm_map_framebuffer: mapped phys 0x%x size 0x%x -> virt 0x%x\n", 
-                 phys_addr, size, result);
+    LOG_INFO_MSG("vmm_map_framebuffer: mapped phys 0x%lx size 0x%lx -> virt 0x%lx\n", 
+                 (unsigned long)phys_addr, (unsigned long)size, (unsigned long)result);
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
     return result;
+#endif /* !ARCH_X86_64 */
 }

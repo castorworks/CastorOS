@@ -52,8 +52,8 @@
 
 #include <tests/test_runner.h>
 
-// 声明引导栈顶地址（定义在 boot.asm）
-extern uint32_t stack_top;
+// 声明引导栈顶地址（定义在 boot.asm / boot64.asm）
+extern char stack_top[];
 
 // 内核主函数
 void kernel_main(multiboot_info_t* mbi) {
@@ -142,32 +142,32 @@ void kernel_main(multiboot_info_t* mbi) {
     
     // 3.5 初始化 Heap（堆内存分配器）
     // 堆起始地址：PMM 位图之后（避免与位图重叠）
-    uint32_t heap_start = pmm_get_bitmap_end();
+    uintptr_t heap_start = pmm_get_bitmap_end();
     
     // 确保堆不会覆盖 multiboot 模块
     if (mbi->flags & MULTIBOOT_INFO_MODS && mbi->mods_count > 0) {
         multiboot_module_t *modules = (multiboot_module_t *)PHYS_TO_VIRT(mbi->mods_addr);
         
         // 检查模块列表结束位置
-        uint32_t mods_list_end = PHYS_TO_VIRT(mbi->mods_addr + sizeof(multiboot_module_t) * mbi->mods_count);
+        uintptr_t mods_list_end = PHYS_TO_VIRT(mbi->mods_addr + sizeof(multiboot_module_t) * mbi->mods_count);
         if (mods_list_end > heap_start) {
             heap_start = mods_list_end;
         }
         
         // 检查每个模块的结束位置
         for (uint32_t i = 0; i < mbi->mods_count; i++) {
-            uint32_t mod_end_virt = PHYS_TO_VIRT(modules[i].mod_end);
+            uintptr_t mod_end_virt = PHYS_TO_VIRT(modules[i].mod_end);
             if (mod_end_virt > heap_start) {
                 heap_start = mod_end_virt;
             }
         }
         
         heap_start = PAGE_ALIGN_UP(heap_start);
-        LOG_INFO_MSG("  Heap start adjusted for multiboot modules: 0x%x\n", heap_start);
+        LOG_INFO_MSG("  Heap start adjusted for multiboot modules: 0x%lx\n", (unsigned long)heap_start);
     }
     
     uint32_t heap_size = 32 * 1024 * 1024;  // 32MB 堆
-    heap_init(heap_start, heap_size);
+    heap_init((uintptr_t)heap_start, heap_size);
     
     // 【关键】通知 PMM 堆的虚拟地址范围，防止分配会与堆重叠的物理帧
     // 这解决了堆扩展时覆盖已分配帧的恒等映射导致的页目录损坏问题
@@ -175,6 +175,12 @@ void kernel_main(multiboot_info_t* mbi) {
     
     heap_print_info();
     LOG_INFO_MSG("  [3.3] Heap initialized\n");
+    
+    // DEBUG: 验证堆状态
+    {
+        heap_block_t *fb = (heap_block_t*)heap_start;
+        LOG_INFO_MSG("  DEBUG: first_block magic after heap_init = 0x%x\n", fb->magic);
+    }
 
     // ========================================================================
     // 阶段 4: 设备驱动（Device Drivers）
@@ -218,7 +224,13 @@ void kernel_main(multiboot_info_t* mbi) {
     LOG_INFO_MSG("  [4.7] Network device subsystem initialized\n");
 
     // 4.8 初始化 E1000 网卡驱动
+#if defined(ARCH_X86_64)
+    // x86_64: 暂时跳过 E1000 驱动，因为 VMM MMIO 映射尚未支持 64 位
+    LOG_WARN_MSG("  [4.8] E1000 driver skipped (x86_64 VMM MMIO not ready)\n");
+    int e1000_count = 0;
+#else
     int e1000_count = e1000_init();
+#endif
     if (e1000_count > 0) {
         LOG_INFO_MSG("  [4.8] E1000 driver initialized (%d device(s))\n", e1000_count);
         
@@ -233,6 +245,10 @@ void kernel_main(multiboot_info_t* mbi) {
     }
 
     // 4.9 初始化帧缓冲（图形模式）
+#if defined(ARCH_X86_64)
+    // x86_64: 暂时跳过帧缓冲，因为 VMM MMIO 映射尚未支持 64 位
+    LOG_WARN_MSG("  [4.9] Framebuffer skipped (x86_64 VMM MMIO not ready)\n");
+#else
     int fb_result = fb_init(mbi);
     if (fb_result == 0) {
         framebuffer_info_t *fb = fb_get_info();
@@ -257,8 +273,13 @@ void kernel_main(multiboot_info_t* mbi) {
     } else {
         LOG_DEBUG_MSG("  [4.9] Framebuffer not available (code=%d), using text mode\n", fb_result);
     }
+#endif
 
     // 4.10 初始化 USB 子系统
+#if defined(ARCH_X86_64)
+    // x86_64: 暂时跳过 USB 子系统，因为 VMM MMIO 映射尚未支持 64 位
+    LOG_WARN_MSG("  [4.10] USB subsystem skipped (x86_64 VMM MMIO not ready)\n");
+#else
     LOG_INFO_MSG("  [4.10] Initializing USB subsystem...\n");
     
     // 4.10.1 初始化 USB 核心层
@@ -281,15 +302,27 @@ void kernel_main(multiboot_info_t* mbi) {
     usb_scan_devices();
     uhci_sync_port_devices();  // 建立端口到设备的映射（热插拔支持）
     LOG_INFO_MSG("    [4.10.4] USB device scan complete\n");
+#endif
     
+#if !defined(ARCH_X86_64)
     // 4.10.5 启动 USB 热插拔监控
     uhci_start_hotplug_monitor();
     LOG_DEBUG_MSG("    [4.10.5] USB hot-plug monitor started\n");
+#endif
 
     // ========================================================================
     // 阶段 5: 高级子系统（Advanced Subsystems）
     // ========================================================================
     LOG_INFO_MSG("[Stage 5] Initializing advanced subsystems...\n");
+    
+    // DEBUG: 验证堆状态
+    {
+        heap_block_t *fb = (heap_block_t*)heap_start;
+        LOG_INFO_MSG("  DEBUG: first_block magic before task_init = 0x%x\n", fb->magic);
+        LOG_INFO_MSG("  DEBUG: task_pool addr = 0x%llx, size = %llu\n", 
+                     (unsigned long long)(uintptr_t)task_pool, 
+                     (unsigned long long)sizeof(task_pool));
+    }
 
     // 5.1 初始化进程管理
     task_init();

@@ -75,7 +75,7 @@ void pmm_print_info(void);
  * @brief 获取位图结束地址（虚拟地址）
  * @return 位图结束的虚拟地址（页对齐）
  */
-uint32_t pmm_get_bitmap_end(void);
+uintptr_t pmm_get_bitmap_end(void);
 
 /**
  * @brief 设置堆保留区域的物理地址范围
@@ -85,7 +85,7 @@ uint32_t pmm_get_bitmap_end(void);
  * 将堆虚拟地址范围转换为物理地址范围，并标记这些物理帧不可分配。
  * 这防止了堆扩展时重新映射已分配帧的恒等映射导致的内存损坏。
  */
-void pmm_set_heap_reserved_range(uint32_t heap_virt_start, uint32_t heap_virt_end);
+void pmm_set_heap_reserved_range(uintptr_t heap_virt_start, uintptr_t heap_virt_end);
 
 /**
  * @brief 增加物理页帧的引用计数

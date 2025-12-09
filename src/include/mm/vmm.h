@@ -37,6 +37,28 @@
  */
 #define PAGE_COW        0x200
 
+/* Architecture-specific page table types */
+#if defined(ARCH_X86_64)
+/* x86_64: 4-level paging with 64-bit entries, 512 entries per level */
+typedef uint64_t pde_t;  ///< 页目录项类型 (64-bit)
+typedef uint64_t pte_t;  ///< 页表项类型 (64-bit)
+
+typedef struct {
+    pte_t entries[512];   ///< 页表项数组 (512 entries for x86_64)
+} __attribute__((aligned(PAGE_SIZE))) page_table_t;
+
+typedef struct {
+    pde_t entries[512];   ///< 页目录项数组 (512 entries for x86_64)
+} __attribute__((aligned(PAGE_SIZE))) page_directory_t;
+
+/* x86_64 uses PML4 -> PDPT -> PD -> PT */
+typedef page_directory_t pml4_t;   ///< PML4 (Level 4)
+typedef page_directory_t pdpt_t;   ///< PDPT (Level 3)
+typedef page_directory_t pd_t;     ///< Page Directory (Level 2)
+typedef page_table_t pt_t;         ///< Page Table (Level 1)
+
+#else
+/* i686: 2-level paging with 32-bit entries, 1024 entries per level */
 typedef uint32_t pde_t;  ///< 页目录项类型
 typedef uint32_t pte_t;  ///< 页表项类型
 
@@ -57,6 +79,7 @@ typedef struct {
 typedef struct {
     pte_t entries[1024];  ///< 页表项数组
 } __attribute__((aligned(PAGE_SIZE))) page_table_t;
+#endif
 
 /**
  * @brief 初始化虚拟内存管理器
@@ -69,26 +92,29 @@ void vmm_init(void);
  * @param phys 物理地址（页对齐）
  * @param flags 页标志（PAGE_PRESENT, PAGE_WRITE, PAGE_USER）
  * @return 成功返回 true，失败返回 false
+ * 
+ * Note: On x86_64, this function is a stub that returns false.
+ * Full 64-bit VMM support requires implementing 4-level paging.
  */
-bool vmm_map_page(uint32_t virt, uint32_t phys, uint32_t flags);
+bool vmm_map_page(uintptr_t virt, uintptr_t phys, uint32_t flags);
 
 /**
  * @brief 取消虚拟页映射
  * @param virt 虚拟地址（页对齐）
  */
-void vmm_unmap_page(uint32_t virt);
+void vmm_unmap_page(uintptr_t virt);
 
 /**
  * @brief 刷新TLB缓存
  * @param virt 虚拟地址（0表示刷新全部）
  */
-void vmm_flush_tlb(uint32_t virt);
+void vmm_flush_tlb(uintptr_t virt);
 
 /**
  * @brief 获取当前页目录的物理地址
  * @return 页目录的物理地址
  */
-uint32_t vmm_get_page_directory(void);
+uintptr_t vmm_get_page_directory(void);
 
 /**
  * @brief 创建新的页目录（用于新进程）
@@ -97,8 +123,10 @@ uint32_t vmm_get_page_directory(void);
  * 创建的页目录会：
  * 1. 自动复制内核空间映射（0x80000000+）
  * 2. 用户空间（0x00000000-0x7FFFFFFF）初始为空
+ * 
+ * Note: On x86_64, this function is a stub that returns 0.
  */
-uint32_t vmm_create_page_directory(void);
+uintptr_t vmm_create_page_directory(void);
 
 /**
  * @brief 克隆页目录（用于 fork，实现 COW 语义）
@@ -111,13 +139,9 @@ uint32_t vmm_create_page_directory(void);
  * - 可写页面被标记为只读 + PAGE_COW
  * - 首次写入时触发 page fault，由 vmm_handle_cow_page_fault 处理
  * 
- * 引用计数：
- * - 每个共享的物理页都有引用计数
- * - 克隆时增加引用计数
- * - 释放页目录时减少引用计数
- * - 引用计数降为 0 时才真正释放物理页
+ * Note: On x86_64, this function is a stub that returns 0.
  */
-uint32_t vmm_clone_page_directory(uint32_t src_dir_phys);
+uintptr_t vmm_clone_page_directory(uintptr_t src_dir_phys);
 
 /**
  * @brief 释放页目录及其用户空间页表
@@ -125,19 +149,19 @@ uint32_t vmm_clone_page_directory(uint32_t src_dir_phys);
  * 
  * 注意：只释放用户空间页表，内核空间页表是共享的
  */
-void vmm_free_page_directory(uint32_t dir_phys);
+void vmm_free_page_directory(uintptr_t dir_phys);
 
 /**
  * @brief 同步 VMM 的 current_dir_phys（不切换 CR3）
  * @param dir_phys 当前页目录的物理地址
  */
-void vmm_sync_current_dir(uint32_t dir_phys);
+void vmm_sync_current_dir(uintptr_t dir_phys);
 
 /**
  * @brief 切换到指定的页目录
  * @param dir_phys 页目录的物理地址
  */
-void vmm_switch_page_directory(uint32_t dir_phys);
+void vmm_switch_page_directory(uintptr_t dir_phys);
 
 /**
  * @brief 在指定页目录中映射页面
@@ -147,16 +171,16 @@ void vmm_switch_page_directory(uint32_t dir_phys);
  * @param flags 页标志
  * @return 成功返回 true，失败返回 false
  */
-bool vmm_map_page_in_directory(uint32_t dir_phys, uint32_t virt, 
-                                uint32_t phys, uint32_t flags);
-uint32_t vmm_unmap_page_in_directory(uint32_t dir_phys, uint32_t virt);
+bool vmm_map_page_in_directory(uintptr_t dir_phys, uintptr_t virt, 
+                                uintptr_t phys, uint32_t flags);
+uintptr_t vmm_unmap_page_in_directory(uintptr_t dir_phys, uintptr_t virt);
 
 /**
  * @brief 处理内核空间缺页异常（同步内核页目录）
  * @param addr 缺页地址
  * @return 是否成功处理（如果成功，不需要 panic）
  */
-bool vmm_handle_kernel_page_fault(uint32_t addr);
+bool vmm_handle_kernel_page_fault(uintptr_t addr);
 
 /**
  * @brief 处理写保护异常（COW）
@@ -164,7 +188,7 @@ bool vmm_handle_kernel_page_fault(uint32_t addr);
  * @param error_code 错误码
  * @return 是否成功处理（如果成功，不需要 panic）
  */
-bool vmm_handle_cow_page_fault(uint32_t addr, uint32_t error_code);
+bool vmm_handle_cow_page_fault(uintptr_t addr, uint32_t error_code);
 
 /**
  * @brief 映射 MMIO 区域
@@ -175,7 +199,7 @@ bool vmm_handle_cow_page_fault(uint32_t addr, uint32_t error_code);
  * 用于映射设备寄存器等内存映射 I/O 区域
  * 映射的页面标记为不可缓存（Cache-Disable）
  */
-uint32_t vmm_map_mmio(uint32_t phys_addr, uint32_t size);
+uintptr_t vmm_map_mmio(uintptr_t phys_addr, size_t size);
 
 /**
  * @brief 映射帧缓冲区域（使用 Write-Combining 模式）
@@ -186,14 +210,14 @@ uint32_t vmm_map_mmio(uint32_t phys_addr, uint32_t size);
  * 帧缓冲区使用 Write-Combining 缓存模式，可以将多个连续写入
  * 合并为一个操作，大幅提升图形输出性能。
  */
-uint32_t vmm_map_framebuffer(uint32_t phys_addr, uint32_t size);
+uintptr_t vmm_map_framebuffer(uintptr_t phys_addr, size_t size);
 
 /**
  * @brief 取消 MMIO 区域映射
  * @param virt_addr 虚拟地址
  * @param size 映射大小（字节）
  */
-void vmm_unmap_mmio(uint32_t virt_addr, uint32_t size);
+void vmm_unmap_mmio(uintptr_t virt_addr, size_t size);
 
 /**
  * @brief 初始化 PAT (Page Attribute Table)
@@ -212,6 +236,6 @@ void vmm_init_pat(void);
  * 而不是简单地使用 VIRT_TO_PHYS 宏（该宏只对恒等映射有效）。
  * 对于动态分配的堆内存，必须使用此函数获取物理地址用于 DMA 等操作。
  */
-uint32_t vmm_virt_to_phys(uint32_t virt);
+uintptr_t vmm_virt_to_phys(uintptr_t virt);
 
 #endif // _MM_VMM_H_

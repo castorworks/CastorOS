@@ -31,7 +31,7 @@ typedef struct heap_block {
  * @param start 堆起始地址
  * @param size 堆最大大小（字节）
  */
-void heap_init(uint32_t start, uint32_t size);
+void heap_init(uintptr_t start, uint32_t size);
 
 /**
  * @brief 分配内存

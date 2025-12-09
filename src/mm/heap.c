@@ -14,9 +14,9 @@
 #include <kernel/panic.h>
 #include <kernel/sync/spinlock.h>
 
-static uint32_t heap_start;        ///< 堆起始地址
-static uint32_t heap_end;          ///< 堆当前结束地址
-static uint32_t heap_max;          ///< 堆最大地址
+static uintptr_t heap_start;        ///< 堆起始地址
+static uintptr_t heap_end;          ///< 堆当前结束地址
+static uintptr_t heap_max;          ///< 堆最大地址
 static heap_block_t *first_block = NULL;  ///< 第一个内存块指针
 static heap_block_t *last_block = NULL;   ///< 最后一个内存块指针
 static spinlock_t heap_lock;       ///< 堆自旋锁，保护堆的内部状态
@@ -30,8 +30,35 @@ static bool expand(size_t size) {
     size_t pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
     if (heap_end + pages * PAGE_SIZE > heap_max) return false;
     
-    uint32_t old_heap_end = heap_end;
-    uint32_t current_dir_phys = vmm_get_page_directory();
+#if defined(ARCH_X86_64)
+    // x86_64: 引导时已经映射了前 1GB 物理内存到高半核
+    // 堆虚拟地址 = KERNEL_VIRTUAL_BASE + 物理地址
+    // 所以堆扩展只需要确保对应的物理地址在已映射范围内
+    // 
+    // 堆地址布局：
+    //   heap_start = PHYS_TO_VIRT(pmm_data_end_phys)
+    //   heap_end 对应的物理地址 = VIRT_TO_PHYS(heap_end)
+    //
+    // 由于引导时使用恒等映射（物理地址 X 映射到虚拟地址 KERNEL_VIRTUAL_BASE + X），
+    // 我们只需要验证堆扩展后的物理地址仍在已映射范围内（< 1GB）
+    
+    uintptr_t new_heap_end = heap_end + pages * PAGE_SIZE;
+    uintptr_t new_heap_end_phys = VIRT_TO_PHYS(new_heap_end);
+    
+    // 验证扩展后的堆仍在已映射范围内（前 1GB）
+    if (new_heap_end_phys > 0x40000000) {  // 1GB
+        LOG_ERROR_MSG("heap: expand would exceed boot mapping (phys 0x%lx > 1GB)\n", 
+                     (unsigned long)new_heap_end_phys);
+        return false;
+    }
+    
+    // 清零新扩展的堆空间（已经通过引导时的恒等映射可访问）
+    memset((void*)heap_end, 0, pages * PAGE_SIZE);
+    heap_end = new_heap_end;
+    return true;
+#else
+    uintptr_t old_heap_end = heap_end;
+    uintptr_t current_dir_phys = vmm_get_page_directory();
     
     // 分配物理页并映射到虚拟地址空间
     for (size_t i = 0; i < pages; i++) {
@@ -41,10 +68,10 @@ static bool expand(size_t size) {
             LOG_ERROR_MSG("heap: expand failed at page %u/%u (out of physical memory)\n", 
                          (unsigned int)(i + 1), (unsigned int)pages);
             for (size_t j = 0; j < i; j++) {
-                uint32_t virt = old_heap_end + j * PAGE_SIZE;
-                uint32_t phys = vmm_unmap_page_in_directory(current_dir_phys, virt);
+                uintptr_t virt = old_heap_end + j * PAGE_SIZE;
+                uintptr_t phys = vmm_unmap_page_in_directory(current_dir_phys, virt);
                 if (phys) {
-                    pmm_free_frame(phys);
+                    pmm_free_frame((uint32_t)phys);
                 }
             }
             return false;
@@ -56,10 +83,10 @@ static bool expand(size_t size) {
                          (unsigned int)(i + 1), (unsigned int)pages);
             pmm_free_frame(frame);
             for (size_t j = 0; j < i; j++) {
-                uint32_t virt = old_heap_end + j * PAGE_SIZE;
-                uint32_t phys = vmm_unmap_page_in_directory(current_dir_phys, virt);
+                uintptr_t virt = old_heap_end + j * PAGE_SIZE;
+                uintptr_t phys = vmm_unmap_page_in_directory(current_dir_phys, virt);
                 if (phys) {
-                    pmm_free_frame(phys);
+                    pmm_free_frame((uint32_t)phys);
                 }
             }
             return false;
@@ -67,6 +94,7 @@ static bool expand(size_t size) {
     }
     heap_end += pages * PAGE_SIZE;
     return true;
+#endif
 }
 
 /**
@@ -130,7 +158,7 @@ static void split(heap_block_t *b, size_t size) {
     
     // 只有当剩余空间足够容纳一个新块时才分裂（至少16字节）
     if (b->size >= size + sizeof(heap_block_t) + 16) {
-        heap_block_t *new = (heap_block_t*)((uint32_t)b + sizeof(heap_block_t) + size);
+        heap_block_t *new = (heap_block_t*)((uintptr_t)b + sizeof(heap_block_t) + size);
         new->size = b->size - size - sizeof(heap_block_t);
         new->is_free = true;
         new->magic = HEAP_MAGIC;
@@ -147,11 +175,11 @@ static void split(heap_block_t *b, size_t size) {
  * @param start 堆起始地址
  * @param size 堆最大大小（字节）
  */
-void heap_init(uint32_t start, uint32_t size) {
+void heap_init(uintptr_t start, uint32_t size) {
     heap_start = heap_end = PAGE_ALIGN_UP(start);
     heap_max = heap_start + size;
     
-    LOG_INFO_MSG("heap_init: start=0x%x, max=0x%x, size=%u\n", heap_start, heap_max, size);
+    LOG_INFO_MSG("heap_init: start=0x%llx, max=0x%llx, size=%u\n", (unsigned long long)heap_start, (unsigned long long)heap_max, size);
     
     // 初始化堆自旋锁
     spinlock_init(&heap_lock);
@@ -161,7 +189,7 @@ void heap_init(uint32_t start, uint32_t size) {
     
     // 初始化第一个内存块
     first_block = (heap_block_t*)heap_start;
-    LOG_INFO_MSG("heap_init: first_block at 0x%p, setting magic...\n", first_block);
+    LOG_INFO_MSG("heap_init: first_block at 0x%llx, setting magic...\n", (unsigned long long)(uintptr_t)first_block);
     
     first_block->size = PAGE_SIZE - sizeof(heap_block_t);
     first_block->is_free = true;
@@ -192,9 +220,12 @@ void* kmalloc(size_t size) {
         spinlock_unlock_irqrestore(&heap_lock, irq_state);
         return NULL;
     }
-    if ((uint32_t)first_block < 0x80000000 || first_block->magic != HEAP_MAGIC) {
-        LOG_ERROR_MSG("kmalloc: first_block corrupted! addr=%p, magic=0x%x (expected 0x%x)\n", 
-                     first_block, (uint32_t)first_block < 0x80000000 ? 0 : first_block->magic, HEAP_MAGIC);
+    if ((uintptr_t)first_block < KERNEL_VIRTUAL_BASE || first_block->magic != HEAP_MAGIC) {
+        LOG_ERROR_MSG("kmalloc: first_block corrupted! addr=0x%llx, magic=0x%x (expected 0x%x)\n", 
+                     (unsigned long long)(uintptr_t)first_block, 
+                     (uintptr_t)first_block < KERNEL_VIRTUAL_BASE ? 0 : first_block->magic, HEAP_MAGIC);
+        LOG_ERROR_MSG("kmalloc: heap_start=0x%llx, heap_end=0x%llx\n",
+                     (unsigned long long)heap_start, (unsigned long long)heap_end);
         spinlock_unlock_irqrestore(&heap_lock, irq_state);
         return NULL;
     }
@@ -205,13 +236,13 @@ void* kmalloc(size_t size) {
     // 查找第一个足够大的空闲块
     for (heap_block_t *b = first_block; b; b = b->next) {
         // 【安全检查】验证当前块的有效性
-        if ((uint32_t)b < 0x80000000) {
-            LOG_ERROR_MSG("kmalloc: invalid block pointer %p in heap chain!\n", b);
+        if ((uintptr_t)b < KERNEL_VIRTUAL_BASE) {
+            LOG_ERROR_MSG("kmalloc: invalid block pointer 0x%lx in heap chain!\n", (unsigned long)b);
             spinlock_unlock_irqrestore(&heap_lock, irq_state);
             return NULL;
         }
         if (b->magic != HEAP_MAGIC) {
-            LOG_ERROR_MSG("kmalloc: block %p has invalid magic 0x%x (expected 0x%x)!\n", b, b->magic, HEAP_MAGIC);
+            LOG_ERROR_MSG("kmalloc: block 0x%lx has invalid magic 0x%x (expected 0x%x)!\n", (unsigned long)b, b->magic, HEAP_MAGIC);
             spinlock_unlock_irqrestore(&heap_lock, irq_state);
             return NULL;
         }
@@ -219,14 +250,14 @@ void* kmalloc(size_t size) {
         if (b->is_free && b->size >= size) {
             b->is_free = false;
             split(b, size);
-            void *ptr = (void*)((uint32_t)b + sizeof(heap_block_t));
+            void *ptr = (void*)((uintptr_t)b + sizeof(heap_block_t));
             spinlock_unlock_irqrestore(&heap_lock, irq_state);
             return ptr;
         }
     }
     
     // 没有找到空闲块，扩展堆空间
-    uint32_t old = heap_end;
+    uintptr_t old = heap_end;
     if (!expand(size + sizeof(heap_block_t))) {
         spinlock_unlock_irqrestore(&heap_lock, irq_state);
         return NULL;
@@ -246,7 +277,7 @@ void* kmalloc(size_t size) {
     }
     last_block = new;
     
-    void *ptr = (void*)((uint32_t)new + sizeof(heap_block_t));
+    void *ptr = (void*)((uintptr_t)new + sizeof(heap_block_t));
     spinlock_unlock_irqrestore(&heap_lock, irq_state);
     return ptr;
 }
@@ -264,10 +295,10 @@ void kfree(void* ptr) {
     spinlock_lock_irqsave(&heap_lock, &irq_state);
     
     // 获取块头指针
-    heap_block_t *b = (heap_block_t*)((uint32_t)ptr - sizeof(heap_block_t));
+    heap_block_t *b = (heap_block_t*)((uintptr_t)ptr - sizeof(heap_block_t));
     // 验证魔数
     if (b->magic != HEAP_MAGIC) {
-        LOG_WARN_MSG("kfree: invalid magic at %p (block %p), magic=0x%x\n", ptr, b, b->magic);
+        LOG_WARN_MSG("kfree: invalid magic at 0x%lx (block 0x%lx), magic=0x%x\n", (unsigned long)ptr, (unsigned long)b, b->magic);
         spinlock_unlock_irqrestore(&heap_lock, irq_state);
         return;
     }
@@ -293,7 +324,7 @@ void* krealloc(void* ptr, size_t size) {
     bool irq_state;
     spinlock_lock_irqsave(&heap_lock, &irq_state);
     
-    heap_block_t *b = (heap_block_t*)((uint32_t)ptr - sizeof(heap_block_t));
+    heap_block_t *b = (heap_block_t*)((uintptr_t)ptr - sizeof(heap_block_t));
     if (b->magic != HEAP_MAGIC) {
         spinlock_unlock_irqrestore(&heap_lock, irq_state);
         return NULL;
@@ -311,12 +342,12 @@ void* krealloc(void* ptr, size_t size) {
     spinlock_unlock_irqrestore(&heap_lock, irq_state);
     
     // 分配新内存并复制数据（kmalloc/kfree 会自己获取锁）
-    void* new = kmalloc(size);
-    if (new) {
-        memcpy(new, ptr, old_size);
+    void* new_ptr = kmalloc(size);
+    if (new_ptr) {
+        memcpy(new_ptr, ptr, old_size);
         kfree(ptr);
     }
-    return new;
+    return new_ptr;
 }
 
 /**
@@ -369,8 +400,8 @@ void* kmalloc_aligned(size_t size, size_t alignment) {
     
     // 计算对齐后的地址
     // 先预留 sizeof(void*) 空间存储原始指针，然后对齐
-    uint32_t raw_addr = (uint32_t)raw + sizeof(void*);
-    uint32_t aligned_addr = (raw_addr + alignment - 1) & ~(alignment - 1);
+    uintptr_t raw_addr = (uintptr_t)raw + sizeof(void*);
+    uintptr_t aligned_addr = (raw_addr + alignment - 1) & ~(alignment - 1);
     
     // 在对齐地址前存储原始指针
     void** ptr_store = (void**)(aligned_addr - sizeof(void*));
@@ -391,7 +422,7 @@ void kfree_aligned(void* ptr) {
     }
     
     // 从对齐地址前读取原始指针
-    void** ptr_store = (void**)((uint32_t)ptr - sizeof(void*));
+    void** ptr_store = (void**)((uintptr_t)ptr - sizeof(void*));
     void* raw = *ptr_store;
     
     // 释放原始分配

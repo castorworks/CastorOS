@@ -28,8 +28,8 @@ static spinlock_t pmm_lock;               ///< PMM 自旋锁
 static protected_frame_t protected_frames[MAX_PROTECTED_FRAMES];
 static uint32_t protected_frame_count = 0;
 static uint16_t *frame_refcount = NULL;   ///< 页帧引用计数数组（每帧2字节，最大65535引用）
-static uint32_t pmm_data_end_virt = 0;    ///< PMM 数据结构结束的虚拟地址（位图+引用计数表）
-extern uint32_t _kernel_end;           ///< 内核结束地址
+static uintptr_t pmm_data_end_virt = 0;    ///< PMM 数据结构结束的虚拟地址（位图+引用计数表）
+extern char _kernel_end[];           ///< 内核结束地址
 
 // 堆保留区域：物理地址在此范围内的帧不会被分配，避免与堆虚拟地址重叠
 // 当堆扩展时，它会重新映射 PHYS_TO_VIRT(phys) 地址，这会破坏已分配帧的恒等映射
@@ -236,7 +236,7 @@ void pmm_init(multiboot_info_t *mbi) {
     
     memset(&pmm_info, 0, sizeof(pmm_info_t));
     uint32_t kernel_start = 0x100000;  // 1MB，内核加载位置
-    uint32_t kernel_end = PAGE_ALIGN_UP(VIRT_TO_PHYS((uint32_t)&_kernel_end));
+    uint32_t kernel_end = PAGE_ALIGN_UP(VIRT_TO_PHYS((uintptr_t)_kernel_end));
     
     // 计算总内存大小
     multiboot_memory_map_t *mmap = (multiboot_memory_map_t*)PHYS_TO_VIRT(mbi->mmap_addr);
@@ -248,8 +248,9 @@ void pmm_init(multiboot_info_t *mbi) {
         if (mmap->type == MULTIBOOT_MEMORY_AVAILABLE) {
             uint32_t end = (uint32_t)(mmap->addr + mmap->len);
             
-            // 高半核限制：内核虚拟空间只有 2GB (0x80000000-0xFFFFFFFF)
-            // 因此只能直接映射 2GB 物理内存
+            // 高半核限制：
+            // - i686: 内核虚拟空间只有 2GB (0x80000000-0xFFFFFFFF)
+            // - x86_64: 可以映射更多，但为简单起见暂时限制为 2GB
             // 超过 2GB 的物理内存将被忽略（除非实现 fixmap）
             if (end > 0x80000000) {  // 2GB
                 if (max_addr < 0x80000000) {
@@ -263,7 +264,7 @@ void pmm_init(multiboot_info_t *mbi) {
             
             if (end > max_addr) max_addr = end;
         }
-        mmap = (multiboot_memory_map_t*)((uint32_t)mmap + mmap->size + 4);
+        mmap = (multiboot_memory_map_t*)((uintptr_t)mmap + mmap->size + 4);
     }
     
     total_frames = max_addr / PAGE_SIZE;
@@ -275,31 +276,50 @@ void pmm_init(multiboot_info_t *mbi) {
     // 初始化位图（默认所有页帧已使用）
     // 每个 uint32_t 有 32 位，所以需要的字节数是 (total_frames + 31) / 32 * 4
     uint32_t bitmap_bytes = PAGE_ALIGN_UP((total_frames + 31) / 32 * 4);
-    frame_bitmap = (uint32_t*)PAGE_ALIGN_UP((uint32_t)&_kernel_end);
+    uintptr_t kernel_end_virt = (uintptr_t)_kernel_end;
+    uintptr_t bitmap_virt = PAGE_ALIGN_UP(kernel_end_virt);
+    LOG_INFO_MSG("PMM: kernel_end_virt = 0x%llx\n", (unsigned long long)kernel_end_virt);
+    LOG_INFO_MSG("PMM: bitmap_virt (after PAGE_ALIGN_UP) = 0x%llx\n", (unsigned long long)bitmap_virt);
+    frame_bitmap = (uint32_t*)bitmap_virt;
     bitmap_size = bitmap_bytes / 4;
     memset(frame_bitmap, 0xFF, bitmap_bytes);
     
     // 计算位图占用的物理地址范围
-    uint32_t bitmap_phys_start = VIRT_TO_PHYS((uint32_t)frame_bitmap);
-    uint32_t bitmap_end = PAGE_ALIGN_UP(bitmap_phys_start + bitmap_bytes);
+    // 使用 uintptr_t 确保在 x86_64 上不会截断地址
+    uintptr_t bitmap_phys_start = VIRT_TO_PHYS((uintptr_t)frame_bitmap);
+    uintptr_t bitmap_end_phys = PAGE_ALIGN_UP(bitmap_phys_start + bitmap_bytes);
     
     // 初始化引用计数表（紧跟位图之后）
     // 每个页帧用 uint16_t (2字节) 存储引用计数
     uint32_t refcount_bytes = PAGE_ALIGN_UP(total_frames * sizeof(uint16_t));
-    frame_refcount = (uint16_t*)PHYS_TO_VIRT(bitmap_end);
+    frame_refcount = (uint16_t*)PHYS_TO_VIRT(bitmap_end_phys);
     memset(frame_refcount, 0, refcount_bytes);
-    uint32_t refcount_end = PAGE_ALIGN_UP(bitmap_end + refcount_bytes);
+    uintptr_t refcount_end_phys = PAGE_ALIGN_UP(bitmap_end_phys + refcount_bytes);
     
     // 保存 PMM 数据结构结束地址（虚拟地址），供堆初始化使用
-    pmm_data_end_virt = PHYS_TO_VIRT(refcount_end);
+    pmm_data_end_virt = PHYS_TO_VIRT(refcount_end_phys);
+    LOG_INFO_MSG("PMM: DEBUG refcount_end_phys=0x%llx, KERNEL_VIRTUAL_BASE=0x%llx\n",
+                 (unsigned long long)refcount_end_phys, (unsigned long long)KERNEL_VIRTUAL_BASE);
+    LOG_INFO_MSG("PMM: DEBUG PHYS_TO_VIRT result=0x%llx\n", 
+                 (unsigned long long)PHYS_TO_VIRT(refcount_end_phys));
     
-    LOG_DEBUG_MSG("PMM: Frame refcount table at virt=%p, phys=0x%x, size=%u bytes\n",
-                 frame_refcount, bitmap_end, refcount_bytes);
-    LOG_DEBUG_MSG("PMM: Refcount table ends at phys=0x%x (virt=0x%x)\n", refcount_end, pmm_data_end_virt);
+    LOG_INFO_MSG("PMM: _kernel_end = %p (0x%llx)\n", _kernel_end, (unsigned long long)(uintptr_t)_kernel_end);
+    LOG_INFO_MSG("PMM: frame_bitmap = %p (virt)\n", frame_bitmap);
+    LOG_INFO_MSG("PMM: bitmap_phys_start = 0x%lx\n", (unsigned long)bitmap_phys_start);
+    LOG_INFO_MSG("PMM: bitmap_end_phys = 0x%lx\n", (unsigned long)bitmap_end_phys);
+    LOG_INFO_MSG("PMM: frame_refcount = %p (virt)\n", frame_refcount);
+    LOG_INFO_MSG("PMM: refcount_end_phys = 0x%lx\n", (unsigned long)refcount_end_phys);
+    LOG_INFO_MSG("PMM: pmm_data_end_virt = 0x%llx\n", (unsigned long long)pmm_data_end_virt);
+    LOG_INFO_MSG("PMM: KERNEL_VIRTUAL_BASE = 0x%llx\n", (unsigned long long)KERNEL_VIRTUAL_BASE);
+    
+    LOG_DEBUG_MSG("PMM: Frame refcount table at virt=%p, phys=0x%lx, size=%u bytes\n",
+                 frame_refcount, (unsigned long)bitmap_end_phys, refcount_bytes);
+    LOG_DEBUG_MSG("PMM: Refcount table ends at phys=0x%lx (virt=0x%lx)\n", 
+                 (unsigned long)refcount_end_phys, (unsigned long)pmm_data_end_virt);
     
     // 【关键修复】标记引用计数表占用的帧为已使用
-    uint32_t refcount_start_frame = bitmap_end / PAGE_SIZE;
-    uint32_t refcount_end_frame = refcount_end / PAGE_SIZE;
+    uint32_t refcount_start_frame = (uint32_t)(bitmap_end_phys / PAGE_SIZE);
+    uint32_t refcount_end_frame = (uint32_t)(refcount_end_phys / PAGE_SIZE);
     LOG_DEBUG_MSG("PMM: Marking refcount table frames %u-%u as used\n", 
                  refcount_start_frame, refcount_end_frame - 1);
     for (uint32_t f = refcount_start_frame; f < refcount_end_frame; f++) {
@@ -323,7 +343,7 @@ void pmm_init(multiboot_info_t *mbi) {
             
             // 跳过内核、位图和引用计数表占用的区域
             if (start < kernel_end) start = kernel_end;
-            if (start < refcount_end) start = refcount_end;
+            if (start < (uint32_t)refcount_end_phys) start = (uint32_t)refcount_end_phys;
             
             if (end > start) {
                 for (uint32_t f = start/PAGE_SIZE; f < end/PAGE_SIZE; f++) {
@@ -332,7 +352,7 @@ void pmm_init(multiboot_info_t *mbi) {
                 }
             }
         }
-        mmap = (multiboot_memory_map_t*)((uint32_t)mmap + mmap->size + 4);
+        mmap = (multiboot_memory_map_t*)((uintptr_t)mmap + mmap->size + 4);
     }
     
     // 处理 Multiboot 模块（如 initrd），标记为已使用
@@ -357,10 +377,10 @@ void pmm_init(multiboot_info_t *mbi) {
     pmm_info.kernel_frames = (kernel_end - kernel_start) / PAGE_SIZE;
     
     // 计算位图占用的页帧数
-    pmm_info.bitmap_frames = (bitmap_end - bitmap_phys_start) / PAGE_SIZE;
+    pmm_info.bitmap_frames = (uint32_t)((bitmap_end_phys - bitmap_phys_start) / PAGE_SIZE);
     
     // 计算引用计数表占用的页帧数
-    uint32_t refcount_frames = (refcount_end - bitmap_end) / PAGE_SIZE;
+    uint32_t refcount_frames = (uint32_t)((refcount_end_phys - bitmap_end_phys) / PAGE_SIZE);
     
     // 保留页帧数 = 内核 + 位图 + 引用计数表
     pmm_info.reserved_frames = pmm_info.kernel_frames + pmm_info.bitmap_frames + refcount_frames;
@@ -563,7 +583,7 @@ pmm_info_t pmm_get_info(void) {
  * 注意：函数名保留为 pmm_get_bitmap_end 以保持 API 兼容性，
  * 但实际返回的是包括引用计数表在内的所有 PMM 数据结构的结束地址。
  */
-uint32_t pmm_get_bitmap_end(void) {
+uintptr_t pmm_get_bitmap_end(void) {
     // 返回保存的 PMM 数据结构结束地址（包括位图和引用计数表）
     if (pmm_data_end_virt != 0) {
         return pmm_data_end_virt;
@@ -572,7 +592,7 @@ uint32_t pmm_get_bitmap_end(void) {
     // 回退：如果还没有初始化，使用旧的计算方式（仅位图）
     // 这种情况理论上不应该发生，因为 pmm_init 会在任何调用之前执行
     uint32_t bitmap_bytes = PAGE_ALIGN_UP((total_frames + 31) / 32 * 4);
-    return PAGE_ALIGN_UP((uint32_t)frame_bitmap + bitmap_bytes);
+    return PAGE_ALIGN_UP((uintptr_t)frame_bitmap + bitmap_bytes);
 }
 
 /**
@@ -591,12 +611,12 @@ uint32_t pmm_get_bitmap_end(void) {
  *   堆扩展会覆盖这个映射，导致帧 P 无法正确访问
  * - 因此我们需要避免分配这些"危险"的物理帧
  */
-void pmm_set_heap_reserved_range(uint32_t heap_virt_start, uint32_t heap_virt_end) {
+void pmm_set_heap_reserved_range(uintptr_t heap_virt_start, uintptr_t heap_virt_end) {
     // 将堆虚拟地址转换为对应的物理地址
     // 只有在高半核范围内的地址才需要转换
-    if (heap_virt_start >= 0x80000000 && heap_virt_end > heap_virt_start) {
-        heap_reserved_phys_start = VIRT_TO_PHYS(heap_virt_start);
-        heap_reserved_phys_end = VIRT_TO_PHYS(heap_virt_end);
+    if (heap_virt_start >= KERNEL_VIRTUAL_BASE && heap_virt_end > heap_virt_start) {
+        heap_reserved_phys_start = (uint32_t)VIRT_TO_PHYS(heap_virt_start);
+        heap_reserved_phys_end = (uint32_t)VIRT_TO_PHYS(heap_virt_end);
         
         // 标记这些帧为已使用，确保它们不会被分配
         uint32_t start_frame = heap_reserved_phys_start / PAGE_SIZE;

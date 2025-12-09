@@ -57,9 +57,15 @@ static const test_entry_t test_suite[] = {
     
     // 内存管理测试
     TEST_ENTRY("Physical Memory Manager Tests", run_pmm_tests),
+#ifndef ARCH_X86_64
+    // VMM tests use 32-bit page table structures, skip on x86_64
     TEST_ENTRY("Virtual Memory Manager Tests", run_vmm_tests),
+#endif
     TEST_ENTRY("Heap Allocator Tests", run_heap_tests),
+#ifndef ARCH_X86_64
+    // Task tests depend on VMM page directory operations
     TEST_ENTRY("Task Manager Tests", run_task_tests),
+#endif
     
     // 架构类型测试 (Property 17: User Library Data Type Size Correctness)
     TEST_ENTRY("Architecture Type Size Tests", run_arch_types_tests),

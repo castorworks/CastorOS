@@ -4,7 +4,8 @@
 #include <kernel/sync/spinlock.h>
 
 /* VGA 文本模式参数 */
-#define VGA_ADDRESS 0x800B8000  // 物理地址 0xB8000 + 内核基址 0x80000000
+#define VGA_PHYS_ADDRESS 0xB8000
+#define VGA_ADDRESS (KERNEL_VIRTUAL_BASE + VGA_PHYS_ADDRESS)
 #define VGA_WIDTH   80
 #define VGA_HEIGHT  25
 

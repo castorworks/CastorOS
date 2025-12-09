@@ -92,7 +92,7 @@ TEST_CASE(test_kmalloc_alignment) {
     for (int i = 1; i <= 100; i++) {
         void *ptr = kmalloc(i);
         ASSERT_NOT_NULL(ptr);
-        ASSERT_EQ_U((uint32_t)ptr & 0x3, 0);
+        ASSERT_EQ_U((uintptr_t)ptr & 0x3, 0);
         kfree(ptr);
     }
 }
@@ -300,7 +300,7 @@ TEST_CASE(test_heap_magic_corruption) {
         uint32_t magic;
     } heap_block_t;
     
-    heap_block_t *block = (heap_block_t*)((uint32_t)ptr - sizeof(heap_block_t));
+    heap_block_t *block = (heap_block_t*)((uintptr_t)ptr - sizeof(heap_block_t));
     uint32_t original_magic = block->magic;
     
     // 验证原始魔数是正确的
@@ -324,7 +324,7 @@ TEST_CASE(test_heap_alignment_various_sizes) {
     for (size_t i = 0; i < sizeof(test_sizes)/sizeof(test_sizes[0]); i++) {
         void *ptr = kmalloc(test_sizes[i]);
         ASSERT_NOT_NULL(ptr);
-        ASSERT_EQ_U((uint32_t)ptr & 0x3, 0);
+        ASSERT_EQ_U((uintptr_t)ptr & 0x3, 0);
         kfree(ptr);
     }
 }

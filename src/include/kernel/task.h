@@ -57,7 +57,61 @@ typedef enum {
  * @brief CPU 上下文结构
  * 
  * 保存任务切换时需要保存/恢复的所有 CPU 寄存器
+ * 架构相关：i686 使用 32 位寄存器，x86_64 使用 64 位寄存器
  */
+#if defined(ARCH_X86_64)
+/* x86_64: 64-bit context structure */
+typedef struct {
+    /* General purpose registers */
+    uint64_t r15;
+    uint64_t r14;
+    uint64_t r13;
+    uint64_t r12;
+    uint64_t r11;
+    uint64_t r10;
+    uint64_t r9;
+    uint64_t r8;
+    uint64_t rbp;
+    uint64_t rdi;
+    uint64_t rsi;
+    uint64_t rdx;
+    uint64_t rcx;
+    uint64_t rbx;
+    uint64_t rax;
+    
+    /* Instruction pointer */
+    uint64_t rip;        ///< 指令指针
+    
+    /* Code segment */
+    uint64_t cs;
+    
+    /* Flags register */
+    uint64_t rflags;     ///< 标志寄存器
+    
+    /* Stack pointer */
+    uint64_t rsp;        ///< 栈指针
+    
+    /* Stack segment */
+    uint64_t ss;
+    
+    /* Page table base register */
+    uint64_t cr3;        ///< 页目录物理地址
+} __attribute__((packed)) cpu_context_t;
+
+/* Compatibility aliases for x86_64 */
+#define eip rip
+#define esp rsp
+#define eflags rflags
+#define eax rax
+#define ebx rbx
+#define ecx rcx
+#define edx rdx
+#define esi rsi
+#define edi rdi
+#define ebp rbp
+
+#else
+/* i686: 32-bit context structure */
 typedef struct {
     /* 段寄存器 */
     uint16_t gs, _gs_padding;
@@ -87,11 +141,13 @@ typedef struct {
     /* 页目录基址寄存器 */
     uint32_t cr3;        ///< 页目录物理地址
 } __attribute__((packed)) cpu_context_t;
+#endif
 
 /**
  * @brief 任务控制块（TCB/PCB）
  * 
  * 进程控制块，包含进程的所有状态信息
+ * 地址相关字段使用 uintptr_t 以支持 32/64 位架构
  */
 typedef struct task {
     /* 基本信息 */
@@ -109,23 +165,23 @@ typedef struct task {
     cpu_context_t context;           ///< CPU 寄存器状态
     
     /* 内核栈 */
-    uint32_t kernel_stack_base;      ///< 内核栈基址（低地址）
-    uint32_t kernel_stack;           ///< 内核栈顶指针（高地址）
+    uintptr_t kernel_stack_base;     ///< 内核栈基址（低地址）
+    uintptr_t kernel_stack;          ///< 内核栈顶指针（高地址）
     
     /* 用户空间（仅用户进程） */
     bool is_user_process;            ///< 是否为用户进程
-    uint32_t user_entry;             ///< 用户程序入口点
-    uint32_t user_stack_base;        ///< 用户栈基址（低地址）
-    uint32_t user_stack;             ///< 用户栈顶指针（高地址）
+    uintptr_t user_entry;            ///< 用户程序入口点
+    uintptr_t user_stack_base;       ///< 用户栈基址（低地址）
+    uintptr_t user_stack;            ///< 用户栈顶指针（高地址）
     
     /* 内存管理 */
-    uint32_t page_dir_phys;          ///< 页目录物理地址
+    uintptr_t page_dir_phys;         ///< 页目录物理地址
     page_directory_t *page_dir;      ///< 页目录虚拟地址
     
     /* 堆管理 */
-    uint32_t heap_start;             ///< 堆起始地址（初始 brk）
-    uint32_t heap_end;               ///< 当前堆结束地址（当前 brk）
-    uint32_t heap_max;               ///< 堆最大地址（防止与栈冲突）
+    uintptr_t heap_start;            ///< 堆起始地址（初始 brk）
+    uintptr_t heap_end;              ///< 当前堆结束地址（当前 brk）
+    uintptr_t heap_max;              ///< 堆最大地址（防止与栈冲突）
     
     /* 文件系统 */
     fd_table_t *fd_table;            ///< 文件描述符表
