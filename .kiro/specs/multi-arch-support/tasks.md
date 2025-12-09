@@ -1,5 +1,13 @@
 # Implementation Plan
 
+> **注意**: 本 spec 的部分任务依赖于 `mm-refactor` spec 的完成。标记为 **[依赖 mm-refactor]** 的任务需要在 mm-refactor 相应 Phase 完成后才能进行。
+>
+> **依赖关系**:
+> - Task 14.5-14.7 (x86_64 完整 VMM) → mm-refactor Phase 4
+> - Task 20.1-20.3 (ARM64 MMU) → mm-refactor Phase 6
+> - Task 22.1 (ARM64 页错误) → mm-refactor Phase 6
+> - Task 35-36 (COW 机制) → mm-refactor Phase 3-6
+
 ## Phase 1: 基础架构重构
 
 - [x] 1. 创建架构目录结构和构建系统
@@ -71,6 +79,11 @@
   - [x] 4.4 Write property test for VMM page table format
     - **Property 3: VMM Page Table Format Correctness**
     - **Validates: Requirements 5.2**
+  - [ ] 4.5 **[依赖 mm-refactor]** 更新 i686 使用新类型系统
+    - 参考 mm-refactor Phase 1-2
+    - 使用 `paddr_t`, `vaddr_t`, `pfn_t` 类型
+    - 更新 PMM 接口使用新类型
+    - _Requirements: 5.1, mm-refactor 1.1, 1.2, 2.1_
 
 - [x] 5. 迁移 i686 任务切换代码
   - [x] 5.1 移动 `task_asm.asm` 到 `src/arch/i686/task/`
@@ -167,12 +180,12 @@
     - **Property 7: Interrupt Register State Preservation (x86_64)**
     - **Validates: Requirements 6.1**
 
-- [x] 14. 实现 x86_64 内存管理
+- [x] 14. 实现 x86_64 内存管理（基础）
   - [x] 14.1 创建 `src/arch/x86_64/mm/paging64.c`
     - 实现 4 级页表操作 (PML4, PDPT, PD, PT)
-    - 实现 HAL MMU 接口
+    - 实现基础 HAL MMU 接口 (hal_mmu_init, hal_mmu_map 静态映射)
     - _Requirements: 5.2_
-  - [x] 14.2 实现 x86_64 页错误处理
+  - [x] 14.2 实现 x86_64 页错误处理（基础）
     - 解析 64 位错误码
     - 读取 CR2 获取错误地址
     - _Requirements: 5.4_
@@ -182,6 +195,24 @@
   - [x] 14.4 Write property test for x86_64 page fault interpretation
     - **Property 5: VMM Page Fault Interpretation (x86_64)**
     - **Validates: Requirements 5.4**
+  - [ ] 14.5 **[依赖 mm-refactor]** 完善 x86_64 动态页表操作
+    - 参考 mm-refactor Phase 4 (Task 9-11)
+    - 实现 `hal_mmu_map()` 动态 4 级页表映射
+    - 实现 `hal_mmu_unmap()` 取消映射
+    - 实现 `hal_mmu_query()` 页表查询
+    - 实现 `hal_mmu_protect()` 修改页属性
+    - _Requirements: 5.2, mm-refactor 5.1_
+  - [ ] 14.6 **[依赖 mm-refactor]** 实现 x86_64 地址空间管理
+    - 参考 mm-refactor Phase 4 (Task 10)
+    - 实现 `hal_mmu_create_space()` 分配 PML4
+    - 实现 `hal_mmu_clone_space()` COW 语义
+    - 实现 `hal_mmu_destroy_space()` 释放页表
+    - _Requirements: 5.2, mm-refactor 5.2, 5.3, 5.5_
+  - [ ] 14.7 **[依赖 mm-refactor]** 完善 x86_64 页错误处理
+    - 参考 mm-refactor Phase 4 (Task 11)
+    - 实现 `hal_mmu_parse_fault()` 填充 `hal_page_fault_info_t`
+    - 更新 `vmm_handle_cow_page_fault()` 支持 x86_64
+    - _Requirements: 5.4, mm-refactor 5.4_
 
 - [x] 15. 实现 x86_64 任务切换
   - [x] 15.1 创建 `src/arch/x86_64/task/context64.asm`
@@ -234,12 +265,25 @@
     - 配置 TCR_EL1 (Translation Control Register)
     - 配置 MAIR_EL1 (Memory Attribute Indirection Register)
     - 设置 TTBR0_EL1 和 TTBR1_EL1
-    - _Requirements: 4.2_
+    - 实现 `hal_mmu_init()` 初始化
+    - 实现 `hal_mmu_flush_tlb()` 和 `hal_mmu_flush_tlb_all()`
+    - 实现 `hal_mmu_switch_space()` 更新 TTBR0_EL1
+    - 实现 `hal_mmu_get_fault_addr()` 读取 FAR_EL1
+    - _Requirements: 4.2, mm-refactor 6.1, 6.5_
   - [ ] 20.2 实现 ARM64 4 级页表操作
-    - 实现页表创建和映射
+    - 参考 mm-refactor Phase 6 (Task 16.2)
+    - 实现 `hal_mmu_map()` 4 级转换表映射
+    - 实现 `hal_mmu_unmap()` 取消映射
+    - 实现 `hal_mmu_query()` 页表查询
     - 实现 HAL MMU 接口
-    - _Requirements: 5.2_
-  - [ ] 20.3 Write property test for ARM64 kernel mapping range
+    - _Requirements: 5.2, mm-refactor 6.2_
+  - [ ] 20.3 实现 ARM64 地址空间管理
+    - 参考 mm-refactor Phase 6 (Task 16.3)
+    - 实现 `hal_mmu_create_space()` 分配顶级页表
+    - 实现 `hal_mmu_clone_space()` COW 语义
+    - 实现 `hal_mmu_destroy_space()` 释放页表
+    - _Requirements: 5.2, mm-refactor 6.2_
+  - [ ] 20.4 Write property test for ARM64 kernel mapping range
     - **Property 4: VMM Kernel Mapping Range Correctness (ARM64)**
     - **Validates: Requirements 5.3**
 
@@ -261,9 +305,11 @@
 
 - [ ] 22. 实现 ARM64 页错误处理
   - [ ] 22.1 创建 `src/arch/arm64/mm/fault.c`
+    - 参考 mm-refactor Phase 6 (Task 16.4)
     - 解析 ESR_EL1 (Exception Syndrome Register)
     - 读取 FAR_EL1 (Fault Address Register)
-    - _Requirements: 5.4_
+    - 实现 `hal_mmu_parse_fault()` 填充 `hal_page_fault_info_t`
+    - _Requirements: 5.4, mm-refactor 6.4_
   - [ ] 22.2 Write property test for ARM64 page fault interpretation
     - **Property 5: VMM Page Fault Interpretation (ARM64)**
     - **Validates: Requirements 5.4**
@@ -302,6 +348,11 @@
   - [ ] 25.2 实现 ARM64 内存屏障
     - 实现 DMB, DSB, ISB 指令封装
     - _Requirements: 9.1_
+  - [ ] 25.3 **[依赖 mm-refactor]** 实现 ARM64 缓存维护操作
+    - 参考 mm-refactor Phase 7 (Task 18.2)
+    - 实现 `hal_cache_clean()` 清理缓存
+    - 实现 `hal_cache_invalidate()` 无效化缓存
+    - _Requirements: 9.4, mm-refactor 10.2_
 
 - [ ] 26. 实现 ARM64 设备树解析
   - [ ] 26.1 创建 `src/arch/arm64/dtb/dtb.c`
@@ -380,19 +431,22 @@
 ## Phase 8: COW 和高级内存功能
 
 - [ ] 35. 适配 COW 机制
-  - [ ] 35.1 实现各架构 COW 页表标志
-    - i686: 使用 Available bit
-    - x86_64: 使用 Available bit
-    - ARM64: 使用 Software bit
-    - _Requirements: 5.5_
+  - [ ] 35.1 **[依赖 mm-refactor]** 实现各架构 COW 页表标志
+    - 参考 mm-refactor Phase 3-6 中的 COW 实现
+    - i686: 使用 Available bit (mm-refactor Task 7 已实现)
+    - x86_64: 使用 Available bit (mm-refactor Task 10.2)
+    - ARM64: 使用 Software bit (mm-refactor Task 16.3)
+    - 使用统一的 `HAL_PTE_COW` 标志
+    - _Requirements: 5.5, mm-refactor 4.4, 5.3_
   - [ ] 35.2 Write property test for COW flag correctness
     - **Property 6: VMM COW Flag Correctness**
     - **Validates: Requirements 5.5**
 
 - [ ] 36. 验证 fork/exec 在各架构上工作
-  - [ ] 36.1 测试 fork 系统调用
-    - 验证 COW 正确工作
-    - _Requirements: 5.5_
+  - [ ] 36.1 **[依赖 mm-refactor]** 测试 fork 系统调用
+    - 验证 `hal_mmu_clone_space()` COW 正确工作
+    - 验证 COW 页错误处理正确触发复制
+    - _Requirements: 5.5, mm-refactor 4.4, 5.3_
   - [ ] 36.2 测试 exec 系统调用
     - 验证程序加载正确
     - _Requirements: 7.4_

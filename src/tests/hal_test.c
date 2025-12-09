@@ -271,6 +271,266 @@ TEST_CASE(hal_mmio_write_ordering) {
 }
 
 /* ============================================================================
+ * Property 8: HAL MMU Map-Query Round-Trip
+ * ============================================================================
+ * 
+ * *For any* valid virtual address `virt`, physical address `phys`, and flags 
+ * `flags`, after `hal_mmu_map(space, virt, phys, flags)` succeeds, 
+ * `hal_mmu_query(space, virt, &out_phys, &out_flags)` SHALL return `true` 
+ * with `out_phys == phys`.
+ * 
+ * **Feature: mm-refactor, Property 8: HAL MMU Map-Query Round-Trip**
+ * **Validates: Requirements 4.1**
+ * 
+ * Test Strategy:
+ * 1. Allocate physical frames
+ * 2. Map them to user-space virtual addresses using hal_mmu_map()
+ * 3. Query the mappings using hal_mmu_query()
+ * 4. Verify the returned physical address matches the original
+ * 5. Clean up by unmapping and freeing frames
+ * ========================================================================== */
+
+#include <mm/pmm.h>
+#include <mm/mm_types.h>
+
+/* Test virtual addresses in user space */
+#define HAL_TEST_VIRT_BASE  0x30000000
+
+/**
+ * @brief Property test: Map-Query round-trip for single page
+ * 
+ * **Feature: mm-refactor, Property 8: HAL MMU Map-Query Round-Trip**
+ * **Validates: Requirements 4.1**
+ */
+TEST_CASE(hal_mmu_map_query_roundtrip_single) {
+#if defined(ARCH_I686)
+    /* Allocate a physical frame */
+    paddr_t phys = pmm_alloc_frame();
+    ASSERT_NE_U(phys, PADDR_INVALID);
+    
+    vaddr_t virt = HAL_TEST_VIRT_BASE;
+    uint32_t flags = HAL_PAGE_PRESENT | HAL_PAGE_WRITE | HAL_PAGE_USER;
+    
+    /* Map the page */
+    bool map_result = hal_mmu_map(HAL_ADDR_SPACE_CURRENT, virt, phys, flags);
+    ASSERT_TRUE(map_result);
+    
+    /* Flush TLB to ensure mapping is visible */
+    hal_mmu_flush_tlb(virt);
+    
+    /* Query the mapping */
+    paddr_t out_phys = 0;
+    uint32_t out_flags = 0;
+    bool query_result = hal_mmu_query(HAL_ADDR_SPACE_CURRENT, virt, &out_phys, &out_flags);
+    
+    /* Property: Query should succeed and return the same physical address */
+    ASSERT_TRUE(query_result);
+    ASSERT_EQ_U(out_phys, phys);
+    
+    /* Property: Flags should include the ones we set */
+    ASSERT_TRUE((out_flags & HAL_PAGE_PRESENT) != 0);
+    ASSERT_TRUE((out_flags & HAL_PAGE_WRITE) != 0);
+    ASSERT_TRUE((out_flags & HAL_PAGE_USER) != 0);
+    
+    /* Clean up */
+    hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, virt);
+    hal_mmu_flush_tlb(virt);
+    pmm_free_frame(phys);
+#else
+    /* Skip on non-i686 architectures for now */
+    ASSERT_TRUE(true);
+#endif
+}
+
+/**
+ * @brief Property test: Map-Query round-trip for multiple pages
+ * 
+ * Tests the property across multiple random-ish virtual addresses.
+ * 
+ * **Feature: mm-refactor, Property 8: HAL MMU Map-Query Round-Trip**
+ * **Validates: Requirements 4.1**
+ */
+TEST_CASE(hal_mmu_map_query_roundtrip_multiple) {
+#if defined(ARCH_I686)
+    #define PBT_MAP_QUERY_ITERATIONS 20
+    
+    paddr_t frames[PBT_MAP_QUERY_ITERATIONS];
+    vaddr_t virts[PBT_MAP_QUERY_ITERATIONS];
+    uint32_t allocated = 0;
+    
+    /* Allocate and map multiple pages */
+    for (uint32_t i = 0; i < PBT_MAP_QUERY_ITERATIONS; i++) {
+        frames[i] = pmm_alloc_frame();
+        if (frames[i] == PADDR_INVALID) {
+            break;
+        }
+        
+        /* Use different virtual addresses */
+        virts[i] = HAL_TEST_VIRT_BASE + (i * PAGE_SIZE);
+        
+        /* Vary flags slightly */
+        uint32_t flags = HAL_PAGE_PRESENT | HAL_PAGE_USER;
+        if (i % 2 == 0) {
+            flags |= HAL_PAGE_WRITE;
+        }
+        
+        bool map_result = hal_mmu_map(HAL_ADDR_SPACE_CURRENT, virts[i], frames[i], flags);
+        ASSERT_TRUE(map_result);
+        
+        allocated++;
+    }
+    
+    /* Flush TLB */
+    hal_mmu_flush_tlb_all();
+    
+    /* Verify all mappings */
+    for (uint32_t i = 0; i < allocated; i++) {
+        paddr_t out_phys = 0;
+        uint32_t out_flags = 0;
+        
+        bool query_result = hal_mmu_query(HAL_ADDR_SPACE_CURRENT, virts[i], &out_phys, &out_flags);
+        
+        /* Property: Query must succeed */
+        ASSERT_TRUE(query_result);
+        
+        /* Property: Physical address must match */
+        ASSERT_EQ_U(out_phys, frames[i]);
+        
+        /* Property: Present flag must be set */
+        ASSERT_TRUE((out_flags & HAL_PAGE_PRESENT) != 0);
+    }
+    
+    /* Clean up */
+    for (uint32_t i = 0; i < allocated; i++) {
+        hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, virts[i]);
+        pmm_free_frame(frames[i]);
+    }
+    hal_mmu_flush_tlb_all();
+#else
+    ASSERT_TRUE(true);
+#endif
+}
+
+/**
+ * @brief Property test: Query returns false for unmapped addresses
+ * 
+ * **Feature: mm-refactor, Property 8: HAL MMU Map-Query Round-Trip**
+ * **Validates: Requirements 4.1**
+ */
+TEST_CASE(hal_mmu_query_unmapped_returns_false) {
+#if defined(ARCH_I686)
+    /* Query an address that should not be mapped */
+    vaddr_t unmapped_virt = 0x50000000;  /* Arbitrary user-space address */
+    
+    paddr_t out_phys = 0;
+    uint32_t out_flags = 0;
+    
+    bool query_result = hal_mmu_query(HAL_ADDR_SPACE_CURRENT, unmapped_virt, &out_phys, &out_flags);
+    
+    /* Property: Query should return false for unmapped address */
+    ASSERT_FALSE(query_result);
+#else
+    ASSERT_TRUE(true);
+#endif
+}
+
+/* ============================================================================
+ * Property 9: Address Space Switch Consistency
+ * ============================================================================
+ * 
+ * *For any* valid address space `space`, after `hal_mmu_switch_space(space)`, 
+ * `hal_mmu_current_space()` SHALL return `space`.
+ * 
+ * **Feature: mm-refactor, Property 9: Address Space Switch Consistency**
+ * **Validates: Requirements 4.5**
+ * 
+ * Test Strategy:
+ * 1. Save the current address space
+ * 2. Create a new address space
+ * 3. Switch to the new address space
+ * 4. Verify hal_mmu_current_space() returns the new space
+ * 5. Switch back to the original address space
+ * 6. Verify hal_mmu_current_space() returns the original space
+ * 7. Clean up
+ * ========================================================================== */
+
+/**
+ * @brief Property test: Address space switch consistency
+ * 
+ * **Feature: mm-refactor, Property 9: Address Space Switch Consistency**
+ * **Validates: Requirements 4.5**
+ */
+TEST_CASE(hal_mmu_switch_space_consistency) {
+#if defined(ARCH_I686)
+    /* Save original address space */
+    hal_addr_space_t original_space = hal_mmu_current_space();
+    ASSERT_NE_U(original_space, HAL_ADDR_SPACE_INVALID);
+    
+    /* Create a new address space */
+    hal_addr_space_t new_space = hal_mmu_create_space();
+    ASSERT_NE_U(new_space, HAL_ADDR_SPACE_INVALID);
+    ASSERT_NE_U(new_space, original_space);
+    
+    /* Switch to new address space */
+    hal_mmu_switch_space(new_space);
+    
+    /* Property: Current space should be the new space */
+    hal_addr_space_t current_after_switch = hal_mmu_current_space();
+    ASSERT_EQ_U(current_after_switch, new_space);
+    
+    /* Switch back to original */
+    hal_mmu_switch_space(original_space);
+    
+    /* Property: Current space should be the original space */
+    hal_addr_space_t current_after_restore = hal_mmu_current_space();
+    ASSERT_EQ_U(current_after_restore, original_space);
+    
+    /* Clean up */
+    hal_mmu_destroy_space(new_space);
+#else
+    ASSERT_TRUE(true);
+#endif
+}
+
+/**
+ * @brief Property test: Multiple address space switches
+ * 
+ * **Feature: mm-refactor, Property 9: Address Space Switch Consistency**
+ * **Validates: Requirements 4.5**
+ */
+TEST_CASE(hal_mmu_switch_space_multiple) {
+#if defined(ARCH_I686)
+    hal_addr_space_t original_space = hal_mmu_current_space();
+    
+    /* Create multiple address spaces */
+    hal_addr_space_t spaces[3];
+    for (int i = 0; i < 3; i++) {
+        spaces[i] = hal_mmu_create_space();
+        ASSERT_NE_U(spaces[i], HAL_ADDR_SPACE_INVALID);
+    }
+    
+    /* Switch through all spaces and verify */
+    for (int i = 0; i < 3; i++) {
+        hal_mmu_switch_space(spaces[i]);
+        
+        /* Property: Current space must match what we switched to */
+        ASSERT_EQ_U(hal_mmu_current_space(), spaces[i]);
+    }
+    
+    /* Switch back to original */
+    hal_mmu_switch_space(original_space);
+    ASSERT_EQ_U(hal_mmu_current_space(), original_space);
+    
+    /* Clean up */
+    for (int i = 0; i < 3; i++) {
+        hal_mmu_destroy_space(spaces[i]);
+    }
+#else
+    ASSERT_TRUE(true);
+#endif
+}
+
+/* ============================================================================
  * Test Suite Definition
  * ========================================================================== */
 
@@ -291,6 +551,15 @@ TEST_SUITE(hal_tests) {
     RUN_TEST(hal_mmio_read_write_64bit);
     RUN_TEST(hal_memory_barriers_callable);
     RUN_TEST(hal_mmio_write_ordering);
+    
+    /* Property 8: HAL MMU Map-Query Round-Trip */
+    RUN_TEST(hal_mmu_map_query_roundtrip_single);
+    RUN_TEST(hal_mmu_map_query_roundtrip_multiple);
+    RUN_TEST(hal_mmu_query_unmapped_returns_false);
+    
+    /* Property 9: Address Space Switch Consistency */
+    RUN_TEST(hal_mmu_switch_space_consistency);
+    RUN_TEST(hal_mmu_switch_space_multiple);
 }
 
 /**

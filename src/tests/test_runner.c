@@ -22,6 +22,8 @@
 #include <tests/isr64_test.h>
 #include <tests/paging64_test.h>
 #include <tests/usermode_test.h>
+#include <tests/mm_types_test.h>
+#include <tests/pgtable_test.h>
 #include <lib/kprintf.h>
 
 // ============================================================================
@@ -90,6 +92,16 @@ static const test_entry_t test_suite[] = {
     // ========== 在下方添加新的测试 ==========
     // TEST_ENTRY("Synchronization Primitive Tests", run_sync_tests),
     
+    // 内存管理类型测试 (Property 1, 2: Type Size Correctness)
+    // **Feature: mm-refactor, Property 1: Physical Address Type Size**
+    // **Feature: mm-refactor, Property 2: Virtual Address Type Size**
+    // **Validates: Requirements 1.1, 1.2**
+    TEST_ENTRY("Memory Management Type Tests", run_mm_types_tests),
+    
+    // 页表抽象层测试 (Property 7: PTE Construction Round-Trip)
+    // **Feature: mm-refactor, Property 7: PTE Construction Round-Trip**
+    // **Validates: Requirements 3.3, 3.4**
+    TEST_ENTRY("Page Table Abstraction Tests", run_pgtable_tests),
 };
 
 // 计算测试用例总数

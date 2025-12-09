@@ -10,13 +10,14 @@
  *   - x86_64 (AMD64/Intel 64-bit)
  *   - arm64 (AArch64)
  * 
- * Requirements: 1.1, 1.3
+ * Requirements: 1.1, 1.3, 4.1, 4.2, 4.3, 4.4, 4.5
  */
 
 #ifndef _HAL_HAL_H_
 #define _HAL_HAL_H_
 
 #include <types.h>
+#include <mm/mm_types.h>
 
 /* ============================================================================
  * Forward Declarations
@@ -122,83 +123,302 @@ void hal_interrupt_eoi(uint32_t irq);
 
 /* ============================================================================
  * Memory Management Unit (MMU)
+ * 
+ * Extended HAL MMU interface providing architecture-independent page table
+ * operations, address space management, and page fault handling.
+ * 
+ * @see Requirements 4.1, 4.2, 4.3, 4.4, 4.5
  * ========================================================================== */
 
-/** Page table entry flags */
+/** Page table entry flags (architecture-independent) */
 #define HAL_PAGE_PRESENT    (1 << 0)   /**< Page is present in memory */
 #define HAL_PAGE_WRITE      (1 << 1)   /**< Page is writable */
 #define HAL_PAGE_USER       (1 << 2)   /**< Page is accessible from user mode */
 #define HAL_PAGE_NOCACHE    (1 << 3)   /**< Disable caching for this page */
 #define HAL_PAGE_EXEC       (1 << 4)   /**< Page is executable */
 #define HAL_PAGE_COW        (1 << 5)   /**< Copy-on-Write flag */
+#define HAL_PAGE_DIRTY      (1 << 6)   /**< Page has been modified */
+#define HAL_PAGE_ACCESSED   (1 << 7)   /**< Page has been accessed */
+#define HAL_PAGE_WRITECOMB  (1 << 8)   /**< Write-combining memory type */
+
+/*----------------------------------------------------------------------------
+ * Address Space Handle
+ *----------------------------------------------------------------------------*/
+
+/**
+ * @brief Address space handle type
+ * 
+ * Represents an address space (page table hierarchy). The handle is the
+ * physical address of the top-level page table:
+ *   - i686: Page Directory (CR3)
+ *   - x86_64: PML4 (CR3)
+ *   - ARM64: Level 0 table (TTBR0_EL1/TTBR1_EL1)
+ * 
+ * @see Requirements 4.2, 4.5
+ */
+typedef paddr_t hal_addr_space_t;
+
+/** @brief Invalid address space handle */
+#define HAL_ADDR_SPACE_INVALID  PADDR_INVALID
+
+/** @brief Use current address space (for hal_mmu_map/unmap/query/protect) */
+#define HAL_ADDR_SPACE_CURRENT  ((hal_addr_space_t)0)
+
+/*----------------------------------------------------------------------------
+ * Page Fault Information
+ *----------------------------------------------------------------------------*/
+
+/**
+ * @brief Page fault information structure
+ * 
+ * Architecture-independent representation of page fault details.
+ * Filled by hal_mmu_parse_fault() from architecture-specific fault registers.
+ * 
+ * @see Requirements 4.3
+ */
+typedef struct hal_page_fault_info {
+    vaddr_t fault_addr;     /**< Virtual address that caused the fault */
+    bool is_present;        /**< Page was present (protection fault vs not-present) */
+    bool is_write;          /**< Fault was caused by a write operation */
+    bool is_user;           /**< Fault occurred in user mode */
+    bool is_exec;           /**< Fault was caused by instruction fetch */
+    bool is_reserved;       /**< Fault was caused by reserved bit violation */
+    uint32_t raw_error;     /**< Architecture-specific raw error code */
+} hal_page_fault_info_t;
+
+/*----------------------------------------------------------------------------
+ * MMU Initialization
+ *----------------------------------------------------------------------------*/
 
 /**
  * @brief Initialize MMU/paging
+ * 
+ * Initializes architecture-specific MMU configuration:
+ *   - i686: Enable paging, set up initial page tables
+ *   - x86_64: Configure 4-level paging
+ *   - ARM64: Configure TCR_EL1, MAIR_EL1, enable MMU
  */
 void hal_mmu_init(void);
 
+/*----------------------------------------------------------------------------
+ * Page Mapping Operations
+ * @see Requirements 4.1
+ *----------------------------------------------------------------------------*/
+
 /**
  * @brief Create a page table mapping
+ * 
+ * Maps a virtual address to a physical address with specified flags.
+ * Allocates intermediate page table levels as needed.
+ * 
+ * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
  * @param virt Virtual address (must be page-aligned)
  * @param phys Physical address (must be page-aligned)
  * @param flags Page flags (HAL_PAGE_*)
- * @return true on success, false on failure
+ * @return true on success, false on failure (e.g., out of memory)
+ * 
+ * @note This function does NOT flush the TLB. Caller must call
+ *       hal_mmu_flush_tlb() if the mapping is for the current address space.
  */
-bool hal_mmu_map(uintptr_t virt, uintptr_t phys, uint32_t flags);
+bool hal_mmu_map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags);
 
 /**
  * @brief Remove a page table mapping
+ * 
+ * Unmaps a virtual address and returns the previously mapped physical address.
+ * Does NOT free intermediate page table levels.
+ * 
+ * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
  * @param virt Virtual address to unmap
+ * @return Previously mapped physical address, or PADDR_INVALID if not mapped
+ * 
+ * @note This function does NOT flush the TLB. Caller must call
+ *       hal_mmu_flush_tlb() if the mapping was for the current address space.
  */
-void hal_mmu_unmap(uintptr_t virt);
+paddr_t hal_mmu_unmap(hal_addr_space_t space, vaddr_t virt);
+
+/**
+ * @brief Query page table mapping
+ * 
+ * Retrieves the physical address and flags for a virtual address mapping.
+ * 
+ * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
+ * @param virt Virtual address to query
+ * @param[out] phys Pointer to store physical address (can be NULL)
+ * @param[out] flags Pointer to store page flags (can be NULL)
+ * @return true if mapping exists, false if not mapped
+ * 
+ * @see Requirements 4.1
+ */
+bool hal_mmu_query(hal_addr_space_t space, vaddr_t virt, paddr_t *phys, uint32_t *flags);
+
+/**
+ * @brief Modify page table entry flags
+ * 
+ * Changes the flags of an existing mapping without changing the physical address.
+ * Useful for implementing COW (clearing write flag) and protection changes.
+ * 
+ * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
+ * @param virt Virtual address of the mapping to modify
+ * @param set_flags Flags to set (OR'd into existing flags)
+ * @param clear_flags Flags to clear (AND'd out of existing flags)
+ * @return true on success, false if mapping doesn't exist
+ * 
+ * @note This function does NOT flush the TLB. Caller must call
+ *       hal_mmu_flush_tlb() after modifying mappings.
+ * 
+ * @see Requirements 4.1
+ */
+bool hal_mmu_protect(hal_addr_space_t space, vaddr_t virt, 
+                     uint32_t set_flags, uint32_t clear_flags);
+
+/*----------------------------------------------------------------------------
+ * TLB Management
+ *----------------------------------------------------------------------------*/
 
 /**
  * @brief Flush TLB entry for a specific address
  * @param virt Virtual address to flush
  */
-void hal_mmu_flush_tlb(uintptr_t virt);
+void hal_mmu_flush_tlb(vaddr_t virt);
 
 /**
  * @brief Flush entire TLB
  */
 void hal_mmu_flush_tlb_all(void);
 
+/*----------------------------------------------------------------------------
+ * Address Space Management
+ * @see Requirements 4.2, 4.4, 4.5
+ *----------------------------------------------------------------------------*/
+
 /**
- * @brief Switch address space
- * @param page_table_phys Physical address of the new page table
+ * @brief Create a new address space
+ * 
+ * Allocates and initializes a new page table hierarchy. The kernel portion
+ * of the address space is shared with all other address spaces.
+ * 
+ * @return Address space handle, or HAL_ADDR_SPACE_INVALID on failure
+ * 
+ * @see Requirements 4.2
  */
-void hal_mmu_switch_space(uintptr_t page_table_phys);
+hal_addr_space_t hal_mmu_create_space(void);
+
+/**
+ * @brief Clone an address space with COW semantics
+ * 
+ * Creates a copy of an address space where user-space pages are shared
+ * with copy-on-write semantics:
+ *   - User pages are marked read-only in both parent and child
+ *   - Physical pages have their reference count incremented
+ *   - Kernel space is shared (not copied)
+ * 
+ * @param src Source address space to clone
+ * @return New address space handle, or HAL_ADDR_SPACE_INVALID on failure
+ * 
+ * @see Requirements 4.4
+ */
+hal_addr_space_t hal_mmu_clone_space(hal_addr_space_t src);
+
+/**
+ * @brief Destroy an address space
+ * 
+ * Frees all page table structures and decrements reference counts on
+ * physical pages. Does NOT free physical pages that are still referenced
+ * by other address spaces (COW).
+ * 
+ * @param space Address space handle to destroy
+ * 
+ * @warning Must not be the currently active address space.
+ */
+void hal_mmu_destroy_space(hal_addr_space_t space);
+
+/**
+ * @brief Switch to a different address space
+ * 
+ * Changes the current address space by updating the page table base register:
+ *   - i686/x86_64: Updates CR3
+ *   - ARM64: Updates TTBR0_EL1 and issues appropriate barriers
+ * 
+ * @param space Address space handle to switch to
+ * 
+ * @see Requirements 4.5
+ */
+void hal_mmu_switch_space(hal_addr_space_t space);
+
+/**
+ * @brief Get the current address space
+ * @return Handle of the currently active address space
+ */
+hal_addr_space_t hal_mmu_current_space(void);
+
+/*----------------------------------------------------------------------------
+ * Page Fault Handling
+ * @see Requirements 4.3
+ *----------------------------------------------------------------------------*/
+
+/**
+ * @brief Parse page fault information
+ * 
+ * Reads architecture-specific fault registers and fills the
+ * hal_page_fault_info_t structure with architecture-independent information.
+ * 
+ * Call this from the page fault handler to get fault details:
+ *   - i686/x86_64: Reads CR2 and error code from stack
+ *   - ARM64: Reads FAR_EL1 and ESR_EL1
+ * 
+ * @param[out] info Pointer to structure to fill with fault information
+ * 
+ * @see Requirements 4.3
+ */
+void hal_mmu_parse_fault(hal_page_fault_info_t *info);
 
 /**
  * @brief Get the faulting address from a page fault
+ * 
+ * Quick accessor for just the fault address without full fault parsing.
+ * 
  * @return The virtual address that caused the page fault
  */
-uintptr_t hal_mmu_get_fault_addr(void);
+vaddr_t hal_mmu_get_fault_addr(void);
+
+/*----------------------------------------------------------------------------
+ * Address Translation (Legacy/Convenience)
+ *----------------------------------------------------------------------------*/
 
 /**
  * @brief Translate virtual address to physical address
+ * 
+ * Convenience wrapper around hal_mmu_query() for the current address space.
+ * 
  * @param virt Virtual address to translate
- * @return Physical address, or 0 if not mapped
+ * @return Physical address, or PADDR_INVALID if not mapped
  */
-uintptr_t hal_mmu_virt_to_phys(uintptr_t virt);
+paddr_t hal_mmu_virt_to_phys(vaddr_t virt);
 
 /**
  * @brief Get current page table physical address
+ * 
  * @return Physical address of the current page table (CR3 on x86, TTBR on ARM)
+ * @deprecated Use hal_mmu_current_space() instead
  */
-uintptr_t hal_mmu_get_current_page_table(void);
+paddr_t hal_mmu_get_current_page_table(void);
 
 /**
  * @brief Create a new page table
- * @return Physical address of the new page table, or 0 on failure
+ * 
+ * @return Physical address of the new page table, or PADDR_INVALID on failure
+ * @deprecated Use hal_mmu_create_space() instead
  */
-uintptr_t hal_mmu_create_page_table(void);
+paddr_t hal_mmu_create_page_table(void);
 
 /**
  * @brief Destroy a page table
+ * 
  * @param page_table_phys Physical address of the page table to destroy
+ * @deprecated Use hal_mmu_destroy_space() instead
  */
-void hal_mmu_destroy_page_table(uintptr_t page_table_phys);
+void hal_mmu_destroy_page_table(paddr_t page_table_phys);
 
 /* ============================================================================
  * Context Switch

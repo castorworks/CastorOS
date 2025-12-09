@@ -14,6 +14,7 @@
 #include <fs/vfs.h>
 #include <mm/vmm.h>
 #include <mm/pmm.h>
+#include <mm/mm_types.h>
 #include <lib/klog.h>
 #include <lib/string.h>
 
@@ -72,8 +73,8 @@ uint32_t sys_brk(uint32_t addr) {
         
         for (uint32_t page = old_end_aligned; page < new_end_aligned; page += PAGE_SIZE) {
             // 分配物理页
-            uint32_t phys = pmm_alloc_frame();
-            if (!phys) {
+            paddr_t phys = pmm_alloc_frame();
+            if (phys == PADDR_INVALID) {
                 LOG_ERROR_MSG("sys_brk: out of memory at page 0x%x\n", page);
                 // 不回滚，保持已分配的页面
                 // 返回实际达到的地址
@@ -82,10 +83,10 @@ uint32_t sys_brk(uint32_t addr) {
             }
             
             // 先通过内核地址清零物理页（在映射之前）
-            memset((void *)PHYS_TO_VIRT(phys), 0, PAGE_SIZE);
+            memset((void *)PHYS_TO_VIRT((uintptr_t)phys), 0, PAGE_SIZE);
             
             // 映射到用户空间（可读写）
-            if (!vmm_map_page_in_directory(current->page_dir_phys, page, phys,
+            if (!vmm_map_page_in_directory(current->page_dir_phys, page, (uintptr_t)phys,
                                            PAGE_PRESENT | PAGE_WRITE | PAGE_USER)) {
                 pmm_free_frame(phys);
                 LOG_ERROR_MSG("sys_brk: failed to map page 0x%x\n", page);
@@ -94,7 +95,7 @@ uint32_t sys_brk(uint32_t addr) {
                 return current->heap_end;
             }
             
-            LOG_DEBUG_MSG("sys_brk: mapped page 0x%x -> phys 0x%x\n", page, phys);
+            LOG_DEBUG_MSG("sys_brk: mapped page 0x%x -> phys 0x%llx\n", page, (unsigned long long)phys);
         }
     } else if (new_end_aligned < old_end_aligned) {
         // 收缩堆：取消映射并释放页面
@@ -193,14 +194,14 @@ static uint32_t do_mmap_anonymous(task_t *current, uint32_t vaddr, uint32_t leng
     
     for (uint32_t page = vaddr; page < vaddr + length; page += PAGE_SIZE) {
         // 分配物理页
-        uint32_t phys = pmm_alloc_frame();
-        if (!phys) {
+        paddr_t phys = pmm_alloc_frame();
+        if (phys == PADDR_INVALID) {
             LOG_ERROR_MSG("sys_mmap: out of memory at page 0x%x\n", page);
             // 回滚已分配的页面
             for (uint32_t p = vaddr; p < page; p += PAGE_SIZE) {
-                uint32_t pf = vmm_unmap_page_in_directory(current->page_dir_phys, p);
+                uintptr_t pf = vmm_unmap_page_in_directory(current->page_dir_phys, p);
                 if (pf) {
-                    pmm_free_frame(pf);
+                    pmm_free_frame((paddr_t)pf);
                 }
             }
             return (uint32_t)-1;
@@ -208,17 +209,17 @@ static uint32_t do_mmap_anonymous(task_t *current, uint32_t vaddr, uint32_t leng
         
         // 先通过内核地址清零物理页（在映射之前）
         // 这样可以避免内核访问用户空间地址的问题
-        memset((void *)PHYS_TO_VIRT(phys), 0, PAGE_SIZE);
+        memset((void *)PHYS_TO_VIRT((uintptr_t)phys), 0, PAGE_SIZE);
         
         // 映射到用户空间
-        if (!vmm_map_page_in_directory(current->page_dir_phys, page, phys, page_flags)) {
+        if (!vmm_map_page_in_directory(current->page_dir_phys, page, (uintptr_t)phys, page_flags)) {
             pmm_free_frame(phys);
             LOG_ERROR_MSG("sys_mmap: failed to map page 0x%x\n", page);
             // 回滚已分配的页面
             for (uint32_t p = vaddr; p < page; p += PAGE_SIZE) {
-                uint32_t pf = vmm_unmap_page_in_directory(current->page_dir_phys, p);
+                uintptr_t pf = vmm_unmap_page_in_directory(current->page_dir_phys, p);
                 if (pf) {
-                    pmm_free_frame(pf);
+                    pmm_free_frame((paddr_t)pf);
                 }
             }
             return (uint32_t)-1;
@@ -255,21 +256,21 @@ static uint32_t do_mmap_file(task_t *current, uint32_t vaddr, uint32_t length,
     
     for (uint32_t page = vaddr; page < vaddr + length; page += PAGE_SIZE) {
         // 分配物理页
-        uint32_t phys = pmm_alloc_frame();
-        if (!phys) {
+        paddr_t phys = pmm_alloc_frame();
+        if (phys == PADDR_INVALID) {
             LOG_ERROR_MSG("sys_mmap: out of memory at page 0x%x\n", page);
             // 回滚
             for (uint32_t p = vaddr; p < page; p += PAGE_SIZE) {
-                uint32_t pf = vmm_unmap_page_in_directory(current->page_dir_phys, p);
+                uintptr_t pf = vmm_unmap_page_in_directory(current->page_dir_phys, p);
                 if (pf) {
-                    pmm_free_frame(pf);
+                    pmm_free_frame((paddr_t)pf);
                 }
             }
             return (uint32_t)-1;
         }
         
         // 获取内核地址以便操作物理页
-        uint8_t *kernel_ptr = (uint8_t *)PHYS_TO_VIRT(phys);
+        uint8_t *kernel_ptr = (uint8_t *)PHYS_TO_VIRT((uintptr_t)phys);
         
         // 先清零页面（通过内核地址）
         memset(kernel_ptr, 0, PAGE_SIZE);
@@ -293,14 +294,14 @@ static uint32_t do_mmap_file(task_t *current, uint32_t vaddr, uint32_t length,
         // 超出文件大小的部分保持为 0
         
         // 映射到用户空间（在填充数据之后）
-        if (!vmm_map_page_in_directory(current->page_dir_phys, page, phys, page_flags)) {
+        if (!vmm_map_page_in_directory(current->page_dir_phys, page, (uintptr_t)phys, page_flags)) {
             pmm_free_frame(phys);
             LOG_ERROR_MSG("sys_mmap: failed to map page 0x%x\n", page);
             // 回滚
             for (uint32_t p = vaddr; p < page; p += PAGE_SIZE) {
-                uint32_t pf = vmm_unmap_page_in_directory(current->page_dir_phys, p);
+                uintptr_t pf = vmm_unmap_page_in_directory(current->page_dir_phys, p);
                 if (pf) {
-                    pmm_free_frame(pf);
+                    pmm_free_frame((paddr_t)pf);
                 }
             }
             return (uint32_t)-1;

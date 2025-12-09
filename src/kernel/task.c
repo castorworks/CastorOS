@@ -10,6 +10,7 @@
 #include <mm/heap.h>
 #include <mm/vmm.h>
 #include <mm/pmm.h>
+#include <mm/mm_types.h>
 #include <lib/klog.h>
 #include <lib/kprintf.h>
 #include <lib/string.h>
@@ -306,8 +307,8 @@ bool task_setup_user_stack(task_t *task) {
         }
         
         // 分配物理页
-        uint32_t phys_addr = pmm_alloc_frame();
-        if (!phys_addr) {
+        paddr_t phys_addr = pmm_alloc_frame();
+        if (phys_addr == PADDR_INVALID) {
             LOG_ERROR_MSG("task_setup_user_stack: Failed to allocate physical page %u/%u\n", 
                          i + 1, num_pages);
             
@@ -324,7 +325,7 @@ bool task_setup_user_stack(task_t *task) {
         }
         
         // 映射到用户空间（用户可读写）
-        if (!vmm_map_page_in_directory(task->page_dir_phys, virt_addr, phys_addr,
+        if (!vmm_map_page_in_directory(task->page_dir_phys, virt_addr, (uintptr_t)phys_addr,
                                        PAGE_PRESENT | PAGE_WRITE | PAGE_USER)) {
             LOG_ERROR_MSG("task_setup_user_stack: Failed to map page %u/%u\n", i + 1, num_pages);
             

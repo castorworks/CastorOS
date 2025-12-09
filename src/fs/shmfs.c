@@ -13,6 +13,7 @@
 #include <lib/klog.h>
 #include <mm/heap.h>
 #include <mm/pmm.h>
+#include <mm/mm_types.h>
 
 // 全局 inode 计数器
 static uint32_t shmfs_next_inode = 1;
@@ -62,8 +63,8 @@ static int shmfs_alloc_pages(shmfs_file_t *file, uint32_t new_size) {
     
     // 分配新的物理页
     for (uint32_t i = old_pages; i < new_pages; i++) {
-        uint32_t phys = pmm_alloc_frame();
-        if (!phys) {
+        paddr_t phys = pmm_alloc_frame();
+        if (phys == PADDR_INVALID) {
             LOG_ERROR_MSG("shmfs: out of physical memory\n");
             return -1;
         }

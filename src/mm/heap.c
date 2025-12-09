@@ -8,6 +8,7 @@
 #include <mm/heap.h>
 #include <mm/vmm.h>
 #include <mm/pmm.h>
+#include <mm/mm_types.h>
 #include <lib/klog.h>
 #include <lib/kprintf.h>
 #include <lib/string.h>
@@ -62,8 +63,8 @@ static bool expand(size_t size) {
     
     // 分配物理页并映射到虚拟地址空间
     for (size_t i = 0; i < pages; i++) {
-        uint32_t frame = pmm_alloc_frame();
-        if (!frame) {
+        paddr_t frame = pmm_alloc_frame();
+        if (frame == PADDR_INVALID) {
             // 分配失败：清理已分配的页
             LOG_ERROR_MSG("heap: expand failed at page %u/%u (out of physical memory)\n", 
                          (unsigned int)(i + 1), (unsigned int)pages);
@@ -71,13 +72,13 @@ static bool expand(size_t size) {
                 uintptr_t virt = old_heap_end + j * PAGE_SIZE;
                 uintptr_t phys = vmm_unmap_page_in_directory(current_dir_phys, virt);
                 if (phys) {
-                    pmm_free_frame((uint32_t)phys);
+                    pmm_free_frame((paddr_t)phys);
                 }
             }
             return false;
         }
         
-        if (!vmm_map_page(heap_end + i * PAGE_SIZE, frame, PAGE_PRESENT | PAGE_WRITE)) {
+        if (!vmm_map_page(heap_end + i * PAGE_SIZE, (uintptr_t)frame, PAGE_PRESENT | PAGE_WRITE)) {
             // 映射失败：清理已分配的页
             LOG_ERROR_MSG("heap: expand failed at mapping page %u/%u\n", 
                          (unsigned int)(i + 1), (unsigned int)pages);
@@ -86,7 +87,7 @@ static bool expand(size_t size) {
                 uintptr_t virt = old_heap_end + j * PAGE_SIZE;
                 uintptr_t phys = vmm_unmap_page_in_directory(current_dir_phys, virt);
                 if (phys) {
-                    pmm_free_frame((uint32_t)phys);
+                    pmm_free_frame((paddr_t)phys);
                 }
             }
             return false;

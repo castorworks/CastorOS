@@ -5,6 +5,7 @@
 #include <kernel/elf.h>
 #include <mm/pmm.h>
 #include <mm/vmm.h>
+#include <mm/mm_types.h>
 #include <lib/klog.h>
 #include <lib/string.h>
 
@@ -166,8 +167,8 @@ bool elf_load(const void *elf_data, uint32_t size, page_directory_t *page_dir,
             uint32_t vaddr = vaddr_start + page * PAGE_SIZE;
             
             // 分配物理页
-            uint32_t phys = pmm_alloc_frame();
-            if (!phys) {
+            paddr_t phys = pmm_alloc_frame();
+            if (phys == PADDR_INVALID) {
                 LOG_ERROR_MSG("ELF: Failed to allocate physical page at 0x%x\n", vaddr);
                 // 清理已分配的页 (cleanup_last_vaddr 指向当前分配失败的地址)
                 cleanup_last_vaddr = vaddr;
@@ -175,11 +176,11 @@ bool elf_load(const void *elf_data, uint32_t size, page_directory_t *page_dir,
             }
             
             // 清零物理页
-            uint8_t *phys_ptr = (uint8_t *)PHYS_TO_VIRT(phys);
+            uint8_t *phys_ptr = (uint8_t *)PHYS_TO_VIRT((uintptr_t)phys);
             memset(phys_ptr, 0, PAGE_SIZE);
             
             // 映射到进程地址空间
-            if (!vmm_map_page_in_directory(page_dir_phys, vaddr, phys, flags)) {
+            if (!vmm_map_page_in_directory(page_dir_phys, vaddr, (uintptr_t)phys, flags)) {
                 LOG_ERROR_MSG("ELF: Failed to map page at 0x%x\n", vaddr);
                 pmm_free_frame(phys);
                 // 清理已分配的页

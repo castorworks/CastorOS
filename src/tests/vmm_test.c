@@ -10,6 +10,7 @@
 #include <tests/vmm_test.h>
 #include <mm/vmm.h>
 #include <mm/pmm.h>
+#include <mm/mm_types.h>
 #include <lib/string.h>
 #include <types.h>
 
@@ -24,11 +25,11 @@
 
 TEST_CASE(test_vmm_map_page_basic) {
     // 分配一个物理页帧
-    uint32_t frame = pmm_alloc_frame();
-    ASSERT_NE_U(frame, 0);
+    paddr_t frame = pmm_alloc_frame();
+    ASSERT_NE_U(frame, PADDR_INVALID);
     
     // 映射到虚拟地址
-    bool result = vmm_map_page(TEST_VIRT_ADDR1, frame, 
+    bool result = vmm_map_page(TEST_VIRT_ADDR1, (uintptr_t)frame, 
                                PAGE_PRESENT | PAGE_WRITE);
     ASSERT_TRUE(result);
     
@@ -44,15 +45,15 @@ TEST_CASE(test_vmm_map_page_basic) {
 
 TEST_CASE(test_vmm_map_page_multiple) {
     // 分配多个物理页帧
-    uint32_t frame1 = pmm_alloc_frame();
-    uint32_t frame2 = pmm_alloc_frame();
-    ASSERT_NE_U(frame1, 0);
-    ASSERT_NE_U(frame2, 0);
+    paddr_t frame1 = pmm_alloc_frame();
+    paddr_t frame2 = pmm_alloc_frame();
+    ASSERT_NE_U(frame1, PADDR_INVALID);
+    ASSERT_NE_U(frame2, PADDR_INVALID);
     
     // 映射到不同的虚拟地址
-    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, frame1, 
+    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, (uintptr_t)frame1, 
                              PAGE_PRESENT | PAGE_WRITE));
-    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR2, frame2, 
+    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR2, (uintptr_t)frame2, 
                              PAGE_PRESENT | PAGE_WRITE));
     
     // 写入不同的数据
@@ -73,11 +74,11 @@ TEST_CASE(test_vmm_map_page_multiple) {
 }
 
 TEST_CASE(test_vmm_map_page_alignment) {
-    uint32_t frame = pmm_alloc_frame();
-    ASSERT_NE_U(frame, 0);
+    paddr_t frame = pmm_alloc_frame();
+    ASSERT_NE_U(frame, PADDR_INVALID);
     
     // 尝试映射非对齐地址（应该失败）
-    bool result = vmm_map_page(TEST_VIRT_ADDR1 + 0x123, frame, 
+    bool result = vmm_map_page(TEST_VIRT_ADDR1 + 0x123, (uintptr_t)frame, 
                                PAGE_PRESENT | PAGE_WRITE);
     ASSERT_FALSE(result);
     
@@ -86,11 +87,11 @@ TEST_CASE(test_vmm_map_page_alignment) {
 }
 
 TEST_CASE(test_vmm_map_page_flags) {
-    uint32_t frame = pmm_alloc_frame();
-    ASSERT_NE_U(frame, 0);
+    paddr_t frame = pmm_alloc_frame();
+    ASSERT_NE_U(frame, PADDR_INVALID);
     
     // 使用不同的标志映射
-    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, frame, 
+    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, (uintptr_t)frame, 
                              PAGE_PRESENT | PAGE_WRITE | PAGE_USER));
     
     // 验证可以读写
@@ -108,11 +109,11 @@ TEST_CASE(test_vmm_map_page_flags) {
 // ============================================================================
 
 TEST_CASE(test_vmm_unmap_page_basic) {
-    uint32_t frame = pmm_alloc_frame();
-    ASSERT_NE_U(frame, 0);
+    paddr_t frame = pmm_alloc_frame();
+    ASSERT_NE_U(frame, PADDR_INVALID);
     
     // 映射
-    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, frame, 
+    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, (uintptr_t)frame, 
                              PAGE_PRESENT | PAGE_WRITE));
     
     // 取消映射
@@ -125,11 +126,11 @@ TEST_CASE(test_vmm_unmap_page_basic) {
 }
 
 TEST_CASE(test_vmm_unmap_page_double) {
-    uint32_t frame = pmm_alloc_frame();
-    ASSERT_NE_U(frame, 0);
+    paddr_t frame = pmm_alloc_frame();
+    ASSERT_NE_U(frame, PADDR_INVALID);
     
     // 映射
-    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, frame, 
+    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, (uintptr_t)frame, 
                              PAGE_PRESENT | PAGE_WRITE));
     
     // 取消映射两次（第二次应该无害）
@@ -152,20 +153,20 @@ TEST_CASE(test_vmm_unmap_page_alignment) {
 
 TEST_CASE(test_vmm_unmap_page_in_directory_basic) {
     // 创建新页目录
-    uint32_t dir = vmm_create_page_directory();
+    uintptr_t dir = vmm_create_page_directory();
     ASSERT_NE_U(dir, 0);
     
     // 分配物理页帧
-    uint32_t frame = pmm_alloc_frame();
-    ASSERT_NE_U(frame, 0);
+    paddr_t frame = pmm_alloc_frame();
+    ASSERT_NE_U(frame, PADDR_INVALID);
     
     // 在新页目录中映射
-    ASSERT_TRUE(vmm_map_page_in_directory(dir, TEST_VIRT_ADDR1, frame,
+    ASSERT_TRUE(vmm_map_page_in_directory(dir, TEST_VIRT_ADDR1, (uintptr_t)frame,
                                           PAGE_PRESENT | PAGE_WRITE));
     
     // 取消映射
-    uint32_t unmapped_frame = vmm_unmap_page_in_directory(dir, TEST_VIRT_ADDR1);
-    ASSERT_EQ_U(unmapped_frame, frame);
+    uintptr_t unmapped_frame = vmm_unmap_page_in_directory(dir, TEST_VIRT_ADDR1);
+    ASSERT_EQ_U(unmapped_frame, (uintptr_t)frame);
     
     // 清理
     vmm_free_page_directory(dir);
@@ -173,11 +174,11 @@ TEST_CASE(test_vmm_unmap_page_in_directory_basic) {
 }
 
 TEST_CASE(test_vmm_unmap_page_in_directory_nonexistent) {
-    uint32_t dir = vmm_create_page_directory();
+    uintptr_t dir = vmm_create_page_directory();
     ASSERT_NE_U(dir, 0);
     
     // 尝试取消映射一个未映射的页面（应该返回0）
-    uint32_t result = vmm_unmap_page_in_directory(dir, TEST_VIRT_ADDR1);
+    uintptr_t result = vmm_unmap_page_in_directory(dir, TEST_VIRT_ADDR1);
     ASSERT_EQ_U(result, 0);
     
     // 清理
@@ -185,11 +186,11 @@ TEST_CASE(test_vmm_unmap_page_in_directory_nonexistent) {
 }
 
 TEST_CASE(test_vmm_unmap_page_in_directory_alignment) {
-    uint32_t dir = vmm_create_page_directory();
+    uintptr_t dir = vmm_create_page_directory();
     ASSERT_NE_U(dir, 0);
     
     // 尝试取消映射非对齐地址（应该返回0）
-    uint32_t result = vmm_unmap_page_in_directory(dir, TEST_VIRT_ADDR1 + 0x123);
+    uintptr_t result = vmm_unmap_page_in_directory(dir, TEST_VIRT_ADDR1 + 0x123);
     ASSERT_EQ_U(result, 0);
     
     // 清理
@@ -201,20 +202,20 @@ TEST_CASE(test_vmm_unmap_page_in_directory_alignment) {
 // ============================================================================
 
 TEST_CASE(test_vmm_map_page_remap) {
-    uint32_t frame1 = pmm_alloc_frame();
-    uint32_t frame2 = pmm_alloc_frame();
-    ASSERT_NE_U(frame1, 0);
-    ASSERT_NE_U(frame2, 0);
+    paddr_t frame1 = pmm_alloc_frame();
+    paddr_t frame2 = pmm_alloc_frame();
+    ASSERT_NE_U(frame1, PADDR_INVALID);
+    ASSERT_NE_U(frame2, PADDR_INVALID);
     
     // 第一次映射
-    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, frame1, 
+    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, (uintptr_t)frame1, 
                              PAGE_PRESENT | PAGE_WRITE));
     uint32_t *ptr = (uint32_t*)TEST_VIRT_ADDR1;
     *ptr = 0x11111111;
     ASSERT_EQ_U(*ptr, 0x11111111);
     
     // 重新映射到不同的物理页
-    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, frame2, 
+    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, (uintptr_t)frame2, 
                              PAGE_PRESENT | PAGE_WRITE));
     
     // 现在应该映射到 frame2（内容应该不同）
@@ -232,14 +233,14 @@ TEST_CASE(test_vmm_map_page_remap) {
 }
 
 TEST_CASE(test_vmm_map_page_different_flags) {
-    uint32_t frame = pmm_alloc_frame();
-    ASSERT_NE_U(frame, 0);
+    paddr_t frame = pmm_alloc_frame();
+    ASSERT_NE_U(frame, PADDR_INVALID);
     
     // 首先映射为只读（实际上x86的supervisor模式总是可写的）
-    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, frame, PAGE_PRESENT));
+    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, (uintptr_t)frame, PAGE_PRESENT));
     
     // 重新映射为可写
-    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, frame, 
+    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, (uintptr_t)frame, 
                              PAGE_PRESENT | PAGE_WRITE));
     
     // 应该能写入
@@ -257,11 +258,11 @@ TEST_CASE(test_vmm_map_page_different_flags) {
 // ============================================================================
 
 TEST_CASE(test_vmm_flush_tlb_single_page) {
-    uint32_t frame = pmm_alloc_frame();
-    ASSERT_NE_U(frame, 0);
+    paddr_t frame = pmm_alloc_frame();
+    ASSERT_NE_U(frame, PADDR_INVALID);
     
     // 映射页面
-    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, frame, 
+    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, (uintptr_t)frame, 
                              PAGE_PRESENT | PAGE_WRITE));
     
     // 写入数据
@@ -279,15 +280,15 @@ TEST_CASE(test_vmm_flush_tlb_single_page) {
 }
 
 TEST_CASE(test_vmm_flush_tlb_full) {
-    uint32_t frame1 = pmm_alloc_frame();
-    uint32_t frame2 = pmm_alloc_frame();
-    ASSERT_NE_U(frame1, 0);
-    ASSERT_NE_U(frame2, 0);
+    paddr_t frame1 = pmm_alloc_frame();
+    paddr_t frame2 = pmm_alloc_frame();
+    ASSERT_NE_U(frame1, PADDR_INVALID);
+    ASSERT_NE_U(frame2, PADDR_INVALID);
     
     // 映射多个页面
-    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, frame1, 
+    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR1, (uintptr_t)frame1, 
                              PAGE_PRESENT | PAGE_WRITE));
-    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR2, frame2, 
+    ASSERT_TRUE(vmm_map_page(TEST_VIRT_ADDR2, (uintptr_t)frame2, 
                              PAGE_PRESENT | PAGE_WRITE));
     
     // 写入数据
@@ -314,7 +315,7 @@ TEST_CASE(test_vmm_flush_tlb_full) {
 
 TEST_CASE(test_vmm_create_page_directory_basic) {
     // 创建新页目录
-    uint32_t new_dir = vmm_create_page_directory();
+    uintptr_t new_dir = vmm_create_page_directory();
     ASSERT_NE_U(new_dir, 0);
     
     // 应该是页对齐的
@@ -326,9 +327,9 @@ TEST_CASE(test_vmm_create_page_directory_basic) {
 
 TEST_CASE(test_vmm_create_multiple_page_directories) {
     // 创建多个页目录
-    uint32_t dir1 = vmm_create_page_directory();
-    uint32_t dir2 = vmm_create_page_directory();
-    uint32_t dir3 = vmm_create_page_directory();
+    uintptr_t dir1 = vmm_create_page_directory();
+    uintptr_t dir2 = vmm_create_page_directory();
+    uintptr_t dir3 = vmm_create_page_directory();
     
     ASSERT_NE_U(dir1, 0);
     ASSERT_NE_U(dir2, 0);
@@ -351,15 +352,15 @@ TEST_CASE(test_vmm_create_multiple_page_directories) {
 
 TEST_CASE(test_vmm_map_page_in_directory_basic) {
     // 创建新页目录
-    uint32_t dir = vmm_create_page_directory();
+    uintptr_t dir = vmm_create_page_directory();
     ASSERT_NE_U(dir, 0);
     
     // 分配物理页帧
-    uint32_t frame = pmm_alloc_frame();
-    ASSERT_NE_U(frame, 0);
+    paddr_t frame = pmm_alloc_frame();
+    ASSERT_NE_U(frame, PADDR_INVALID);
     
     // 在新页目录中映射
-    bool result = vmm_map_page_in_directory(dir, TEST_VIRT_ADDR1, frame,
+    bool result = vmm_map_page_in_directory(dir, TEST_VIRT_ADDR1, (uintptr_t)frame,
                                             PAGE_PRESENT | PAGE_WRITE);
     ASSERT_TRUE(result);
     
@@ -370,18 +371,18 @@ TEST_CASE(test_vmm_map_page_in_directory_basic) {
 }
 
 TEST_CASE(test_vmm_map_page_in_directory_multiple) {
-    uint32_t dir = vmm_create_page_directory();
+    uintptr_t dir = vmm_create_page_directory();
     ASSERT_NE_U(dir, 0);
     
     // 在同一个页目录中映射多个页面
-    uint32_t frame1 = pmm_alloc_frame();
-    uint32_t frame2 = pmm_alloc_frame();
-    ASSERT_NE_U(frame1, 0);
-    ASSERT_NE_U(frame2, 0);
+    paddr_t frame1 = pmm_alloc_frame();
+    paddr_t frame2 = pmm_alloc_frame();
+    ASSERT_NE_U(frame1, PADDR_INVALID);
+    ASSERT_NE_U(frame2, PADDR_INVALID);
     
-    ASSERT_TRUE(vmm_map_page_in_directory(dir, TEST_VIRT_ADDR1, frame1,
+    ASSERT_TRUE(vmm_map_page_in_directory(dir, TEST_VIRT_ADDR1, (uintptr_t)frame1,
                                           PAGE_PRESENT | PAGE_WRITE));
-    ASSERT_TRUE(vmm_map_page_in_directory(dir, TEST_VIRT_ADDR2, frame2,
+    ASSERT_TRUE(vmm_map_page_in_directory(dir, TEST_VIRT_ADDR2, (uintptr_t)frame2,
                                           PAGE_PRESENT | PAGE_WRITE));
     
     // 清理
@@ -396,7 +397,7 @@ TEST_CASE(test_vmm_map_page_in_directory_multiple) {
 // ============================================================================
 
 TEST_CASE(test_vmm_get_page_directory) {
-    uint32_t current_dir = vmm_get_page_directory();
+    uintptr_t current_dir = vmm_get_page_directory();
     
     // 应该非零
     ASSERT_NE_U(current_dir, 0);
@@ -410,10 +411,10 @@ TEST_CASE(test_vmm_get_page_directory) {
 // ============================================================================
 
 TEST_CASE(test_vmm_switch_page_directory) {
-    uint32_t original_dir = vmm_get_page_directory();
+    uintptr_t original_dir = vmm_get_page_directory();
     
     // 创建新页目录
-    uint32_t new_dir = vmm_create_page_directory();
+    uintptr_t new_dir = vmm_create_page_directory();
     ASSERT_NE_U(new_dir, 0);
     
     // 切换到新页目录
@@ -436,17 +437,17 @@ TEST_CASE(test_vmm_switch_page_directory) {
 
 TEST_CASE(test_vmm_clone_page_directory_basic) {
     // 创建源页目录
-    uint32_t src_dir = vmm_create_page_directory();
+    uintptr_t src_dir = vmm_create_page_directory();
     ASSERT_NE_U(src_dir, 0);
     
     // 在源页目录中映射一个页面
-    uint32_t frame = pmm_alloc_frame();
-    ASSERT_NE_U(frame, 0);
-    ASSERT_TRUE(vmm_map_page_in_directory(src_dir, TEST_VIRT_ADDR1, frame,
+    paddr_t frame = pmm_alloc_frame();
+    ASSERT_NE_U(frame, PADDR_INVALID);
+    ASSERT_TRUE(vmm_map_page_in_directory(src_dir, TEST_VIRT_ADDR1, (uintptr_t)frame,
                                           PAGE_PRESENT | PAGE_WRITE));
     
     // 克隆页目录
-    uint32_t clone_dir = vmm_clone_page_directory(src_dir);
+    uintptr_t clone_dir = vmm_clone_page_directory(src_dir);
     ASSERT_NE_U(clone_dir, 0);
     ASSERT_NE_U(clone_dir, src_dir);
     
@@ -459,16 +460,16 @@ TEST_CASE(test_vmm_clone_page_directory_basic) {
 }
 
 TEST_CASE(test_vmm_clone_page_directory_data_isolation) {
-    uint32_t original_dir = vmm_get_page_directory();
+    uintptr_t original_dir = vmm_get_page_directory();
     
     // 创建源页目录
-    uint32_t src_dir = vmm_create_page_directory();
+    uintptr_t src_dir = vmm_create_page_directory();
     ASSERT_NE_U(src_dir, 0);
     
     // 在源页目录中映射并写入数据
-    uint32_t frame = pmm_alloc_frame();
-    ASSERT_NE_U(frame, 0);
-    ASSERT_TRUE(vmm_map_page_in_directory(src_dir, TEST_VIRT_ADDR1, frame,
+    paddr_t frame = pmm_alloc_frame();
+    ASSERT_NE_U(frame, PADDR_INVALID);
+    ASSERT_TRUE(vmm_map_page_in_directory(src_dir, TEST_VIRT_ADDR1, (uintptr_t)frame,
                                           PAGE_PRESENT | PAGE_WRITE));
     
     // 切换到源页目录并写入数据
@@ -479,7 +480,7 @@ TEST_CASE(test_vmm_clone_page_directory_data_isolation) {
     
     // 克隆页目录（使用 COW 机制）
     // 此时两个页目录共享同一个物理页，且都被标记为只读 + COW
-    uint32_t clone_dir = vmm_clone_page_directory(src_dir);
+    uintptr_t clone_dir = vmm_clone_page_directory(src_dir);
     ASSERT_NE_U(clone_dir, 0);
     
     // 切换到克隆的页目录
@@ -517,10 +518,10 @@ TEST_CASE(test_vmm_clone_page_directory_data_isolation) {
 
 TEST_CASE(test_vmm_clone_page_directory_empty) {
     // 克隆一个空的页目录（只有内核映射）
-    uint32_t empty_dir = vmm_create_page_directory();
+    uintptr_t empty_dir = vmm_create_page_directory();
     ASSERT_NE_U(empty_dir, 0);
     
-    uint32_t clone_dir = vmm_clone_page_directory(empty_dir);
+    uintptr_t clone_dir = vmm_clone_page_directory(empty_dir);
     ASSERT_NE_U(clone_dir, 0);
     ASSERT_NE_U(clone_dir, empty_dir);
     
@@ -535,23 +536,23 @@ TEST_CASE(test_vmm_clone_page_directory_empty) {
 
 TEST_CASE(test_vmm_cow_refcount) {
     // 测试 COW 克隆后的引用计数
-    uint32_t src_dir = vmm_create_page_directory();
+    uintptr_t src_dir = vmm_create_page_directory();
     ASSERT_NE_U(src_dir, 0);
     
     // 分配物理页并映射
-    uint32_t frame = pmm_alloc_frame();
-    ASSERT_NE_U(frame, 0);
+    paddr_t frame = pmm_alloc_frame();
+    ASSERT_NE_U(frame, PADDR_INVALID);
     
     // 检查初始引用计数（应该是 1）
     uint32_t initial_refcount = pmm_frame_get_refcount(frame);
     ASSERT_EQ_U(initial_refcount, 1);
     
     // 映射到源页目录
-    ASSERT_TRUE(vmm_map_page_in_directory(src_dir, TEST_VIRT_ADDR1, frame,
+    ASSERT_TRUE(vmm_map_page_in_directory(src_dir, TEST_VIRT_ADDR1, (uintptr_t)frame,
                                           PAGE_PRESENT | PAGE_WRITE));
     
     // 克隆页目录（COW）
-    uint32_t clone_dir = vmm_clone_page_directory(src_dir);
+    uintptr_t clone_dir = vmm_clone_page_directory(src_dir);
     ASSERT_NE_U(clone_dir, 0);
     
     // 检查克隆后的引用计数（应该是 2，因为 COW 共享）
@@ -559,7 +560,7 @@ TEST_CASE(test_vmm_cow_refcount) {
     ASSERT_EQ_U(cow_refcount, 2);
     
     // 再克隆一次（模拟多级 fork）
-    uint32_t clone2_dir = vmm_clone_page_directory(src_dir);
+    uintptr_t clone2_dir = vmm_clone_page_directory(src_dir);
     ASSERT_NE_U(clone2_dir, 0);
     
     // 检查引用计数（应该是 3）
@@ -582,21 +583,21 @@ TEST_CASE(test_vmm_cow_refcount) {
 
 TEST_CASE(test_vmm_cow_multiple_pages) {
     // 测试多个页面的 COW
-    uint32_t src_dir = vmm_create_page_directory();
+    uintptr_t src_dir = vmm_create_page_directory();
     ASSERT_NE_U(src_dir, 0);
     
     // 分配并映射多个页面
-    uint32_t frames[3];
+    paddr_t frames[3];
     for (int i = 0; i < 3; i++) {
         frames[i] = pmm_alloc_frame();
-        ASSERT_NE_U(frames[i], 0);
+        ASSERT_NE_U(frames[i], PADDR_INVALID);
         ASSERT_TRUE(vmm_map_page_in_directory(src_dir, 
-            TEST_VIRT_ADDR1 + i * PAGE_SIZE, frames[i],
+            TEST_VIRT_ADDR1 + i * PAGE_SIZE, (uintptr_t)frames[i],
             PAGE_PRESENT | PAGE_WRITE));
     }
     
     // 克隆页目录
-    uint32_t clone_dir = vmm_clone_page_directory(src_dir);
+    uintptr_t clone_dir = vmm_clone_page_directory(src_dir);
     ASSERT_NE_U(clone_dir, 0);
     
     // 验证所有帧的引用计数都是 2
@@ -618,16 +619,16 @@ TEST_CASE(test_vmm_free_page_directory_with_mappings) {
     pmm_info_t info_before = pmm_get_info();
     
     // 创建页目录
-    uint32_t dir = vmm_create_page_directory();
+    uintptr_t dir = vmm_create_page_directory();
     ASSERT_NE_U(dir, 0);
     
     // 在页目录中映射多个页面
-    uint32_t frames[5];
+    paddr_t frames[5];
     for (int i = 0; i < 5; i++) {
         frames[i] = pmm_alloc_frame();
-        ASSERT_NE_U(frames[i], 0);
+        ASSERT_NE_U(frames[i], PADDR_INVALID);
         ASSERT_TRUE(vmm_map_page_in_directory(dir, TEST_VIRT_ADDR1 + i * PAGE_SIZE, 
-                                              frames[i], PAGE_PRESENT | PAGE_WRITE));
+                                              (uintptr_t)frames[i], PAGE_PRESENT | PAGE_WRITE));
     }
     
     pmm_info_t info_after_alloc = pmm_get_info();
@@ -639,7 +640,7 @@ TEST_CASE(test_vmm_free_page_directory_with_mappings) {
     
     pmm_info_t info_after_free = pmm_get_info();
     // 所有页帧应该被释放（允许小误差）
-    int32_t diff = (int32_t)info_after_free.free_frames - (int32_t)info_before.free_frames;
+    int64_t diff = (int64_t)info_after_free.free_frames - (int64_t)info_before.free_frames;
     ASSERT_TRUE(diff >= -5 && diff <= 5);
     
     // 注意：这里不需要单独释放 frames，因为 vmm_free_page_directory 会处理
@@ -654,7 +655,7 @@ TEST_CASE(test_vmm_free_page_directory_empty) {
     pmm_info_t info_before = pmm_get_info();
     
     // 创建空页目录
-    uint32_t dir = vmm_create_page_directory();
+    uintptr_t dir = vmm_create_page_directory();
     ASSERT_NE_U(dir, 0);
     
     // 立即释放
@@ -662,7 +663,7 @@ TEST_CASE(test_vmm_free_page_directory_empty) {
     
     pmm_info_t info_after = pmm_get_info();
     // 应该只释放页目录本身（1个页帧）
-    int32_t diff = (int32_t)info_after.free_frames - (int32_t)info_before.free_frames;
+    int64_t diff = (int64_t)info_after.free_frames - (int64_t)info_before.free_frames;
     ASSERT_TRUE(diff >= -2 && diff <= 2);
 }
 
@@ -672,15 +673,15 @@ TEST_CASE(test_vmm_free_page_directory_empty) {
 
 TEST_CASE(test_vmm_comprehensive) {
     // 1. 创建新页目录
-    uint32_t dir = vmm_create_page_directory();
+    uintptr_t dir = vmm_create_page_directory();
     ASSERT_NE_U(dir, 0);
     
     // 2. 分配物理页帧
-    uint32_t frame = pmm_alloc_frame();
-    ASSERT_NE_U(frame, 0);
+    paddr_t frame = pmm_alloc_frame();
+    ASSERT_NE_U(frame, PADDR_INVALID);
     
     // 3. 在新页目录中映射
-    ASSERT_TRUE(vmm_map_page_in_directory(dir, TEST_VIRT_ADDR1, frame,
+    ASSERT_TRUE(vmm_map_page_in_directory(dir, TEST_VIRT_ADDR1, (uintptr_t)frame,
                                           PAGE_PRESENT | PAGE_WRITE));
     
     // 4. 清理
@@ -689,7 +690,7 @@ TEST_CASE(test_vmm_comprehensive) {
 }
 
 TEST_CASE(test_vmm_multiple_page_tables) {
-    uint32_t dir = vmm_create_page_directory();
+    uintptr_t dir = vmm_create_page_directory();
     ASSERT_NE_U(dir, 0);
     
     // 映射到不同的页目录项范围（需要多个页表）
@@ -697,20 +698,20 @@ TEST_CASE(test_vmm_multiple_page_tables) {
     uint32_t addr2 = 0x00400000;  // PDE 1 (4MB边界)
     uint32_t addr3 = 0x00800000;  // PDE 2 (8MB边界)
     
-    uint32_t frame1 = pmm_alloc_frame();
-    uint32_t frame2 = pmm_alloc_frame();
-    uint32_t frame3 = pmm_alloc_frame();
+    paddr_t frame1 = pmm_alloc_frame();
+    paddr_t frame2 = pmm_alloc_frame();
+    paddr_t frame3 = pmm_alloc_frame();
     
-    ASSERT_NE_U(frame1, 0);
-    ASSERT_NE_U(frame2, 0);
-    ASSERT_NE_U(frame3, 0);
+    ASSERT_NE_U(frame1, PADDR_INVALID);
+    ASSERT_NE_U(frame2, PADDR_INVALID);
+    ASSERT_NE_U(frame3, PADDR_INVALID);
     
     // 映射到不同的页表
-    ASSERT_TRUE(vmm_map_page_in_directory(dir, addr1, frame1, 
+    ASSERT_TRUE(vmm_map_page_in_directory(dir, addr1, (uintptr_t)frame1, 
                                           PAGE_PRESENT | PAGE_WRITE));
-    ASSERT_TRUE(vmm_map_page_in_directory(dir, addr2, frame2, 
+    ASSERT_TRUE(vmm_map_page_in_directory(dir, addr2, (uintptr_t)frame2, 
                                           PAGE_PRESENT | PAGE_WRITE));
-    ASSERT_TRUE(vmm_map_page_in_directory(dir, addr3, frame3, 
+    ASSERT_TRUE(vmm_map_page_in_directory(dir, addr3, (uintptr_t)frame3, 
                                           PAGE_PRESENT | PAGE_WRITE));
     
     // 清理
@@ -788,14 +789,14 @@ TEST_SUITE(vmm_comprehensive_tests) {
 TEST_CASE(test_pbt_vmm_page_table_format) {
     #define PBT_VMM_ITERATIONS 20
     
-    uint32_t frames[PBT_VMM_ITERATIONS];
+    paddr_t frames[PBT_VMM_ITERATIONS];
     uint32_t virt_addrs[PBT_VMM_ITERATIONS];
     uint32_t allocated = 0;
     
     // Allocate frames and map them
     for (uint32_t i = 0; i < PBT_VMM_ITERATIONS; i++) {
         frames[i] = pmm_alloc_frame();
-        if (frames[i] == 0) {
+        if (frames[i] == PADDR_INVALID) {
             break;
         }
         
@@ -808,7 +809,7 @@ TEST_CASE(test_pbt_vmm_page_table_format) {
             flags |= PAGE_USER;
         }
         
-        bool result = vmm_map_page(virt_addrs[i], frames[i], flags);
+        bool result = vmm_map_page(virt_addrs[i], (uintptr_t)frames[i], flags);
         ASSERT_TRUE(result);
         
         allocated++;
@@ -845,10 +846,10 @@ TEST_CASE(test_pbt_vmm_page_table_levels) {
     //   [11:0]  - Page Offset (12 bits, 4KB page)
     
     // Test that we can map addresses that span different PDE entries
-    uint32_t frame1 = pmm_alloc_frame();
-    uint32_t frame2 = pmm_alloc_frame();
-    ASSERT_NE_U(frame1, 0);
-    ASSERT_NE_U(frame2, 0);
+    paddr_t frame1 = pmm_alloc_frame();
+    paddr_t frame2 = pmm_alloc_frame();
+    ASSERT_NE_U(frame1, PADDR_INVALID);
+    ASSERT_NE_U(frame2, PADDR_INVALID);
     
     // Address in PDE 0x40 (virtual 0x10000000)
     uint32_t virt1 = 0x10000000;
@@ -856,8 +857,8 @@ TEST_CASE(test_pbt_vmm_page_table_levels) {
     uintptr_t virt2 = 0x10400000;
     
     // Property: Both addresses should map successfully
-    ASSERT_TRUE(vmm_map_page(virt1, frame1, PAGE_PRESENT | PAGE_WRITE));
-    ASSERT_TRUE(vmm_map_page(virt2, frame2, PAGE_PRESENT | PAGE_WRITE));
+    ASSERT_TRUE(vmm_map_page(virt1, (uintptr_t)frame1, PAGE_PRESENT | PAGE_WRITE));
+    ASSERT_TRUE(vmm_map_page(virt2, (uintptr_t)frame2, PAGE_PRESENT | PAGE_WRITE));
     
     // Property: Data written to each address should be independent
     uint32_t *ptr1 = (uint32_t*)(uintptr_t)virt1;
@@ -920,10 +921,10 @@ TEST_CASE(test_pbt_vmm_page_directory_isolation) {
     ASSERT_NE_U(dir1, dir2);
     
     // Allocate frames
-    uint32_t frame1 = pmm_alloc_frame();
-    uint32_t frame2 = pmm_alloc_frame();
-    ASSERT_NE_U(frame1, 0);
-    ASSERT_NE_U(frame2, 0);
+    paddr_t frame1 = pmm_alloc_frame();
+    paddr_t frame2 = pmm_alloc_frame();
+    ASSERT_NE_U(frame1, PADDR_INVALID);
+    ASSERT_NE_U(frame2, PADDR_INVALID);
     
     // Map same virtual address to different physical frames in each directory
     uint32_t virt = TEST_VIRT_ADDR1;

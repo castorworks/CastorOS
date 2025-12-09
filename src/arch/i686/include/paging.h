@@ -66,42 +66,15 @@
  * i686 HAL MMU 函数声明
  * ========================================================================== */
 
-/**
- * @brief 刷新单个 TLB 条目
- * @param virt 虚拟地址
- */
-void hal_mmu_flush_tlb(uintptr_t virt);
+/* Note: HAL MMU functions are declared in hal/hal.h with proper types */
 
 /**
- * @brief 刷新整个 TLB
- */
-void hal_mmu_flush_tlb_all(void);
-
-/**
- * @brief 切换地址空间
- * @param page_table_phys 新页目录的物理地址
- */
-void hal_mmu_switch_space(uintptr_t page_table_phys);
-
-/**
- * @brief 获取页错误地址
- * @return CR2 寄存器中的错误地址
- */
-uintptr_t hal_mmu_get_fault_addr(void);
-
-/**
- * @brief 获取当前页目录物理地址
- * @return CR3 寄存器的值
- */
-uintptr_t hal_mmu_get_current_page_table(void);
-
-/**
- * @brief 启用分页
+ * @brief 启用分页 (i686)
  */
 void hal_mmu_enable_paging(void);
 
 /**
- * @brief 检查分页是否启用
+ * @brief 检查分页是否启用 (i686)
  * @return true 如果分页已启用
  */
 bool hal_mmu_is_paging_enabled(void);
@@ -141,5 +114,21 @@ uint32_t i686_get_page_size(void);
  * @return 0x80000000
  */
 uintptr_t i686_get_kernel_virtual_base(void);
+
+/* ============================================================================
+ * HAL MMU 扩展函数声明 (i686 特定)
+ * ========================================================================== */
+
+#include <hal/hal.h>
+
+/**
+ * @brief 使用错误码解析页错误信息 (i686)
+ * 
+ * 此函数应由页错误 ISR 调用，传入 CPU 推送的错误码。
+ * 
+ * @param[out] info 页错误信息结构
+ * @param error_code CPU 推送的错误码
+ */
+void hal_mmu_parse_fault_with_error(hal_page_fault_info_t *info, uint32_t error_code);
 
 #endif /* _ARCH_I686_PAGING_H_ */
