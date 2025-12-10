@@ -4,9 +4,9 @@
 
 #include <kernel/task.h>
 #include <kernel/interrupt.h>
-#include <kernel/gdt.h>
 #include <kernel/fd_table.h>
 #include <kernel/sync/spinlock.h>
+#include <hal/hal.h>
 #include <mm/heap.h>
 #include <mm/vmm.h>
 #include <mm/pmm.h>
@@ -15,6 +15,11 @@
 #include <lib/kprintf.h>
 #include <lib/string.h>
 #include <drivers/timer.h>
+
+/* GDT is x86-specific */
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
+#include <kernel/gdt.h>
+#endif
 
 // 辅助函数：检查页目录项是否存在
 static inline bool is_present(uint32_t pde) { return pde & 0x1; }
@@ -295,11 +300,14 @@ bool task_setup_user_stack(task_t *task) {
             // 清理已分配的页面
             for (uint32_t j = 0; j < i; j++) {
                 uint32_t cleanup_virt = stack_bottom + (j * PAGE_SIZE);
-                    uint32_t phys = vmm_unmap_page_in_directory(task->page_dir_phys, cleanup_virt);
+                uint32_t phys = vmm_unmap_page_in_directory(task->page_dir_phys, cleanup_virt);
                 if (phys) {
                     pmm_free_frame(phys);
                 }
             }
+            
+            // 清理空的页表
+            vmm_cleanup_empty_page_tables(task->page_dir_phys, stack_bottom, stack_top);
             
             task->user_stack_base = 0;
             task->user_stack = 0;
@@ -321,6 +329,9 @@ bool task_setup_user_stack(task_t *task) {
                 }
             }
             
+            // 清理空的页表
+            vmm_cleanup_empty_page_tables(task->page_dir_phys, stack_bottom, stack_top);
+            
             return false;
         }
         
@@ -340,6 +351,9 @@ bool task_setup_user_stack(task_t *task) {
                     pmm_free_frame(cleanup_phys);
                 }
             }
+            
+            // 清理空的页表
+            vmm_cleanup_empty_page_tables(task->page_dir_phys, stack_bottom, stack_top);
             
             return false;
         }
@@ -590,8 +604,8 @@ static void idle_task_loop(void) {
     LOG_DEBUG_MSG("Idle task started\n");
     
     while (1) {
-        // HLT 指令：暂停 CPU 直到下一次中断
-        __asm__ volatile("hlt");
+        // 暂停 CPU 直到下一次中断
+        hal_cpu_halt();
         
         // 在中断返回后，主动让出 CPU
         // 这样如果有任务被唤醒，它们就能得到执行
@@ -877,7 +891,7 @@ void task_exit(uint32_t exit_code) {
         interrupts_restore(prev_state);
         // 无限循环，因为函数标记为 noreturn
         while (1) {
-            __asm__ volatile("hlt");
+            hal_cpu_halt();
         }
     }
     
@@ -949,7 +963,7 @@ void task_exit(uint32_t exit_code) {
     
     // 永远不会执行到这里
     while (1) {
-        __asm__ volatile("hlt");
+        hal_cpu_halt();
     }
 }
 

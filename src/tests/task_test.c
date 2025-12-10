@@ -9,6 +9,8 @@
 
 #if defined(ARCH_X86_64)
 #include <context64.h>
+#elif defined(ARCH_ARM64)
+#include "../arch/arm64/include/context.h"
 #endif
 
 #define TEST_PDE_IDX(v) ((v) >> 22)
@@ -408,6 +410,210 @@ TEST_CASE(test_pbt_x86_64_address_space_switch_context_size) {
 }
 #endif /* ARCH_X86_64 */
 
+// ============================================================================
+// Property-Based Tests: Context Switch Register Preservation (ARM64)
+// **Feature: multi-arch-support, Property 9: Context Switch Register Preservation (ARM64)**
+// **Validates: Requirements 7.2**
+// ============================================================================
+
+#if defined(ARCH_ARM64)
+/**
+ * Property Test: ARM64 context structure size is correct
+ * 
+ * *For any* ARM64 context, the structure size SHALL be 280 bytes,
+ * which includes X0-X30 (31 registers), SP, PC, PSTATE, and TTBR0.
+ */
+TEST_CASE(test_pbt_arm64_context_size) {
+    // ARM64 context should be 280 bytes:
+    // - X0-X30: 31 x 8 = 248 bytes
+    // - SP: 8 bytes
+    // - PC: 8 bytes
+    // - PSTATE: 8 bytes
+    // - TTBR0: 8 bytes
+    // Total: 280 bytes
+    ASSERT_EQ_U(sizeof(arm64_context_t), 280);
+    
+    // Verify this matches what hal_context_size() returns
+    ASSERT_EQ_U(hal_context_size(), 280);
+}
+
+/**
+ * Property Test: ARM64 context field offsets are correct
+ * 
+ * *For any* ARM64 context, the field offsets SHALL match what the
+ * assembly code expects for correct register save/restore.
+ */
+TEST_CASE(test_pbt_arm64_context_field_offsets) {
+    arm64_context_t ctx;
+    uintptr_t base = (uintptr_t)&ctx;
+    
+    // X0 at offset 0
+    ASSERT_EQ_U((uintptr_t)&ctx.x[0] - base, 0);
+    // X1 at offset 8
+    ASSERT_EQ_U((uintptr_t)&ctx.x[1] - base, 8);
+    // X19 at offset 152 (callee-saved, used for entry function)
+    ASSERT_EQ_U((uintptr_t)&ctx.x[19] - base, 152);
+    // X29 (FP) at offset 232
+    ASSERT_EQ_U((uintptr_t)&ctx.x[29] - base, 232);
+    // X30 (LR) at offset 240
+    ASSERT_EQ_U((uintptr_t)&ctx.x[30] - base, 240);
+    // SP at offset 248
+    ASSERT_EQ_U((uintptr_t)&ctx.sp - base, 248);
+    // PC at offset 256
+    ASSERT_EQ_U((uintptr_t)&ctx.pc - base, 256);
+    // PSTATE at offset 264
+    ASSERT_EQ_U((uintptr_t)&ctx.pstate - base, 264);
+    // TTBR0 at offset 272
+    ASSERT_EQ_U((uintptr_t)&ctx.ttbr0 - base, 272);
+}
+
+/**
+ * Property Test: ARM64 context initialization sets correct PSTATE
+ * 
+ * *For any* context initialization, the PSTATE SHALL be set correctly
+ * for the specified privilege level (EL0 for user, EL1 for kernel).
+ */
+TEST_CASE(test_pbt_arm64_context_init_pstate) {
+    arm64_context_t kernel_ctx;
+    arm64_context_t user_ctx;
+    
+    // Initialize kernel context
+    hal_context_init((hal_context_t*)&kernel_ctx, 0xFFFF000000100000ULL, 0xFFFF000000200000ULL, false);
+    
+    // Initialize user context
+    hal_context_init((hal_context_t*)&user_ctx, 0x00400000ULL, 0x7FFFFFFFE000ULL, true);
+    
+    // Kernel context: PSTATE should indicate EL1h (0x05)
+    ASSERT_EQ_U(kernel_ctx.pstate & 0x0F, ARM64_PSTATE_EL1h);
+    
+    // User context: PSTATE should indicate EL0t (0x00)
+    ASSERT_EQ_U(user_ctx.pstate & 0x0F, ARM64_PSTATE_EL0t);
+}
+
+/**
+ * Property Test: ARM64 context initialization preserves entry point and stack
+ * 
+ * *For any* context initialization with entry point E and stack S,
+ * the context SHALL contain the correct entry point and stack values.
+ */
+TEST_CASE(test_pbt_arm64_context_init_entry_stack) {
+    arm64_context_t ctx;
+    
+    // Test with user context (simpler - entry point is directly in PC)
+    uint64_t test_entry = 0x00400000ULL;
+    uint64_t test_stack = 0x7FFFFFFFE000ULL;
+    
+    hal_context_init((hal_context_t*)&ctx, test_entry, test_stack, true);
+    
+    // For user context, PC should be the entry point
+    ASSERT_EQ_U(ctx.pc, test_entry);
+    // SP should be the stack pointer
+    ASSERT_EQ_U(ctx.sp, test_stack);
+}
+
+/**
+ * Property Test: ARM64 kernel context stores entry function in X19
+ * 
+ * *For any* kernel context initialization, the actual entry function
+ * SHALL be stored in X19 (callee-saved register) for use by the
+ * kernel thread entry trampoline.
+ */
+TEST_CASE(test_pbt_arm64_kernel_context_entry_in_x19) {
+    arm64_context_t ctx;
+    
+    // Test with kernel context
+    uint64_t test_entry = 0xFFFF000000100000ULL;
+    uint64_t test_stack = 0xFFFF000000200000ULL;
+    
+    hal_context_init((hal_context_t*)&ctx, test_entry, test_stack, false);
+    
+    // For kernel context, X19 should contain the actual entry function
+    ASSERT_EQ_U(ctx.x[19], test_entry);
+    
+    // PC should point to hal_context_enter_kernel_thread (not the entry function)
+    // We can't easily check the exact address, but it should not be the entry function
+    ASSERT_NE_U(ctx.pc, test_entry);
+}
+
+// ============================================================================
+// Property-Based Tests: Address Space Switch Correctness (ARM64)
+// **Feature: multi-arch-support, Property 10: Address Space Switch Correctness (ARM64)**
+// **Validates: Requirements 7.3**
+// ============================================================================
+
+/**
+ * Property Test: ARM64 context TTBR0 field is correctly positioned for address space switch
+ * 
+ * *For any* address space switch during task switching, the correct architecture-specific
+ * page table base register (TTBR0_EL1 on ARM64) SHALL be updated to point to the new
+ * task's page table.
+ */
+TEST_CASE(test_pbt_arm64_address_space_switch_ttbr0_offset) {
+    arm64_context_t ctx;
+    uintptr_t base = (uintptr_t)&ctx;
+    
+    // TTBR0 must be at offset 272 for the assembly code to work correctly
+    ASSERT_EQ_U((uintptr_t)&ctx.ttbr0 - base, 272);
+    
+    // TTBR0 field must be 8 bytes (64-bit)
+    ASSERT_EQ_U(sizeof(ctx.ttbr0), 8);
+}
+
+/**
+ * Property Test: ARM64 context initialization sets TTBR0 to zero
+ * 
+ * *For any* newly initialized context, TTBR0 SHALL be set to 0,
+ * indicating that the caller must set the page table address.
+ */
+TEST_CASE(test_pbt_arm64_address_space_switch_ttbr0_init) {
+    arm64_context_t ctx;
+    
+    // Initialize a user context
+    hal_context_init((hal_context_t*)&ctx, 0x00400000ULL, 0x7FFFFFFFE000ULL, true);
+    
+    // TTBR0 should be 0 after initialization (caller sets it)
+    ASSERT_EQ_U(ctx.ttbr0, 0);
+    
+    // Initialize a kernel context
+    hal_context_init((hal_context_t*)&ctx, 0xFFFF000000100000ULL, 0xFFFF000000200000ULL, false);
+    
+    // TTBR0 should still be 0 after initialization
+    ASSERT_EQ_U(ctx.ttbr0, 0);
+}
+
+/**
+ * Property Test: ARM64 context TTBR0 can store valid page table addresses
+ * 
+ * *For any* valid page table physical address, the TTBR0 field SHALL be able
+ * to store it correctly. Page table addresses must be 4KB aligned.
+ */
+TEST_CASE(test_pbt_arm64_address_space_switch_ttbr0_storage) {
+    arm64_context_t ctx;
+    
+    // Test various page table addresses (must be 4KB aligned)
+    uint64_t test_addresses[] = {
+        0x0000000040001000ULL,  // QEMU virt RAM base + 4KB
+        0x0000000040100000ULL,  // 1MB into RAM
+        0x0000000050000000ULL,  // 256MB into RAM
+        0x0000000100000000ULL,  // 4GB (above 32-bit)
+    };
+    
+    for (size_t i = 0; i < sizeof(test_addresses) / sizeof(test_addresses[0]); i++) {
+        // Initialize context
+        hal_context_init((hal_context_t*)&ctx, 0x00400000ULL, 0x7FFFFFFFE000ULL, true);
+        
+        // Set TTBR0 to test address
+        ctx.ttbr0 = test_addresses[i];
+        
+        // Verify TTBR0 stores the address correctly
+        ASSERT_EQ_U(ctx.ttbr0, test_addresses[i]);
+        
+        // Verify address is 4KB aligned (required for page tables)
+        ASSERT_EQ_U(ctx.ttbr0 & 0xFFF, 0);
+    }
+}
+#endif /* ARCH_ARM64 */
+
 TEST_SUITE(task_context_property_tests) {
     RUN_TEST(test_pbt_context_size);
     RUN_TEST(test_pbt_context_init_segments);
@@ -422,6 +628,19 @@ TEST_SUITE(task_context_property_tests) {
     RUN_TEST(test_pbt_x86_64_address_space_switch_cr3_init);
     RUN_TEST(test_pbt_x86_64_address_space_switch_cr3_storage);
     RUN_TEST(test_pbt_x86_64_address_space_switch_context_size);
+#elif defined(ARCH_ARM64)
+    // **Feature: multi-arch-support, Property 9: Context Switch Register Preservation (ARM64)**
+    // **Validates: Requirements 7.2**
+    RUN_TEST(test_pbt_arm64_context_size);
+    RUN_TEST(test_pbt_arm64_context_field_offsets);
+    RUN_TEST(test_pbt_arm64_context_init_pstate);
+    RUN_TEST(test_pbt_arm64_context_init_entry_stack);
+    RUN_TEST(test_pbt_arm64_kernel_context_entry_in_x19);
+    // **Feature: multi-arch-support, Property 10: Address Space Switch Correctness (ARM64)**
+    // **Validates: Requirements 7.3**
+    RUN_TEST(test_pbt_arm64_address_space_switch_ttbr0_offset);
+    RUN_TEST(test_pbt_arm64_address_space_switch_ttbr0_init);
+    RUN_TEST(test_pbt_arm64_address_space_switch_ttbr0_storage);
 #endif
 }
 

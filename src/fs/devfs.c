@@ -86,7 +86,9 @@ static uint32_t devzero_write(fs_node_t *node, uint32_t offset,
  * /dev/serial - 串口设备
  * 提供串口读写功能
  */
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
 #define COM1 0x3F8
+#endif
 
 static uint32_t devserial_read(fs_node_t *node, uint32_t offset,
                                uint32_t size, uint8_t *buffer) {
@@ -94,7 +96,8 @@ static uint32_t devserial_read(fs_node_t *node, uint32_t offset,
     
     uint32_t bytes_read = 0;
     
-    // 读取串口数据（非阻塞）
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
+    // 读取串口数据（非阻塞）- x86 端口 I/O
     for (uint32_t i = 0; i < size; i++) {
         // 检查是否有数据可读（LSR 寄存器的位 0）
         if (inb(COM1 + 5) & 0x01) {
@@ -105,6 +108,10 @@ static uint32_t devserial_read(fs_node_t *node, uint32_t offset,
             break;
         }
     }
+#else
+    // ARM64: 串口读取需要 MMIO，暂时返回 0
+    (void)size; (void)buffer;
+#endif
     
     return bytes_read;
 }

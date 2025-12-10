@@ -14,6 +14,11 @@ static inline bool interrupts_disable(void) {
     __asm__ volatile("pushfq; popq %0" : "=r"(rflags));
     __asm__ volatile("cli");
     return (rflags & 0x200) != 0;  // IF 标志
+#elif defined(ARCH_ARM64)
+    uint64_t daif;
+    __asm__ volatile("mrs %0, daif" : "=r"(daif));
+    __asm__ volatile("msr daifset, #0xf" ::: "memory");
+    return (daif & 0x80) == 0;  // IRQ 未屏蔽
 #else
     uint32_t eflags;
     __asm__ volatile("pushf; pop %0" : "=r"(eflags));
@@ -27,7 +32,11 @@ static inline bool interrupts_disable(void) {
  */
 static inline void interrupts_enable(void) __attribute__((unused));
 static inline void interrupts_enable(void) {
+#if defined(ARCH_ARM64)
+    __asm__ volatile("msr daifclr, #0xf" ::: "memory");
+#else
     __asm__ volatile("sti");
+#endif
 }
 
 /**

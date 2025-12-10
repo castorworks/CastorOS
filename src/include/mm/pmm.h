@@ -90,6 +90,18 @@ paddr_t pmm_alloc_frame_zone(pmm_zone_t zone);
 paddr_t pmm_alloc_frames(size_t count);
 
 /**
+ * @brief 从指定区域分配连续物理页帧（用于 DMA）
+ * @param count 页帧数量
+ * @param zone 内存区域 (ZONE_DMA 用于 DMA 缓冲区)
+ * @return 成功返回起始物理地址，失败返回 PADDR_INVALID
+ * 
+ * DMA 区域 (ZONE_DMA) 限制在 0-16MB 范围内，适用于 ISA DMA。
+ * 
+ * @see Requirements 10.1
+ */
+paddr_t pmm_alloc_frames_zone(size_t count, pmm_zone_t zone);
+
+/**
  * @brief 释放一个物理页帧
  * @param frame 页帧的物理地址
  * 
@@ -106,6 +118,57 @@ void pmm_free_frame(paddr_t frame);
  * @param count 页帧数量
  */
 void pmm_free_frames(paddr_t frame, size_t count);
+
+/*============================================================================
+ * 大页分配接口（2MB 对齐）
+ * @see Requirements 8.1
+ *============================================================================*/
+
+/** @brief 大页大小 (2MB) */
+#define HUGE_PAGE_SIZE          (2 * 1024 * 1024)
+
+/** @brief 大页包含的 4KB 页帧数 */
+#define HUGE_PAGE_FRAMES        (HUGE_PAGE_SIZE / PAGE_SIZE)
+
+/** @brief 大页对齐掩码 */
+#define HUGE_PAGE_MASK          (~((paddr_t)HUGE_PAGE_SIZE - 1))
+
+/**
+ * @brief 分配一个 2MB 大页
+ * @return 成功返回 2MB 对齐的物理地址，失败返回 PADDR_INVALID
+ * 
+ * 分配 512 个连续的 4KB 页帧，起始地址 2MB 对齐。
+ * 分配后会清零页帧内容。
+ * 
+ * @see Requirements 8.1
+ */
+paddr_t pmm_alloc_huge_page(void);
+
+/**
+ * @brief 从指定区域分配一个 2MB 大页
+ * @param zone 内存区域
+ * @return 成功返回 2MB 对齐的物理地址，失败返回 PADDR_INVALID
+ * 
+ * @see Requirements 8.1
+ */
+paddr_t pmm_alloc_huge_page_zone(pmm_zone_t zone);
+
+/**
+ * @brief 释放一个 2MB 大页
+ * @param huge_page 大页的物理地址（必须 2MB 对齐）
+ * 
+ * @see Requirements 8.1
+ */
+void pmm_free_huge_page(paddr_t huge_page);
+
+/**
+ * @brief 检查物理地址是否 2MB 对齐
+ * @param addr 物理地址
+ * @return true 如果 2MB 对齐
+ */
+static inline bool pmm_is_huge_page_aligned(paddr_t addr) {
+    return (addr & (HUGE_PAGE_SIZE - 1)) == 0;
+}
 
 /**
  * @brief 将物理页帧标记为受保护（禁止释放）
@@ -166,6 +229,26 @@ pmm_info_t pmm_get_info(void);
  * @brief 打印物理内存使用信息
  */
 void pmm_print_info(void);
+
+/**
+ * @brief 验证 PMM 内部数据结构一致性
+ * @return 一致性检查通过返回 true，发现问题返回 false
+ * 
+ * 检查内容包括：
+ * - 位图和引用计数的一致性
+ * - 空闲/已使用帧计数的正确性
+ * - 保护帧列表的有效性
+ * 
+ * @see Requirements 11.2
+ */
+bool pmm_verify_consistency(void);
+
+/**
+ * @brief 打印 PMM 详细诊断信息
+ * 
+ * 打印位图状态、引用计数分布、保护帧列表等详细信息
+ */
+void pmm_print_diagnostics(void);
 
 /**
  * @brief 获取位图结束地址（虚拟地址）

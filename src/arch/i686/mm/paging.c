@@ -708,3 +708,130 @@ paddr_t hal_mmu_create_page_table(void) {
 void hal_mmu_destroy_page_table(paddr_t page_table_phys) {
     hal_mmu_destroy_space((hal_addr_space_t)page_table_phys);
 }
+
+/* ============================================================================
+ * 大页映射实现 (i686)
+ * 
+ * i686 支持 4MB 大页（通过 PSE），但此实现使用回退方式：
+ * 将 2MB 大页请求映射为 512 个 4KB 页。
+ * 
+ * @see Requirements 8.1, 8.2, 8.4
+ * ========================================================================== */
+
+/** @brief 2MB 大页大小 */
+#define HUGE_PAGE_SIZE_2MB      (2 * 1024 * 1024)
+
+/** @brief 2MB 大页包含的 4KB 页数 (local definition to avoid conflict with pmm.h) */
+#define HUGE_PAGE_FRAMES_I686   (HUGE_PAGE_SIZE_2MB / PAGE_SIZE)
+
+/**
+ * @brief 检查是否支持大页 (i686)
+ * @return false (i686 使用回退实现)
+ * 
+ * i686 理论上支持 4MB 大页（PSE），但此实现返回 false
+ * 表示不支持原生 2MB 大页，将使用回退方式。
+ */
+bool hal_mmu_huge_pages_supported(void) {
+    return false;  /* Use fallback implementation */
+}
+
+/**
+ * @brief 检查地址是否 2MB 对齐
+ */
+static inline bool is_huge_page_aligned(uint32_t addr) {
+    return (addr & (HUGE_PAGE_SIZE_2MB - 1)) == 0;
+}
+
+/**
+ * @brief 映射 2MB 大页 (i686 回退实现)
+ * 
+ * 由于 i686 不支持原生 2MB 大页，此函数将 2MB 区域
+ * 映射为 512 个连续的 4KB 页。
+ * 
+ * @param space 地址空间句柄
+ * @param virt 虚拟地址（必须 2MB 对齐）
+ * @param phys 物理地址（必须 2MB 对齐）
+ * @param flags HAL 页标志
+ * @return true 成功，false 失败
+ * 
+ * @see Requirements 8.2, 8.4
+ */
+bool hal_mmu_map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags) {
+    /* Validate 2MB alignment */
+    if (!is_huge_page_aligned((uint32_t)virt) || !is_huge_page_aligned((uint32_t)phys)) {
+        LOG_ERROR_MSG("hal_mmu_map_huge: addresses not 2MB-aligned (virt=0x%lx, phys=0x%llx)\n",
+                      (unsigned long)virt, (unsigned long long)phys);
+        return false;
+    }
+    
+    LOG_DEBUG_MSG("hal_mmu_map_huge (i686 fallback): Mapping 512 x 4KB pages at virt=0x%lx\n",
+                  (unsigned long)virt);
+    
+    /* Map 512 individual 4KB pages */
+    for (uint32_t i = 0; i < HUGE_PAGE_FRAMES_I686; i++) {
+        vaddr_t page_virt = virt + (i * PAGE_SIZE);
+        paddr_t page_phys = phys + (i * PAGE_SIZE);
+        
+        if (!hal_mmu_map(space, page_virt, page_phys, flags)) {
+            /* Rollback on failure */
+            LOG_ERROR_MSG("hal_mmu_map_huge: Failed at page %u, rolling back\n", i);
+            for (uint32_t j = 0; j < i; j++) {
+                hal_mmu_unmap(space, virt + (j * PAGE_SIZE));
+            }
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+/**
+ * @brief 取消 2MB 大页映射 (i686 回退实现)
+ * 
+ * @param space 地址空间句柄
+ * @param virt 虚拟地址（必须 2MB 对齐）
+ * @return 原物理地址，未映射返回 PADDR_INVALID
+ * 
+ * @see Requirements 8.2
+ */
+paddr_t hal_mmu_unmap_huge(hal_addr_space_t space, vaddr_t virt) {
+    /* Validate 2MB alignment */
+    if (!is_huge_page_aligned((uint32_t)virt)) {
+        LOG_ERROR_MSG("hal_mmu_unmap_huge: address not 2MB-aligned (virt=0x%lx)\n",
+                      (unsigned long)virt);
+        return PADDR_INVALID;
+    }
+    
+    /* Get the physical address of the first page */
+    paddr_t first_phys;
+    if (!hal_mmu_query(space, virt, &first_phys, NULL)) {
+        return PADDR_INVALID;
+    }
+    
+    LOG_DEBUG_MSG("hal_mmu_unmap_huge (i686 fallback): Unmapping 512 x 4KB pages at virt=0x%lx\n",
+                  (unsigned long)virt);
+    
+    /* Unmap all 512 pages */
+    for (uint32_t i = 0; i < HUGE_PAGE_FRAMES_I686; i++) {
+        vaddr_t page_virt = virt + (i * PAGE_SIZE);
+        hal_mmu_unmap(space, page_virt);
+    }
+    
+    return first_phys;
+}
+
+/**
+ * @brief 查询映射是否为大页 (i686)
+ * 
+ * @param space 地址空间句柄
+ * @param virt 虚拟地址
+ * @return false (i686 回退实现不使用原生大页)
+ * 
+ * @see Requirements 8.3
+ */
+bool hal_mmu_is_huge_page(hal_addr_space_t space, vaddr_t virt) {
+    (void)space;
+    (void)virt;
+    /* i686 fallback implementation doesn't use native huge pages */
+    return false;
+}

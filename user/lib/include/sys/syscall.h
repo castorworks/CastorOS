@@ -3,12 +3,27 @@
  * @brief 系统调用号定义和底层接口
  * 
  * 本文件仅供库内部使用，应用程序应使用 unistd.h 等标准头文件
+ * 
+ * 系统调用实现位于架构特定的汇编文件中:
+ * - i686:   src/arch/i686/syscall.S   (INT 0x80)
+ * - x86_64: src/arch/x86_64/syscall.S (SYSCALL)
+ * - arm64:  src/arch/arm64/syscall.S  (SVC #0)
  */
 
 #ifndef _SYS_SYSCALL_H_
 #define _SYS_SYSCALL_H_
 
-#include <types.h>
+/* 基础整数类型 - 直接定义以避免循环依赖 */
+typedef unsigned int       uint32_t;
+typedef unsigned long long uint64_t;
+
+/* 架构相关的指针类型 */
+#if defined(ARCH_X86_64) || defined(__x86_64__) || \
+    defined(ARCH_ARM64) || defined(__aarch64__)
+typedef uint64_t uintptr_t;
+#else
+typedef uint32_t uintptr_t;
+#endif
 
 #ifndef __maybe_unused
 #define __maybe_unused __attribute__((unused))
@@ -97,87 +112,61 @@ enum {
 };
 
 // ============================================================================
-// 系统调用接口（内联汇编实现）
+// 架构无关的系统调用参数类型
 // ============================================================================
 
-static inline __maybe_unused uint32_t __syscall4(uint32_t num, uint32_t arg0,
-                                                 uint32_t arg1, uint32_t arg2,
-                                                 uint32_t arg3) {
-    uint32_t ret;
-    __asm__ volatile (
-        "int $0x80"
-        : "=a"(ret)
-        : "a"(num), "b"(arg0), "c"(arg1), "d"(arg2), "S"(arg3)
-        : "memory", "cc"
-    );
-    return ret;
-}
+#if defined(ARCH_X86_64) || defined(__x86_64__) || \
+    defined(ARCH_ARM64) || defined(__aarch64__)
+typedef uint64_t syscall_arg_t;
+#else
+/* 默认使用 32 位类型（向后兼容） */
+typedef uint32_t syscall_arg_t;
+#endif
 
-static inline __maybe_unused uint32_t syscall0(uint32_t num) {
-    return __syscall4(num, 0, 0, 0, 0);
-}
+// ============================================================================
+// 系统调用接口（架构特定汇编实现）
+// ============================================================================
 
-static inline __maybe_unused uint32_t syscall1(uint32_t num, uint32_t arg0) {
-    return __syscall4(num, arg0, 0, 0, 0);
-}
+/**
+ * @brief 无参数系统调用
+ * @param num 系统调用号
+ * @return 系统调用返回值
+ */
+syscall_arg_t syscall0(syscall_arg_t num);
 
-static inline __maybe_unused uint32_t syscall2(uint32_t num, uint32_t arg0, uint32_t arg1) {
-    return __syscall4(num, arg0, arg1, 0, 0);
-}
+/**
+ * @brief 1个参数系统调用
+ */
+syscall_arg_t syscall1(syscall_arg_t num, syscall_arg_t arg0);
 
-static inline __maybe_unused uint32_t syscall3(uint32_t num, uint32_t arg0,
-                                               uint32_t arg1, uint32_t arg2) {
-    return __syscall4(num, arg0, arg1, arg2, 0);
-}
+/**
+ * @brief 2个参数系统调用
+ */
+syscall_arg_t syscall2(syscall_arg_t num, syscall_arg_t arg0, syscall_arg_t arg1);
 
-static inline __maybe_unused uint32_t syscall4(uint32_t num, uint32_t arg0,
-                                               uint32_t arg1, uint32_t arg2,
-                                               uint32_t arg3) {
-    return __syscall4(num, arg0, arg1, arg2, arg3);
-}
+/**
+ * @brief 3个参数系统调用
+ */
+syscall_arg_t syscall3(syscall_arg_t num, syscall_arg_t arg0, syscall_arg_t arg1,
+                       syscall_arg_t arg2);
 
-static inline __maybe_unused uint32_t __syscall5(uint32_t num, uint32_t arg0,
-                                                 uint32_t arg1, uint32_t arg2,
-                                                 uint32_t arg3, uint32_t arg4) {
-    uint32_t ret;
-    __asm__ volatile (
-        "int $0x80"
-        : "=a"(ret)
-        : "a"(num), "b"(arg0), "c"(arg1), "d"(arg2), "S"(arg3), "D"(arg4)
-        : "memory", "cc"
-    );
-    return ret;
-}
+/**
+ * @brief 4个参数系统调用
+ */
+syscall_arg_t syscall4(syscall_arg_t num, syscall_arg_t arg0, syscall_arg_t arg1,
+                       syscall_arg_t arg2, syscall_arg_t arg3);
 
-static inline __maybe_unused uint32_t syscall5(uint32_t num, uint32_t arg0,
-                                               uint32_t arg1, uint32_t arg2,
-                                               uint32_t arg3, uint32_t arg4) {
-    return __syscall5(num, arg0, arg1, arg2, arg3, arg4);
-}
+/**
+ * @brief 5个参数系统调用
+ */
+syscall_arg_t syscall5(syscall_arg_t num, syscall_arg_t arg0, syscall_arg_t arg1,
+                       syscall_arg_t arg2, syscall_arg_t arg3, syscall_arg_t arg4);
 
-static inline __maybe_unused uint32_t __syscall6(uint32_t num, uint32_t arg0,
-                                                 uint32_t arg1, uint32_t arg2,
-                                                 uint32_t arg3, uint32_t arg4,
-                                                 uint32_t arg5) {
-    uint32_t ret;
-    __asm__ volatile (
-        "push %%ebp\n\t"
-        "mov %7, %%ebp\n\t"
-        "int $0x80\n\t"
-        "pop %%ebp"
-        : "=a"(ret)
-        : "a"(num), "b"(arg0), "c"(arg1), "d"(arg2), "S"(arg3), "D"(arg4), "g"(arg5)
-        : "memory", "cc"
-    );
-    return ret;
-}
-
-static inline __maybe_unused uint32_t syscall6(uint32_t num, uint32_t arg0,
-                                               uint32_t arg1, uint32_t arg2,
-                                               uint32_t arg3, uint32_t arg4,
-                                               uint32_t arg5) {
-    return __syscall6(num, arg0, arg1, arg2, arg3, arg4, arg5);
-}
+/**
+ * @brief 6个参数系统调用
+ */
+syscall_arg_t syscall6(syscall_arg_t num, syscall_arg_t arg0, syscall_arg_t arg1,
+                       syscall_arg_t arg2, syscall_arg_t arg3, syscall_arg_t arg4,
+                       syscall_arg_t arg5);
 
 #endif // _SYS_SYSCALL_H_
-

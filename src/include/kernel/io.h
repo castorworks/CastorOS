@@ -7,7 +7,10 @@
  * 端口 I/O 操作
  * 
  * 这些内联函数用于直接访问 x86 架构的 I/O 端口
+ * 仅在 x86 架构 (i686, x86_64) 上可用
  */
+
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
 
 /**
  * 向指定端口输出一个字节
@@ -68,5 +71,7 @@ static inline uint32_t inl(uint16_t port) {
 static inline void outl(uint16_t port, uint32_t val) {
     __asm__ volatile("outl %0, %1" : : "a"(val), "Nd"(port));
 }
+
+#endif /* ARCH_I686 || ARCH_X86_64 */
 
 #endif /* _KERNEL_IO_H_ */

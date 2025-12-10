@@ -1,0 +1,2 @@
+# Common (architecture-independent) driver headers
+# This directory is reserved for headers of drivers that work across all architectures

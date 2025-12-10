@@ -1,0 +1,8 @@
+# ARM-specific drivers
+# This directory contains drivers specific to ARM64 architecture
+#
+# Planned drivers:
+# - pl011.c     - ARM PL011 UART serial driver
+# - timer.c     - ARM Generic Timer driver
+# - gic.c       - GIC interrupt controller (if not in arch/)
+# - virtio.c    - VirtIO drivers for QEMU virt machine

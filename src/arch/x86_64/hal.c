@@ -355,6 +355,57 @@ bool hal_mmu_initialized(void) {
 }
 
 /* ============================================================================
+ * Cache Maintenance Operations (x86_64)
+ * 
+ * On x86_64, caches are DMA-coherent (snooped), so explicit cache maintenance
+ * is not required for DMA operations. These functions are no-ops.
+ * 
+ * @see Requirements 10.2
+ * ========================================================================== */
+
+/**
+ * @brief Clean cache for a memory region (x86_64 - no-op)
+ * 
+ * On x86_64, caches are DMA-coherent, so this is a no-op.
+ * 
+ * @param addr Virtual address of the region start
+ * @param size Size of the region in bytes
+ */
+void hal_cache_clean(void *addr, size_t size) {
+    (void)addr;
+    (void)size;
+    /* x86_64 caches are DMA-coherent - no action needed */
+}
+
+/**
+ * @brief Invalidate cache for a memory region (x86_64 - no-op)
+ * 
+ * On x86_64, caches are DMA-coherent, so this is a no-op.
+ * 
+ * @param addr Virtual address of the region start
+ * @param size Size of the region in bytes
+ */
+void hal_cache_invalidate(void *addr, size_t size) {
+    (void)addr;
+    (void)size;
+    /* x86_64 caches are DMA-coherent - no action needed */
+}
+
+/**
+ * @brief Clean and invalidate cache for a memory region (x86_64 - no-op)
+ * 
+ * On x86_64, caches are DMA-coherent, so this is a no-op.
+ * 
+ * @param addr Virtual address of the region start
+ * @param size Size of the region in bytes
+ */
+void hal_cache_clean_invalidate(void *addr, size_t size) {
+    (void)addr;
+    (void)size;
+    /* x86_64 caches are DMA-coherent - no action needed */
+}
+
+/* ============================================================================
  * Architecture Information
  * ========================================================================== */
 

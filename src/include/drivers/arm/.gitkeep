@@ -1,0 +1,7 @@
+# ARM-specific driver headers
+# This directory contains headers for ARM64-specific drivers
+#
+# Planned headers:
+# - pl011.h     - ARM PL011 UART serial driver
+# - timer.h     - ARM Generic Timer driver
+# - virtio.h    - VirtIO drivers for QEMU virt machine

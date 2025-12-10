@@ -1,66 +1,26 @@
+/**
+ * @file vga.h
+ * @brief VGA driver header - architecture wrapper
+ * 
+ * This file includes the architecture-specific VGA driver header.
+ * VGA is x86-specific.
+ */
+
 #ifndef _DRIVERS_VGA_H_
 #define _DRIVERS_VGA_H_
 
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
+#include <drivers/x86/vga.h>
+#else
+// VGA is x86-specific, provide empty stubs for other architectures
 #include <types.h>
 
-/**
- * VGA 文本模式驱动
- * 提供基础的 80x25 文本模式屏幕输出功能
- */
+static inline void vga_init(void) {}
+static inline void vga_clear(void) {}
+static inline void vga_putchar(char c) { (void)c; }
+static inline void vga_print(const char *str) { (void)str; }
+static inline void vga_set_color(uint8_t fg, uint8_t bg) { (void)fg; (void)bg; }
 
-/* VGA 颜色常量 */
-typedef enum {
-    VGA_COLOR_BLACK = 0,
-    VGA_COLOR_BLUE = 1,
-    VGA_COLOR_GREEN = 2,
-    VGA_COLOR_CYAN = 3,
-    VGA_COLOR_RED = 4,
-    VGA_COLOR_MAGENTA = 5,
-    VGA_COLOR_BROWN = 6,
-    VGA_COLOR_LIGHT_GREY = 7,
-    VGA_COLOR_DARK_GREY = 8,
-    VGA_COLOR_LIGHT_BLUE = 9,
-    VGA_COLOR_LIGHT_GREEN = 10,
-    VGA_COLOR_LIGHT_CYAN = 11,
-    VGA_COLOR_LIGHT_RED = 12,
-    VGA_COLOR_LIGHT_MAGENTA = 13,
-    VGA_COLOR_YELLOW = 14,
-    VGA_COLOR_WHITE = 15,
-} vga_color_t;
+#endif
 
-/**
- * 初始化 VGA 驱动
- */
-void vga_init(void);
-
-/**
- * 清空屏幕
- */
-void vga_clear(void);
-
-/**
- * 输出字符串
- * @param msg 要输出的字符串，支持 '\n' 换行符
- */
-void vga_print(const char *msg);
-
-/**
- * 输出一个字符
- * @param c 要输出的字符，支持 '\n' 换行符
- */
-void vga_putchar(char c);
-
-/**
- * 设置颜色
- * @param fg 前景色（文字颜色）
- * @param bg 背景色
- */
-void vga_set_color(vga_color_t fg, vga_color_t bg);
-
-/**
- * 获取当前颜色属性
- * @return 当前的颜色属性字节
- */
-uint8_t vga_get_color(void);
-
-#endif /* _DRIVERS_VGA_H_ */
+#endif // _DRIVERS_VGA_H_

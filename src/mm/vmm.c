@@ -11,6 +11,7 @@
 #include <mm/vmm.h>
 #include <mm/pmm.h>
 #include <lib/klog.h>
+#include <lib/kprintf.h>
 #include <lib/string.h>
 #include <kernel/sync/spinlock.h>
 #include <kernel/task.h>
@@ -1198,6 +1199,73 @@ uintptr_t vmm_unmap_page_in_directory(uintptr_t dir_phys, uintptr_t virt) {
     return (uintptr_t)old_phys;
 }
 
+/**
+ * @brief 清理指定范围内的空页表
+ * @param dir_phys 页目录的物理地址
+ * @param start_virt 起始虚拟地址（页对齐）
+ * @param end_virt 结束虚拟地址（页对齐）
+ * 
+ * 检查指定虚拟地址范围内的页表，如果页表为空（所有条目都未映射），
+ * 则释放该页表并清除对应的页目录项。
+ */
+void vmm_cleanup_empty_page_tables(uintptr_t dir_phys, uintptr_t start_virt, uintptr_t end_virt) {
+    if (!dir_phys || start_virt >= end_virt) {
+        return;
+    }
+    
+    // 只处理用户空间
+    if (start_virt >= KERNEL_VIRTUAL_BASE || end_virt > KERNEL_VIRTUAL_BASE) {
+        return;
+    }
+    
+    bool irq_state;
+    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    
+    page_directory_t *dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
+    
+#if defined(ARCH_X86_64)
+    // x86_64: 4-level paging - more complex cleanup needed
+    // For now, skip cleanup on x86_64 as it requires walking multiple levels
+    (void)dir;
+    (void)start_virt;
+    (void)end_virt;
+#else
+    // i686: 2-level paging
+    uint32_t start_pde = pde_idx(start_virt);
+    uint32_t end_pde = pde_idx(end_virt - 1);  // -1 because end_virt is exclusive
+    
+    for (uint32_t pd = start_pde; pd <= end_pde; pd++) {
+        pde_t pde = dir->entries[pd];
+        
+        // Skip if PDE is not present
+        if (!is_present(pde)) {
+            continue;
+        }
+        
+        // Get page table
+        uintptr_t table_phys = get_frame(pde);
+        page_table_t *table = (page_table_t*)PHYS_TO_VIRT(table_phys);
+        
+        // Check if all entries in the page table are empty
+        bool is_empty = true;
+        for (uint32_t pt = 0; pt < 1024; pt++) {
+            if (is_present(table->entries[pt])) {
+                is_empty = false;
+                break;
+            }
+        }
+        
+        // If page table is empty, free it and clear the PDE
+        if (is_empty) {
+            dir->entries[pd] = 0;
+            pmm_free_frame((paddr_t)table_phys);
+        }
+    }
+#endif
+    
+    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+}
+
 /* ============================================================================
  * MMIO 映射
  * ============================================================================ */
@@ -1351,10 +1419,11 @@ uintptr_t vmm_virt_to_phys(uintptr_t virt) {
 #define PAT_TYPE_UC_    7   // Uncacheable (UC-)
 
 /** IA32_PAT MSR 地址 */
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
 #define MSR_IA32_PAT    0x277
 
 /**
- * @brief 写入 MSR 寄存器
+ * @brief 写入 MSR 寄存器 (x86 only)
  */
 static inline void wrmsr(uint32_t msr, uint64_t value) {
     uint32_t low = value & 0xFFFFFFFF;
@@ -1363,7 +1432,7 @@ static inline void wrmsr(uint32_t msr, uint64_t value) {
 }
 
 /**
- * @brief 检查 CPU 是否支持 PAT
+ * @brief 检查 CPU 是否支持 PAT (x86 only)
  */
 static bool cpu_has_pat(void) {
     uint32_t eax, ebx, ecx, edx;
@@ -1372,6 +1441,7 @@ static bool cpu_has_pat(void) {
                      : "a"(1));
     return (edx & (1 << 16)) != 0;  // PAT 在 EDX bit 16
 }
+#endif /* ARCH_I686 || ARCH_X86_64 */
 
 /**
  * @brief 初始化 PAT (Page Attribute Table)
@@ -1397,6 +1467,7 @@ static bool cpu_has_pat(void) {
  * - PAT=1, PCD=1, PWT=1 -> PAT[7] = WC  <-- 用于帧缓冲
  */
 void vmm_init_pat(void) {
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
     if (!cpu_has_pat()) {
         LOG_WARN_MSG("vmm: PAT not supported by CPU, framebuffer will use UC mode\n");
         return;
@@ -1419,6 +1490,10 @@ void vmm_init_pat(void) {
     pat_initialized = true;
     
     LOG_INFO_MSG("vmm: PAT initialized (WC mode available for framebuffer)\n");
+#else
+    /* ARM64: Memory attributes are configured via MAIR_EL1 in mmu.c */
+    LOG_INFO_MSG("vmm: PAT not applicable on ARM64 (using MAIR_EL1)\n");
+#endif
 }
 
 /**
@@ -1493,4 +1568,163 @@ uintptr_t vmm_map_framebuffer(uintptr_t phys_addr, size_t size) {
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
     return result;
+}
+
+/*============================================================================
+ * 调试功能：页表转储
+ * @see Requirements 11.1
+ *============================================================================*/
+
+/**
+ * @brief 将页标志转换为可读字符串
+ * @param flags 页标志
+ * @param buf 输出缓冲区
+ * @param buf_size 缓冲区大小
+ */
+static void flags_to_string(uint32_t flags, char *buf, size_t buf_size) {
+    if (buf_size < 16) return;
+    
+    buf[0] = (flags & PAGE_PRESENT) ? 'P' : '-';
+    buf[1] = (flags & PAGE_WRITE) ? 'W' : 'R';
+    buf[2] = (flags & PAGE_USER) ? 'U' : 'K';
+    buf[3] = (flags & PAGE_WRITE_THROUGH) ? 'T' : '-';
+    buf[4] = (flags & PAGE_CACHE_DISABLE) ? 'N' : '-';
+    buf[5] = (flags & PAGE_COW) ? 'C' : '-';
+    buf[6] = '\0';
+}
+
+/**
+ * @brief 转储页表内容（调试功能）
+ * @param dir_phys 页目录的物理地址（0 表示当前页目录）
+ * @param start_virt 起始虚拟地址
+ * @param end_virt 结束虚拟地址
+ */
+void vmm_dump_page_tables(uintptr_t dir_phys, uintptr_t start_virt, uintptr_t end_virt) {
+    if (dir_phys == 0) {
+        dir_phys = current_dir_phys;
+    }
+    
+    if (dir_phys == 0) {
+        kprintf("VMM: No page directory available\n");
+        return;
+    }
+    
+    // 页对齐
+    start_virt = PAGE_ALIGN_DOWN(start_virt);
+    end_virt = PAGE_ALIGN_UP(end_virt);
+    
+    kprintf("\n==================== Page Table Dump ====================\n");
+    kprintf("Page Directory: phys=0x%lx\n", (unsigned long)dir_phys);
+    kprintf("Range: 0x%lx - 0x%lx\n", (unsigned long)start_virt, (unsigned long)end_virt);
+    kprintf("----------------------------------------------------------\n");
+    kprintf("Virtual Addr     Physical Addr    Flags   Refcount\n");
+    kprintf("----------------------------------------------------------\n");
+    
+    uint32_t mapped_count = 0;
+    uint32_t cow_count = 0;
+    
+#if defined(ARCH_X86_64)
+    // x86_64: 4-level paging
+    pml4_t *pml4 = (pml4_t*)PHYS_TO_VIRT(dir_phys);
+    
+    for (uintptr_t virt = start_virt; virt < end_virt; virt += PAGE_SIZE) {
+        uint32_t pml4_i = pml4_idx(virt);
+        if (!is_present64(pml4->entries[pml4_i])) continue;
+        
+        pdpt_t *pdpt = (pdpt_t*)PHYS_TO_VIRT(get_frame64(pml4->entries[pml4_i]));
+        uint32_t pdpt_i = pdpt_idx(virt);
+        if (!is_present64(pdpt->entries[pdpt_i])) continue;
+        
+        pd_t *pd = (pd_t*)PHYS_TO_VIRT(get_frame64(pdpt->entries[pdpt_i]));
+        uint32_t pd_i = pd_idx(virt);
+        if (!is_present64(pd->entries[pd_i])) continue;
+        
+        pt_t *pt = (pt_t*)PHYS_TO_VIRT(get_frame64(pd->entries[pd_i]));
+        uint32_t pt_i = pt_idx(virt);
+        if (!is_present64(pt->entries[pt_i])) continue;
+        
+        paddr_t phys = get_frame64(pt->entries[pt_i]);
+        uint32_t flags = (uint32_t)(pt->entries[pt_i] & 0xFFF);
+        uint32_t refcount = pmm_frame_get_refcount(phys);
+        
+        char flags_str[16];
+        flags_to_string(flags, flags_str, sizeof(flags_str));
+        
+        kprintf("0x%016llx 0x%016llx %s    %u\n",
+               (unsigned long long)virt, (unsigned long long)phys, 
+               flags_str, refcount);
+        
+        mapped_count++;
+        if (flags & PAGE_COW) cow_count++;
+        
+        // 限制输出数量
+        if (mapped_count >= 100) {
+            kprintf("... (truncated, showing first 100 mappings)\n");
+            break;
+        }
+    }
+#else
+    // i686: 2-level paging
+    page_directory_t *dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
+    
+    for (uintptr_t virt = start_virt; virt < end_virt; virt += PAGE_SIZE) {
+        uint32_t pd_i = pde_idx(virt);
+        if (!is_present(dir->entries[pd_i])) continue;
+        
+        paddr_t table_phys = get_frame(dir->entries[pd_i]);
+        if (table_phys == 0 || table_phys >= 0x80000000) continue;
+        
+        page_table_t *table = (page_table_t*)PHYS_TO_VIRT((uintptr_t)table_phys);
+        uint32_t pt_i = pte_idx(virt);
+        if (!is_present(table->entries[pt_i])) continue;
+        
+        paddr_t phys = get_frame(table->entries[pt_i]);
+        uint32_t flags = table->entries[pt_i] & 0xFFF;
+        uint32_t refcount = pmm_frame_get_refcount(phys);
+        
+        char flags_str[16];
+        flags_to_string(flags, flags_str, sizeof(flags_str));
+        
+        kprintf("0x%08lx       0x%08llx       %s    %u\n",
+               (unsigned long)virt, (unsigned long long)phys, 
+               flags_str, refcount);
+        
+        mapped_count++;
+        if (flags & PAGE_COW) cow_count++;
+        
+        // 限制输出数量
+        if (mapped_count >= 100) {
+            kprintf("... (truncated, showing first 100 mappings)\n");
+            break;
+        }
+    }
+#endif
+    
+    kprintf("----------------------------------------------------------\n");
+    kprintf("Summary: %u mapped pages, %u COW pages\n", mapped_count, cow_count);
+    kprintf("Flags: P=Present, W=Write, R=ReadOnly, U=User, K=Kernel\n");
+    kprintf("       T=WriteThrough, N=NoCache, C=COW\n");
+    kprintf("==========================================================\n\n");
+}
+
+/**
+ * @brief 转储当前页目录的用户空间映射
+ */
+void vmm_dump_user_mappings(void) {
+    vmm_dump_page_tables(0, 0x00000000, KERNEL_VIRTUAL_BASE);
+}
+
+/**
+ * @brief 转储当前页目录的内核空间映射
+ */
+void vmm_dump_kernel_mappings(void) {
+#if defined(ARCH_X86_64)
+    // x86_64: 内核空间从 0xFFFF800000000000 开始
+    // 只转储前 1GB 以避免输出过多
+    vmm_dump_page_tables(0, KERNEL_VIRTUAL_BASE, KERNEL_VIRTUAL_BASE + 0x40000000ULL);
+#else
+    // i686: 内核空间从 0x80000000 开始
+    // 只转储前 256MB 以避免输出过多
+    vmm_dump_page_tables(0, KERNEL_VIRTUAL_BASE, KERNEL_VIRTUAL_BASE + 0x10000000);
+#endif
 }

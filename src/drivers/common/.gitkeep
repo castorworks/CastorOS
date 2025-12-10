@@ -1,0 +1,3 @@
+# Common (architecture-independent) drivers
+# This directory is reserved for drivers that work across all architectures
+# Currently, most drivers are x86-specific and located in src/drivers/x86/

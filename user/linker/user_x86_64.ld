@@ -1,11 +1,11 @@
-/* 用户程序链接脚本 */
-OUTPUT_FORMAT(elf32-i386)
-OUTPUT_ARCH(i386)
+/* 用户程序链接脚本 - x86_64 (64-bit) */
+OUTPUT_FORMAT(elf64-x86-64)
+OUTPUT_ARCH(i386:x86-64)
 ENTRY(_start)
 
 SECTIONS
 {
-    /* 用户空间起始地址 */
+    /* 用户空间起始地址 (64-bit user space) */
     . = 0x10000000;
     
     /* 代码段 */
@@ -30,4 +30,3 @@ SECTIONS
         *(COMMON)
     }
 }
-

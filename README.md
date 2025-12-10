@@ -2,16 +2,73 @@
 
 > CastorOS is an operating system designed for learning and fun.
 
+## 支持的架构
+
+CastorOS 支持以下 CPU 架构：
+
+| 架构 | 描述 | 状态 |
+|------|------|------|
+| i686 | Intel x86 32位 | ✅ 完整支持 |
+| x86_64 | AMD64/Intel 64位 | ✅ 基础支持 |
+| arm64 | ARM AArch64 | ✅ 基础支持 |
+
 ## 构建系统
 
-+ 参考 [docs/00-environment.md](./docs/00-environment.md) 安装开发环境
+### 安装开发环境
 
-+ 编译并运行
+参考 [docs/00-environment.md](./docs/00-environment.md) 安装开发环境和交叉编译器。
 
-  ```bash
-  make clean
-  make run
-  ```
+### 基本构建命令
+
+```bash
+# 构建内核 (默认 i686 架构)
+make
+
+# 指定架构构建
+make ARCH=i686      # x86 32位
+make ARCH=x86_64    # x86 64位
+make ARCH=arm64     # ARM64
+
+# 运行内核
+make run                    # 带 GUI
+make run-silent             # 无 GUI (仅串口输出)
+
+# 调试模式 (等待 GDB 连接)
+make debug
+make debug-silent
+
+# 清理构建文件
+make clean                  # 清理当前架构
+make clean-all              # 清理所有架构
+
+# 查看构建配置
+make info
+
+# 查看帮助
+make help
+```
+
+### 用户空间程序
+
+```bash
+# 构建用户程序
+make shell        # 用户 Shell
+make hello        # Hello World 示例
+make tests        # 用户态测试
+
+# 创建可启动磁盘镜像
+make disk
+
+# 从磁盘镜像运行 (包含网络支持)
+make run-disk
+```
+
+### IDE 支持
+
+```bash
+# 生成 compile_commands.json (用于 clangd 等 IDE 插件)
+make compile-db
+```
 
 ## 当前进展
 

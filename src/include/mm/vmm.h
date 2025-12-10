@@ -176,6 +176,19 @@ bool vmm_map_page_in_directory(uintptr_t dir_phys, uintptr_t virt,
 uintptr_t vmm_unmap_page_in_directory(uintptr_t dir_phys, uintptr_t virt);
 
 /**
+ * @brief 清理指定范围内的空页表
+ * @param dir_phys 页目录的物理地址
+ * @param start_virt 起始虚拟地址（页对齐）
+ * @param end_virt 结束虚拟地址（页对齐）
+ * 
+ * 检查指定虚拟地址范围内的页表，如果页表为空（所有条目都未映射），
+ * 则释放该页表并清除对应的页目录项。
+ * 
+ * 注意：只处理用户空间页表，不会影响内核空间。
+ */
+void vmm_cleanup_empty_page_tables(uintptr_t dir_phys, uintptr_t start_virt, uintptr_t end_virt);
+
+/**
  * @brief 处理内核空间缺页异常（同步内核页目录）
  * @param addr 缺页地址
  * @return 是否成功处理（如果成功，不需要 panic）
@@ -237,5 +250,34 @@ void vmm_init_pat(void);
  * 对于动态分配的堆内存，必须使用此函数获取物理地址用于 DMA 等操作。
  */
 uintptr_t vmm_virt_to_phys(uintptr_t virt);
+
+/**
+ * @brief 转储页表内容（调试功能）
+ * @param dir_phys 页目录的物理地址（0 表示当前页目录）
+ * @param start_virt 起始虚拟地址
+ * @param end_virt 结束虚拟地址
+ * 
+ * 打印指定虚拟地址范围内的页表映射信息，包括：
+ * - 虚拟地址
+ * - 物理地址
+ * - 页标志（Present, Write, User, COW 等）
+ * 
+ * @see Requirements 11.1
+ */
+void vmm_dump_page_tables(uintptr_t dir_phys, uintptr_t start_virt, uintptr_t end_virt);
+
+/**
+ * @brief 转储当前页目录的用户空间映射
+ * 
+ * 便捷函数，转储当前页目录中用户空间（0x00000000 - KERNEL_VIRTUAL_BASE）的所有映射
+ */
+void vmm_dump_user_mappings(void);
+
+/**
+ * @brief 转储当前页目录的内核空间映射
+ * 
+ * 便捷函数，转储当前页目录中内核空间（KERNEL_VIRTUAL_BASE - 0xFFFFFFFF）的所有映射
+ */
+void vmm_dump_kernel_mappings(void);
 
 #endif // _MM_VMM_H_

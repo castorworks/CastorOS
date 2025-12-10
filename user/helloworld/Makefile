@@ -1,48 +1,87 @@
 # CastorOS Hello World Example - Makefile
+# 支持多架构编译: i686, x86_64, arm64
 
-# 工具链配置
-CC = i686-elf-gcc
-LD = i686-elf-ld
-OBJCOPY = i686-elf-objcopy
+# ============================================================================
+# 架构配置
+# ============================================================================
 
+# 默认架构
+ARCH ?= i686
+
+# 架构特定配置
+ifeq ($(ARCH),i686)
+    CC = i686-elf-gcc
+    LD = i686-elf-ld
+    OBJCOPY = i686-elf-objcopy
+    ARCH_CFLAGS = -m32 -DARCH_I686
+    LDSCRIPT = ../linker/user_i686.ld
+else ifeq ($(ARCH),x86_64)
+    CC = x86_64-elf-gcc
+    LD = x86_64-elf-ld
+    OBJCOPY = x86_64-elf-objcopy
+    ARCH_CFLAGS = -m64 -DARCH_X86_64 -mcmodel=large -mno-red-zone
+    LDSCRIPT = ../linker/user_x86_64.ld
+else ifeq ($(ARCH),arm64)
+    CC = aarch64-elf-gcc
+    LD = aarch64-elf-ld
+    OBJCOPY = aarch64-elf-objcopy
+    ARCH_CFLAGS = -DARCH_ARM64
+    LDSCRIPT = ../linker/user_arm64.ld
+else
+    $(error Unsupported architecture: $(ARCH). Use i686, x86_64, or arm64)
+endif
+
+# ============================================================================
 # 编译标志
-CFLAGS = -m32 -std=gnu99 -ffreestanding -nostdlib -nostartfiles \
+# ============================================================================
+
+CFLAGS = -std=gnu99 -ffreestanding -nostdlib -nostartfiles \
          -fno-builtin -fno-stack-protector -O0 -g -Wall -Wextra \
-         -I../lib/include
+         -I../lib/include $(ARCH_CFLAGS)
 
-# 链接脚本
-LDSCRIPT = user.ld
+# ============================================================================
+# 目录和文件
+# ============================================================================
 
-# 库文件
+BUILD_DIR = build/$(ARCH)
 LIB_DIR = ../lib
-LIBRARY = $(LIB_DIR)/build/libuser.a
+LIBRARY = $(LIB_DIR)/build/$(ARCH)/libuser.a
 
 # 源文件
 SOURCES = hello.c
-OBJECTS = $(SOURCES:.c=.o)
+OBJECTS = $(patsubst %.c, $(BUILD_DIR)/%.o, $(SOURCES))
 
 # 目标文件
 TARGET = hello
-ELF = $(TARGET).elf
-BINARY = $(TARGET).bin
+ELF = $(BUILD_DIR)/$(TARGET).elf
+BINARY = $(BUILD_DIR)/$(TARGET).bin
 
-# 默认目标
-all: $(LIBRARY) $(ELF)
+# ============================================================================
+# 目标
+# ============================================================================
+
+.PHONY: all clean clean-all lib info
+
+all: lib $(ELF)
 	@echo ""
-	@echo "[OK] Hello World compiled successfully: $(ELF)"
+	@echo "[OK] Hello World compiled for $(ARCH): $(ELF)"
 	@echo ""
 
 # 构建库
-$(LIBRARY):
-	@$(MAKE) -C $(LIB_DIR)
+lib:
+	@$(MAKE) -C $(LIB_DIR) ARCH=$(ARCH)
+
+$(LIBRARY): lib
 
 # 编译 C 文件
-%.o: %.c
-	@echo "[CC] $<"
+$(BUILD_DIR)/%.o: %.c
+	@mkdir -p $(dir $@)
+	@echo "[CC] $< -> $@"
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # 链接为 ELF
 $(ELF): $(OBJECTS) $(LIBRARY)
+	@mkdir -p $(dir $@)
 	@echo "[LD] $@"
 	$(LD) -T $(LDSCRIPT) -nostdlib -o $@ $(OBJECTS) $(LIBRARY)
 
@@ -51,10 +90,23 @@ $(BINARY): $(ELF)
 	@echo "[OBJCOPY] $@"
 	$(OBJCOPY) -O binary $< $@
 
-# 清理
+# 清理当前架构
 clean:
-	rm -f $(OBJECTS) $(ELF) $(BINARY)
-	@echo "[OK] Cleaned hello build files"
+	rm -rf $(BUILD_DIR)
+	@echo "[OK] Cleaned hello build files for $(ARCH)"
 
-.PHONY: all clean
+# 清理所有架构
+clean-all:
+	rm -rf build
+	@echo "[OK] Cleaned all hello build files"
 
+# 显示配置信息
+info:
+	@echo "=== Hello World Build Configuration ==="
+	@echo "Architecture: $(ARCH)"
+	@echo "Compiler:     $(CC)"
+	@echo "Linker:       $(LD)"
+	@echo "CFLAGS:       $(CFLAGS)"
+	@echo "Linker Script: $(LDSCRIPT)"
+	@echo "Library:      $(LIBRARY)"
+	@echo "Output:       $(ELF)"

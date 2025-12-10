@@ -10,9 +10,22 @@
 
 #include <kernel/system.h>
 #include <kernel/io.h>
-#include <drivers/acpi.h>
 #include <lib/klog.h>
 #include <lib/kprintf.h>
+
+/* ACPI 仅在 x86 架构上可用 */
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
+#include <drivers/acpi.h>
+#endif
+
+/* 架构特定的挂起指令 */
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
+    #define HALT_FOREVER() __asm__ volatile ("cli; hlt")
+#elif defined(ARCH_ARM64)
+    #define HALT_FOREVER() __asm__ volatile ("msr daifset, #0xf; wfi")
+#else
+    #define HALT_FOREVER() do {} while(0)
+#endif
 
 /**
  * @brief 永久挂起（关机/重启失败时的最终状态）
@@ -24,12 +37,13 @@ static void system_halt_forever(void) {
     kprintf("It is now safe to turn off your computer.\n");
     
     while (1) {
-        __asm__ volatile ("cli; hlt");
+        HALT_FOREVER();
     }
 }
 
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
 /**
- * @brief 通过键盘控制器重启系统
+ * @brief 通过键盘控制器重启系统 (x86 only)
  * 
  * 这是传统的 PC 重启方式，通过向键盘控制器发送复位命令
  */
@@ -49,7 +63,7 @@ static void system_reboot_keyboard_controller(void) {
 }
 
 /**
- * @brief 通过三重故障重启系统
+ * @brief 通过三重故障重启系统 (x86 only)
  * 
  * 加载空的 IDT 并触发中断，导致三重故障
  */
@@ -57,7 +71,11 @@ static void system_reboot_triple_fault(void) {
     // 加载空的 IDT
     struct {
         uint16_t limit;
+#if defined(ARCH_I686)
         uint32_t base;
+#else
+        uint64_t base;
+#endif
     } __attribute__((packed)) null_idt = {0, 0};
     
     __asm__ volatile ("lidt %0" : : "m"(null_idt));
@@ -65,10 +83,12 @@ static void system_reboot_triple_fault(void) {
     // 触发中断导致三重故障
     __asm__ volatile ("int $0x00");
 }
+#endif /* ARCH_I686 || ARCH_X86_64 */
 
 void system_reboot(void) {
     LOG_INFO_MSG("System: Initiating reboot...\n");
     
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
     __asm__ volatile ("cli");
     
     // 方法 1: 尝试 ACPI 重置（如果支持）
@@ -90,6 +110,13 @@ void system_reboot(void) {
     // 方法 3: 三重故障
     LOG_DEBUG_MSG("System: Trying triple fault...\n");
     system_reboot_triple_fault();
+#elif defined(ARCH_ARM64)
+    __asm__ volatile ("msr daifset, #0xf");
+    
+    // ARM64: 使用 PSCI (Power State Coordination Interface) 重启
+    // TODO: 实现 PSCI 调用
+    LOG_WARN_MSG("System: ARM64 reboot not yet implemented\n");
+#endif
     
     // 如果所有方法都失败
     system_halt_forever();
@@ -98,6 +125,7 @@ void system_reboot(void) {
 void system_poweroff(void) {
     LOG_INFO_MSG("System: Initiating power off...\n");
     
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
     __asm__ volatile ("cli");
     
     // 方法 1: 尝试 ACPI 关机（首选，适用于真实硬件）
@@ -130,6 +158,13 @@ void system_poweroff(void) {
     // APM 通过 INT 15h AX=5307h BX=0001h CX=0003h 关机
     // 但这需要实模式，在保护模式下不能直接调用
     // 某些 BIOS 可能支持通过 I/O 端口 APM 控制
+#elif defined(ARCH_ARM64)
+    __asm__ volatile ("msr daifset, #0xf");
+    
+    // ARM64: 使用 PSCI (Power State Coordination Interface) 关机
+    // TODO: 实现 PSCI 调用
+    LOG_WARN_MSG("System: ARM64 power off not yet implemented\n");
+#endif
     
     // 方法 4: 如果都失败，进入挂起状态
     LOG_WARN_MSG("System: All power off methods failed\n");

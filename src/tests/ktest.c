@@ -3,11 +3,16 @@
 // ============================================================================
 
 #include <tests/ktest.h>
+#include <tests/test_runner.h>
 #include <lib/kprintf.h>
 #include <lib/string.h>
 
 // 全局测试上下文
 static test_context_t g_test_ctx;
+
+// Track last assertion failure location for diagnostics
+static const char* g_last_failure_file = NULL;
+static int g_last_failure_line = 0;
 
 // ============================================================================
 // 辅助函数：彩色输出（使用 kconsole_set_color 自动适配图形/文本模式）
@@ -63,6 +68,10 @@ void unittest_run_test(const char* test_name, test_func_t test_func) {
     g_test_ctx.test_failed = false;
     g_test_ctx.stats.total++;
     
+    // Reset failure location tracking
+    g_last_failure_file = NULL;
+    g_last_failure_line = 0;
+    
     kprintf("  [ RUN  ] %s\n", test_name);
     
     // 运行测试
@@ -79,17 +88,25 @@ void unittest_run_test(const char* test_name, test_func_t test_func) {
         kprintf("  ");
         print_fail("[ FAIL ]");
         kprintf(" %s\n", test_name);
+        
+        // Print architecture-specific diagnostics on failure
+        // Requirements: 11.4 - Report architecture-specific diagnostic information
+        test_print_failure_diagnostics(test_name, g_last_failure_file, g_last_failure_line);
     }
     
     g_test_ctx.current_test_name = NULL;
 }
 
 void unittest_print_summary(void) {
+    const arch_info_t *arch = test_get_arch_info();
+    
     kprintf("\n");
     print_info("================================================================================\n");
     print_info("Test Summary\n");
     print_info("================================================================================\n");
     
+    // Include architecture in summary
+    kprintf("Architecture:     %s (%u-bit)\n", arch->name, arch->bits);
     kprintf("Total tests:      %u\n", g_test_ctx.stats.total);
     
     if (g_test_ctx.stats.passed > 0) {
@@ -113,14 +130,18 @@ void unittest_print_summary(void) {
     kprintf("\nResult: ");
     if (g_test_ctx.stats.failed == 0) {
         kconsole_set_color(KCOLOR_LIGHT_GREEN, KCOLOR_BLACK);
-        kprintf("ALL TESTS PASSED");
+        kprintf("ALL TESTS PASSED on %s", arch->name);
         kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
         kprintf("\n");
     } else {
         kconsole_set_color(KCOLOR_LIGHT_RED, KCOLOR_BLACK);
-        kprintf("SOME TESTS FAILED");
+        kprintf("SOME TESTS FAILED on %s", arch->name);
         kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
         kprintf("\n");
+        
+        // Print detailed architecture info when tests fail
+        kprintf("\n");
+        test_print_arch_info();
     }
     print_info("================================================================================\n\n");
 }
@@ -139,6 +160,8 @@ void _assert_true(bool condition, const char* expr,
     
     if (!condition) {
         g_test_ctx.test_failed = true;
+        g_last_failure_file = file;
+        g_last_failure_line = line;
         kprintf("    ");
         print_fail("Assertion failed: ");
         kprintf("%s\n", expr);
@@ -154,6 +177,8 @@ void _assert_false(bool condition, const char* expr,
     
     if (condition) {
         g_test_ctx.test_failed = true;
+        g_last_failure_file = file;
+        g_last_failure_line = line;
         kprintf("    ");
         print_fail("Assertion failed: ");
         kprintf("%s\n", expr);
@@ -169,6 +194,8 @@ void _assert_eq_int(int32_t expected, int32_t actual,
     
     if (expected != actual) {
         g_test_ctx.test_failed = true;
+        g_last_failure_file = file;
+        g_last_failure_line = line;
         kprintf("    ");
         print_fail("Assertion failed: ");
         kprintf("expected == actual\n");
@@ -184,6 +211,8 @@ void _assert_ne_int(int32_t expected, int32_t actual,
     
     if (expected == actual) {
         g_test_ctx.test_failed = true;
+        g_last_failure_file = file;
+        g_last_failure_line = line;
         kprintf("    ");
         print_fail("Assertion failed: ");
         kprintf("expected != actual\n");
@@ -199,6 +228,8 @@ void _assert_eq_uint(uint32_t expected, uint32_t actual,
     
     if (expected != actual) {
         g_test_ctx.test_failed = true;
+        g_last_failure_file = file;
+        g_last_failure_line = line;
         kprintf("    ");
         print_fail("Assertion failed: ");
         kprintf("expected == actual\n");
@@ -214,6 +245,8 @@ void _assert_ne_uint(uint32_t expected, uint32_t actual,
     
     if (expected == actual) {
         g_test_ctx.test_failed = true;
+        g_last_failure_file = file;
+        g_last_failure_line = line;
         kprintf("    ");
         print_fail("Assertion failed: ");
         kprintf("expected != actual\n");
@@ -229,6 +262,8 @@ void _assert_eq_ptr(void* expected, void* actual,
     
     if (expected != actual) {
         g_test_ctx.test_failed = true;
+        g_last_failure_file = file;
+        g_last_failure_line = line;
         kprintf("    ");
         print_fail("Assertion failed: ");
         kprintf("expected == actual\n");
@@ -244,6 +279,8 @@ void _assert_ne_ptr(void* expected, void* actual,
     
     if (expected == actual) {
         g_test_ctx.test_failed = true;
+        g_last_failure_file = file;
+        g_last_failure_line = line;
         kprintf("    ");
         print_fail("Assertion failed: ");
         kprintf("expected != actual\n");
@@ -258,6 +295,8 @@ void _assert_null(void* ptr, const char* file, int line) {
     
     if (ptr != NULL) {
         g_test_ctx.test_failed = true;
+        g_last_failure_file = file;
+        g_last_failure_line = line;
         kprintf("    ");
         print_fail("Assertion failed: ");
         kprintf("ptr == NULL\n");
@@ -272,6 +311,8 @@ void _assert_not_null(void* ptr, const char* file, int line) {
     
     if (ptr == NULL) {
         g_test_ctx.test_failed = true;
+        g_last_failure_file = file;
+        g_last_failure_line = line;
         kprintf("    ");
         print_fail("Assertion failed: ");
         kprintf("ptr != NULL\n");
@@ -292,6 +333,8 @@ void _assert_eq_str(const char* expected, const char* actual,
     
     if (expected == NULL || actual == NULL) {
         g_test_ctx.test_failed = true;
+        g_last_failure_file = file;
+        g_last_failure_line = line;
         kprintf("    ");
         print_fail("Assertion failed: ");
         kprintf("expected == actual\n");
@@ -303,6 +346,8 @@ void _assert_eq_str(const char* expected, const char* actual,
     
     if (strcmp(expected, actual) != 0) {
         g_test_ctx.test_failed = true;
+        g_last_failure_file = file;
+        g_last_failure_line = line;
         kprintf("    ");
         print_fail("Assertion failed: ");
         kprintf("expected == actual\n");
@@ -324,6 +369,8 @@ void _assert_ne_str(const char* expected, const char* actual,
     
     if (expected == NULL && actual == NULL) {
         g_test_ctx.test_failed = true;
+        g_last_failure_file = file;
+        g_last_failure_line = line;
         kprintf("    ");
         print_fail("Assertion failed: ");
         kprintf("expected != actual\n");
@@ -334,6 +381,8 @@ void _assert_ne_str(const char* expected, const char* actual,
     
     if (strcmp(expected, actual) == 0) {
         g_test_ctx.test_failed = true;
+        g_last_failure_file = file;
+        g_last_failure_line = line;
         kprintf("    ");
         print_fail("Assertion failed: ");
         kprintf("expected != actual\n");

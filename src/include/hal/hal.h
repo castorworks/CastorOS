@@ -140,6 +140,7 @@ void hal_interrupt_eoi(uint32_t irq);
 #define HAL_PAGE_DIRTY      (1 << 6)   /**< Page has been modified */
 #define HAL_PAGE_ACCESSED   (1 << 7)   /**< Page has been accessed */
 #define HAL_PAGE_WRITECOMB  (1 << 8)   /**< Write-combining memory type */
+#define HAL_PAGE_HUGE       (1 << 9)   /**< Huge page (2MB on x86_64, 2MB block on ARM64) */
 
 /*----------------------------------------------------------------------------
  * Address Space Handle
@@ -271,6 +272,70 @@ bool hal_mmu_query(hal_addr_space_t space, vaddr_t virt, paddr_t *phys, uint32_t
  */
 bool hal_mmu_protect(hal_addr_space_t space, vaddr_t virt, 
                      uint32_t set_flags, uint32_t clear_flags);
+
+/*----------------------------------------------------------------------------
+ * Huge Page Mapping Operations (2MB pages)
+ * @see Requirements 8.1, 8.2
+ *----------------------------------------------------------------------------*/
+
+/** @brief Huge page size (2MB) */
+#define HAL_HUGE_PAGE_SIZE      (2 * 1024 * 1024)
+
+/** @brief Huge page alignment mask */
+#define HAL_HUGE_PAGE_MASK      (~((vaddr_t)HAL_HUGE_PAGE_SIZE - 1))
+
+/**
+ * @brief Check if huge pages are supported on this architecture
+ * @return true if 2MB huge pages are supported
+ * 
+ * @note i686 does not support huge pages in this implementation
+ * @note x86_64 and ARM64 support 2MB huge pages
+ */
+bool hal_mmu_huge_pages_supported(void);
+
+/**
+ * @brief Map a 2MB huge page
+ * 
+ * Creates a 2MB huge page mapping. Both virtual and physical addresses
+ * must be 2MB aligned.
+ * 
+ * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
+ * @param virt Virtual address (must be 2MB aligned)
+ * @param phys Physical address (must be 2MB aligned)
+ * @param flags Page flags (HAL_PAGE_*)
+ * @return true on success, false on failure
+ * 
+ * @note On architectures that don't support huge pages, this falls back
+ *       to mapping 512 individual 4KB pages.
+ * @note This function does NOT flush the TLB.
+ * 
+ * @see Requirements 8.2
+ */
+bool hal_mmu_map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags);
+
+/**
+ * @brief Unmap a 2MB huge page
+ * 
+ * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
+ * @param virt Virtual address (must be 2MB aligned)
+ * @return Previously mapped physical address, or PADDR_INVALID if not mapped
+ * 
+ * @note This function does NOT flush the TLB.
+ * 
+ * @see Requirements 8.2
+ */
+paddr_t hal_mmu_unmap_huge(hal_addr_space_t space, vaddr_t virt);
+
+/**
+ * @brief Query if a mapping is a huge page
+ * 
+ * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
+ * @param virt Virtual address
+ * @return true if the mapping is a 2MB huge page, false otherwise
+ * 
+ * @see Requirements 8.3
+ */
+bool hal_mmu_is_huge_page(hal_addr_space_t space, vaddr_t virt);
 
 /*----------------------------------------------------------------------------
  * TLB Management
@@ -621,6 +686,65 @@ static inline void hal_mmio_write64(volatile void *addr, uint64_t val) {
 #endif
     *(volatile uint64_t *)addr = val;
 }
+
+/* ============================================================================
+ * Cache Maintenance Operations (DMA Support)
+ * 
+ * These functions are required for DMA operations on architectures with
+ * non-coherent caches (primarily ARM64). On x86, caches are typically
+ * coherent with DMA, so these are no-ops.
+ * 
+ * @see Requirements 10.2
+ * ========================================================================== */
+
+/**
+ * @brief Clean cache for a memory region (write back dirty data)
+ * 
+ * Ensures that any dirty cache lines in the specified region are written
+ * back to main memory. This should be called before a DMA read operation
+ * (device reading from memory) to ensure the device sees the latest data.
+ * 
+ * @param addr Virtual address of the region start
+ * @param size Size of the region in bytes
+ * 
+ * @note On x86, this is a no-op as caches are DMA-coherent.
+ * @note On ARM64, this performs DC CVAC (Clean by VA to PoC) operations.
+ */
+void hal_cache_clean(void *addr, size_t size);
+
+/**
+ * @brief Invalidate cache for a memory region (discard cached data)
+ * 
+ * Invalidates any cache lines in the specified region, forcing subsequent
+ * reads to fetch data from main memory. This should be called after a DMA
+ * write operation (device writing to memory) to ensure the CPU sees the
+ * new data written by the device.
+ * 
+ * @param addr Virtual address of the region start
+ * @param size Size of the region in bytes
+ * 
+ * @warning This may discard dirty data! Use hal_cache_clean_invalidate()
+ *          if the region may contain modified data.
+ * 
+ * @note On x86, this is a no-op as caches are DMA-coherent.
+ * @note On ARM64, this performs DC IVAC (Invalidate by VA to PoC) operations.
+ */
+void hal_cache_invalidate(void *addr, size_t size);
+
+/**
+ * @brief Clean and invalidate cache for a memory region
+ * 
+ * Combines clean and invalidate operations: writes back dirty data and
+ * then invalidates the cache lines. This is the safest option for
+ * bidirectional DMA buffers.
+ * 
+ * @param addr Virtual address of the region start
+ * @param size Size of the region in bytes
+ * 
+ * @note On x86, this is a no-op as caches are DMA-coherent.
+ * @note On ARM64, this performs DC CIVAC (Clean and Invalidate by VA to PoC).
+ */
+void hal_cache_clean_invalidate(void *addr, size_t size);
 
 /* ============================================================================
  * Memory Barriers

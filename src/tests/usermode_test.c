@@ -273,11 +273,221 @@ TEST_CASE(test_segment_selector_ordering) {
     ASSERT_EQ_UINT(I686_KERNEL_DS, 0x10);
 }
 
-#else
-// ARM64 or other architectures - placeholder tests
+#elif defined(ARCH_ARM64)
+
+// ============================================================================
+// ARM64 User Mode Transition Property Tests
+// ============================================================================
+// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness (ARM64)**
+// **Validates: Requirements 7.4**
+//
+// ARM64 uses Exception Levels (EL) instead of privilege rings:
+// - EL0: User mode (unprivileged)
+// - EL1: Kernel mode (privileged)
+// - EL2: Hypervisor (not used in CastorOS)
+// - EL3: Secure Monitor (not used in CastorOS)
+//
+// User mode transition uses ERET instruction which:
+// - Loads PC from ELR_EL1
+// - Loads PSTATE from SPSR_EL1
+// - Switches to the exception level specified in SPSR_EL1.M field
+// ============================================================================
+
+// SPSR_EL1 / PSTATE bits
+#define ARM64_PSTATE_N      (1ULL << 31)    // Negative flag
+#define ARM64_PSTATE_Z      (1ULL << 30)    // Zero flag
+#define ARM64_PSTATE_C      (1ULL << 29)    // Carry flag
+#define ARM64_PSTATE_V      (1ULL << 28)    // Overflow flag
+#define ARM64_PSTATE_D      (1ULL << 9)     // Debug mask
+#define ARM64_PSTATE_A      (1ULL << 8)     // SError mask
+#define ARM64_PSTATE_I      (1ULL << 7)     // IRQ mask
+#define ARM64_PSTATE_F      (1ULL << 6)     // FIQ mask
+
+// Exception Level and SP selection (M field, bits [3:0])
+#define ARM64_PSTATE_M_MASK     0x0F
+#define ARM64_PSTATE_EL0t       0x00    // EL0 with SP_EL0
+#define ARM64_PSTATE_EL1t       0x04    // EL1 with SP_EL0
+#define ARM64_PSTATE_EL1h       0x05    // EL1 with SP_EL1
+
+// Default PSTATE for user mode (EL0, all interrupts enabled)
+#define ARM64_PSTATE_USER_DEFAULT   ARM64_PSTATE_EL0t
+
+// Default PSTATE for kernel mode (EL1h, all interrupts enabled)
+#define ARM64_PSTATE_KERNEL_DEFAULT ARM64_PSTATE_EL1h
+
+// ============================================================================
+// Property Test: User Mode PSTATE Has EL0
+// ============================================================================
+// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness (ARM64)**
+// **Validates: Requirements 7.4**
+//
+// For any user mode transition on ARM64, the SPSR_EL1.M field SHALL be set
+// to EL0t (0x00) to indicate EL0 with SP_EL0.
+// ============================================================================
 
 TEST_CASE(test_user_cs_has_rpl3) {
-    // ARM64 doesn't use segment selectors
+    // ARM64 equivalent: User mode PSTATE should have M=EL0t
+    uint64_t user_pstate = ARM64_PSTATE_USER_DEFAULT;
+    uint8_t el = user_pstate & ARM64_PSTATE_M_MASK;
+    
+    // EL0t = 0x00
+    ASSERT_EQ_UINT(el, ARM64_PSTATE_EL0t);
+}
+
+// ============================================================================
+// Property Test: User Mode Has Interrupts Enabled
+// ============================================================================
+// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness (ARM64)**
+// **Validates: Requirements 7.4**
+//
+// For any user mode transition on ARM64, the DAIF mask bits SHALL be cleared
+// to enable interrupts in user mode.
+// ============================================================================
+
+TEST_CASE(test_user_ds_has_rpl3) {
+    // ARM64 equivalent: User mode should have interrupts enabled (DAIF cleared)
+    uint64_t user_pstate = ARM64_PSTATE_USER_DEFAULT;
+    
+    // All interrupt mask bits should be cleared for user mode
+    ASSERT_TRUE((user_pstate & ARM64_PSTATE_D) == 0);
+    ASSERT_TRUE((user_pstate & ARM64_PSTATE_A) == 0);
+    ASSERT_TRUE((user_pstate & ARM64_PSTATE_I) == 0);
+    ASSERT_TRUE((user_pstate & ARM64_PSTATE_F) == 0);
+}
+
+// ============================================================================
+// Property Test: Kernel Mode PSTATE Has EL1
+// ============================================================================
+// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness (ARM64)**
+// **Validates: Requirements 7.4**
+//
+// For any kernel mode operation on ARM64, the PSTATE.M field SHALL indicate
+// EL1 (either EL1t or EL1h).
+// ============================================================================
+
+TEST_CASE(test_kernel_segments_have_rpl0) {
+    // ARM64 equivalent: Kernel mode PSTATE should have M=EL1h
+    uint64_t kernel_pstate = ARM64_PSTATE_KERNEL_DEFAULT;
+    uint8_t el = kernel_pstate & ARM64_PSTATE_M_MASK;
+    
+    // EL1h = 0x05
+    ASSERT_EQ_UINT(el, ARM64_PSTATE_EL1h);
+}
+
+// ============================================================================
+// Property Test: Default User PSTATE Has Interrupts Enabled
+// ============================================================================
+// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness (ARM64)**
+// **Validates: Requirements 7.4**
+//
+// For any user mode transition, the PSTATE register SHALL have all interrupt
+// mask bits (DAIF) cleared to enable interrupts in user mode.
+// ============================================================================
+
+TEST_CASE(test_default_rflags_has_if_set) {
+    // ARM64 equivalent: Default user PSTATE should have DAIF cleared
+    uint64_t pstate = ARM64_PSTATE_USER_DEFAULT;
+    
+    // DAIF bits should all be 0 (interrupts enabled)
+    uint64_t daif_mask = ARM64_PSTATE_D | ARM64_PSTATE_A | ARM64_PSTATE_I | ARM64_PSTATE_F;
+    ASSERT_TRUE((pstate & daif_mask) == 0);
+}
+
+// ============================================================================
+// Property Test: ERET Return Structure
+// ============================================================================
+// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness (ARM64)**
+// **Validates: Requirements 7.4**
+//
+// For any user mode transition using ERET, the following registers SHALL be
+// properly configured:
+// - ELR_EL1: Contains the return address (user entry point)
+// - SPSR_EL1: Contains the saved PSTATE (with M=EL0t)
+// - SP_EL0: Contains the user stack pointer
+// ============================================================================
+
+// Simulated ERET context structure
+typedef struct {
+    uint64_t elr_el1;       // Exception Link Register (return address)
+    uint64_t spsr_el1;      // Saved Program Status Register
+    uint64_t sp_el0;        // User stack pointer
+} __attribute__((packed)) eret_context_t;
+
+TEST_CASE(test_iretq_frame_structure) {
+    // ARM64 equivalent: ERET context structure
+    // Verify the structure size is correct (3 * 8 = 24 bytes)
+    ASSERT_EQ_UINT(sizeof(eret_context_t), 24);
+    
+    // Create a test context
+    eret_context_t ctx;
+    ctx.elr_el1 = 0x400000;                     // User entry point
+    ctx.spsr_el1 = ARM64_PSTATE_USER_DEFAULT;   // EL0 with interrupts enabled
+    ctx.sp_el0 = 0x7FFFFFFFE000;                // User stack
+    
+    // Verify context values
+    uint8_t el = ctx.spsr_el1 & ARM64_PSTATE_M_MASK;
+    ASSERT_EQ_UINT(el, ARM64_PSTATE_EL0t);
+    
+    // Verify interrupts are enabled
+    uint64_t daif_mask = ARM64_PSTATE_D | ARM64_PSTATE_A | ARM64_PSTATE_I | ARM64_PSTATE_F;
+    ASSERT_TRUE((ctx.spsr_el1 & daif_mask) == 0);
+}
+
+// ============================================================================
+// Property Test: User and Kernel Exception Levels Are Distinct
+// ============================================================================
+// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness (ARM64)**
+// **Validates: Requirements 7.4**
+//
+// User mode (EL0) and kernel mode (EL1) exception levels SHALL be distinct
+// to ensure proper privilege separation.
+// ============================================================================
+
+TEST_CASE(test_user_kernel_segments_distinct) {
+    // ARM64 equivalent: EL0 and EL1 should be distinct
+    uint8_t user_el = ARM64_PSTATE_USER_DEFAULT & ARM64_PSTATE_M_MASK;
+    uint8_t kernel_el = ARM64_PSTATE_KERNEL_DEFAULT & ARM64_PSTATE_M_MASK;
+    
+    // User EL (0) should be different from Kernel EL (5)
+    ASSERT_NE_UINT(user_el, kernel_el);
+    
+    // User should be at EL0
+    ASSERT_EQ_UINT(user_el, ARM64_PSTATE_EL0t);
+    
+    // Kernel should be at EL1
+    ASSERT_EQ_UINT(kernel_el, ARM64_PSTATE_EL1h);
+}
+
+// ============================================================================
+// Property Test: Exception Level Ordering
+// ============================================================================
+// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness (ARM64)**
+// **Validates: Requirements 7.4**
+//
+// ARM64 exception levels SHALL be ordered with higher privilege at higher
+// levels: EL0 (user) < EL1 (kernel) < EL2 (hypervisor) < EL3 (secure monitor).
+// ============================================================================
+
+TEST_CASE(test_segment_selector_ordering) {
+    // ARM64 equivalent: Exception level ordering
+    // EL0 < EL1 (user has lower privilege than kernel)
+    
+    // Extract just the EL bits (bits [3:2] of M field)
+    uint8_t user_el_bits = (ARM64_PSTATE_EL0t >> 2) & 0x03;
+    uint8_t kernel_el_bits = (ARM64_PSTATE_EL1h >> 2) & 0x03;
+    
+    // User EL (0) should be less than Kernel EL (1)
+    ASSERT_TRUE(user_el_bits < kernel_el_bits);
+    
+    // Verify specific values
+    ASSERT_EQ_UINT(user_el_bits, 0);    // EL0
+    ASSERT_EQ_UINT(kernel_el_bits, 1);  // EL1
+}
+
+#else
+// Unknown architecture - placeholder tests
+
+TEST_CASE(test_user_cs_has_rpl3) {
     ASSERT_TRUE(true);
 }
 

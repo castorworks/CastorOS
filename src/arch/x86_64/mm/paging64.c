@@ -894,6 +894,246 @@ paddr_t hal_mmu_virt_to_phys(vaddr_t virt) {
     return PADDR_INVALID;
 }
 
+/* ============================================================================
+ * 大页映射实现 (2MB Huge Pages) - x86_64
+ * 
+ * x86_64 支持 2MB 大页（通过 PD 级别的 PS 位）和 1GB 大页（通过 PDPT 级别的 PS 位）
+ * 此实现仅支持 2MB 大页
+ * 
+ * @see Requirements 8.1, 8.2
+ * ========================================================================== */
+
+/** @brief 2MB 大页大小 */
+#define HUGE_PAGE_SIZE_2MB      (2 * 1024 * 1024)
+
+/** @brief 2MB 大页物理地址掩码 (bits 21-51) */
+#define PTE64_HUGE_ADDR_MASK    0x000FFFFFFFE00000ULL
+
+/**
+ * @brief 检查是否支持大页 (x86_64)
+ * @return true (x86_64 支持 2MB 大页)
+ */
+bool hal_mmu_huge_pages_supported(void) {
+    return true;
+}
+
+/**
+ * @brief 检查地址是否 2MB 对齐
+ */
+static inline bool is_huge_page_aligned(uint64_t addr) {
+    return (addr & (HUGE_PAGE_SIZE_2MB - 1)) == 0;
+}
+
+/**
+ * @brief 映射 2MB 大页 (x86_64)
+ * 
+ * 在 PD 级别创建 2MB 大页映射（设置 PS 位）
+ * 
+ * @param space 地址空间句柄
+ * @param virt 虚拟地址（必须 2MB 对齐）
+ * @param phys 物理地址（必须 2MB 对齐）
+ * @param flags HAL 页标志
+ * @return true 成功，false 失败
+ * 
+ * @see Requirements 8.2
+ */
+bool hal_mmu_map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags) {
+    /* Validate 2MB alignment */
+    if (!is_huge_page_aligned((uint64_t)virt) || !is_huge_page_aligned((uint64_t)phys)) {
+        LOG_ERROR_MSG("hal_mmu_map_huge: addresses not 2MB-aligned (virt=0x%llx, phys=0x%llx)\n",
+                      (unsigned long long)virt, (unsigned long long)phys);
+        return false;
+    }
+    
+    if (!x86_64_is_canonical_address((uint64_t)virt)) {
+        LOG_ERROR_MSG("hal_mmu_map_huge: non-canonical address 0x%llx\n",
+                      (unsigned long long)virt);
+        return false;
+    }
+    
+    pte64_t *pml4 = get_pml4(space);
+    
+    /* Get indices for each level */
+    uint64_t pml4_idx = pml4_index((uint64_t)virt);
+    uint64_t pdpt_idx = pdpt_index((uint64_t)virt);
+    uint64_t pd_idx = pd_index((uint64_t)virt);
+    
+    /* Convert HAL flags to x86_64 flags */
+    uint64_t x64_flags = hal_flags_to_x64(flags);
+    
+    /* Add HUGE flag for 2MB page */
+    x64_flags |= PTE64_HUGE;
+    
+    /* Intermediate table flags: present, writable, user (if user page) */
+    uint64_t table_flags = PTE64_PRESENT | PTE64_WRITE;
+    if (flags & HAL_PAGE_USER) {
+        table_flags |= PTE64_USER;
+    }
+    
+    /* Level 4: PML4 -> PDPT */
+    pte64_t *pdpt;
+    if (!pte64_is_present(pml4[pml4_idx])) {
+        paddr_t pdpt_phys = alloc_page_table();
+        if (pdpt_phys == PADDR_INVALID) {
+            return false;
+        }
+        pml4[pml4_idx] = pdpt_phys | table_flags;
+    }
+    pdpt = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pml4[pml4_idx]));
+    
+    /* Level 3: PDPT -> PD */
+    pte64_t *pd;
+    if (!pte64_is_present(pdpt[pdpt_idx])) {
+        paddr_t pd_phys = alloc_page_table();
+        if (pd_phys == PADDR_INVALID) {
+            return false;
+        }
+        pdpt[pdpt_idx] = pd_phys | table_flags;
+    } else if (pte64_is_huge(pdpt[pdpt_idx])) {
+        /* Cannot map 2MB page over 1GB huge page */
+        LOG_ERROR_MSG("hal_mmu_map_huge: cannot map over 1GB huge page\n");
+        return false;
+    }
+    pd = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pdpt[pdpt_idx]));
+    
+    /* Level 2: PD entry (2MB huge page) */
+    /* Check if there's already a PT at this location */
+    if (pte64_is_present(pd[pd_idx]) && !pte64_is_huge(pd[pd_idx])) {
+        LOG_ERROR_MSG("hal_mmu_map_huge: cannot map 2MB page over existing PT\n");
+        return false;
+    }
+    
+    /* Create 2MB huge page entry */
+    pd[pd_idx] = (phys & PTE64_HUGE_ADDR_MASK) | x64_flags;
+    
+    LOG_DEBUG_MSG("hal_mmu_map_huge: Mapped 2MB page virt=0x%llx -> phys=0x%llx\n",
+                  (unsigned long long)virt, (unsigned long long)phys);
+    
+    return true;
+}
+
+/**
+ * @brief 取消 2MB 大页映射 (x86_64)
+ * 
+ * @param space 地址空间句柄
+ * @param virt 虚拟地址（必须 2MB 对齐）
+ * @return 原物理地址，未映射返回 PADDR_INVALID
+ * 
+ * @see Requirements 8.2
+ */
+paddr_t hal_mmu_unmap_huge(hal_addr_space_t space, vaddr_t virt) {
+    /* Validate 2MB alignment */
+    if (!is_huge_page_aligned((uint64_t)virt)) {
+        LOG_ERROR_MSG("hal_mmu_unmap_huge: address not 2MB-aligned (virt=0x%llx)\n",
+                      (unsigned long long)virt);
+        return PADDR_INVALID;
+    }
+    
+    if (!x86_64_is_canonical_address((uint64_t)virt)) {
+        return PADDR_INVALID;
+    }
+    
+    pte64_t *pml4 = get_pml4(space);
+    
+    /* Get indices for each level */
+    uint64_t pml4_idx = pml4_index((uint64_t)virt);
+    uint64_t pdpt_idx = pdpt_index((uint64_t)virt);
+    uint64_t pd_idx = pd_index((uint64_t)virt);
+    
+    /* Level 4: PML4 */
+    pte64_t pml4e = pml4[pml4_idx];
+    if (!pte64_is_present(pml4e)) {
+        return PADDR_INVALID;
+    }
+    
+    /* Level 3: PDPT */
+    pte64_t *pdpt = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pml4e));
+    pte64_t pdpte = pdpt[pdpt_idx];
+    if (!pte64_is_present(pdpte)) {
+        return PADDR_INVALID;
+    }
+    
+    /* Cannot unmap if this is a 1GB huge page */
+    if (pte64_is_huge(pdpte)) {
+        LOG_ERROR_MSG("hal_mmu_unmap_huge: cannot unmap 1GB huge page with this function\n");
+        return PADDR_INVALID;
+    }
+    
+    /* Level 2: PD */
+    pte64_t *pd = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pdpte));
+    pte64_t pde = pd[pd_idx];
+    if (!pte64_is_present(pde)) {
+        return PADDR_INVALID;
+    }
+    
+    /* Verify this is a 2MB huge page */
+    if (!pte64_is_huge(pde)) {
+        LOG_ERROR_MSG("hal_mmu_unmap_huge: entry is not a 2MB huge page\n");
+        return PADDR_INVALID;
+    }
+    
+    /* Get physical address before clearing */
+    paddr_t phys = pde & PTE64_HUGE_ADDR_MASK;
+    
+    /* Clear the entry */
+    pd[pd_idx] = 0;
+    
+    LOG_DEBUG_MSG("hal_mmu_unmap_huge: Unmapped 2MB page virt=0x%llx (was phys=0x%llx)\n",
+                  (unsigned long long)virt, (unsigned long long)phys);
+    
+    return phys;
+}
+
+/**
+ * @brief 查询映射是否为大页 (x86_64)
+ * 
+ * @param space 地址空间句柄
+ * @param virt 虚拟地址
+ * @return true 如果是 2MB 大页映射
+ * 
+ * @see Requirements 8.3
+ */
+bool hal_mmu_is_huge_page(hal_addr_space_t space, vaddr_t virt) {
+    if (!x86_64_is_canonical_address((uint64_t)virt)) {
+        return false;
+    }
+    
+    pte64_t *pml4 = get_pml4(space);
+    
+    /* Get indices for each level */
+    uint64_t pml4_idx = pml4_index((uint64_t)virt);
+    uint64_t pdpt_idx = pdpt_index((uint64_t)virt);
+    uint64_t pd_idx = pd_index((uint64_t)virt);
+    
+    /* Level 4: PML4 */
+    pte64_t pml4e = pml4[pml4_idx];
+    if (!pte64_is_present(pml4e)) {
+        return false;
+    }
+    
+    /* Level 3: PDPT */
+    pte64_t *pdpt = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pml4e));
+    pte64_t pdpte = pdpt[pdpt_idx];
+    if (!pte64_is_present(pdpte)) {
+        return false;
+    }
+    
+    /* Check for 1GB huge page */
+    if (pte64_is_huge(pdpte)) {
+        return true;  /* 1GB huge page */
+    }
+    
+    /* Level 2: PD */
+    pte64_t *pd = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pdpte));
+    pte64_t pde = pd[pd_idx];
+    if (!pte64_is_present(pde)) {
+        return false;
+    }
+    
+    /* Check for 2MB huge page */
+    return pte64_is_huge(pde);
+}
+
 
 /* ============================================================================
  * x86_64 地址空间管理实现

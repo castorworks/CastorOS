@@ -1,4 +1,4 @@
-/* 用户程序链接脚本 */
+/* 用户程序链接脚本 - i686 (x86 32-bit) */
 OUTPUT_FORMAT(elf32-i386)
 OUTPUT_ARCH(i386)
 ENTRY(_start)
@@ -30,4 +30,3 @@ SECTIONS
         *(COMMON)
     }
 }
-

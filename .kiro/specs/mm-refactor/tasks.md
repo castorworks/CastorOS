@@ -177,57 +177,57 @@
 
 ## Phase 6: ARM64 MMU 实现（基础）
 
-- [ ] 16. 实现 ARM64 MMU 基础
-  - [ ] 16.1 创建 `src/arch/arm64/mm/mmu.c`
+- [x] 16. 实现 ARM64 MMU 基础
+  - [x] 16.1 创建 `src/arch/arm64/mm/mmu.c`
     - 实现 `hal_mmu_init()` 配置 TCR_EL1, MAIR_EL1
     - 实现 `hal_mmu_flush_tlb()` 和 `hal_mmu_flush_tlb_all()`
     - 实现 `hal_mmu_switch_space()` 更新 TTBR0_EL1
     - 实现 `hal_mmu_get_fault_addr()` 读取 FAR_EL1
     - _Requirements: 6.1, 6.5_
-  - [ ] 16.2 实现 ARM64 页表操作
+  - [x] 16.2 实现 ARM64 页表操作
     - 实现 `hal_mmu_map()` 4 级转换表
     - 实现 `hal_mmu_unmap()`
     - 实现 `hal_mmu_query()`
     - _Requirements: 6.2_
-  - [ ] 16.3 实现 ARM64 地址空间管理
+  - [x] 16.3 实现 ARM64 地址空间管理
     - 实现 `hal_mmu_create_space()`
     - 实现 `hal_mmu_clone_space()` (COW)
     - 实现 `hal_mmu_destroy_space()`
     - _Requirements: 6.2_
-  - [ ] 16.4 实现 ARM64 页错误处理
+  - [x] 16.4 实现 ARM64 页错误处理
     - 实现 `hal_mmu_parse_fault()` 解析 ESR_EL1
     - _Requirements: 6.4_
 
-- [ ] 17. Checkpoint - 验证 ARM64 MMU
+- [x] 17. Checkpoint - 验证 ARM64 MMU
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Phase 7: 高级功能和优化
 
-- [ ] 18. 实现 DMA 内存管理
-  - [ ] 18.1 实现 `pmm_alloc_frames()` 连续分配
+- [x] 18. 实现 DMA 内存管理
+  - [x] 18.1 实现 `pmm_alloc_frames()` 连续分配
     - 支持 DMA 区域分配
     - _Requirements: 10.1_
-  - [ ] 18.2 添加 ARM64 缓存维护操作
+  - [x] 18.2 添加 ARM64 缓存维护操作
     - 实现 `hal_cache_clean()`
     - 实现 `hal_cache_invalidate()`
     - _Requirements: 10.2_
 
-- [ ] 19. 实现调试功能
-  - [ ] 19.1 实现页表转储功能
+- [x] 19. 实现调试功能
+  - [x] 19.1 实现页表转储功能
     - 添加 `vmm_dump_page_tables()` 函数
     - _Requirements: 11.1_
-  - [ ] 19.2 实现 PMM 一致性检查
+  - [x] 19.2 实现 PMM 一致性检查
     - 添加 `pmm_verify_consistency()` 函数
     - _Requirements: 11.2_
 
-- [ ] 20. 大页支持
-  - [ ] 20.1 实现 2MB 大页分配
+- [x] 20. 大页支持
+  - [x] 20.1 实现 2MB 大页分配
     - 修改 PMM 支持 2MB 对齐分配
     - _Requirements: 8.1_
-  - [ ] 20.2 实现大页映射
+  - [x] 20.2 实现大页映射
     - 修改 HAL MMU 支持大页标志
     - _Requirements: 8.2_
 
-- [ ] 21. Final Checkpoint - 完整功能验证
+- [x] 21. Final Checkpoint - 完整功能验证
   - Ensure all tests pass, ask the user if questions arise.
 

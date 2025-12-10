@@ -6,6 +6,18 @@
 #include <lib/kprintf.h>
 #include <lib/klog.h>
 
+/* 架构特定的禁用中断和挂起指令 */
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
+    #define DISABLE_INTERRUPTS() __asm__ volatile("cli")
+    #define HALT_CPU()           __asm__ volatile("hlt")
+#elif defined(ARCH_ARM64)
+    #define DISABLE_INTERRUPTS() __asm__ volatile("msr daifset, #0xf")
+    #define HALT_CPU()           __asm__ volatile("wfi")
+#else
+    #define DISABLE_INTERRUPTS() do {} while(0)
+    #define HALT_CPU()           do {} while(0)
+#endif
+
 /**
  * 内核 Panic
  * 显示错误信息并挂起系统
@@ -16,7 +28,7 @@
  */
 void kernel_panic(const char* message, const char* file, int line) {
     /* 禁用中断，防止进一步的中断干扰 */
-    __asm__ volatile("cli");
+    DISABLE_INTERRUPTS();
     
     /* 显示 Panic 信息 */
     kprintf("\n");
@@ -37,7 +49,7 @@ void kernel_panic(const char* message, const char* file, int line) {
     
     /* 挂起系统 */
     for(;;) {
-        __asm__ volatile("hlt");
+        HALT_CPU();
     }
 }
 
