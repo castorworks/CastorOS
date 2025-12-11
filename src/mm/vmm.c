@@ -3,9 +3,9 @@
  * @brief 虚拟内存管理器实现
  * 
  * 实现分页机制，管理虚拟地址到物理地址的映射
- * 核心逻辑保持架构无关，通过 HAL 接口调用架构特定操作
+ * 核心逻辑保持架构无关，通过 HAL 接口和 pgtable 抽象层调用架构特定操作
  * 
- * Requirements: 5.1, 5.2
+ * Requirements: 3.4, 4.1, 4.2, 4.4, 5.1, 5.2, 12.1
  */
 
 #include <mm/vmm.h>
@@ -16,16 +16,22 @@
 #include <kernel/sync/spinlock.h>
 #include <kernel/task.h>
 #include <hal/hal.h>
+#include <hal/pgtable.h>
+#include <hal/hal_error.h>
 
 static page_directory_t *current_dir = NULL;  ///< 当前页目录虚拟地址
 static uintptr_t current_dir_phys = 0;         ///< 当前页目录物理地址
+
+/* 引导时的页目录 - 使用 pgtable 抽象层获取条目大小 */
 #if defined(ARCH_X86_64)
 extern uint64_t boot_page_directory[];         ///< 引导时的 PML4 (x86_64)
 #else
 extern uint32_t boot_page_directory[];         ///< 引导时的页目录 (i686)
 #endif
+
 static spinlock_t vmm_lock;                    ///< VMM 自旋锁，保护页表操作
 
+/* 内核页目录范围 - 使用 pgtable 抽象层获取配置 */
 #if defined(ARCH_X86_64)
 #define KERNEL_PDE_START 256   // x86_64: PML4 entry 256 = 0xFFFF800000000000
 #define KERNEL_PDE_END   512
@@ -39,48 +45,60 @@ static spinlock_t vmm_lock;                    ///< VMM 自旋锁，保护页表
 static uintptr_t active_page_directories[MAX_PAGE_DIRECTORIES];
 static uint32_t active_pd_count = 0;
 
+/* ============================================================================
+ * 页表索引提取函数 - 使用 pgtable 抽象层
+ * 
+ * 这些函数封装了 pgtable 抽象层的索引提取功能，提供向后兼容的接口。
+ * @see Requirements 3.3, 3.4
+ * ========================================================================== */
+
 #if defined(ARCH_X86_64)
-/* x86_64: 4-level paging address decomposition */
-static inline uint32_t pml4_idx(uintptr_t v) { return (v >> 39) & 0x1FF; }
-static inline uint32_t pdpt_idx(uintptr_t v) { return (v >> 30) & 0x1FF; }
-static inline uint32_t pd_idx(uintptr_t v)   { return (v >> 21) & 0x1FF; }
-static inline uint32_t pt_idx(uintptr_t v)   { return (v >> 12) & 0x1FF; }
-static inline uintptr_t get_frame64(uint64_t e) { return e & 0x000FFFFFFFFFF000ULL; }
-static inline bool is_present64(uint64_t e) { return e & PAGE_PRESENT; }
+/* x86_64: 4-level paging address decomposition using pgtable abstraction */
+static inline uint32_t pml4_idx(uintptr_t v) { return pgtable_get_index((vaddr_t)v, 3); }
+static inline uint32_t pdpt_idx(uintptr_t v) { return pgtable_get_index((vaddr_t)v, 2); }
+static inline uint32_t pd_idx(uintptr_t v)   { return pgtable_get_index((vaddr_t)v, 1); }
+static inline uint32_t pt_idx(uintptr_t v)   { return pgtable_get_index((vaddr_t)v, 0); }
+/* 使用 pgtable 抽象层提取物理地址和检查存在位 */
+static inline uintptr_t get_frame64(pte_t e) { return (uintptr_t)pgtable_get_phys(e); }
+static inline bool is_present64(pte_t e) { return pgtable_is_present(e); }
 /* Compatibility aliases for x86_64 */
 #define pde_idx(v) pml4_idx(v)
 #define pte_idx(v) pt_idx(v)
 #define get_frame(e) get_frame64(e)
 #define is_present(e) is_present64(e)
 #else
-/* i686: 2-level paging address decomposition */
+/* i686: 2-level paging address decomposition using pgtable abstraction */
 /**
  * @brief 获取页目录索引
  * @param v 虚拟地址
  * @return 页目录索引（高10位）
  */
-static inline uint32_t pde_idx(uintptr_t v) { return v >> 22; }
+static inline uint32_t pde_idx(uintptr_t v) { return pgtable_get_index((vaddr_t)v, 1); }
 
 /**
  * @brief 获取页表索引
  * @param v 虚拟地址
  * @return 页表索引（中间10位）
  */
-static inline uint32_t pte_idx(uintptr_t v) { return (v >> 12) & 0x3FF; }
+static inline uint32_t pte_idx(uintptr_t v) { return pgtable_get_index((vaddr_t)v, 0); }
 
 /**
  * @brief 从页表项/页目录项中提取物理地址
  * @param e 页表项或页目录项
  * @return 物理地址（页对齐）
+ * 
+ * 使用 pgtable 抽象层提取物理地址
  */
-static inline uintptr_t get_frame(pde_t e) { return e & 0xFFFFF000; }
+static inline uintptr_t get_frame(pte_t e) { return (uintptr_t)pgtable_get_phys(e); }
 
 /**
  * @brief 检查页表项/页目录项是否存在
  * @param e 页表项或页目录项
  * @return 存在返回 true，否则返回 false
+ * 
+ * 使用 pgtable 抽象层检查存在位
  */
-static inline bool is_present(pde_t e) { return e & PAGE_PRESENT; }
+static inline bool is_present(pte_t e) { return pgtable_is_present(e); }
 #endif
 
 /**
@@ -357,10 +375,12 @@ bool vmm_handle_kernel_page_fault(uintptr_t addr) {
 }
 
 /**
- * @brief 处理写保护异常（COW）
+ * @brief 处理写保护异常（COW）- 统一实现
  * @param addr 缺页地址
  * @param error_code 错误码
  * @return 是否成功处理
+ * 
+ * 使用 HAL 接口实现架构无关的 COW 处理。
  * 
  * x86 Page Fault Error Code:
  *   Bit 0 (P): 1 = 页面存在，0 = 页面不存在
@@ -370,16 +390,18 @@ bool vmm_handle_kernel_page_fault(uintptr_t addr) {
  *   Bit 4 (I/D): 1 = 指令获取导致
  * 
  * COW 异常特征：页面存在(P=1) + 写操作(W=1) + 页面有 PAGE_COW 标志
+ * 
+ * @see Requirements 4.1
  */
 bool vmm_handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
-#if defined(ARCH_X86_64)
-    // x86_64: 使用 HAL 接口实现通用 COW 处理
+    /* 统一的 COW 处理逻辑，使用 HAL 接口实现架构无关 */
+    
     // error_code bit 1: 写入导致的异常
     // error_code bit 0: 页面存在
     // COW 异常应该是：页面存在(bit0=1) + 写入(bit1=1) = 0x3 或 0x7
     if ((error_code & 0x3) != 0x3) {
-        LOG_DEBUG_MSG("COW x64: Not a COW fault - addr=0x%llx, error=0x%x\n", 
-                     (unsigned long long)addr, error_code);
+        LOG_DEBUG_MSG("COW: Not a COW fault - addr=0x%lx, error=0x%x\n", 
+                     (unsigned long)addr, error_code);
         return false;  // 不是写保护异常
     }
     
@@ -390,131 +412,23 @@ bool vmm_handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
     paddr_t old_frame;
     uint32_t hal_flags;
     if (!hal_mmu_query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)addr, &old_frame, &hal_flags)) {
-        LOG_DEBUG_MSG("COW x64: Page not mapped - addr=0x%llx\n", (unsigned long long)addr);
+        LOG_DEBUG_MSG("COW: Page not mapped - addr=0x%lx\n", (unsigned long)addr);
         spinlock_unlock_irqrestore(&vmm_lock, irq_state);
         return false;
     }
     
     // 检查页面是否标记为 COW
     if (!(hal_flags & HAL_PAGE_COW)) {
-        LOG_DEBUG_MSG("COW x64: Not a COW page - addr=0x%llx, flags=0x%x\n",
-                     (unsigned long long)addr, hal_flags);
+        LOG_DEBUG_MSG("COW: Not a COW page - addr=0x%lx, flags=0x%x\n",
+                     (unsigned long)addr, hal_flags);
         spinlock_unlock_irqrestore(&vmm_lock, irq_state);
         return false;
     }
     
     // 【安全检查】验证旧物理帧地址
     if (old_frame == PADDR_INVALID || old_frame == 0) {
-        LOG_ERROR_MSG("COW x64: Invalid old frame address 0x%llx at addr=0x%llx\n", 
-                     (unsigned long long)old_frame, (unsigned long long)addr);
-        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-        return false;
-    }
-    
-    uint32_t refcount = pmm_frame_get_refcount(old_frame);
-    
-    LOG_INFO_MSG("COW x64: Handling page fault - addr=0x%llx, old_frame=0x%llx, refcount=%u\n", 
-                (unsigned long long)addr, (unsigned long long)old_frame, refcount);
-    
-    if (refcount == 0) {
-        // 异常情况：COW 页面但引用计数为 0
-        // 这不应该发生，但为了安全，我们恢复写权限并继续
-        LOG_WARN_MSG("COW x64: Page at 0x%llx has refcount=0 but is marked COW, restoring write\n", 
-                    (unsigned long long)addr);
-        hal_mmu_protect(HAL_ADDR_SPACE_CURRENT, (vaddr_t)addr, 
-                       HAL_PAGE_WRITE, HAL_PAGE_COW);
-        hal_mmu_flush_tlb((vaddr_t)addr);
-        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-        return true;
-    }
-    
-    if (refcount == 1) {
-        // 只有当前进程引用，直接恢复写权限，无需复制
-        hal_mmu_protect(HAL_ADDR_SPACE_CURRENT, (vaddr_t)addr, 
-                       HAL_PAGE_WRITE, HAL_PAGE_COW);
-        hal_mmu_flush_tlb((vaddr_t)addr);
-        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-        LOG_DEBUG_MSG("COW x64: Single reference (refcount=1), restored write permission\n");
-        return true;
-    }
-    
-    // 多个进程共享（refcount > 1），需要复制页面
-    paddr_t new_frame = pmm_alloc_frame();
-    if (new_frame == PADDR_INVALID) {
-        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-        LOG_ERROR_MSG("COW x64: Failed to allocate frame for COW copy (out of memory)\n");
-        return false;
-    }
-    
-    // 复制页面内容
-    void *src_virt = (void*)PHYS_TO_VIRT((uintptr_t)old_frame);
-    void *dst_virt = (void*)PHYS_TO_VIRT((uintptr_t)new_frame);
-    memcpy(dst_virt, src_virt, PAGE_SIZE);
-    
-    // 计算新的标志：去掉 COW，恢复写权限
-    uint32_t new_flags = (hal_flags & ~HAL_PAGE_COW) | HAL_PAGE_WRITE;
-    
-    // 取消旧映射并创建新映射
-    hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, (vaddr_t)(addr & ~(PAGE_SIZE - 1)));
-    hal_mmu_map(HAL_ADDR_SPACE_CURRENT, (vaddr_t)(addr & ~(PAGE_SIZE - 1)), new_frame, new_flags);
-    
-    // 刷新 TLB
-    hal_mmu_flush_tlb((vaddr_t)addr);
-    
-    // 减少旧页面的引用计数
-    pmm_frame_ref_dec(old_frame);
-    
-    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-    
-    LOG_DEBUG_MSG("COW x64: Copied page (refcount was %u), old_frame=0x%llx -> new_frame=0x%llx\n", 
-                 refcount, (unsigned long long)old_frame, (unsigned long long)new_frame);
-    return true;
-#else
-    // error_code bit 1: 写入导致的异常
-    // error_code bit 0: 页面存在
-    // COW 异常应该是：页面存在(bit0=1) + 写入(bit1=1) = 0x3 或 0x7
-    if ((error_code & 0x3) != 0x3) {
-        LOG_DEBUG_MSG("COW: Not a COW fault - addr=0x%x, error=0x%x\n", addr, error_code);
-        return false;  // 不是写保护异常
-    }
-    
-    bool irq_state;
-    spinlock_lock_irqsave(&vmm_lock, &irq_state);
-    
-    uint32_t pd_idx = pde_idx(addr);
-    uint32_t pt_idx = pte_idx(addr);
-    
-    // 检查页表是否存在
-    if (!is_present(current_dir->entries[pd_idx])) {
-        LOG_DEBUG_MSG("COW: Page table not present - addr=0x%x\n", addr);
-        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-        return false;
-    }
-    
-    // 【安全检查】验证页表的物理地址
-    paddr_t table_phys = get_frame(current_dir->entries[pd_idx]);
-    if (table_phys == 0 || table_phys >= 0x80000000) {
-        LOG_ERROR_MSG("COW: Invalid page table address 0x%llx at PDE %u\n", (unsigned long long)table_phys, pd_idx);
-        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-        return false;
-    }
-    
-    page_table_t *table = (page_table_t*)PHYS_TO_VIRT((uintptr_t)table_phys);
-    pte_t *pte = &table->entries[pt_idx];
-    
-    // 检查页面是否存在且标记为 COW
-    if (!is_present(*pte) || !(*pte & PAGE_COW)) {
-        LOG_DEBUG_MSG("COW: Not a COW page - addr=0x%lx, pte=0x%x, present=%d, cow=%d\n",
-                     (unsigned long)addr, *pte, is_present(*pte), (*pte & PAGE_COW) != 0);
-        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
-        return false;  // 不是 COW 页面
-    }
-    
-    paddr_t old_frame = get_frame(*pte);
-    
-    // 【安全检查】验证旧物理帧地址
-    if (old_frame == 0 || old_frame >= 0x80000000) {
-        LOG_ERROR_MSG("COW: Invalid old frame address 0x%llx at addr=0x%lx\n", (unsigned long long)old_frame, (unsigned long)addr);
+        LOG_ERROR_MSG("COW: Invalid old frame address 0x%llx at addr=0x%lx\n", 
+                     (unsigned long long)old_frame, (unsigned long)addr);
         spinlock_unlock_irqrestore(&vmm_lock, irq_state);
         return false;
     }
@@ -527,17 +441,20 @@ bool vmm_handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
     if (refcount == 0) {
         // 异常情况：COW 页面但引用计数为 0
         // 这不应该发生，但为了安全，我们恢复写权限并继续
-        LOG_WARN_MSG("COW: Page at 0x%lx has refcount=0 but is marked COW, restoring write\n", (unsigned long)addr);
-        *pte = (uint32_t)old_frame | ((*pte & 0xFFF) & ~PAGE_COW) | PAGE_WRITE;
-        vmm_flush_tlb(addr);
+        LOG_WARN_MSG("COW: Page at 0x%lx has refcount=0 but is marked COW, restoring write\n", 
+                    (unsigned long)addr);
+        hal_mmu_protect(HAL_ADDR_SPACE_CURRENT, (vaddr_t)addr, 
+                       HAL_PAGE_WRITE, HAL_PAGE_COW);
+        hal_mmu_flush_tlb((vaddr_t)addr);
         spinlock_unlock_irqrestore(&vmm_lock, irq_state);
         return true;
     }
     
     if (refcount == 1) {
         // 只有当前进程引用，直接恢复写权限，无需复制
-        *pte = (uint32_t)old_frame | ((*pte & 0xFFF) & ~PAGE_COW) | PAGE_WRITE;
-        vmm_flush_tlb(addr);
+        hal_mmu_protect(HAL_ADDR_SPACE_CURRENT, (vaddr_t)addr, 
+                       HAL_PAGE_WRITE, HAL_PAGE_COW);
+        hal_mmu_flush_tlb((vaddr_t)addr);
         spinlock_unlock_irqrestore(&vmm_lock, irq_state);
         LOG_DEBUG_MSG("COW: Single reference (refcount=1), restored write permission\n");
         return true;
@@ -556,17 +473,20 @@ bool vmm_handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
     void *dst_virt = (void*)PHYS_TO_VIRT((uintptr_t)new_frame);
     memcpy(dst_virt, src_virt, PAGE_SIZE);
     
-    // 更新页表项：指向新页面，恢复写权限，去掉 COW 标记
-    uint32_t old_flags = *pte & 0xFFF;
-    uint32_t new_flags = (old_flags & ~PAGE_COW) | PAGE_WRITE;
-    *pte = (uint32_t)new_frame | new_flags;
+    // 计算新的标志：去掉 COW，恢复写权限
+    uint32_t new_flags = (hal_flags & ~HAL_PAGE_COW) | HAL_PAGE_WRITE;
+    
+    // 页对齐地址
+    vaddr_t page_addr = (vaddr_t)(addr & ~(PAGE_SIZE - 1));
+    
+    // 取消旧映射并创建新映射
+    hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, page_addr);
+    hal_mmu_map(HAL_ADDR_SPACE_CURRENT, page_addr, new_frame, new_flags);
     
     // 刷新 TLB
-    vmm_flush_tlb(addr);
+    hal_mmu_flush_tlb((vaddr_t)addr);
     
     // 减少旧页面的引用计数
-    // 注意：这里不调用 pmm_free_frame，因为我们不想释放帧
-    // 我们只是减少引用计数，让其他进程继续共享
     pmm_frame_ref_dec(old_frame);
     
     spinlock_unlock_irqrestore(&vmm_lock, irq_state);
@@ -574,7 +494,6 @@ bool vmm_handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
     LOG_DEBUG_MSG("COW: Copied page (refcount was %u), old_frame=0x%llx -> new_frame=0x%llx\n", 
                  refcount, (unsigned long long)old_frame, (unsigned long long)new_frame);
     return true;
-#endif /* !ARCH_X86_64 */
 }
 
 /**
@@ -610,6 +529,87 @@ static uint32_t hal_flags_to_vmm(uint32_t hal_flags) {
     if (hal_flags & HAL_PAGE_COW)       vmm_flags |= PAGE_COW;
     
     return vmm_flags;
+}
+
+/* ============================================================================
+ * 错误码转换函数实现
+ * 
+ * 提供 HAL 错误码与 VMM 错误码之间的转换，确保错误处理一致性。
+ * 
+ * @see Requirements 4.4, 12.1
+ * ========================================================================== */
+
+/**
+ * @brief 将 HAL 错误码转换为 VMM 错误码
+ * @param hal_err HAL 错误码
+ * @return 对应的 VMM 错误码
+ */
+vmm_error_t vmm_error_from_hal(hal_error_t hal_err) {
+    switch (hal_err) {
+        case HAL_OK:
+            return VMM_OK;
+        case HAL_ERR_INVALID_PARAM:
+            return VMM_ERR_INVALID_PARAM;
+        case HAL_ERR_NO_MEMORY:
+            return VMM_ERR_NO_MEMORY;
+        case HAL_ERR_NOT_SUPPORTED:
+            return VMM_ERR_NOT_SUPPORTED;
+        case HAL_ERR_NOT_FOUND:
+            return VMM_ERR_NOT_FOUND;
+        case HAL_ERR_PERMISSION:
+            return VMM_ERR_PERMISSION;
+        case HAL_ERR_ALREADY_EXISTS:
+            return VMM_ERR_ALREADY_MAPPED;
+        default:
+            return VMM_ERR_INVALID_PARAM;
+    }
+}
+
+/**
+ * @brief 将 VMM 错误码转换为 HAL 错误码
+ * @param vmm_err VMM 错误码
+ * @return 对应的 HAL 错误码
+ */
+hal_error_t vmm_error_to_hal(vmm_error_t vmm_err) {
+    switch (vmm_err) {
+        case VMM_OK:
+            return HAL_OK;
+        case VMM_ERR_INVALID_PARAM:
+            return HAL_ERR_INVALID_PARAM;
+        case VMM_ERR_NO_MEMORY:
+            return HAL_ERR_NO_MEMORY;
+        case VMM_ERR_NOT_SUPPORTED:
+            return HAL_ERR_NOT_SUPPORTED;
+        case VMM_ERR_NOT_FOUND:
+            return HAL_ERR_NOT_FOUND;
+        case VMM_ERR_ALREADY_MAPPED:
+            return HAL_ERR_ALREADY_EXISTS;
+        case VMM_ERR_PERMISSION:
+            return HAL_ERR_PERMISSION;
+        case VMM_ERR_COW_FAILED:
+            return HAL_ERR_IO;
+        default:
+            return HAL_ERR_INVALID_PARAM;
+    }
+}
+
+/**
+ * @brief 获取 VMM 错误码的字符串描述
+ * @param err VMM 错误码
+ * @return 错误描述字符串
+ */
+const char *vmm_error_string(vmm_error_t err) {
+    switch (err) {
+        case VMM_OK:                return "Success";
+        case VMM_ERR_INVALID_PARAM: return "Invalid parameter";
+        case VMM_ERR_NO_MEMORY:     return "Out of memory";
+        case VMM_ERR_NOT_SUPPORTED: return "Operation not supported";
+        case VMM_ERR_NOT_FOUND:     return "Mapping not found";
+        case VMM_ERR_ALREADY_MAPPED:return "Address already mapped";
+        case VMM_ERR_PERMISSION:    return "Permission denied";
+        case VMM_ERR_COW_FAILED:    return "COW operation failed";
+        default:                    return "Unknown error";
+    }
 }
 
 /**

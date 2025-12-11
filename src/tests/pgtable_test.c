@@ -2,14 +2,15 @@
 // pgtable_test.c - 页表抽象层单元测试
 // ============================================================================
 // 
-// Property-Based Tests for pgtable.h
-// **Feature: mm-refactor**
-// **Validates: Requirements 3.1, 3.3, 3.4**
+// Property-Based Tests for pgtable.h and hal/pgtable.h
+// **Feature: mm-refactor, multi-arch-optimization**
+// **Validates: Requirements 3.1, 3.2, 3.3, 3.4**
 // ============================================================================
 
 #include <tests/ktest.h>
 #include <tests/pgtable_test.h>
 #include <mm/pgtable.h>
+#include <hal/pgtable.h>
 #include <lib/kprintf.h>
 
 // ============================================================================
@@ -329,6 +330,253 @@ TEST_SUITE(pgtable_va_tests) {
 }
 
 // ============================================================================
+// HAL pgtable 函数测试
+// **Feature: multi-arch-optimization, Property 1: 页表项往返一致性**
+// **Validates: Requirements 3.1, 3.2**
+// ============================================================================
+
+/**
+ * Property Test: HAL pgtable_make_entry/pgtable_get_phys round-trip
+ * 
+ * *For any* valid physical address and flag combination, creating a page table
+ * entry with pgtable_make_entry() and then extracting the physical address
+ * with pgtable_get_phys() should return the original address.
+ */
+TEST_CASE(test_hal_pgtable_phys_roundtrip) {
+    paddr_t test_addrs[] = {
+        0x0,
+        0x1000,
+        0x100000,
+        0x10000000,
+#if defined(ARCH_X86_64) || defined(ARCH_ARM64)
+        0x100000000ULL,
+        0x1000000000ULL,
+#endif
+    };
+    
+    size_t num_addrs = sizeof(test_addrs) / sizeof(test_addrs[0]);
+    
+    for (size_t i = 0; i < num_addrs; i++) {
+        paddr_t addr = test_addrs[i];
+        uint32_t flags = PTE_PRESENT | PTE_WRITE;
+        
+        pte_t entry = pgtable_make_entry(addr, flags);
+        paddr_t extracted = pgtable_get_phys(entry);
+        
+        // Compare as 64-bit values
+        ASSERT_TRUE(extracted == addr);
+    }
+}
+
+/**
+ * Property Test: HAL pgtable_make_entry/pgtable_get_flags round-trip
+ * 
+ * *For any* valid physical address and flag combination, creating a page table
+ * entry with pgtable_make_entry() and then extracting the flags with
+ * pgtable_get_flags() should return the original flags.
+ */
+TEST_CASE(test_hal_pgtable_flags_roundtrip) {
+    paddr_t addr = 0x1000;
+    
+    uint32_t test_flags[] = {
+        PTE_PRESENT,
+        PTE_PRESENT | PTE_WRITE,
+        PTE_PRESENT | PTE_USER,
+        PTE_PRESENT | PTE_WRITE | PTE_USER,
+        PTE_PRESENT | PTE_NOCACHE,
+        PTE_PRESENT | PTE_COW,
+#if defined(ARCH_X86_64) || defined(ARCH_ARM64)
+        PTE_PRESENT | PTE_EXEC,
+        PTE_PRESENT | PTE_WRITE | PTE_USER | PTE_EXEC,
+#endif
+    };
+    
+    size_t num_flags = sizeof(test_flags) / sizeof(test_flags[0]);
+    
+    for (size_t i = 0; i < num_flags; i++) {
+        uint32_t flags = test_flags[i];
+        
+        pte_t entry = pgtable_make_entry(addr, flags);
+        uint32_t extracted = pgtable_get_flags(entry);
+        
+        // Check that all input flags are present in extracted flags
+        ASSERT_TRUE((extracted & flags) == flags);
+    }
+}
+
+/**
+ * Property Test: HAL pgtable_is_* functions
+ * 
+ * *For any* page table entry with specific flags, the corresponding
+ * pgtable_is_* functions should return the correct boolean value.
+ */
+TEST_CASE(test_hal_pgtable_is_functions) {
+    paddr_t addr = 0x1000;
+    
+    // Test pgtable_is_present
+    {
+        pte_t present = pgtable_make_entry(addr, PTE_PRESENT);
+        pte_t not_present = pgtable_make_entry(addr, 0);
+        
+        ASSERT_TRUE(pgtable_is_present(present));
+        ASSERT_FALSE(pgtable_is_present(not_present));
+    }
+    
+    // Test pgtable_is_writable
+    {
+        pte_t writable = pgtable_make_entry(addr, PTE_PRESENT | PTE_WRITE);
+        pte_t readonly = pgtable_make_entry(addr, PTE_PRESENT);
+        
+        ASSERT_TRUE(pgtable_is_writable(writable));
+        ASSERT_FALSE(pgtable_is_writable(readonly));
+    }
+    
+    // Test pgtable_is_user
+    {
+        pte_t user = pgtable_make_entry(addr, PTE_PRESENT | PTE_USER);
+        pte_t kernel = pgtable_make_entry(addr, PTE_PRESENT);
+        
+        ASSERT_TRUE(pgtable_is_user(user));
+        ASSERT_FALSE(pgtable_is_user(kernel));
+    }
+    
+    // Test pgtable_is_cow
+    {
+        pte_t cow = pgtable_make_entry(addr, PTE_PRESENT | PTE_COW);
+        pte_t not_cow = pgtable_make_entry(addr, PTE_PRESENT);
+        
+        ASSERT_TRUE(pgtable_is_cow(cow));
+        ASSERT_FALSE(pgtable_is_cow(not_cow));
+    }
+}
+
+/**
+ * Property Test: HAL pgtable_modify_flags
+ * 
+ * *For any* page table entry, pgtable_modify_flags should correctly
+ * set and clear the specified flags.
+ */
+TEST_CASE(test_hal_pgtable_modify_flags) {
+    paddr_t addr = 0x1000;
+    
+    // Start with a basic entry
+    pte_t entry = pgtable_make_entry(addr, PTE_PRESENT | PTE_WRITE);
+    
+    // Add COW flag
+    pte_t with_cow = pgtable_modify_flags(entry, PTE_COW, 0);
+    ASSERT_TRUE(pgtable_is_cow(with_cow));
+    ASSERT_TRUE(pgtable_is_writable(with_cow));
+    
+    // Remove WRITE flag
+    pte_t readonly = pgtable_modify_flags(with_cow, 0, PTE_WRITE);
+    ASSERT_TRUE(pgtable_is_cow(readonly));
+    ASSERT_FALSE(pgtable_is_writable(readonly));
+    
+    // Physical address should be preserved
+    ASSERT_TRUE(pgtable_get_phys(readonly) == addr);
+}
+
+/**
+ * Property Test: HAL pgtable configuration queries
+ * 
+ * *For any* architecture, the configuration query functions should
+ * return consistent values.
+ */
+TEST_CASE(test_hal_pgtable_config) {
+    uint32_t levels = pgtable_get_levels();
+    uint32_t entries = pgtable_get_entries_per_level();
+    uint32_t entry_size = pgtable_get_entry_size();
+    
+#if defined(ARCH_I686)
+    ASSERT_EQ_U(levels, 2);
+    ASSERT_EQ_U(entries, 1024);
+    ASSERT_EQ_U(entry_size, 4);
+    ASSERT_FALSE(pgtable_supports_nx());
+    ASSERT_FALSE(pgtable_supports_huge_pages());
+#elif defined(ARCH_X86_64)
+    ASSERT_EQ_U(levels, 4);
+    ASSERT_EQ_U(entries, 512);
+    ASSERT_EQ_U(entry_size, 8);
+    ASSERT_TRUE(pgtable_supports_nx());
+    ASSERT_TRUE(pgtable_supports_huge_pages());
+#elif defined(ARCH_ARM64)
+    ASSERT_EQ_U(levels, 4);
+    ASSERT_EQ_U(entries, 512);
+    ASSERT_EQ_U(entry_size, 8);
+    ASSERT_TRUE(pgtable_supports_nx());
+    ASSERT_TRUE(pgtable_supports_huge_pages());
+#endif
+}
+
+/**
+ * Property Test: HAL pgtable index extraction
+ * 
+ * *For any* virtual address, the index extraction functions should
+ * return values within valid ranges.
+ */
+TEST_CASE(test_hal_pgtable_index_extraction) {
+    vaddr_t test_addrs[] = {
+        0x0,
+        0x1000,
+        0x12345678,
+        0x80000000,
+#if defined(ARCH_X86_64) || defined(ARCH_ARM64)
+        0x7FFFFFFFFFFF,
+        0xFFFF800000000000ULL,
+#endif
+    };
+    
+    size_t num_addrs = sizeof(test_addrs) / sizeof(test_addrs[0]);
+    uint32_t levels = pgtable_get_levels();
+    uint32_t max_index = pgtable_get_entries_per_level();
+    
+    for (size_t i = 0; i < num_addrs; i++) {
+        vaddr_t va = test_addrs[i];
+        
+        // Top index should be within range
+        uint32_t top_idx = pgtable_get_top_index(va);
+        ASSERT_TRUE(top_idx < max_index);
+        
+        // All level indices should be within range
+        for (uint32_t level = 0; level < levels; level++) {
+            uint32_t idx = pgtable_get_index(va, level);
+            ASSERT_TRUE(idx < max_index);
+        }
+        
+        // Page offset should be within 4KB
+        uint32_t offset = pgtable_get_page_offset(va);
+        ASSERT_TRUE(offset < PAGE_SIZE);
+    }
+}
+
+/**
+ * Property Test: HAL pgtable_validate_entry
+ * 
+ * *For any* valid page table entry, pgtable_validate_entry should return true.
+ */
+TEST_CASE(test_hal_pgtable_validate) {
+    paddr_t addr = 0x1000;
+    
+    // Valid entries should pass validation
+    pte_t valid = pgtable_make_entry(addr, PTE_PRESENT | PTE_WRITE);
+    ASSERT_TRUE(pgtable_validate_entry(valid));
+    
+    // Empty entry should pass validation
+    pte_t empty = pgtable_clear_entry();
+    ASSERT_TRUE(pgtable_validate_entry(empty));
+}
+
+TEST_SUITE(hal_pgtable_tests) {
+    RUN_TEST(test_hal_pgtable_phys_roundtrip);
+    RUN_TEST(test_hal_pgtable_flags_roundtrip);
+    RUN_TEST(test_hal_pgtable_is_functions);
+    RUN_TEST(test_hal_pgtable_modify_flags);
+    RUN_TEST(test_hal_pgtable_config);
+    RUN_TEST(test_hal_pgtable_index_extraction);
+    RUN_TEST(test_hal_pgtable_validate);
+}
+
+// ============================================================================
 // 运行所有测试
 // ============================================================================
 
@@ -336,13 +584,18 @@ void run_pgtable_tests(void) {
     // 初始化测试框架
     unittest_init();
     
-    // Property 7: PTE Construction Round-Trip
+    // Property 7: PTE Construction Round-Trip (mm/pgtable.h macros)
     // **Feature: mm-refactor, Property 7: PTE Construction Round-Trip**
     // **Validates: Requirements 3.3, 3.4**
     RUN_SUITE(pgtable_pte_tests);
     
-    // Virtual address decomposition tests
+    // Virtual address decomposition tests (mm/pgtable.h macros)
     RUN_SUITE(pgtable_va_tests);
+    
+    // HAL pgtable function tests
+    // **Feature: multi-arch-optimization, Property 1: 页表项往返一致性**
+    // **Validates: Requirements 3.1, 3.2**
+    RUN_SUITE(hal_pgtable_tests);
     
     // 打印测试摘要
     unittest_print_summary();

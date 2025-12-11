@@ -3,12 +3,53 @@
  * @brief 虚拟内存管理器
  * 
  * 实现分页机制，管理虚拟地址到物理地址的映射
+ * 
+ * @see Requirements 3.4, 4.1, 4.2, 4.4, 12.1
  */
 
 #ifndef _MM_VMM_H_
 #define _MM_VMM_H_
 
 #include <types.h>
+#include <hal/hal_error.h>
+
+/* ============================================================================
+ * VMM 错误码定义
+ * 
+ * VMM 使用与 HAL 兼容的错误码，确保跨架构的错误处理一致性。
+ * 
+ * @see Requirements 4.4, 12.1
+ * ========================================================================== */
+
+/**
+ * @brief VMM 错误码枚举
+ * 
+ * 与 HAL 错误码保持一致，便于错误码转换。
+ */
+typedef enum vmm_error {
+    VMM_OK = 0,                     /**< 操作成功 */
+    VMM_ERR_INVALID_PARAM = -1,     /**< 无效参数（地址未对齐等） */
+    VMM_ERR_NO_MEMORY = -2,         /**< 内存不足（无法分配页表或物理页） */
+    VMM_ERR_NOT_SUPPORTED = -3,     /**< 不支持的操作 */
+    VMM_ERR_NOT_FOUND = -4,         /**< 映射不存在 */
+    VMM_ERR_ALREADY_MAPPED = -5,    /**< 地址已映射 */
+    VMM_ERR_PERMISSION = -6,        /**< 权限错误 */
+    VMM_ERR_COW_FAILED = -7,        /**< COW 处理失败 */
+} vmm_error_t;
+
+/**
+ * @brief 检查 VMM 操作是否成功
+ * @param err vmm_error_t 返回值
+ * @return 如果操作成功返回非零值
+ */
+#define VMM_SUCCESS(err) ((err) == VMM_OK)
+
+/**
+ * @brief 检查 VMM 操作是否失败
+ * @param err vmm_error_t 返回值
+ * @return 如果操作失败返回非零值
+ */
+#define VMM_FAILED(err) ((err) != VMM_OK)
 
 /** @brief 页存在标志 */
 #define PAGE_PRESENT    0x001
@@ -279,5 +320,42 @@ void vmm_dump_user_mappings(void);
  * 便捷函数，转储当前页目录中内核空间（KERNEL_VIRTUAL_BASE - 0xFFFFFFFF）的所有映射
  */
 void vmm_dump_kernel_mappings(void);
+
+/* ============================================================================
+ * 错误码转换函数
+ * 
+ * 提供 HAL 错误码与 VMM 错误码之间的转换。
+ * 
+ * @see Requirements 4.4, 12.1
+ * ========================================================================== */
+
+/**
+ * @brief 将 HAL 错误码转换为 VMM 错误码
+ * @param hal_err HAL 错误码
+ * @return 对应的 VMM 错误码
+ * 
+ * 转换规则：
+ *   HAL_OK              -> VMM_OK
+ *   HAL_ERR_INVALID_PARAM -> VMM_ERR_INVALID_PARAM
+ *   HAL_ERR_NO_MEMORY   -> VMM_ERR_NO_MEMORY
+ *   HAL_ERR_NOT_SUPPORTED -> VMM_ERR_NOT_SUPPORTED
+ *   HAL_ERR_NOT_FOUND   -> VMM_ERR_NOT_FOUND
+ *   其他                -> VMM_ERR_INVALID_PARAM
+ */
+vmm_error_t vmm_error_from_hal(hal_error_t hal_err);
+
+/**
+ * @brief 将 VMM 错误码转换为 HAL 错误码
+ * @param vmm_err VMM 错误码
+ * @return 对应的 HAL 错误码
+ */
+hal_error_t vmm_error_to_hal(vmm_error_t vmm_err);
+
+/**
+ * @brief 获取 VMM 错误码的字符串描述
+ * @param err VMM 错误码
+ * @return 错误描述字符串
+ */
+const char *vmm_error_string(vmm_error_t err);
 
 #endif // _MM_VMM_H_

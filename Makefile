@@ -111,9 +111,11 @@ DISK_IMAGE = $(BUILD_DIR)/bootable.img
 ifeq ($(ARCH),arm64)
     COMMON_C_SOURCES = $(SRC_DIR)/lib/string.c \
         $(SRC_DIR)/lib/libgcc_stub.c \
-        $(wildcard $(SRC_DIR)/drivers/arm/*.c)
+        $(wildcard $(SRC_DIR)/drivers/arm/*.c) \
+        $(wildcard $(SRC_DIR)/drivers/platform/*.c)
 else
     COMMON_C_SOURCES = $(wildcard $(SRC_DIR)/drivers/common/*.c) \
+        $(wildcard $(SRC_DIR)/drivers/platform/*.c) \
         $(wildcard $(SRC_DIR)/drivers/x86/*.c) \
         $(wildcard $(SRC_DIR)/drivers/x86/usb/*.c) \
         $(wildcard $(SRC_DIR)/fs/*.c) \
@@ -132,12 +134,16 @@ ifeq ($(ARCH),arm64)
     ARCH_C_SOURCES = $(ARCH_DIR)/hal.c \
         $(ARCH_DIR)/hal_caps.c \
         $(ARCH_DIR)/stubs.c \
+        $(ARCH_DIR)/boot/boot_info.c \
         $(ARCH_DIR)/interrupt/exception.c \
         $(ARCH_DIR)/interrupt/gic.c \
+        $(ARCH_DIR)/interrupt/hal_irq.c \
         $(ARCH_DIR)/mm/mmu.c \
         $(ARCH_DIR)/mm/fault.c \
+        $(ARCH_DIR)/mm/pgtable.c \
         $(ARCH_DIR)/task/context.c \
         $(ARCH_DIR)/syscall/syscall.c \
+        $(ARCH_DIR)/syscall/hal_syscall.c \
         $(ARCH_DIR)/dtb/dtb.c
 else
     ARCH_C_SOURCES = $(wildcard $(ARCH_DIR)/*.c) \
