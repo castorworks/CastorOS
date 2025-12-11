@@ -35,6 +35,7 @@
 
 #define PBT_DEFAULT_ITERATIONS  100
 #define PBT_MAX_SHRINK_ATTEMPTS 50
+#define PBT_SHRINK_ENABLED      1    // Enable counterexample shrinking
 
 // ============================================================================
 // Random Number Generator State
@@ -48,12 +49,18 @@
  */
 typedef struct pbt_state {
     uint64_t seed;           // Current PRNG state
+    uint64_t initial_seed;   // Seed at start of iteration (for reproducibility)
     uint32_t iteration;      // Current test iteration
     uint32_t shrink_count;   // Number of shrink attempts
     bool     failed;         // Whether current test failed
+    bool     is_shrinking;   // Whether we're in shrink phase
     const char *failure_msg; // Failure message
     const char *file;        // File where failure occurred
     int      line;           // Line where failure occurred
+    
+    // Counterexample tracking for enhanced reporting
+    uint64_t counterexample_values[8];  // Store up to 8 generated values
+    uint32_t counterexample_count;      // Number of values stored
 } pbt_state_t;
 
 // ============================================================================
@@ -260,6 +267,50 @@ void pbt_gen_bytes(pbt_state_t *state, void *buffer, size_t size);
  */
 #define PBT_RUN_DEFAULT(name) \
     PBT_RUN(name, PBT_DEFAULT_ITERATIONS)
+
+// ============================================================================
+// Counterexample Tracking
+// ============================================================================
+
+/**
+ * @brief Record a generated value for counterexample reporting
+ * 
+ * Call this after generating a value to include it in failure reports.
+ * 
+ * @param state PBT state
+ * @param value Generated value to record
+ */
+void pbt_record_value(pbt_state_t *state, uint64_t value);
+
+/**
+ * @brief Record a generated value with a name for counterexample reporting
+ * 
+ * @param state PBT state
+ * @param name Variable name for reporting
+ * @param value Generated value to record
+ */
+#define PBT_RECORD(state, name, value) \
+    do { \
+        pbt_record_value(state, (uint64_t)(value)); \
+    } while (0)
+
+// ============================================================================
+// Enhanced Failure Reporting
+// ============================================================================
+
+/**
+ * @brief Print detailed failure diagnostics
+ * 
+ * Called automatically on property failure. Prints:
+ * - Failing seed for reproducibility
+ * - Iteration number
+ * - Shrink attempt count (if shrinking was performed)
+ * - Recorded counterexample values
+ * 
+ * @param state PBT state with failure information
+ * @param name Property name
+ */
+void pbt_print_failure_diagnostics(pbt_state_t *state, const char *name);
 
 // ============================================================================
 // Internal Functions (do not call directly)

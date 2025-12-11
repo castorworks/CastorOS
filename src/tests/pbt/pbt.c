@@ -64,12 +64,18 @@ void pbt_init(void) {
 void pbt_state_init(pbt_state_t *state, uint64_t seed) {
     // Ensure seed is non-zero (xorshift requires non-zero state)
     state->seed = (seed != 0) ? seed : PBT_DEFAULT_SEED;
+    state->initial_seed = state->seed;
     state->iteration = 0;
     state->shrink_count = 0;
     state->failed = false;
+    state->is_shrinking = false;
     state->failure_msg = NULL;
     state->file = NULL;
     state->line = 0;
+    state->counterexample_count = 0;
+    for (int i = 0; i < 8; i++) {
+        state->counterexample_values[i] = 0;
+    }
 }
 
 
@@ -93,16 +99,18 @@ bool pbt_run_property(const char *name, pbt_property_fn property, uint32_t itera
     kprintf("  [ PBT  ] %s (%u iterations)\n", name, iterations);
     
     bool all_passed = true;
-    uint32_t failed_iteration = 0;
-    uint64_t failed_seed = 0;
+    pbt_state_t failed_state;  // Save state for detailed reporting
+    memset(&failed_state, 0, sizeof(failed_state));
     
     for (uint32_t i = 0; i < iterations; i++) {
         state.iteration = i;
         state.failed = false;
         state.failure_msg = NULL;
+        state.counterexample_count = 0;
         
         // Save seed before this iteration for reproducibility
         uint64_t iter_seed = state.seed;
+        state.initial_seed = iter_seed;
         
         // Run the property
         property(&state);
@@ -111,8 +119,39 @@ bool pbt_run_property(const char *name, pbt_property_fn property, uint32_t itera
         
         if (state.failed) {
             all_passed = false;
-            failed_iteration = i;
-            failed_seed = iter_seed;
+            failed_state = state;  // Copy state for reporting
+            
+#if PBT_SHRINK_ENABLED
+            // Attempt to shrink the counterexample
+            uint32_t shrink_attempts = 0;
+            uint64_t shrink_seed = iter_seed;
+            
+            while (shrink_attempts < PBT_MAX_SHRINK_ATTEMPTS) {
+                // Try a "smaller" seed by reducing it
+                uint64_t try_seed = shrink_seed / 2;
+                if (try_seed == 0 || try_seed == shrink_seed) {
+                    break;
+                }
+                
+                pbt_state_t shrink_state;
+                pbt_state_init(&shrink_state, try_seed);
+                shrink_state.iteration = i;
+                shrink_state.is_shrinking = true;
+                shrink_state.shrink_count = shrink_attempts + 1;
+                
+                property(&shrink_state);
+                
+                if (shrink_state.failed) {
+                    // Found a smaller failing case
+                    shrink_seed = try_seed;
+                    failed_state = shrink_state;
+                }
+                
+                shrink_attempts++;
+            }
+            
+            failed_state.shrink_count = shrink_attempts;
+#endif
             break;
         }
     }
@@ -127,19 +166,9 @@ bool pbt_run_property(const char *name, pbt_property_fn property, uint32_t itera
         return true;
     } else {
         g_pbt_stats.failed_properties++;
-        kprintf("  ");
-        kconsole_set_color(KCOLOR_LIGHT_RED, KCOLOR_BLACK);
-        kprintf("[ FAIL ]");
-        kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
-        kprintf(" %s: failed at iteration %u (seed: 0x%llx)\n", 
-                name, failed_iteration, (unsigned long long)failed_seed);
         
-        if (state.failure_msg) {
-            kprintf("    Assertion: %s\n", state.failure_msg);
-        }
-        if (state.file) {
-            kprintf("    Location: %s:%d\n", state.file, state.line);
-        }
+        // Print enhanced failure diagnostics
+        pbt_print_failure_diagnostics(&failed_state, name);
         
         return false;
     }
@@ -293,6 +322,68 @@ void pbt_gen_bytes(pbt_state_t *state, void *buffer, size_t size) {
         uint64_t random = xorshift64(&state->seed);
         memcpy(bytes, &random, size);
     }
+}
+
+// ============================================================================
+// Counterexample Tracking
+// ============================================================================
+
+void pbt_record_value(pbt_state_t *state, uint64_t value) {
+    if (state->counterexample_count < 8) {
+        state->counterexample_values[state->counterexample_count++] = value;
+    }
+}
+
+// ============================================================================
+// Enhanced Failure Reporting
+// ============================================================================
+
+void pbt_print_failure_diagnostics(pbt_state_t *state, const char *name) {
+    kprintf("\n");
+    kconsole_set_color(KCOLOR_LIGHT_RED, KCOLOR_BLACK);
+    kprintf("================================================================================\n");
+    kprintf("PROPERTY TEST FAILURE DIAGNOSTICS\n");
+    kprintf("================================================================================\n");
+    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
+    
+    kprintf("Property:     %s\n", name);
+    kprintf("Iteration:    %u\n", state->iteration);
+    kprintf("Seed:         0x%llx\n", (unsigned long long)state->initial_seed);
+    
+    if (state->shrink_count > 0) {
+        kprintf("Shrink attempts: %u\n", state->shrink_count);
+        kprintf("Shrunk seed:  0x%llx (use this seed to reproduce minimal case)\n", 
+                (unsigned long long)state->initial_seed);
+    }
+    
+    if (state->file) {
+        kprintf("Location:     %s:%d\n", state->file, state->line);
+    }
+    
+    if (state->failure_msg) {
+        kprintf("Assertion:    %s\n", state->failure_msg);
+    }
+    
+    // Print recorded counterexample values
+    if (state->counterexample_count > 0) {
+        kprintf("\nCounterexample values:\n");
+        for (uint32_t i = 0; i < state->counterexample_count; i++) {
+            kprintf("  [%u]: %llu (0x%llx)\n", i, 
+                    (unsigned long long)state->counterexample_values[i],
+                    (unsigned long long)state->counterexample_values[i]);
+        }
+    }
+    
+    // Print reproduction hint
+    kprintf("\nTo reproduce this failure:\n");
+    kprintf("  1. Use seed 0x%llx in pbt_state_init()\n", 
+            (unsigned long long)state->initial_seed);
+    kprintf("  2. Run iteration %u\n", state->iteration);
+    
+    kconsole_set_color(KCOLOR_LIGHT_RED, KCOLOR_BLACK);
+    kprintf("================================================================================\n");
+    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
+    kprintf("\n");
 }
 
 // ============================================================================

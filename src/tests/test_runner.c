@@ -3,14 +3,18 @@
 // ============================================================================
 // 
 // 运行所有注册的单元测试套件
-// 使用数组管理测试，可以通过注释屏蔽某个测试
+// 支持模块化注册和传统数组两种方式管理测试
 // 
 // 支持多架构测试运行，提供架构特定诊断信息
-// Requirements: 11.3, 11.4
+// 支持按子系统和模块名过滤测试
+//
+// **Feature: test-refactor**
+// **Validates: Requirements 10.2, 12.2, 12.3, 13.1**
 // ============================================================================
 
 #include <tests/ktest.h>
 #include <tests/test_runner.h>
+#include <tests/test_module.h>
 #include <tests/ktest_example.h>
 #include <tests/string_test.h>
 #include <tests/kprintf_test.h>
@@ -37,6 +41,17 @@
 #include <tests/cow_flag_test.h>
 #include <tests/fork_exec_test.h>
 #include <tests/syscall_error_test.h>
+#include <tests/vfs_test.h>
+#include <tests/ramfs_test.h>
+#include <tests/fat32_test.h>
+#include <tests/devfs_test.h>
+#include <tests/checksum_test.h>
+#include <tests/netbuf_test.h>
+#include <tests/arp_test.h>
+#include <tests/tcp_test.h>
+#include <tests/pci_test.h>
+#include <tests/timer_test.h>
+#include <tests/serial_test.h>
 #include <tests/pbt.h>
 #include <lib/kprintf.h>
 
@@ -399,6 +414,63 @@ static const test_entry_t test_suite[] = {
     // **Feature: multi-arch-support, Property 13: System Call Error Consistency**
     // **Validates: Requirements 8.4**
     TEST_ENTRY("System Call Error Consistency Tests", run_syscall_error_tests),
+    
+    // VFS 测试 (Property 9: VFS Read-Write Round-Trip)
+    // **Feature: test-refactor, Property 9: VFS Read-Write Round-Trip**
+    // **Validates: Requirements 4.1, 4.2**
+    TEST_ENTRY("VFS Tests", run_vfs_tests),
+    
+    // Ramfs 测试 (Property 10: Ramfs Create-Delete Consistency)
+    // **Feature: test-refactor, Property 10: Ramfs Create-Delete Consistency**
+    // **Validates: Requirements 4.4**
+    TEST_ENTRY("Ramfs Tests", run_ramfs_tests),
+    
+    // FAT32 测试 - 目录项解析和文件名处理
+    // **Feature: test-refactor**
+    // **Validates: Requirements 4.3**
+    TEST_ENTRY("FAT32 Tests", run_fat32_tests),
+    
+    // Devfs 测试 - 设备注册和节点访问
+    // **Feature: test-refactor**
+    // **Validates: Requirements 4.5**
+    TEST_ENTRY("Devfs Tests", run_devfs_tests),
+    
+    // Checksum 测试 - 网络校验和计算
+    // **Feature: test-refactor**
+    // **Validates: Requirements 5.1**
+    TEST_ENTRY("Checksum Tests", run_checksum_tests),
+    
+    // Netbuf 测试 - 网络缓冲区管理
+    // **Feature: test-refactor, Property 12: Netbuf Data Integrity**
+    // **Validates: Requirements 5.5**
+    TEST_ENTRY("Netbuf Tests", run_netbuf_tests),
+    
+    // ARP 测试 - ARP 缓存表管理
+    // **Feature: test-refactor, Property 11: ARP Table Lookup Round-Trip**
+    // **Validates: Requirements 5.4**
+    TEST_ENTRY("ARP Tests", run_arp_tests),
+    
+    // TCP 测试 - TCP 段解析和头部字段提取
+    // **Feature: test-refactor**
+    // **Validates: Requirements 5.3**
+    TEST_ENTRY("TCP Tests", run_tcp_tests),
+    
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
+    // PCI 测试 - PCI 配置空间读写
+    // **Feature: test-refactor**
+    // **Validates: Requirements 6.2**
+    TEST_ENTRY("PCI Tests", run_pci_tests),
+#endif
+    
+    // Timer 测试 - tick 计数和回调调用
+    // **Feature: test-refactor**
+    // **Validates: Requirements 6.3**
+    TEST_ENTRY("Timer Tests", run_timer_tests),
+    
+    // Serial 测试 - 字符发送和接收
+    // **Feature: test-refactor**
+    // **Validates: Requirements 6.4**
+    TEST_ENTRY("Serial Tests", run_serial_tests),
 };
 
 // 计算测试用例总数
@@ -476,5 +548,119 @@ void run_all_tests(void) {
     kprintf("================================================================================\n");
     kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
     kprintf("\n");
+}
+
+// ============================================================================
+// 模块化测试运行器支持
+// ============================================================================
+// 
+// 以下函数支持新的模块化测试注册机制
+// Requirements: 10.2, 12.2, 12.3, 13.1
+// ============================================================================
+
+// 全局模块注册表
+static test_registry_t g_test_registry;
+static bool g_registry_initialized = false;
+
+/**
+ * @brief 初始化全局测试注册表
+ */
+void test_runner_init_registry(void) {
+    if (!g_registry_initialized) {
+        test_registry_init(&g_test_registry);
+        g_registry_initialized = true;
+    }
+}
+
+/**
+ * @brief 获取全局测试注册表
+ */
+test_registry_t* test_runner_get_registry(void) {
+    if (!g_registry_initialized) {
+        test_runner_init_registry();
+    }
+    return &g_test_registry;
+}
+
+/**
+ * @brief 注册一个测试模块到全局注册表
+ */
+bool test_runner_register_module(const test_module_t *module) {
+    if (!g_registry_initialized) {
+        test_runner_init_registry();
+    }
+    return test_registry_add(&g_test_registry, module);
+}
+
+/**
+ * @brief 运行指定子系统的测试
+ * 
+ * Requirements: 12.2 - 支持运行子系统内所有模块
+ */
+void run_subsystem_tests(const char *subsystem) {
+    if (!g_registry_initialized) {
+        kprintf("Warning: Test registry not initialized\n");
+        return;
+    }
+    test_run_subsystem(&g_test_registry, subsystem);
+}
+
+/**
+ * @brief 运行指定模块的测试
+ * 
+ * Requirements: 12.3 - 支持运行单个模块
+ */
+void run_module_tests(const char *module_name) {
+    if (!g_registry_initialized) {
+        kprintf("Warning: Test registry not initialized\n");
+        return;
+    }
+    test_run_module(&g_test_registry, module_name);
+}
+
+/**
+ * @brief 使用选项运行所有注册的模块化测试
+ * 
+ * Requirements: 13.1 - 支持选择性测试执行
+ */
+void run_tests_with_options(const test_run_options_t *options) {
+    if (!g_registry_initialized) {
+        kprintf("Warning: Test registry not initialized\n");
+        return;
+    }
+    test_run_with_options(&g_test_registry, options);
+}
+
+/**
+ * @brief 打印已注册的测试模块列表
+ */
+void test_runner_list_modules(void) {
+    if (!g_registry_initialized) {
+        kprintf("Test registry not initialized\n");
+        return;
+    }
+    
+    kprintf("\nRegistered Test Modules:\n");
+    kprintf("========================\n");
+    
+    for (uint32_t i = 0; i < g_test_registry.count; i++) {
+        const test_module_t *mod = g_test_registry.modules[i];
+        if (mod != NULL) {
+            kprintf("  [%u] %s (%s)", i + 1, mod->name, 
+                    test_subsystem_name(mod->subsystem));
+            if (mod->is_slow) {
+                kprintf(" [slow]");
+            }
+            if (mod->is_arch_specific) {
+                kprintf(" [arch-specific]");
+            }
+            kprintf("\n");
+            if (mod->description != NULL) {
+                kprintf("      %s\n", mod->description);
+            }
+        }
+    }
+    
+    kprintf("\nTotal: %u modules\n", g_test_registry.count);
 }
 

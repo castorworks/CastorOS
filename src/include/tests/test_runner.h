@@ -68,5 +68,69 @@ void test_print_failure_diagnostics(const char *test_name,
                                      const char *file, 
                                      int line);
 
+// ============================================================================
+// 模块化测试运行器支持
+// ============================================================================
+// 
+// 以下函数支持新的模块化测试注册机制
+// **Feature: test-refactor**
+// **Validates: Requirements 10.2, 12.2, 12.3, 13.1**
+// ============================================================================
+
+// 前向声明
+struct test_registry;
+struct test_module;
+struct test_run_options;
+
+/**
+ * @brief 初始化全局测试注册表
+ */
+void test_runner_init_registry(void);
+
+/**
+ * @brief 获取全局测试注册表
+ * @return 指向全局注册表的指针
+ */
+struct test_registry* test_runner_get_registry(void);
+
+/**
+ * @brief 注册一个测试模块到全局注册表
+ * @param module 模块指针
+ * @return 成功返回 true，失败返回 false
+ */
+bool test_runner_register_module(const struct test_module *module);
+
+/**
+ * @brief 运行指定子系统的测试
+ * 
+ * Requirements: 12.2 - 支持运行子系统内所有模块
+ * 
+ * @param subsystem 子系统名称 (mm, fs, net, drivers, kernel, arch, lib)
+ */
+void run_subsystem_tests(const char *subsystem);
+
+/**
+ * @brief 运行指定模块的测试
+ * 
+ * Requirements: 12.3 - 支持运行单个模块
+ * 
+ * @param module_name 模块名称
+ */
+void run_module_tests(const char *module_name);
+
+/**
+ * @brief 使用选项运行所有注册的模块化测试
+ * 
+ * Requirements: 13.1 - 支持选择性测试执行
+ * 
+ * @param options 运行选项
+ */
+void run_tests_with_options(const struct test_run_options *options);
+
+/**
+ * @brief 打印已注册的测试模块列表
+ */
+void test_runner_list_modules(void);
+
 #endif // _TESTS_TEST_RUNNER_H_
 
