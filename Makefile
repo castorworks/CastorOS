@@ -111,8 +111,10 @@ DISK_IMAGE = $(BUILD_DIR)/bootable.img
 ifeq ($(ARCH),arm64)
     COMMON_C_SOURCES = $(SRC_DIR)/lib/string.c \
         $(SRC_DIR)/lib/libgcc_stub.c \
+        $(SRC_DIR)/lib/kprintf.c \
         $(wildcard $(SRC_DIR)/drivers/arm/*.c) \
-        $(wildcard $(SRC_DIR)/drivers/platform/*.c)
+        $(wildcard $(SRC_DIR)/drivers/platform/*.c) \
+        $(wildcard $(SRC_DIR)/tests/framework/*.c)
 else
     COMMON_C_SOURCES = $(wildcard $(SRC_DIR)/drivers/common/*.c) \
         $(wildcard $(SRC_DIR)/drivers/platform/*.c) \
@@ -253,7 +255,7 @@ test: $(KERNEL)
 ifeq ($(ARCH),arm64)
 	@$(TIMEOUT_CMD) $(TEST_TIMEOUT) $(QEMU) $(QEMU_FLAGS) $(KERNEL) -nographic 2>&1 | head -$(OUTPUT_LINES) || true
 else
-	@$(TIMEOUT_CMD) $(TEST_TIMEOUT) $(QEMU) $(QEMU_FLAGS) $(KERNEL) -serial stdio -display none 2>&1 | head -$(OUTPUT_LINES) || true
+	@$(MAKE) test-disk ARCH=$(ARCH)
 endif
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
@@ -289,7 +291,7 @@ check: $(KERNEL)
 
 run: $(KERNEL)
 ifeq ($(ARCH),arm64)
-	$(QEMU) $(QEMU_FLAGS) $(KERNEL) -nographic -serial mon:stdio
+	$(QEMU) $(QEMU_FLAGS) $(KERNEL) -device virtio-gpu-pci -serial mon:stdio
 else ifeq ($(ARCH),x86_64)
 	@$(MAKE) run-disk ARCH=x86_64
 else
@@ -373,7 +375,8 @@ ifeq ($(ARCH),i686)
 else ifeq ($(ARCH),x86_64)
 	qemu-system-x86_64 -hda $(DISK_IMAGE) -serial stdio -netdev user,id=net0 -device e1000,netdev=net0
 else ifeq ($(ARCH),arm64)
-	qemu-system-aarch64 $(QEMU_MACHINE) -hda $(DISK_IMAGE) -nographic -serial mon:stdio
+	@echo "ARM64 uses direct kernel boot with disk as secondary storage"
+	qemu-system-aarch64 $(QEMU_MACHINE) -kernel $(KERNEL) -drive file=$(DISK_IMAGE),format=raw,if=virtio -device virtio-gpu-pci -serial mon:stdio
 endif
 
 debug-disk: disk
@@ -382,7 +385,15 @@ ifeq ($(ARCH),i686)
 else ifeq ($(ARCH),x86_64)
 	qemu-system-x86_64 -hda $(DISK_IMAGE) -serial stdio -netdev user,id=net0 -device e1000,netdev=net0 -s -S
 else ifeq ($(ARCH),arm64)
-	qemu-system-aarch64 $(QEMU_MACHINE) -hda $(DISK_IMAGE) -nographic -serial mon:stdio -s -S
+	qemu-system-aarch64 $(QEMU_MACHINE) -kernel $(KERNEL) -drive file=$(DISK_IMAGE),format=raw,if=virtio -nographic -serial mon:stdio -s -S
+endif
+
+# 从磁盘镜像测试 (用于 i686/x86_64)
+test-disk: disk
+ifeq ($(ARCH),x86_64)
+	@$(TIMEOUT_CMD) $(TEST_TIMEOUT) qemu-system-x86_64 -hda $(DISK_IMAGE) -serial stdio -display none 2>&1 | head -$(OUTPUT_LINES) || true
+else
+	@$(TIMEOUT_CMD) $(TEST_TIMEOUT) qemu-system-i386 -hda $(DISK_IMAGE) -serial stdio -display none 2>&1 | head -$(OUTPUT_LINES) || true
 endif
 
 # ============================================================================

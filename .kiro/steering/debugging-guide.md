@@ -35,9 +35,14 @@ make debug-capture             # 输出保存到 build/$(ARCH)/debug.log
 make debug                     # 带 GUI
 make debug-silent              # 无 GUI
 
-# 手动调试命令 (参考)
-gtimeout 8 qemu-system-i386 -kernel build/i686/castor.bin -serial stdio -display none 2>&1 | head -200
-gtimeout 8 qemu-system-x86_64 -kernel build/x86_64/castor.bin -serial stdio -display none 2>&1 | head -200
+# 手动调试命令 (参考，需先运行 make disk ARCH=xxx)
+# i686: 使用 GRUB 磁盘镜像
+gtimeout 8 qemu-system-i386 -hda build/i686/bootable.img -serial stdio -display none 2>&1 | head -200
+
+# x86_64: 使用 GRUB 磁盘镜像
+gtimeout 15 qemu-system-x86_64 -hda build/x86_64/bootable.img -serial stdio -display none 2>&1 | head -200
+
+# arm64: 使用 -M virt 机器类型 (直接 -kernel)
 gtimeout 8 qemu-system-aarch64 -M virt -cpu cortex-a72 -kernel build/arm64/castor.bin -nographic 2>&1 | head -200
 ```
 
@@ -63,6 +68,8 @@ make sources                   # 列出源文件
 
 | 架构 | QEMU | 启动方式 | 状态 |
 |------|------|----------|------|
-| i686 | qemu-system-i386 | -kernel | 主要 |
-| x86_64 | qemu-system-x86_64 | 需要 GRUB 磁盘 | 开发中 |
-| arm64 | qemu-system-aarch64 | -M virt | 开发中 |
+| i686 | qemu-system-i386 | -hda 磁盘镜像 | 主要 |
+| x86_64 | qemu-system-x86_64 | -hda 磁盘镜像 | 开发中 |
+| arm64 | qemu-system-aarch64 | -M virt -kernel | 开发中 |
+
+**注意**: i686/x86_64 测试时会自动构建 GRUB 磁盘镜像。

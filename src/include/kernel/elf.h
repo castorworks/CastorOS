@@ -7,7 +7,7 @@
 /**
  * ELF 可执行文件格式支持
  * 
- * 支持 32 位 i386 ELF 格式
+ * 支持 32 位 i386 和 64 位 x86_64 ELF 格式
  */
 
 /* ELF 魔数 */
@@ -29,7 +29,8 @@
 #define ET_CORE         4  // Core 文件
 
 /* 机器类型 */
-#define EM_386          3  // Intel 80386
+#define EM_386          3   // Intel 80386
+#define EM_X86_64       62  // AMD x86-64
 
 /* 版本 */
 #define EV_CURRENT      1  // 当前版本
@@ -84,14 +85,56 @@ typedef struct {
 } __attribute__((packed)) elf32_phdr_t;
 
 /**
- * 验证 ELF 文件头
+ * ELF 文件头（64位）
+ */
+typedef struct {
+    uint8_t  e_ident[16];    // 魔数和其他信息
+    uint16_t e_type;         // 目标文件类型
+    uint16_t e_machine;      // 机器类型
+    uint32_t e_version;      // 版本
+    uint64_t e_entry;        // 程序入口点虚拟地址
+    uint64_t e_phoff;        // 程序头表偏移
+    uint64_t e_shoff;        // 节头表偏移
+    uint32_t e_flags;        // 处理器特定标志
+    uint16_t e_ehsize;       // ELF 头大小
+    uint16_t e_phentsize;    // 程序头表项大小
+    uint16_t e_phnum;        // 程序头表项数量
+    uint16_t e_shentsize;    // 节头表项大小
+    uint16_t e_shnum;        // 节头表项数量
+    uint16_t e_shstrndx;     // 节头字符串表索引
+} __attribute__((packed)) elf64_ehdr_t;
+
+/**
+ * ELF 程序头（64位）
+ * 注意：64位程序头的字段顺序与32位不同
+ */
+typedef struct {
+    uint32_t p_type;         // 段类型
+    uint32_t p_flags;        // 段标志（64位中位置不同）
+    uint64_t p_offset;       // 段在文件中的偏移
+    uint64_t p_vaddr;        // 段的虚拟地址
+    uint64_t p_paddr;        // 段的物理地址（通常忽略）
+    uint64_t p_filesz;       // 段在文件中的大小
+    uint64_t p_memsz;        // 段在内存中的大小
+    uint64_t p_align;        // 对齐
+} __attribute__((packed)) elf64_phdr_t;
+
+/**
+ * 验证 ELF 文件头（自动检测32/64位）
  * @param elf_data ELF 数据指针
  * @return 成功返回 true
  */
 bool elf_validate_header(const void *elf_data);
 
 /**
- * 加载 ELF 文件到指定页目录
+ * 检查 ELF 是否为 64 位
+ * @param elf_data ELF 数据指针
+ * @return 64位返回 true，32位返回 false
+ */
+bool elf_is_64bit(const void *elf_data);
+
+/**
+ * 加载 ELF 文件到指定页目录（使用 uintptr_t 支持 32/64 位）
  * @param elf_data ELF 数据指针
  * @param size ELF 文件大小
  * @param page_dir 目标页目录
@@ -100,15 +143,14 @@ bool elf_validate_header(const void *elf_data);
  * @return 成功返回 true
  */
 bool elf_load(const void *elf_data, uint32_t size, 
-              page_directory_t *page_dir, uint32_t *entry_point,
-              uint32_t *program_end);
+              page_directory_t *page_dir, uintptr_t *entry_point,
+              uintptr_t *program_end);
 
 /**
  * 获取 ELF 入口点地址
  * @param elf_data ELF 数据指针
  * @return 入口点地址，失败返回 0
  */
-uint32_t elf_get_entry(const void *elf_data);
+uintptr_t elf_get_entry(const void *elf_data);
 
 #endif // _KERNEL_ELF_H_
-

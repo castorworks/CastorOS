@@ -474,8 +474,8 @@ uint32_t task_create_kernel_thread(void (*entry)(void), const char *name) {
 /**
  * @brief 创建用户进程
  */
-uint32_t task_create_user_process(const char *name, uint32_t entry_point,
-                                   page_directory_t *page_dir, uint32_t program_end) {
+uint32_t task_create_user_process(const char *name, uintptr_t entry_point,
+                                   page_directory_t *page_dir, uintptr_t program_end) {
     if (!name || !page_dir || entry_point == 0) {
         LOG_ERROR_MSG("task_create_user_process: Invalid parameters\n");
         return 0;
@@ -774,6 +774,11 @@ void task_schedule(void) {
     // 更新 TSS 内核栈
     if (next_task->is_user_process) {
         tss_set_kernel_stack(next_task->kernel_stack);
+#if defined(ARCH_X86_64)
+        // x86_64: Also set kernel stack for SYSCALL mechanism
+        extern void hal_syscall_set_kernel_stack(uint64_t stack_ptr);
+        hal_syscall_set_kernel_stack((uint64_t)next_task->kernel_stack);
+#endif
     }
     
     // 关键修复：在上下文切换前，先同步 VMM 的 current_dir_phys

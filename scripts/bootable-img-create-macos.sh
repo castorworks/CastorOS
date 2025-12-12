@@ -34,9 +34,10 @@ else
     GRUB_CFG="$PROJECT_ROOT/grub.cfg"
 fi
 
-SHELL_ELF="$PROJECT_ROOT/user/shell/shell.elf"
-HELLO_ELF="$PROJECT_ROOT/user/helloworld/hello.elf"
-TESTS_ELF="$PROJECT_ROOT/user/tests/tests.elf"
+# Use architecture-specific user programs
+SHELL_ELF="$PROJECT_ROOT/user/shell/build/$ARCH/shell.elf"
+HELLO_ELF="$PROJECT_ROOT/user/helloworld/build/$ARCH/hello.elf"
+TESTS_ELF="$PROJECT_ROOT/user/tests/build/$ARCH/tests.elf"
 
 # i686-elf-grub 工具链路径(你需要根据自己环境调整)
 GRUB_PREFIX="/opt/homebrew"
@@ -63,8 +64,12 @@ fi
 check_tools() {
     local tools=(
         hdiutil newfs_msdos dd mount umount python3
-        "$GRUB_MKIMAGE"
     )
+
+    # GRUB tools only needed for x86 architectures
+    if [ "$ARCH" != "arm64" ]; then
+        tools+=("$GRUB_MKIMAGE")
+    fi
 
     local missing=()
 
@@ -78,8 +83,10 @@ check_tools() {
         error "Missing tools:\n${missing[*]}\nYou must install: i686-elf-grub + Xcode Command Line Tools + Python 3"
     fi
     
-    # 检查 GRUB 文件
-    [ -f "$GRUB_BIOS_BOOT_IMG" ] || error "GRUB boot.img not found: $GRUB_BIOS_BOOT_IMG"
+    # 检查 GRUB 文件 (only for x86)
+    if [ "$ARCH" != "arm64" ]; then
+        [ -f "$GRUB_BIOS_BOOT_IMG" ] || error "GRUB boot.img not found: $GRUB_BIOS_BOOT_IMG"
+    fi
 }
 
 check_files() {
@@ -190,6 +197,12 @@ install_files() {
 }
 
 install_grub_bios() {
+    # ARM64 uses direct kernel boot, skip GRUB installation
+    if [ "$ARCH" = "arm64" ]; then
+        info "[5/7] Skipping GRUB (ARM64 uses direct kernel boot)"
+        return
+    fi
+
     info "[5/7] Installing GRUB (manual BIOS mode, no grub-install)"
     
     # 确保文件系统已卸载

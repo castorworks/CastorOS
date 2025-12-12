@@ -23,6 +23,8 @@ extern void enter_usermode(uint32_t entry_point, uint32_t user_stack);
 #elif defined(ARCH_X86_64)
 /* x86_64: Use IRETQ instruction via assembly */
 extern void enter_usermode64(uint64_t entry_point, uint64_t user_stack);
+/* x86_64: Set kernel stack for SYSCALL mechanism */
+extern void hal_syscall_set_kernel_stack(uint64_t stack_ptr);
 
 #elif defined(ARCH_ARM64)
 /* ARM64: Use ERET instruction via assembly (future implementation) */
@@ -58,6 +60,8 @@ void task_enter_usermode(uintptr_t entry_point, uintptr_t user_stack)
     enter_usermode((uint32_t)entry_point, (uint32_t)user_stack);
     
 #elif defined(ARCH_X86_64)
+    /* x86_64: Set kernel stack for SYSCALL mechanism */
+    hal_syscall_set_kernel_stack((uint64_t)current->kernel_stack);
     /* x86_64: Use IRETQ to transition to user mode */
     enter_usermode64((uint64_t)entry_point, (uint64_t)user_stack);
     

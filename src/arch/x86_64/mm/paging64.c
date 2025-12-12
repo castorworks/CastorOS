@@ -608,6 +608,9 @@ bool hal_mmu_map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t fl
             return false;
         }
         pml4[pml4_idx] = pdpt_phys | table_flags;
+    } else if (flags & HAL_PAGE_USER) {
+        /* Existing entry: ensure USER flag is set for user mappings */
+        pml4[pml4_idx] |= PTE64_USER;
     }
     pdpt = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pml4[pml4_idx]));
     
@@ -623,6 +626,9 @@ bool hal_mmu_map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t fl
         /* Cannot map 4KB page over 1GB huge page */
         LOG_ERROR_MSG("hal_mmu_map: cannot map over 1GB huge page\n");
         return false;
+    } else if (flags & HAL_PAGE_USER) {
+        /* Existing entry: ensure USER flag is set for user mappings */
+        pdpt[pdpt_idx] |= PTE64_USER;
     }
     pd = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pdpt[pdpt_idx]));
     
@@ -638,6 +644,9 @@ bool hal_mmu_map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t fl
         /* Cannot map 4KB page over 2MB huge page */
         LOG_ERROR_MSG("hal_mmu_map: cannot map over 2MB huge page\n");
         return false;
+    } else if (flags & HAL_PAGE_USER) {
+        /* Existing entry: ensure USER flag is set for user mappings */
+        pd[pd_idx] |= PTE64_USER;
     }
     pt = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pd[pd_idx]));
     

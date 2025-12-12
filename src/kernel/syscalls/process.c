@@ -315,7 +315,7 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
     }
     
     // 获取入口点
-    uint32_t entry_point = elf_get_entry(elf_data);
+    uintptr_t entry_point = elf_get_entry(elf_data);
     if (entry_point == 0) {
         LOG_ERROR_MSG("sys_execve: failed to get entry point from '%s'\n", path);
         kfree(elf_data);
@@ -346,7 +346,7 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
     uint32_t old_dir_phys = current->page_dir_phys;
     
     // 加载 ELF 到新页目录
-    uint32_t program_end;
+    uintptr_t program_end;
     if (!elf_load(elf_data, file_size, new_dir, &entry_point, &program_end)) {
         LOG_ERROR_MSG("sys_execve: failed to load ELF '%s'\n", path);
         vmm_free_page_directory(new_dir_phys);

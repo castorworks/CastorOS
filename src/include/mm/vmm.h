@@ -63,6 +63,9 @@ typedef enum vmm_error {
 #define PAGE_CACHE_DISABLE 0x010
 /** @brief PAT 标志（用于页表项）*/
 #define PAGE_PAT        0x080
+/** @brief 页可执行标志 */
+#define PAGE_EXEC       0x100
+
 /** 
  * @brief Copy-on-Write 标志（使用 x86 Available bit 9）
  * 

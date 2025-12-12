@@ -70,6 +70,7 @@ void fb_terminal_init(void);
 void fb_terminal_clear(void);
 void fb_terminal_putchar(char c);
 void fb_terminal_write(const char *str);
+void fb_terminal_set_vga_color(uint8_t fg, uint8_t bg);
 void fb_flush(void);
 
 #endif /* _DRIVERS_ARM_FRAMEBUFFER_H_ */

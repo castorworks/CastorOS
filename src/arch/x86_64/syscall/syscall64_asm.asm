@@ -97,12 +97,10 @@ syscall_entry:
     ;   - RSP = user stack (we need to switch to kernel stack)
     ;   - Interrupts are disabled (RFLAGS.IF cleared by SYSCALL)
     
-    ; Use swapgs to access kernel data
-    swapgs
-    
-    ; Save user RSP and load kernel RSP
-    mov [gs:user_stack_ptr - kernel_stack_ptr], rsp
-    mov rsp, [gs:0]         ; Load kernel stack from per-CPU data
+    ; Save user RSP and load kernel RSP using absolute addresses
+    ; (We don't use swapgs here because GS base MSRs aren't set up)
+    mov [rel user_stack_ptr], rsp
+    mov rsp, [rel kernel_stack_ptr]
     
     ; ========================================================================
     ; Step 2: Save user context
@@ -110,7 +108,7 @@ syscall_entry:
     ; Build a stack frame for the syscall
     
     ; Save user RSP
-    push qword [gs:user_stack_ptr - kernel_stack_ptr]
+    push qword [rel user_stack_ptr]
     
     ; Save general purpose registers
     push rax                ; syscall number
@@ -128,9 +126,6 @@ syscall_entry:
     push r13
     push r14
     push r15
-    
-    ; Restore gs for kernel use
-    swapgs
     
     ; ========================================================================
     ; Step 3: Call syscall dispatcher
@@ -164,9 +159,6 @@ syscall_entry:
     ; Store return value
     mov [rsp + 0x70], rax   ; Save return value to rax position in frame
     
-    ; Prepare for swapgs
-    swapgs
-    
     ; Restore general purpose registers
     pop r15
     pop r14
@@ -186,9 +178,6 @@ syscall_entry:
     
     ; Restore user RSP
     pop rsp
-    
-    ; Restore gs
-    swapgs
     
     ; Return to user mode
     ; RCX = return address, R11 = RFLAGS

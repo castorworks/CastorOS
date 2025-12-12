@@ -66,22 +66,22 @@ bool load_user_shell(void) {
     
     // 创建页目录
     LOG_DEBUG_MSG("Shell: Creating page directory...\n");
-    uint32_t page_dir_phys = vmm_create_page_directory();
+    uintptr_t page_dir_phys = vmm_create_page_directory();
     if (!page_dir_phys) {
         LOG_ERROR_MSG("Failed to create page directory\n");
         kfree(elf_data);
         return false;
     }
     
-    LOG_INFO_MSG("Shell: Created page directory at phys 0x%x\n", page_dir_phys);
+    LOG_INFO_MSG("Shell: Created page directory at phys 0x%llx\n", (unsigned long long)page_dir_phys);
     
     page_directory_t *page_dir = (page_directory_t*)PHYS_TO_VIRT(page_dir_phys);
     LOG_DEBUG_MSG("Shell: Page directory virt address: %p\n", page_dir);
     
     // 加载 ELF
     LOG_DEBUG_MSG("Shell: Loading ELF (size=%u)...\n", shell_size);
-    uint32_t entry_point;
-    uint32_t program_end;
+    uintptr_t entry_point;
+    uintptr_t program_end;
     if (!elf_load(elf_data, shell_size, page_dir, &entry_point, &program_end)) {
         LOG_ERROR_MSG("Failed to load ELF\n");
         vmm_free_page_directory(page_dir_phys);
@@ -89,7 +89,8 @@ bool load_user_shell(void) {
         return false;
     }
     
-    LOG_DEBUG_MSG("Shell: ELF loaded, entry=0x%x, program_end=0x%x\n", entry_point, program_end);
+    LOG_DEBUG_MSG("Shell: ELF loaded, entry=0x%llx, program_end=0x%llx\n", 
+                 (unsigned long long)entry_point, (unsigned long long)program_end);
     kfree(elf_data);
     
     // 创建用户进程
@@ -103,7 +104,7 @@ bool load_user_shell(void) {
     
     LOG_INFO_MSG("Shell loaded successfully!\n");
     LOG_INFO_MSG("  Process: shell (PID %u)\n", pid);
-    LOG_INFO_MSG("  Entry point: 0x%x\n", entry_point);
+    LOG_INFO_MSG("  Entry point: 0x%llx\n", (unsigned long long)entry_point);
     LOG_INFO_MSG("================================ User Shell Ready ==============================\n");
 
     return true;

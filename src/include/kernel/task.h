@@ -239,8 +239,8 @@ uint32_t task_create_kernel_thread(void (*entry)(void), const char *name);
  * @param program_end 程序加载的最高地址（用于设置堆起始地址）
  * @return 成功返回 PID，失败返回 0
  */
-uint32_t task_create_user_process(const char *name, uint32_t entry_point,
-                                   page_directory_t *page_dir, uint32_t program_end);
+uint32_t task_create_user_process(const char *name, uintptr_t entry_point,
+                                   page_directory_t *page_dir, uintptr_t program_end);
 
 /**
  * @brief 退出当前任务

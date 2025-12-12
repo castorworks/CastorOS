@@ -13,7 +13,8 @@
 #include <tests/test_runner.h>
 #include <tests/test_module.h>
 
-// 子系统测试头文件
+// 子系统测试头文件 (x86 only for now)
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
 #include <tests/lib/string_test.h>
 #include <tests/lib/kprintf_test.h>
 #include <tests/lib/klog_test.h>
@@ -45,6 +46,9 @@
 #include <tests/arch/arch_types_test.h>
 #include <tests/arch/interrupt_handler_test.h>
 #include <tests/arch/userlib_syscall_test.h>
+#include <tests/pbt/pbt.h>
+#include <tests/examples/ktest_example.h>
+#endif
 
 #ifdef ARCH_X86_64
 #include <tests/arch/x86_64/isr64_test.h>
@@ -56,10 +60,6 @@
 #include <tests/arch/arm64/arm64_exception_test.h>
 #include <tests/arch/arm64/arm64_fault_test.h>
 #endif
-
-#include <tests/pbt/pbt.h>
-#include <tests/examples/ktest_example.h>
-#include <tests/examples/ktest_example.h>
 #include <lib/kprintf.h>
 
 // Architecture-specific constants
@@ -277,6 +277,7 @@ typedef struct {
 #define TEST_ENTRY(name, func) { name, func }
 
 static const test_entry_t test_suite[] = {
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
     // 基础库测试 (lib/)
     TEST_ENTRY("String Library Tests", run_string_tests),
     TEST_ENTRY("kprintf Module Tests", run_kprintf_tests),
@@ -312,13 +313,6 @@ static const test_entry_t test_suite[] = {
     TEST_ENTRY("x86_64 Paging Property Tests", run_paging64_tests),
     TEST_ENTRY("x86_64 User Mode Transition Tests", run_usermode_tests),
 #endif
-
-#ifdef ARCH_ARM64
-    TEST_ENTRY("ARM64 MMU Property Tests", run_arm64_mmu_tests),
-    TEST_ENTRY("ARM64 Exception Register Preservation Tests", run_arm64_exception_tests),
-    TEST_ENTRY("ARM64 Page Fault Interpretation Tests", run_arm64_fault_tests),
-    TEST_ENTRY("ARM64 User Mode Transition Tests", run_usermode_tests),
-#endif
     
     // 内核核心测试 (kernel/)
     TEST_ENTRY("Fork/Exec Verification Tests", run_fork_exec_tests),
@@ -337,11 +331,17 @@ static const test_entry_t test_suite[] = {
     TEST_ENTRY("TCP Tests", run_tcp_tests),
     
     // 驱动测试 (drivers/)
-#if defined(ARCH_I686) || defined(ARCH_X86_64)
     TEST_ENTRY("PCI Tests", run_pci_tests),
-#endif
     TEST_ENTRY("Timer Tests", run_timer_tests),
     TEST_ENTRY("Serial Tests", run_serial_tests),
+#endif /* ARCH_I686 || ARCH_X86_64 */
+
+#ifdef ARCH_ARM64
+    // ARM64-specific tests only
+    TEST_ENTRY("ARM64 MMU Property Tests", run_arm64_mmu_tests),
+    TEST_ENTRY("ARM64 Exception Register Preservation Tests", run_arm64_exception_tests),
+    TEST_ENTRY("ARM64 Page Fault Interpretation Tests", run_arm64_fault_tests),
+#endif
 };
 
 #define TEST_COUNT (sizeof(test_suite) / sizeof(test_suite[0]))

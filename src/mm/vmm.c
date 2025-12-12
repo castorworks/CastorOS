@@ -509,6 +509,7 @@ static uint32_t vmm_flags_to_hal(uint32_t vmm_flags) {
     if (vmm_flags & PAGE_USER)          hal_flags |= HAL_PAGE_USER;
     if (vmm_flags & PAGE_CACHE_DISABLE) hal_flags |= HAL_PAGE_NOCACHE;
     if (vmm_flags & PAGE_COW)           hal_flags |= HAL_PAGE_COW;
+    if (vmm_flags & PAGE_EXEC)          hal_flags |= HAL_PAGE_EXEC;
     
     return hal_flags;
 }
