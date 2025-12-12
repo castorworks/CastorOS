@@ -125,9 +125,25 @@ else
         $(wildcard $(SRC_DIR)/lib/*.c) \
         $(wildcard $(SRC_DIR)/mm/*.c) \
         $(wildcard $(SRC_DIR)/net/*.c) \
-        $(wildcard $(SRC_DIR)/tests/*.c) \
+        $(wildcard $(SRC_DIR)/tests/framework/*.c) \
+        $(wildcard $(SRC_DIR)/tests/lib/*.c) \
+        $(wildcard $(SRC_DIR)/tests/mm/*.c) \
+        $(wildcard $(SRC_DIR)/tests/fs/*.c) \
+        $(wildcard $(SRC_DIR)/tests/net/*.c) \
         $(wildcard $(SRC_DIR)/tests/kernel/*.c) \
-        $(wildcard $(SRC_DIR)/tests/pbt/*.c)
+        $(wildcard $(SRC_DIR)/tests/drivers/*.c) \
+        $(wildcard $(SRC_DIR)/tests/arch/*.c) \
+        $(wildcard $(SRC_DIR)/tests/pbt/*.c) \
+        $(wildcard $(SRC_DIR)/tests/examples/*.c)
+endif
+
+# 架构特定测试源文件
+ifeq ($(ARCH),x86_64)
+    ARCH_TEST_SOURCES = $(wildcard $(SRC_DIR)/tests/arch/x86_64/*.c)
+else ifeq ($(ARCH),arm64)
+    ARCH_TEST_SOURCES = $(wildcard $(SRC_DIR)/tests/arch/arm64/*.c)
+else ifeq ($(ARCH),i686)
+    ARCH_TEST_SOURCES = $(wildcard $(SRC_DIR)/tests/arch/i686/*.c)
 endif
 
 ifeq ($(ARCH),arm64)
@@ -181,7 +197,7 @@ else ifeq ($(ARCH),arm64)
         $(wildcard $(ARCH_DIR)/syscall/*.S)
 endif
 
-C_SOURCES = $(COMMON_C_SOURCES) $(ARCH_C_SOURCES)
+C_SOURCES = $(COMMON_C_SOURCES) $(ARCH_C_SOURCES) $(ARCH_TEST_SOURCES)
 ASM_SOURCES = $(COMMON_ASM_SOURCES) $(ARCH_ASM_SOURCES)
 
 # ============================================================================

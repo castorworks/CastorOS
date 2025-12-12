@@ -9,7 +9,7 @@
 // **Validates: Requirements 11.3**
 // ============================================================================
 
-#include <tests/pbt.h>
+#include <tests/pbt/pbt.h>
 #include <tests/ktest.h>
 #include <lib/kprintf.h>
 #include <lib/string.h>
