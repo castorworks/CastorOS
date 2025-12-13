@@ -156,11 +156,20 @@ syscall_entry:
     mov r9,  [rsp + 0x38]   ; p5 = saved r8
     
     ; Push frame pointer as 7th argument
-    mov rax, rsp
-    push rax                ; frame pointer
+    ; Stack layout after saving 16 registers: rsp points to r15
+    ; For System V AMD64 ABI:
+    ;   - First 6 args in rdi, rsi, rdx, rcx, r8, r9
+    ;   - 7th arg (frame) must be at [rsp+8] after CALL
+    ;   - Stack must be 16-byte aligned before CALL
+    ;
+    ; Current stack: 16 qwords = 128 bytes (16-byte aligned)
+    ; We need to push 2 qwords (16 bytes) to maintain alignment:
+    ;   1. Alignment padding (will be at [rsp+16] after CALL)
+    ;   2. Frame pointer (will be at [rsp+8] after CALL - the 7th argument)
     
-    ; Align stack to 16 bytes (we pushed 17 qwords = 136 bytes, need 8 more)
-    sub rsp, 8
+    mov rax, rsp            ; rax = pointer to saved registers (frame)
+    sub rsp, 8              ; Alignment padding
+    push rax                ; frame pointer as 7th argument
     
     call syscall_dispatcher
     

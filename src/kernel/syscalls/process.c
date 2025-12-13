@@ -226,9 +226,18 @@ uint32_t sys_fork(uintptr_t *frame) {
     
     // 复制段寄存器（强制使用 Ring 3 段，防止权限提升）
     // 不信任用户提供的段选择子，强制设置为用户态段
+#if defined(ARCH_X86_64)
+    // x86_64 GDT layout:
+    //   0x18 (index 3) = User Data → 0x1B with RPL=3
+    //   0x20 (index 4) = User Code → 0x23 with RPL=3
+    child->context.cs = 0x23;  // 用户代码段（Ring 3）
+    child->context.ss = 0x1B;  // 用户数据段（Ring 3）
+#else
+    // i686 GDT layout:
+    //   0x18 (index 3) = User Code → 0x1B with RPL=3
+    //   0x20 (index 4) = User Data → 0x23 with RPL=3
     child->context.cs = 0x1B;  // 用户代码段（Ring 3）
     child->context.ss = 0x23;  // 用户栈段（Ring 3）
-#if !defined(ARCH_X86_64)
     // i686: 需要设置所有段寄存器
     child->context.ds = 0x23;  // 用户数据段（Ring 3）
     child->context.es = 0x23;
@@ -492,9 +501,18 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     
     // 设置用户态上下文
     current->context.eip = entry_point;
+#if defined(ARCH_X86_64)
+    // x86_64 GDT layout:
+    //   0x18 (index 3) = User Data → 0x1B with RPL=3
+    //   0x20 (index 4) = User Code → 0x23 with RPL=3
+    current->context.cs = 0x23;  // 用户代码段（Ring 3）
+    current->context.ss = 0x1B;  // 用户数据段（Ring 3）
+#else
+    // i686 GDT layout:
+    //   0x18 (index 3) = User Code → 0x1B with RPL=3
+    //   0x20 (index 4) = User Data → 0x23 with RPL=3
     current->context.cs = 0x1B;  // 用户代码段（Ring 3）
     current->context.ss = 0x23;  // 用户栈段（Ring 3）
-#if !defined(ARCH_X86_64)
     // i686: 需要设置所有段寄存器
     current->context.ds = 0x23;  // 用户数据段（Ring 3）
     current->context.es = 0x23;
