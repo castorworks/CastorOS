@@ -819,6 +819,21 @@ void task_schedule(void) {
                         prev_task->pid, prev_task->name);
         }
         
+#if defined(ARCH_X86_64)
+        // Debug: Print context before switching to user process
+        if (next_task->is_user_process) {
+            LOG_INFO_MSG("Switching to user process %u (%s):\n", next_task->pid, next_task->name);
+            LOG_INFO_MSG("  RIP=0x%llx, RSP=0x%llx\n", 
+                         (unsigned long long)next_task->context.eip,
+                         (unsigned long long)next_task->context.esp);
+            LOG_INFO_MSG("  CS=0x%llx, SS=0x%llx, RFLAGS=0x%llx\n",
+                         (unsigned long long)next_task->context.cs,
+                         (unsigned long long)next_task->context.ss,
+                         (unsigned long long)next_task->context.eflags);
+            LOG_INFO_MSG("  CR3=0x%llx\n", (unsigned long long)next_task->context.cr3);
+        }
+#endif
+        
         task_switch_context(&old_ctx_ptr, &next_task->context);
         
         // 注意：永远不会执行到这里（task_switch_context 不会返回到这里）

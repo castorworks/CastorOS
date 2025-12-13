@@ -144,6 +144,14 @@ hal_context_switch_asm:
     push qword [rax + 128]   ; CS
     push qword [rax + 120]   ; RIP
     
+    ; Set data segment registers to user data segment (0x1B = 0x18 | 3)
+    ; IRETQ only restores CS and SS, not DS/ES/FS/GS
+    mov cx, 0x1B             ; User Data Segment with RPL=3
+    mov ds, cx
+    mov es, cx
+    mov fs, cx
+    mov gs, cx
+    
     ; Restore general purpose registers
     mov r15, [rax + 0]
     mov r14, [rax + 8]

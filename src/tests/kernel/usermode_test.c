@@ -26,10 +26,11 @@
 #if defined(ARCH_X86_64)
 
 // x86_64 segment selectors (from gdt64.h)
+// GDT layout: index 3 = User Data (0x18), index 4 = User Code (0x20)
 #define X86_64_KERNEL_CS    0x08
 #define X86_64_KERNEL_DS    0x10
-#define X86_64_USER_CS      0x1B    // 0x18 | RPL=3
-#define X86_64_USER_DS      0x23    // 0x20 | RPL=3
+#define X86_64_USER_CS      0x23    // 0x20 | RPL=3 (GDT index 4)
+#define X86_64_USER_DS      0x1B    // 0x18 | RPL=3 (GDT index 3)
 
 // RFLAGS bits
 #define RFLAGS_IF           (1ULL << 9)     // Interrupt enable flag
@@ -56,9 +57,9 @@ TEST_CASE(test_user_cs_has_rpl3) {
     
     ASSERT_EQ_UINT(rpl, 3);
     
-    // The base selector (without RPL) should be 0x18
+    // The base selector (without RPL) should be 0x20 (GDT index 4)
     uint16_t base_selector = user_cs & ~RPL_MASK;
-    ASSERT_EQ_UINT(base_selector, 0x18);
+    ASSERT_EQ_UINT(base_selector, 0x20);
 }
 
 // ============================================================================
@@ -78,9 +79,9 @@ TEST_CASE(test_user_ds_has_rpl3) {
     
     ASSERT_EQ_UINT(rpl, 3);
     
-    // The base selector (without RPL) should be 0x20
+    // The base selector (without RPL) should be 0x18 (GDT index 3)
     uint16_t base_selector = user_ds & ~RPL_MASK;
-    ASSERT_EQ_UINT(base_selector, 0x20);
+    ASSERT_EQ_UINT(base_selector, 0x18);
 }
 
 // ============================================================================

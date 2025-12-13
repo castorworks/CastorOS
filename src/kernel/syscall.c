@@ -117,7 +117,8 @@ static syscall_arg_t sys_open_wrapper(syscall_arg_t *frame, syscall_arg_t path, 
 static syscall_arg_t sys_close_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t p2, 
                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
-    return sys_close((int32_t)fd);
+    // Sign-extend the 32-bit result to 64-bit for proper error handling
+    return (syscall_arg_t)(int32_t)sys_close((int32_t)fd);
 }
 
 static syscall_arg_t sys_read_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t buffer, 
@@ -441,6 +442,7 @@ static syscall_arg_t sys_fcntl_wrapper(syscall_arg_t *frame, syscall_arg_t sockf
 syscall_arg_t syscall_dispatcher(syscall_arg_t syscall_num, syscall_arg_t p1, syscall_arg_t p2, 
                                  syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5, 
                                  syscall_arg_t *frame) {
+    
     /* 检查系统调用号是否在有效范围内 */
     if (syscall_num >= SYS_MAX) {
         LOG_WARN_MSG("Invalid syscall number: %lu (out of range)\n", (unsigned long)syscall_num);

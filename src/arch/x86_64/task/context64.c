@@ -66,8 +66,8 @@ void hal_context_init(hal_context_t *ctx, uintptr_t entry,
     
     if (is_user) {
         /* User mode context */
-        x64_ctx->cs = X86_64_USER_CS;        /* 0x1B - User code segment with RPL=3 */
-        x64_ctx->ss = X86_64_USER_DS;        /* 0x23 - User data segment with RPL=3 */
+        x64_ctx->cs = X86_64_USER_CS;        /* 0x23 - User code segment with RPL=3 */
+        x64_ctx->ss = X86_64_USER_DS;        /* 0x1B - User data segment with RPL=3 */
         
         /* User entry point */
         x64_ctx->rip = (uint64_t)entry;

@@ -102,6 +102,14 @@ syscall_entry:
     mov [rel user_stack_ptr], rsp
     mov rsp, [rel kernel_stack_ptr]
     
+    ; Check if kernel stack is valid (non-zero)
+    test rsp, rsp
+    jnz .stack_ok
+    ; If kernel stack is 0, we have a problem - use a fallback
+    ; This should never happen if hal_syscall_set_kernel_stack was called
+    hlt
+.stack_ok:
+    
     ; ========================================================================
     ; Step 2: Save user context
     ; ========================================================================
@@ -133,8 +141,7 @@ syscall_entry:
     ; syscall_dispatcher(syscall_num, p1, p2, p3, p4, p5, frame)
     ; System V AMD64 ABI: rdi, rsi, rdx, rcx, r8, r9, [stack]
     
-    mov rdi, rax            ; syscall_num (from saved rax)
-    ; rsi already has arg1 (user's rdi)
+    mov rdi, [rsp + 0x70]   ; syscall_num = saved rax
     mov rsi, [rsp + 0x48]   ; p1 = saved rdi
     mov rdx, [rsp + 0x50]   ; p2 = saved rsi
     mov rcx, [rsp + 0x58]   ; p3 = saved rdx
@@ -181,7 +188,7 @@ syscall_entry:
     
     ; Return to user mode
     ; RCX = return address, R11 = RFLAGS
-    sysretq
+    o64 sysret
 
 
 ; ============================================================================

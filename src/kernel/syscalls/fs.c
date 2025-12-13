@@ -13,6 +13,7 @@
 #include <fs/vfs.h>
 #include <fs/pipe.h>
 #include <lib/klog.h>
+#include <lib/kprintf.h>
 #include <lib/string.h>
 
 /* ============================================================================

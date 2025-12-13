@@ -123,11 +123,11 @@ typedef struct x86_64_context {
 /** Kernel data segment selector */
 #define X86_64_KERNEL_DS    0x10
 
-/** User code segment selector (with RPL=3) */
-#define X86_64_USER_CS      0x1B
+/** User code segment selector (with RPL=3) - GDT index 4 */
+#define X86_64_USER_CS      0x23
 
-/** User data segment selector (with RPL=3) */
-#define X86_64_USER_DS      0x23
+/** User data segment selector (with RPL=3) - GDT index 3 */
+#define X86_64_USER_DS      0x1B
 
 /* ============================================================================
  * RFLAGS Bits

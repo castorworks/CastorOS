@@ -406,11 +406,11 @@ TEST_CASE(test_exec_context_init_user_mode) {
     // Property: Stack must be set
     ASSERT_EQ_U(ctx.rsp, stack);
     
-    // Property: User code segment
-    ASSERT_EQ_U(ctx.cs, 0x1B);
+    // Property: User code segment (GDT index 4 = 0x20 | RPL=3 = 0x23)
+    ASSERT_EQ_U(ctx.cs, 0x23);
     
-    // Property: User stack segment
-    ASSERT_EQ_U(ctx.ss, 0x23);
+    // Property: User stack segment (GDT index 3 = 0x18 | RPL=3 = 0x1B)
+    ASSERT_EQ_U(ctx.ss, 0x1B);
     
     // Property: Interrupts enabled
     ASSERT_TRUE((ctx.rflags & 0x200) != 0);

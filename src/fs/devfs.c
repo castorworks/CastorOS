@@ -171,6 +171,9 @@ static uint32_t devconsole_write(fs_node_t *node, uint32_t offset,
     extern void vga_putchar(char c);
     
     for (uint32_t i = 0; i < size; i++) {
+        // 同时输出到串口，确保在所有架构上都能看到输出
+        serial_putchar(buffer[i]);
+        
         if (fb_is_initialized()) {
             fb_terminal_putchar(buffer[i]);
         } else {
