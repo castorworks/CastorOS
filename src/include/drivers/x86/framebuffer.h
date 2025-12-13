@@ -32,7 +32,7 @@ typedef enum {
  * ============================================================================ */
 
 typedef struct framebuffer_info {
-    uint32_t address;       ///< 帧缓冲物理地址
+    uintptr_t address;      ///< 帧缓冲物理地址
     uint32_t *buffer;       ///< 映射后的虚拟地址
     uint32_t width;         ///< 水平分辨率（像素）
     uint32_t height;        ///< 垂直分辨率（像素）

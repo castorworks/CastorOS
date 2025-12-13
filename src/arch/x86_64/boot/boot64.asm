@@ -15,6 +15,8 @@ KERNEL_VMA              equ 0xFFFF800000000000
 
 PAGE_PRESENT            equ (1 << 0)
 PAGE_WRITE              equ (1 << 1)
+PAGE_WRITE_THROUGH      equ (1 << 3)
+PAGE_CACHE_DISABLE      equ (1 << 4)
 PAGE_SIZE_2MB           equ (1 << 7)
 
 CR0_PG                  equ (1 << 31)
@@ -52,8 +54,11 @@ multiboot_header:
     dd MULTIBOOT_MAGIC
     dd MULTIBOOT_FLAGS
     dd MULTIBOOT_CHECKSUM
-    dd 0, 0, 0, 0, 0
-    dd 0, 0, 0, 32
+    dd 0, 0, 0, 0, 0       ; a.out kludge (unused)
+    dd 0                   ; mode_type: 0 = linear graphics mode (1 = EGA text)
+    dd 0                   ; width: 0 = let GRUB choose based on gfxpayload
+    dd 0                   ; height: 0 = let GRUB choose
+    dd 32                  ; depth: 32bpp preferred
 
 ; ============================================================================
 ; 32 位引导代码
@@ -155,9 +160,17 @@ setup_page_tables:
     mov [edi], eax
 
     ; PD: 映射前 1GB
+    ; 第一个 2MB 页包含 VGA 内存 (0xB8000)，需要禁用缓存
     mov edi, BOOT_PD_PHYS
-    mov eax, PAGE_PRESENT | PAGE_WRITE | PAGE_SIZE_2MB
-    mov ecx, 512
+    ; 第一个 2MB 页：禁用缓存 (PCD=1, PWT=1) 用于 VGA 内存映射 I/O
+    mov eax, PAGE_PRESENT | PAGE_WRITE | PAGE_SIZE_2MB | PAGE_CACHE_DISABLE | PAGE_WRITE_THROUGH
+    mov [edi], eax
+    mov dword [edi + 4], 0
+    add edi, 8
+    
+    ; 剩余的 511 个 2MB 页：正常缓存
+    mov eax, 0x200000 | PAGE_PRESENT | PAGE_WRITE | PAGE_SIZE_2MB
+    mov ecx, 511
 .fill_pd:
     mov [edi], eax
     mov dword [edi + 4], 0

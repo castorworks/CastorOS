@@ -219,11 +219,11 @@ int fb_init(multiboot_info_t *mbi) {
     }
     
     // 计算帧缓冲大小
-    uint32_t fb_size = fb_info.pitch * fb_info.height;
+    size_t fb_size = (size_t)fb_info.pitch * fb_info.height;
     
     // 映射帧缓冲到虚拟地址空间
     // 使用 vmm_map_framebuffer 进行映射，启用 Write-Combining 模式以提升性能
-    uint32_t fb_virt = vmm_map_framebuffer(fb_info.address, fb_size);
+    uintptr_t fb_virt = vmm_map_framebuffer(fb_info.address, fb_size);
     if (!fb_virt) {
         LOG_ERROR_MSG("fb: Failed to map framebuffer\n");
         return -3;
@@ -244,8 +244,8 @@ int fb_init(multiboot_info_t *mbi) {
     
     LOG_INFO_MSG("fb: Initialized %ux%u @ %ubpp (format=%d)\n",
                  fb_info.width, fb_info.height, fb_info.bpp, fb_info.format);
-    LOG_INFO_MSG("fb: Physical=0x%x, Virtual=0x%x, Pitch=%u\n",
-                 fb_info.address, (uint32_t)fb_info.buffer, fb_info.pitch);
+    LOG_INFO_MSG("fb: Physical=0x%llx, Virtual=0x%llx, Pitch=%u\n",
+                 (unsigned long long)fb_info.address, (unsigned long long)(uintptr_t)fb_info.buffer, fb_info.pitch);
     
     return 0;
 }

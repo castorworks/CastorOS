@@ -245,9 +245,9 @@ void kernel_main(multiboot_info_t* mbi) {
     }
 
     // 4.9 初始化帧缓冲（图形模式）
-#if defined(ARCH_X86_64)
-    // x86_64: 暂时跳过帧缓冲，因为 VMM MMIO 映射尚未支持 64 位
-    LOG_WARN_MSG("  [4.9] Framebuffer skipped (x86_64 VMM MMIO not ready)\n");
+#if defined(ARCH_ARM64)
+    // ARM64: 暂时跳过帧缓冲，因为 VMM MMIO 映射尚未支持
+    LOG_WARN_MSG("  [4.9] Framebuffer skipped (ARM64 VMM MMIO not ready)\n");
 #else
     int fb_result = fb_init(mbi);
     if (fb_result == 0) {
