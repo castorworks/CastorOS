@@ -141,6 +141,13 @@ syscall_entry:
     ; syscall_dispatcher(syscall_num, p1, p2, p3, p4, p5, frame)
     ; System V AMD64 ABI: rdi, rsi, rdx, rcx, r8, r9, [stack]
     
+    ; CRITICAL: Enable interrupts before calling syscall dispatcher
+    ; SYSCALL instruction clears IF via SFMASK, but we need interrupts
+    ; enabled during syscall handling (e.g., for keyboard input while
+    ; blocking in read()). This matches i686 behavior which uses a trap
+    ; gate that doesn't disable interrupts.
+    sti
+    
     mov rdi, [rsp + 0x70]   ; syscall_num = saved rax
     mov rsi, [rsp + 0x48]   ; p1 = saved rdi
     mov rdx, [rsp + 0x50]   ; p2 = saved rsi
@@ -188,6 +195,10 @@ syscall_entry:
     
     ; Return to user mode
     ; RCX = return address, R11 = RFLAGS
+    ; Note: SYSRET will restore RFLAGS from R11, which includes IF.
+    ; We disable interrupts here for the brief window before SYSRET
+    ; to prevent any race conditions during the return sequence.
+    cli
     o64 sysret
 
 

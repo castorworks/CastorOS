@@ -355,6 +355,9 @@ void keyboard_init(void) {
     /* 注册 IRQ 1 处理函数 */
     irq_register_handler(1, keyboard_callback);
     
+    /* 确保 IRQ 1 未被屏蔽 */
+    irq_enable_line(1);
+    
     LOG_INFO_MSG("Keyboard initialized successfully\n");
     LOG_DEBUG_MSG("  Buffer size: %u bytes\n", KEYBOARD_BUFFER_SIZE);
 }
