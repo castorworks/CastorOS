@@ -7,7 +7,7 @@ inclusion: always
 ## 超时配置
 
 - 默认测试超时: 8 秒 (可通过 `TEST_TIMEOUT` 调整)
-- macOS 使用 `gtimeout`, Linux 使用 `timeout`
+- 统一使用 `timeout` 命令 (macOS 需安装 coreutils)
 - 输出限制: 200 行 (可通过 `OUTPUT_LINES` 调整)
 
 ## 快速测试命令
@@ -37,13 +37,13 @@ make debug-silent              # 无 GUI
 
 # 手动调试命令 (参考，需先运行 make disk ARCH=xxx)
 # i686: 使用 GRUB 磁盘镜像
-gtimeout 8 qemu-system-i386 -hda build/i686/bootable.img -serial stdio -display none 2>&1 | head -200
+timeout 8 qemu-system-i386 -hda build/i686/bootable.img -serial stdio -display none 2>&1 | head -200
 
 # x86_64: 使用 GRUB 磁盘镜像
-gtimeout 15 qemu-system-x86_64 -hda build/x86_64/bootable.img -serial stdio -display none 2>&1 | head -200
+timeout 15 qemu-system-x86_64 -hda build/x86_64/bootable.img -serial stdio -display none 2>&1 | head -200
 
 # arm64: 使用 -M virt 机器类型 (直接 -kernel)
-gtimeout 8 qemu-system-aarch64 -M virt -cpu cortex-a72 -kernel build/arm64/castor.bin -nographic 2>&1 | head -200
+timeout 8 qemu-system-aarch64 -M virt -cpu cortex-a72 -kernel build/arm64/castor.bin -nographic 2>&1 | head -200
 ```
 
 ## 构建验证
@@ -60,7 +60,7 @@ make sources                   # 列出源文件
 
 ## 常见问题
 
-1. **gtimeout 未找到**: `brew install coreutils`
+1. **timeout 未找到**: `brew install coreutils` (macOS)
 2. **交叉编译器未找到**: 运行 `scripts/cross-compiler-install.sh`
 3. **QEMU 未找到**: `brew install qemu`
 

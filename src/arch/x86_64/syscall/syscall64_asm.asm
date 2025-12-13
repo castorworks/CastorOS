@@ -217,7 +217,7 @@ syscall_entry_compat:
     push rax
     
     ; Switch to kernel data segment
-    mov ax, 0x10            ; GDT_KERNEL_DATA_SEGMENT
+    mov ax, 0x10            ; GDT64_KERNEL_DATA_SEGMENT
     mov ds, ax
     mov es, ax
     
@@ -473,17 +473,20 @@ enter_usermode64:
     xor r15, r15
     
     ; Build IRETQ stack frame
-    push 0x23               ; SS = User Data Segment (0x20 | RPL=3)
+    ; GDT Layout (SYSRET compatible):
+    ;   0x18: User Data (SS = 0x18 | 3 = 0x1B)
+    ;   0x20: User Code (CS = 0x20 | 3 = 0x23)
+    push 0x1B               ; SS = User Data Segment (0x18 | RPL=3)
     push rsi                ; RSP = user stack
     
     ; Set RFLAGS: IF=1 (enable interrupts), reserved bit 1 = 1
     push 0x202              ; RFLAGS
     
-    push 0x1B               ; CS = User Code Segment (0x18 | RPL=3)
+    push 0x23               ; CS = User Code Segment (0x20 | RPL=3)
     push rdi                ; RIP = entry point
     
     ; Clear segment registers (set to user data segment)
-    mov ax, 0x23
+    mov ax, 0x1B            ; User Data Segment (0x18 | RPL=3)
     mov ds, ax
     mov es, ax
     mov fs, ax

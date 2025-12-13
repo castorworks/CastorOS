@@ -70,15 +70,15 @@ TEST_CASE(test_syscall_arg_type_size) {
 // and arguments correctly from the architecture-specific entry mechanism.
 // ============================================================================
 
-extern uint32_t syscall_dispatcher(uint32_t syscall_num, uint32_t p1, uint32_t p2, 
-                                   uint32_t p3, uint32_t p4, uint32_t p5, uint32_t *frame);
+// syscall_dispatcher is declared in kernel/syscall.h with syscall_arg_t
+#include <kernel/syscall.h>
 
 TEST_CASE(test_syscall_dispatcher_receives_arguments) {
-    uint32_t dummy_frame[13] = {0};
+    syscall_arg_t dummy_frame[16] = {0};
     
     // Test that syscall number is correctly received
     // SYS_GETPID should be dispatched correctly
-    uint32_t result = syscall_dispatcher(SYS_GETPID, 0, 0, 0, 0, 0, dummy_frame);
+    syscall_arg_t result = syscall_dispatcher(SYS_GETPID, 0, 0, 0, 0, 0, dummy_frame);
     
     // If the syscall number was not received correctly, we would get -1 (invalid syscall)
     // SYS_GETPID returns -1 only if there's no current task, which is different from
@@ -87,7 +87,7 @@ TEST_CASE(test_syscall_dispatcher_receives_arguments) {
     
     // Test that an invalid syscall number is correctly identified
     result = syscall_dispatcher(0xFFFF, 0, 0, 0, 0, 0, dummy_frame);
-    ASSERT_EQ_UINT(result, (uint32_t)-1);
+    ASSERT_EQ_UINT((uint32_t)result, (uint32_t)-1);
     
     kprintf("[PASS] Syscall dispatcher receives arguments correctly\n");
 }
@@ -148,31 +148,17 @@ TEST_CASE(test_syscall_numbers_are_portable) {
 // ============================================================================
 
 TEST_CASE(test_syscall_entry_mechanism_configured) {
+    syscall_arg_t dummy_frame[16] = {0};
+    syscall_arg_t result = syscall_dispatcher(SYS_TIME, 0, 0, 0, 0, 0, dummy_frame);
+    ASSERT_NE_UINT((uint32_t)result, (uint32_t)-1);
+    
 #if defined(ARCH_I686)
-    // On i686, INT 0x80 should be configured
-    // We verify this by checking that syscalls work
-    uint32_t dummy_frame[13] = {0};
-    uint32_t result = syscall_dispatcher(SYS_TIME, 0, 0, 0, 0, 0, dummy_frame);
-    // If INT 0x80 wasn't configured, we wouldn't be able to call syscalls
-    ASSERT_NE_UINT(result, (uint32_t)-1);
     kprintf("[PASS] i686: INT 0x80 syscall entry is configured\n");
 #elif defined(ARCH_X86_64)
-    // On x86_64, SYSCALL instruction should be configured via MSRs
-    uint32_t dummy_frame[13] = {0};
-    uint32_t result = syscall_dispatcher(SYS_TIME, 0, 0, 0, 0, 0, dummy_frame);
-    ASSERT_NE_UINT(result, (uint32_t)-1);
     kprintf("[PASS] x86_64: SYSCALL entry is configured\n");
 #elif defined(ARCH_ARM64)
-    // On ARM64, SVC handler should be in exception vector table
-    uint32_t dummy_frame[13] = {0};
-    uint32_t result = syscall_dispatcher(SYS_TIME, 0, 0, 0, 0, 0, dummy_frame);
-    ASSERT_NE_UINT(result, (uint32_t)-1);
     kprintf("[PASS] arm64: SVC syscall entry is configured\n");
 #else
-    // Default architecture
-    uint32_t dummy_frame[13] = {0};
-    uint32_t result = syscall_dispatcher(SYS_TIME, 0, 0, 0, 0, 0, dummy_frame);
-    ASSERT_NE_UINT(result, (uint32_t)-1);
     kprintf("[PASS] default: syscall entry is configured\n");
 #endif
 }

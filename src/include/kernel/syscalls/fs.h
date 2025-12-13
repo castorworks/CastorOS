@@ -147,9 +147,9 @@ uint32_t sys_chdir(const char *path);
  * 
  * 返回值：
  *   成功: 缓冲区指针
- *   (uint32_t)-1: 错误
+ *   失败: (uintptr_t)-1
  */
-uint32_t sys_getcwd(char *buffer, uint32_t size);
+uintptr_t sys_getcwd(char *buffer, size_t size);
 
 /**
  * sys_stat - 获取文件状态信息

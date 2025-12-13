@@ -57,7 +57,7 @@ void sys_exit(uint32_t code) {
  * 注意：这个函数实际上不会被直接调用
  * 系统调用包装器会调用 sys_fork_with_frame
  */
-uint32_t sys_fork(uint32_t *frame) {
+uint32_t sys_fork(uintptr_t *frame) {
     // 禁用中断，保证 fork 过程的原子性
     bool prev_state = interrupts_disable();
     
@@ -92,26 +92,50 @@ uint32_t sys_fork(uint32_t *frame) {
     
     // 直接从传递的 frame 参数读取用户态寄存器
     // frame 指针由 syscall_handler 传递，指向它保存寄存器的位置
-    uint32_t user_ds     = frame[0];   // DS
-    uint32_t user_eax    = frame[1];   // EAX (系统调用号)
-    uint32_t user_ebx    = frame[2];   // EBX
-    uint32_t user_ecx    = frame[3];   // ECX
-    uint32_t user_edx    = frame[4];   // EDX
-    uint32_t user_esi    = frame[5];   // ESI
-    uint32_t user_edi    = frame[6];   // EDI
-    uint32_t user_ebp    = frame[7];   // EBP
-    uint32_t user_eip    = frame[8];   // EIP (IRET)
-    uint32_t user_cs     = frame[9];   // CS (IRET)
-    uint32_t user_eflags = frame[10];  // EFLAGS (IRET)
-    uint32_t user_esp    = frame[11];  // ESP (IRET)
-    uint32_t user_ss     = frame[12];  // SS (IRET)
+    // 注意：栈帧布局是架构相关的
+#if defined(ARCH_X86_64)
+    // x86_64 栈帧布局（syscall64_asm.asm）：
+    //   frame[0]  = r15
+    //   frame[1]  = r14
+    //   ...
+    //   frame[14] = rax (syscall number)
+    //   frame[15] = user_rsp
+    uintptr_t user_ds     = 0x23;       // 用户数据段（x86_64 不使用 DS）
+    uintptr_t user_eax    = frame[14];  // RAX (系统调用号)
+    uintptr_t user_ebx    = frame[13];  // RBX
+    uintptr_t user_ecx    = frame[12];  // RCX (user RIP)
+    uintptr_t user_edx    = frame[11];  // RDX
+    uintptr_t user_esi    = frame[10];  // RSI
+    uintptr_t user_edi    = frame[9];   // RDI
+    uintptr_t user_ebp    = frame[8];   // RBP
+    uintptr_t user_eip    = frame[12];  // RCX = user RIP (SYSCALL saves RIP to RCX)
+    uintptr_t user_cs     = 0x1B;       // 用户代码段
+    uintptr_t user_eflags = frame[4];   // R11 = user RFLAGS
+    uintptr_t user_esp    = frame[15];  // user RSP
+    uintptr_t user_ss     = 0x23;       // 用户栈段
+#else
+    // i686 栈帧布局（syscall_asm.asm）：
+    uintptr_t user_ds     = frame[0];   // DS
+    uintptr_t user_eax    = frame[1];   // EAX (系统调用号)
+    uintptr_t user_ebx    = frame[2];   // EBX
+    uintptr_t user_ecx    = frame[3];   // ECX
+    uintptr_t user_edx    = frame[4];   // EDX
+    uintptr_t user_esi    = frame[5];   // ESI
+    uintptr_t user_edi    = frame[6];   // EDI
+    uintptr_t user_ebp    = frame[7];   // EBP
+    uintptr_t user_eip    = frame[8];   // EIP (IRET)
+    uintptr_t user_cs     = frame[9];   // CS (IRET)
+    uintptr_t user_eflags = frame[10];  // EFLAGS (IRET)
+    uintptr_t user_esp    = frame[11];  // ESP (IRET)
+    uintptr_t user_ss     = frame[12];  // SS (IRET)
+#endif
     
     (void)user_eax;  // 系统调用号，不需要复制
     
     LOG_DEBUG_MSG("sys_fork: Captured user context:\n");
-    LOG_DEBUG_MSG("  EIP=0x%x ESP=0x%x EBP=0x%x\n", user_eip, user_esp, user_ebp);
-    LOG_DEBUG_MSG("  CS=0x%x SS=0x%x DS=0x%x EFLAGS=0x%x\n", 
-                  user_cs, user_ss, user_ds, user_eflags);
+    LOG_DEBUG_MSG("  EIP=0x%lx ESP=0x%lx EBP=0x%lx\n", (unsigned long)user_eip, (unsigned long)user_esp, (unsigned long)user_ebp);
+    LOG_DEBUG_MSG("  CS=0x%lx SS=0x%lx DS=0x%lx EFLAGS=0x%lx\n", 
+                  (unsigned long)user_cs, (unsigned long)user_ss, (unsigned long)user_ds, (unsigned long)user_eflags);
     
     // 【安全检查】验证父进程页目录的完整性（仅检查前几个 PDE）
     page_directory_t *parent_dir = parent->page_dir;
@@ -260,11 +284,11 @@ uint32_t sys_fork(uint32_t *frame) {
 /**
  * sys_execve - 执行新程序（替换当前进程）
  * 
- * @param frame 系统调用栈帧指针
+ * @param frame 系统调用栈帧指针（架构相关大小）
  * @param path  程序路径
  * @return 成功则不返回，失败返回 -1
  */
-uint32_t sys_execve(uint32_t *frame, const char *path) {
+uint32_t sys_execve(uintptr_t *frame, const char *path) {
     if (!path) {
         LOG_ERROR_MSG("sys_execve: path is NULL\n");
         return (uint32_t)-1;
@@ -505,6 +529,19 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
     // 我们需要修改这些值，让系统调用返回时跳转到新程序
     
     if (frame) {
+#if defined(ARCH_X86_64)
+        // x86_64: 修改 SYSCALL 返回帧
+        // 栈帧布局（syscall64_asm.asm）：
+        //   frame[12] = RCX (user RIP) - SYSRET 会用这个作为返回地址
+        //   frame[4]  = R11 (user RFLAGS)
+        //   frame[15] = user RSP
+        frame[12] = entry_point;           // RCX = 新程序入口点（SYSRET 返回地址）
+        frame[4]  = 0x202;                 // R11 = RFLAGS（中断使能）
+        frame[15] = current->user_stack;   // user RSP = 用户栈顶
+        
+        LOG_DEBUG_MSG("sys_execve: modified syscall frame to return to 0x%lx\n", (unsigned long)entry_point);
+#else
+        // i686: 修改 IRET 栈帧
         // 修改用户段寄存器（syscall_handler 会在返回前恢复这些）
         frame[0] = 0x23;   // DS = 用户数据段
         
@@ -515,7 +552,8 @@ uint32_t sys_execve(uint32_t *frame, const char *path) {
         frame[11] = current->user_stack;  // ESP = 用户栈顶
         frame[12] = 0x23;              // SS = 用户栈段 (Ring 3)
         
-        LOG_DEBUG_MSG("sys_execve: modified syscall frame to return to 0x%x\n", entry_point);
+        LOG_DEBUG_MSG("sys_execve: modified syscall frame to return to 0x%lx\n", (unsigned long)entry_point);
+#endif
     } else {
         // 如果没有 frame（不应该发生），使用原来的方法
         LOG_WARN_MSG("sys_execve: no frame provided, using fallback method\n");

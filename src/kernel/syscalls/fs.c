@@ -610,33 +610,33 @@ uint32_t sys_chdir(const char *path) {
 /**
  * sys_getcwd - 获取当前工作目录
  */
-uint32_t sys_getcwd(char *buffer, uint32_t size) {
+uintptr_t sys_getcwd(char *buffer, size_t size) {
     if (!buffer) {
         LOG_ERROR_MSG("sys_getcwd: buffer is NULL\n");
-        return (uint32_t)-1;
+        return (uintptr_t)-1;
     }
     
     task_t *current = task_get_current();
     if (!current) {
         LOG_ERROR_MSG("sys_getcwd: no current task\n");
-        return (uint32_t)-1;
+        return (uintptr_t)-1;
     }
     
-    LOG_DEBUG_MSG("sys_getcwd: size=%u\n", size);
+    LOG_DEBUG_MSG("sys_getcwd: size=%zu\n", size);
     
-    uint32_t cwd_len = strlen(current->cwd);
+    size_t cwd_len = strlen(current->cwd);
     
     // 检查缓冲区大小
     if (size <= cwd_len) {
-        LOG_ERROR_MSG("sys_getcwd: buffer too small (%u <= %u)\n", size, cwd_len);
-        return (uint32_t)-1;
+        LOG_ERROR_MSG("sys_getcwd: buffer too small (%zu <= %zu)\n", size, cwd_len);
+        return (uintptr_t)-1;
     }
     
     // 复制当前工作目录到用户缓冲区
     strcpy(buffer, current->cwd);
     
     LOG_DEBUG_MSG("sys_getcwd: returned '%s'\n", current->cwd);
-    return (uint32_t)buffer;
+    return (uintptr_t)buffer;
 }
 
 /**

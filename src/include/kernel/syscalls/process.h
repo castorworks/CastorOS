@@ -16,17 +16,18 @@ void sys_exit(uint32_t code) __attribute__((noreturn));
 
 /**
  * sys_fork - 创建子进程
+ * @param frame 系统调用栈帧指针（架构相关大小）
  * @return 父进程返回子进程 PID，子进程返回 0，失败返回 -1
  */
-uint32_t sys_fork(uint32_t *frame);
+uint32_t sys_fork(uintptr_t *frame);
 
 /**
  * sys_execve - 执行新程序（替换当前进程）
- * @param frame 系统调用栈帧指针
+ * @param frame 系统调用栈帧指针（架构相关大小）
  * @param path  程序路径
  * @return 成功则返回 0（通过修改 frame 返回到新程序），失败返回 -1
  */
-uint32_t sys_execve(uint32_t *frame, const char *path);
+uint32_t sys_execve(uintptr_t *frame, const char *path);
 
 /**
  * sys_getpid - 获取当前进程 PID

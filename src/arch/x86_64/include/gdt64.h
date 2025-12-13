@@ -18,13 +18,25 @@
 
 /* ============================================================================
  * Segment Selectors
+ * ============================================================================
+ * GDT Layout for SYSRET compatibility:
+ *   Index 0 (0x00): Null descriptor
+ *   Index 1 (0x08): Kernel Code (64-bit)
+ *   Index 2 (0x10): Kernel Data
+ *   Index 3 (0x18): User Data    <- SYSRET SS = STAR[63:48] + 8 | 3
+ *   Index 4 (0x20): User Code    <- SYSRET CS = STAR[63:48] + 16 | 3
+ *   Index 5 (0x28): TSS (16 bytes)
+ *
+ * With STAR[63:48] = 0x10:
+ *   SYSRET CS = 0x10 + 16 | 3 = 0x23 (User Code at 0x20)
+ *   SYSRET SS = 0x10 + 8 | 3 = 0x1B (User Data at 0x18)
  * ========================================================================== */
 
 #define GDT64_NULL_SEGMENT          0x00
 #define GDT64_KERNEL_CODE_SEGMENT   0x08    /* Index 1 */
 #define GDT64_KERNEL_DATA_SEGMENT   0x10    /* Index 2 */
-#define GDT64_USER_CODE_SEGMENT     0x18    /* Index 3, RPL=3 -> 0x1B */
-#define GDT64_USER_DATA_SEGMENT     0x20    /* Index 4, RPL=3 -> 0x23 */
+#define GDT64_USER_DATA_SEGMENT     0x18    /* Index 3, RPL=3 -> 0x1B (for SYSRET SS) */
+#define GDT64_USER_CODE_SEGMENT     0x20    /* Index 4, RPL=3 -> 0x23 (for SYSRET CS) */
 #define GDT64_TSS_SEGMENT           0x28    /* Index 5 (16 bytes, spans 5-6) */
 
 /* User mode selectors with RPL=3 */

@@ -123,24 +123,30 @@ void gdt64_init_with_tss(uint64_t kernel_stack) {
                     GDT64_ACCESS_CODE_DATA | GDT64_ACCESS_READABLE,
                     GDT64_FLAG_GRANULARITY);
     
-    /* Entry 3: User Code Segment (64-bit, Ring 3)
-     * Access: Present + Ring 3 + Code/Data + Executable + Readable
-     * Flags: Long mode (L=1, D=0)
+    /* Entry 3: User Data Segment (Ring 3)
+     * Access: Present + Ring 3 + Code/Data + Writable
+     * Flags: None
+     * 
+     * NOTE: User Data MUST be at index 3 (0x18) for SYSRET compatibility.
+     * SYSRET SS = STAR[63:48] + 8 | 3 = 0x10 + 8 | 3 = 0x1B
      */
     gdt64_set_entry(3, 0, 0xFFFFF,
+                    GDT64_ACCESS_PRESENT | GDT64_ACCESS_PRIV_RING3 |
+                    GDT64_ACCESS_CODE_DATA | GDT64_ACCESS_READABLE,
+                    GDT64_FLAG_GRANULARITY);
+    
+    /* Entry 4: User Code Segment (64-bit, Ring 3)
+     * Access: Present + Ring 3 + Code/Data + Executable + Readable
+     * Flags: Long mode (L=1, D=0)
+     * 
+     * NOTE: User Code MUST be at index 4 (0x20) for SYSRET compatibility.
+     * SYSRET CS = STAR[63:48] + 16 | 3 = 0x10 + 16 | 3 = 0x23
+     */
+    gdt64_set_entry(4, 0, 0xFFFFF,
                     GDT64_ACCESS_PRESENT | GDT64_ACCESS_PRIV_RING3 |
                     GDT64_ACCESS_CODE_DATA | GDT64_ACCESS_EXECUTABLE |
                     GDT64_ACCESS_READABLE,
                     GDT64_FLAG_GRANULARITY | GDT64_FLAG_LONG_MODE);
-    
-    /* Entry 4: User Data Segment (Ring 3)
-     * Access: Present + Ring 3 + Code/Data + Writable
-     * Flags: None
-     */
-    gdt64_set_entry(4, 0, 0xFFFFF,
-                    GDT64_ACCESS_PRESENT | GDT64_ACCESS_PRIV_RING3 |
-                    GDT64_ACCESS_CODE_DATA | GDT64_ACCESS_READABLE,
-                    GDT64_FLAG_GRANULARITY);
     
     /* Initialize TSS */
     memset(&tss64, 0, sizeof(tss64));

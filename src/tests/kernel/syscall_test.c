@@ -24,8 +24,8 @@
 // ============================================================================
 
 // The syscall_dispatcher is the core function that routes syscalls
-extern uint32_t syscall_dispatcher(uint32_t syscall_num, uint32_t p1, uint32_t p2, 
-                                   uint32_t p3, uint32_t p4, uint32_t p5, uint32_t *frame);
+// Uses syscall_arg_t for 32/64-bit compatibility (defined in kernel/syscall.h)
+#include <kernel/syscall.h>
 
 // ============================================================================
 // Property Test: Invalid Syscall Numbers Return Error
@@ -38,19 +38,19 @@ extern uint32_t syscall_dispatcher(uint32_t syscall_num, uint32_t p1, uint32_t p
 // ============================================================================
 
 TEST_CASE(test_invalid_syscall_returns_error) {
-    uint32_t dummy_frame[13] = {0};
+    syscall_arg_t dummy_frame[16] = {0};
     
     // Test with syscall number at SYS_MAX boundary
-    uint32_t result = syscall_dispatcher(SYS_MAX, 0, 0, 0, 0, 0, dummy_frame);
-    ASSERT_EQ_UINT(result, (uint32_t)-1);
+    syscall_arg_t result = syscall_dispatcher(SYS_MAX, 0, 0, 0, 0, 0, dummy_frame);
+    ASSERT_EQ_UINT((uint32_t)result, (uint32_t)-1);
     
     // Test with syscall number well beyond SYS_MAX
     result = syscall_dispatcher(SYS_MAX + 100, 0, 0, 0, 0, 0, dummy_frame);
-    ASSERT_EQ_UINT(result, (uint32_t)-1);
+    ASSERT_EQ_UINT((uint32_t)result, (uint32_t)-1);
     
-    // Test with maximum uint32_t value
-    result = syscall_dispatcher(0xFFFFFFFF, 0, 0, 0, 0, 0, dummy_frame);
-    ASSERT_EQ_UINT(result, (uint32_t)-1);
+    // Test with maximum value
+    result = syscall_dispatcher((syscall_arg_t)-1, 0, 0, 0, 0, 0, dummy_frame);
+    ASSERT_EQ_UINT((uint32_t)result, (uint32_t)-1);
 }
 
 // ============================================================================
@@ -64,19 +64,19 @@ TEST_CASE(test_invalid_syscall_returns_error) {
 // ============================================================================
 
 TEST_CASE(test_unimplemented_syscall_returns_error) {
-    uint32_t dummy_frame[13] = {0};
+    syscall_arg_t dummy_frame[16] = {0};
     
     // SYS_CLONE is defined but not implemented
-    uint32_t result = syscall_dispatcher(SYS_CLONE, 0, 0, 0, 0, 0, dummy_frame);
-    ASSERT_EQ_UINT(result, (uint32_t)-1);
+    syscall_arg_t result = syscall_dispatcher(SYS_CLONE, 0, 0, 0, 0, 0, dummy_frame);
+    ASSERT_EQ_UINT((uint32_t)result, (uint32_t)-1);
     
     // SYS_MPROTECT is defined but not implemented
     result = syscall_dispatcher(SYS_MPROTECT, 0, 0, 0, 0, 0, dummy_frame);
-    ASSERT_EQ_UINT(result, (uint32_t)-1);
+    ASSERT_EQ_UINT((uint32_t)result, (uint32_t)-1);
     
     // SYS_SIGACTION is defined but not implemented
     result = syscall_dispatcher(SYS_SIGACTION, 0, 0, 0, 0, 0, dummy_frame);
-    ASSERT_EQ_UINT(result, (uint32_t)-1);
+    ASSERT_EQ_UINT((uint32_t)result, (uint32_t)-1);
 }
 
 // ============================================================================
@@ -91,11 +91,11 @@ TEST_CASE(test_unimplemented_syscall_returns_error) {
 // ============================================================================
 
 TEST_CASE(test_getpid_dispatches_correctly) {
-    uint32_t dummy_frame[13] = {0};
+    syscall_arg_t dummy_frame[16] = {0};
     
     // Call getpid - should dispatch to the handler
     // Note: During kernel tests, there may be no current task, so -1 is acceptable
-    uint32_t pid = syscall_dispatcher(SYS_GETPID, 0, 0, 0, 0, 0, dummy_frame);
+    syscall_arg_t pid = syscall_dispatcher(SYS_GETPID, 0, 0, 0, 0, 0, dummy_frame);
     
     // The syscall should have been dispatched (not returned as unimplemented)
     // If it was unimplemented, we would see a warning message
@@ -118,13 +118,13 @@ TEST_CASE(test_getpid_dispatches_correctly) {
 // ============================================================================
 
 TEST_CASE(test_getppid_returns_valid_ppid) {
-    uint32_t dummy_frame[13] = {0};
+    syscall_arg_t dummy_frame[16] = {0};
     
     // Call getppid - should return parent process ID
-    uint32_t ppid = syscall_dispatcher(SYS_GETPPID, 0, 0, 0, 0, 0, dummy_frame);
+    syscall_arg_t ppid = syscall_dispatcher(SYS_GETPPID, 0, 0, 0, 0, 0, dummy_frame);
     
     // PPID should be a reasonable value (not -1 error)
-    ASSERT_NE_UINT(ppid, (uint32_t)-1);
+    ASSERT_NE_UINT((uint32_t)ppid, (uint32_t)-1);
 }
 
 // ============================================================================
@@ -138,14 +138,14 @@ TEST_CASE(test_getppid_returns_valid_ppid) {
 // ============================================================================
 
 TEST_CASE(test_time_returns_timestamp) {
-    uint32_t dummy_frame[13] = {0};
+    syscall_arg_t dummy_frame[16] = {0};
     
     // Call time - should return current timestamp
-    uint32_t timestamp = syscall_dispatcher(SYS_TIME, 0, 0, 0, 0, 0, dummy_frame);
+    syscall_arg_t timestamp = syscall_dispatcher(SYS_TIME, 0, 0, 0, 0, 0, dummy_frame);
     
     // Timestamp should not be an error value
     // Note: timestamp could be 0 if RTC is not initialized, so we just check it's not -1
-    ASSERT_NE_UINT(timestamp, (uint32_t)-1);
+    ASSERT_NE_UINT((uint32_t)timestamp, (uint32_t)-1);
 }
 
 // ============================================================================
@@ -211,15 +211,15 @@ TEST_CASE(test_syscall_number_organization) {
 TEST_CASE(test_syscall_entry_initialized) {
     // This test verifies that syscall_init() has been called and the
     // system call mechanism is operational by testing that valid syscalls work
-    uint32_t dummy_frame[13] = {0};
+    syscall_arg_t dummy_frame[16] = {0};
     
     // If syscall entry is not initialized, these would fail or crash
     // The fact that we can call the dispatcher and get valid results
     // indicates the entry mechanism is working
     
     // Test that an invalid syscall returns error (proves dispatcher is working)
-    uint32_t result = syscall_dispatcher(SYS_MAX + 1, 0, 0, 0, 0, 0, dummy_frame);
-    ASSERT_EQ_UINT(result, (uint32_t)-1);
+    syscall_arg_t result = syscall_dispatcher(SYS_MAX + 1, 0, 0, 0, 0, 0, dummy_frame);
+    ASSERT_EQ_UINT((uint32_t)result, (uint32_t)-1);
     
     // If we reach here, the syscall mechanism is working
     ASSERT_TRUE(true);
@@ -236,13 +236,13 @@ TEST_CASE(test_syscall_entry_initialized) {
 // ============================================================================
 
 TEST_CASE(test_error_returns_are_negative) {
-    uint32_t dummy_frame[13] = {0};
+    syscall_arg_t dummy_frame[16] = {0};
     
-    // Invalid syscall should return -1 (0xFFFFFFFF as unsigned)
-    uint32_t result = syscall_dispatcher(SYS_MAX, 0, 0, 0, 0, 0, dummy_frame);
+    // Invalid syscall should return -1 (0xFFFFFFFF as unsigned on 32-bit)
+    syscall_arg_t result = syscall_dispatcher(SYS_MAX, 0, 0, 0, 0, 0, dummy_frame);
     
     // When interpreted as signed, this should be negative
-    int32_t signed_result = (int32_t)result;
+    intptr_t signed_result = (intptr_t)result;
     ASSERT_TRUE(signed_result < 0);
     
     // Specifically, it should be -1
@@ -260,14 +260,14 @@ TEST_CASE(test_error_returns_are_negative) {
 // ============================================================================
 
 TEST_CASE(test_syscall_arguments_passed_correctly) {
-    uint32_t dummy_frame[13] = {0};
+    syscall_arg_t dummy_frame[16] = {0};
     
     // Test with close(-1) - should return error for invalid fd
     // This tests that the first argument (fd) is correctly passed
-    uint32_t result = syscall_dispatcher(SYS_CLOSE, (uint32_t)-1, 0, 0, 0, 0, dummy_frame);
+    syscall_arg_t result = syscall_dispatcher(SYS_CLOSE, (syscall_arg_t)-1, 0, 0, 0, 0, dummy_frame);
     
     // close(-1) should fail with an error
-    int32_t signed_result = (int32_t)result;
+    intptr_t signed_result = (intptr_t)result;
     ASSERT_TRUE(signed_result < 0);
 }
 

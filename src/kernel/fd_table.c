@@ -118,7 +118,7 @@ int32_t fd_table_copy(fd_table_t *src, fd_table_t *dst) {
     
     // 按地址顺序加锁，避免死锁
     spinlock_t *first_lock, *second_lock;
-    if ((uint32_t)src < (uint32_t)dst) {
+    if ((uintptr_t)src < (uintptr_t)dst) {
         first_lock = &src->lock;
         second_lock = &dst->lock;
     } else {

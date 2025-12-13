@@ -27,13 +27,12 @@ endif
 TEST_TIMEOUT ?= 8
 # 输出行数限制
 OUTPUT_LINES ?= 200
-# macOS 使用 gtimeout, Linux 使用 timeout
+# timeout 命令 (macOS 需要安装 coreutils: brew install coreutils)
+TIMEOUT_CMD = timeout
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
-    TIMEOUT_CMD = gtimeout
     CREATE_SCRIPT = scripts/bootable-img-create-macos.sh
 else
-    TIMEOUT_CMD = timeout
     CREATE_SCRIPT = scripts/bootable-img-create.sh
 endif
 

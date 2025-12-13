@@ -4,6 +4,13 @@
 #include <types.h>   // uint32_t, size_t, pid_t 等定义
 
 // ============================================================================
+// 架构无关的系统调用参数类型
+// ============================================================================
+// 系统调用参数使用 uintptr_t 以支持 32 位和 64 位架构
+// 在 i686 上 uintptr_t = uint32_t，在 x86_64 上 uintptr_t = uint64_t
+typedef uintptr_t syscall_arg_t;
+
+// ============================================================================
 // 系统调用号定义（与用户态保持一致）
 // ============================================================================
 
@@ -103,5 +110,16 @@ void syscall_init(void);
  * 系统调用处理函数（汇编调用）
  */
 extern void syscall_handler(void);
+
+/**
+ * 系统调用分发器
+ * @param syscall_num 系统调用号
+ * @param p1-p5 系统调用参数
+ * @param frame 栈帧指针
+ * @return 系统调用返回值
+ */
+syscall_arg_t syscall_dispatcher(syscall_arg_t syscall_num, syscall_arg_t p1, syscall_arg_t p2,
+                                 syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5,
+                                 syscall_arg_t *frame);
 
 #endif // _KERNEL_SYSCALL_H_
