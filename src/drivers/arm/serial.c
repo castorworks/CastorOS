@@ -401,3 +401,16 @@ void serial_clear_interrupts(void) {
 uint32_t serial_get_interrupt_status(void) {
     return pl011_read(PL011_MIS);
 }
+
+/**
+ * @brief Try to read a character without blocking
+ * @param c Pointer to store the character
+ * @return true if a character was read, false if no character available
+ */
+bool serial_try_getchar(char *c) {
+    if (pl011_read(PL011_FR) & PL011_FR_RXFE) {
+        return false;
+    }
+    *c = (char)(pl011_read(PL011_DR) & 0xFF);
+    return true;
+}

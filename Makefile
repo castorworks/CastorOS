@@ -69,7 +69,7 @@ else ifeq ($(ARCH),arm64)
     LD = aarch64-elf-ld
     AS = aarch64-elf-as
     OBJCOPY = aarch64-elf-objcopy
-    ARCH_CFLAGS = -mcpu=cortex-a72
+    ARCH_CFLAGS = -mcpu=cortex-a72 -mgeneral-regs-only
     ARCH_LDFLAGS = -T linker_arm64.ld -nostdlib
     ARCH_ASFLAGS =
     ARCH_DEFINE = -DARCH_ARM64
@@ -108,12 +108,41 @@ DISK_IMAGE = $(BUILD_DIR)/bootable.img
 # ============================================================================
 
 ifeq ($(ARCH),arm64)
+    # ARM64 Common Sources
+    # Library modules
     COMMON_C_SOURCES = $(SRC_DIR)/lib/string.c \
         $(SRC_DIR)/lib/libgcc_stub.c \
         $(SRC_DIR)/lib/kprintf.c \
+        $(SRC_DIR)/lib/klog.c \
         $(wildcard $(SRC_DIR)/drivers/arm/*.c) \
         $(wildcard $(SRC_DIR)/drivers/platform/*.c) \
-        $(wildcard $(SRC_DIR)/tests/framework/*.c)
+        $(wildcard $(SRC_DIR)/tests/framework/*.c) \
+        \
+        $(SRC_DIR)/mm/pmm.c \
+        $(SRC_DIR)/mm/vmm.c \
+        $(SRC_DIR)/mm/heap.c \
+        \
+        $(SRC_DIR)/kernel/kernel.c \
+        $(SRC_DIR)/kernel/task.c \
+        $(SRC_DIR)/kernel/syscall.c \
+        $(SRC_DIR)/kernel/panic.c \
+        $(SRC_DIR)/kernel/fd_table.c \
+        $(SRC_DIR)/kernel/interrupt.c \
+        $(SRC_DIR)/kernel/elf.c \
+        $(SRC_DIR)/kernel/system.c \
+        $(SRC_DIR)/kernel/user.c \
+        $(SRC_DIR)/kernel/loader.c \
+        $(wildcard $(SRC_DIR)/kernel/sync/*.c) \
+        $(SRC_DIR)/kernel/syscalls/fs.c \
+        $(SRC_DIR)/kernel/syscalls/mm.c \
+        $(SRC_DIR)/kernel/syscalls/process.c \
+        $(SRC_DIR)/kernel/syscalls/system.c \
+        $(SRC_DIR)/kernel/syscalls/time.c \
+        \
+        $(SRC_DIR)/fs/vfs.c \
+        $(SRC_DIR)/fs/ramfs.c \
+        $(SRC_DIR)/fs/devfs.c \
+        $(SRC_DIR)/fs/pipe.c
 else
     COMMON_C_SOURCES = $(wildcard $(SRC_DIR)/drivers/common/*.c) \
         $(wildcard $(SRC_DIR)/drivers/platform/*.c) \
@@ -222,6 +251,7 @@ OBJECTS = $(ASM_OBJECTS) $(C_OBJECTS)
 .PHONY: all clean run debug info help
 .PHONY: test test-all build-all check
 .PHONY: shell hello tests disk
+.PHONY: debug-arm64 gdb-arm64
 
 all: $(KERNEL)
 
@@ -337,6 +367,32 @@ else
 	@$(TIMEOUT_CMD) $(TEST_TIMEOUT) $(QEMU) $(QEMU_FLAGS) $(KERNEL) -serial stdio -display none 2>&1 | tee $(BUILD_DIR)/debug.log | head -$(OUTPUT_LINES)
 endif
 	@echo "Output saved to $(BUILD_DIR)/debug.log"
+
+# ARM64 专用调试目标
+debug-arm64:
+	@$(MAKE) ARCH=arm64 $(BUILD_DIR)/castor.bin
+	@echo "╔══════════════════════════════════════════════════════════════╗"
+	@echo "║           ARM64 Debug Session                                ║"
+	@echo "╠══════════════════════════════════════════════════════════════╣"
+	@echo "║ QEMU is waiting for GDB connection on port 1234              ║"
+	@echo "║                                                              ║"
+	@echo "║ To connect, run in another terminal:                         ║"
+	@echo "║   aarch64-elf-gdb -x .gdbinit-arm64                          ║"
+	@echo "║ Or:                                                          ║"
+	@echo "║   gdb-multiarch -x .gdbinit-arm64                            ║"
+	@echo "╚══════════════════════════════════════════════════════════════╝"
+	$(QEMU) -M virt -cpu cortex-a72 -kernel build/arm64/castor.bin -nographic -serial mon:stdio -s -S
+
+# GDB 连接辅助目标 (在另一个终端运行)
+gdb-arm64:
+	@if command -v aarch64-elf-gdb >/dev/null 2>&1; then \
+		aarch64-elf-gdb -x .gdbinit-arm64; \
+	elif command -v gdb-multiarch >/dev/null 2>&1; then \
+		gdb-multiarch -x .gdbinit-arm64; \
+	else \
+		echo "Error: No ARM64 GDB found. Install aarch64-elf-gdb or gdb-multiarch"; \
+		exit 1; \
+	fi
 
 # ============================================================================
 # 用户空间构建
@@ -469,6 +525,8 @@ help:
 	@echo "  debug        Start QEMU with GDB server"
 	@echo "  debug-silent Debug without GUI"
 	@echo "  debug-capture Capture output to file"
+	@echo "  debug-arm64  Start ARM64 debug session (with instructions)"
+	@echo "  gdb-arm64    Connect GDB to ARM64 debug session"
 	@echo ""
 	@echo "User Space:"
 	@echo "  shell        Build shell"

@@ -128,6 +128,26 @@ void hal_context_switch(hal_context_t **old_ctx, hal_context_t *new_ctx) {
 }
 
 /**
+ * @brief Set the kernel stack for a task context
+ * 
+ * On ARM64, this stores the kernel stack pointer in X28 of the context.
+ * The context switch code will use this to set SP_EL1 before ERET to user mode.
+ * This ensures that when an exception occurs in user mode, the CPU uses
+ * the correct kernel stack for that task.
+ * 
+ * @param ctx Pointer to the task's context
+ * @param stack_top Top of the kernel stack
+ */
+void hal_context_set_kernel_stack_ctx(hal_context_t *ctx, uintptr_t stack_top) {
+    if (!ctx) {
+        return;
+    }
+    arm64_context_t *arm64_ctx = (arm64_context_t *)ctx;
+    /* Store kernel stack in X28 - context switch will use this to set SP_EL1 */
+    arm64_ctx->x[28] = (uint64_t)stack_top;
+}
+
+/**
  * @brief Set the kernel stack for the current CPU
  * 
  * On ARM64, this sets up the stack pointer that will be used when
@@ -136,11 +156,7 @@ void hal_context_switch(hal_context_t **old_ctx, hal_context_t *new_ctx) {
  * @param stack_top Top of the kernel stack
  */
 void hal_context_set_kernel_stack(uintptr_t stack_top) {
-    /* On ARM64, SP_EL1 is automatically used when taking exceptions to EL1 */
-    /* We can set it directly, but typically it's managed by the exception handler */
-    /* For now, we store it for use by exception handlers */
-    
-    /* Note: In a full implementation, this would update a per-CPU structure
-     * that the exception handler uses to set up the kernel stack */
-    (void)stack_top;
+    /* On ARM64, we set SP directly since we're in kernel mode */
+    /* This is called when setting up the kernel stack for the current task */
+    __asm__ volatile("mov sp, %0" : : "r"(stack_top));
 }

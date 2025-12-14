@@ -110,8 +110,11 @@
  *   x1-x3 - 保留
  */
 _start:
-    /* 保存 DTB 地址 */
+    /* 保存 DTB 地址 (x0 contains DTB address from bootloader/QEMU) */
     mov     x19, x0
+    
+    /* Also save to x21 as backup (x19-x28 are callee-saved) */
+    mov     x21, x0
 
     /* 禁用中断 */
     msr     daifset, #0xf
@@ -163,6 +166,15 @@ el2_entry:
     mov     x0, #(1 << 31)  /* RW=1: EL1 is AArch64 */
     msr     hcr_el2, x0
     
+    /* 配置 CNTHCTL_EL2: 允许 EL1 访问物理计时器 */
+    /* EL1PCTEN=1: EL1 可以访问物理计数器 */
+    /* EL1PCEN=1: EL1 可以访问物理计时器 */
+    mov     x0, #3          /* EL1PCTEN | EL1PCEN */
+    msr     cnthctl_el2, x0
+    
+    /* 配置 CNTVOFF_EL2: 虚拟计时器偏移为 0 */
+    msr     cntvoff_el2, xzr
+    
     /* 配置 SPSR_EL2: 返回到 EL1h */
     mov     x0, #0x3c5      /* D=1, A=1, I=1, F=1, M=EL1h */
     msr     spsr_el2, x0
@@ -210,6 +222,21 @@ bss_done:
 
     /* 配置 TCR_EL1 */
     /* T0SZ=16, T1SZ=16, TG0=4KB, TG1=4KB, SH=Inner, ORGN/IRGN=WB-WA, IPS=48bit */
+    /* 
+     * TCR_EL1 layout:
+     * [5:0]   T0SZ = 16 (48-bit VA for TTBR0)
+     * [21:16] T1SZ = 16 (48-bit VA for TTBR1)
+     * [15:14] TG0 = 0 (4KB granule for TTBR0)
+     * [31:30] TG1 = 2 (4KB granule for TTBR1)
+     * [34:32] IPS = 5 (48-bit PA)
+     * [9:8]   IRGN0 = 1 (WB-WA)
+     * [11:10] ORGN0 = 1 (WB-WA)
+     * [13:12] SH0 = 3 (Inner)
+     * [25:24] IRGN1 = 1 (WB-WA)
+     * [27:26] ORGN1 = 1 (WB-WA)
+     * [29:28] SH1 = 3 (Inner)
+     */
+    /* Build TCR value carefully to avoid overwriting */
     mov     x0, #16             /* T0SZ = 16 */
     orr     x0, x0, #(16 << 16) /* T1SZ = 16 */
     orr     x0, x0, #(1 << 8)   /* IRGN0 = WB-WA */
@@ -218,7 +245,12 @@ bss_done:
     orr     x0, x0, #(1 << 24)  /* IRGN1 = WB-WA */
     orr     x0, x0, #(1 << 26)  /* ORGN1 = WB-WA */
     orr     x0, x0, #(3 << 28)  /* SH1 = Inner */
-    movk    x0, #0x8002, lsl #16 /* TG1=4KB (bit 30-31=2), IPS=48bit (bit 32-34=5) */
+    /* TG1 = 2 (bits 31:30) - use orr instead of movk to preserve other bits */
+    orr     x0, x0, #(2 << 30)  /* TG1 = 4KB */
+    /* IPS = 5 (bits 34:32) - 48-bit physical address */
+    mov     x1, #(5 << 0)       /* IPS value */
+    lsl     x1, x1, #32         /* Shift to bits 34:32 */
+    orr     x0, x0, x1          /* Combine */
     msr     tcr_el1, x0
 
     /* 加载页表基址 */
@@ -248,7 +280,11 @@ bss_done:
     mov     sp, x0
 
     /* 准备 kernel_main 参数 */
+    /* Use x19 (primary) or x21 (backup) for DTB address */
     mov     x0, x19             /* DTB 地址 */
+    cbnz    x0, 1f              /* If x19 != 0, use it */
+    mov     x0, x21             /* Otherwise try x21 backup */
+1:
 
     /* 调用 kernel_main */
     bl      kernel_main
@@ -289,10 +325,23 @@ setup_page_tables:
     orr     x3, x1, #TABLE_DESC
     str     x3, [x0, #0]
 
-    /* L0[256] -> L1 高地址表 (内核映射) */
-    /* 索引 256 = 0xFFFF000000000000 >> 39 & 0x1FF */
-    orr     x3, x2, #TABLE_DESC
-    str     x3, [x0, #(256 * 8)]
+    /* L0[0] -> L1 高地址表 (内核映射) */
+    /* 
+     * 对于 TTBR1 (内核空间), 地址 0xFFFF_0000_xxxx_xxxx 的 L0 索引是:
+     * bits [47:39] = 0 (因为 0xFFFF_0000 的 bit 47 = 0)
+     * 所以 L0[0] 用于内核映射
+     * 
+     * 注意: TTBR0 和 TTBR1 使用相同的 L0 表，但 TTBR0 用于用户空间 (0x0000_xxxx)
+     * TTBR1 用于内核空间 (0xFFFF_xxxx)。由于两者的 L0 索引相同 (都是 0)，
+     * 我们需要确保 L0[0] 的 L1 表同时支持恒等映射和高半核映射。
+     * 
+     * 当前设计: L0[0] -> boot_l1_table_low (恒等映射)
+     * 这意味着 0xFFFF_0000_4xxx_xxxx 会映射到物理 0x4xxx_xxxx，这正是我们需要的。
+     */
+    /* 实际上不需要单独的高地址表，因为恒等映射已经覆盖了所需的物理地址 */
+    /* 保留此代码以备将来需要分离用户/内核页表时使用 */
+    /* orr     x3, x2, #TABLE_DESC */
+    /* str     x3, [x0, #0] */
 
     /* 设置 L1 低地址表: 恒等映射前 4GB */
     /* L1[0] = 0x00000000 (1GB block) */

@@ -45,6 +45,16 @@ void hal_cpu_init(void) {
      * - System registers configured by boot code
      */
     
+    /* Enable FP/SIMD access for EL0 and EL1
+     * CPACR_EL1.FPEN[21:20] = 0b11 enables FP/SIMD for both EL0 and EL1
+     */
+    uint64_t cpacr;
+    __asm__ volatile("mrs %0, cpacr_el1" : "=r"(cpacr));
+    cpacr |= (3ULL << 20);  /* FPEN = 0b11 */
+    __asm__ volatile("msr cpacr_el1, %0" : : "r"(cpacr));
+    __asm__ volatile("isb");
+    serial_puts("HAL: FP/SIMD enabled for EL0 and EL1\n");
+    
     g_hal_cpu_initialized = true;
     serial_puts("HAL: ARM64 CPU initialization complete\n");
 }
@@ -115,7 +125,17 @@ void hal_interrupt_unregister(uint32_t irq) {
  * @brief Enable interrupts globally
  */
 void hal_interrupt_enable(void) {
+    serial_puts("HAL: Enabling interrupts...\n");
+    
+    /* Debug: Print current SP before enabling interrupts */
+    uint64_t sp;
+    __asm__ volatile("mov %0, sp" : "=r"(sp));
+    serial_puts("  Current SP: ");
+    serial_put_hex64(sp);
+    serial_puts("\n");
+    
     __asm__ volatile("msr daifclr, #0xf" ::: "memory");
+    serial_puts("HAL: Interrupts enabled\n");
 }
 
 /**
@@ -240,11 +260,23 @@ static void hal_timer_irq_handler(void *data) {
     /* Increment software tick counter */
     g_timer_ticks++;
     
-    /* Reload timer for next tick */
+    /* Reload timer for next tick FIRST - this clears the interrupt condition */
     if (g_timer_frequency > 0) {
         uint64_t cntfrq = read_cntfrq_el0();
         uint64_t tval = cntfrq / g_timer_frequency;
         write_cntp_tval_el0(tval);
+    }
+    
+    /* Debug: Print tick count periodically */
+    if (g_timer_ticks <= 10 || (g_timer_ticks % 100) == 0) {
+        serial_puts("[TIMER] Tick ");
+        serial_put_hex64(g_timer_ticks);
+        
+        /* Check timer state after reload */
+        uint64_t ctl = read_cntp_ctl_el0();
+        serial_puts(" CTL=");
+        serial_put_hex64(ctl);
+        serial_puts("\n");
     }
     
     /* Call user callback if registered */
@@ -285,11 +317,60 @@ void hal_timer_init(uint32_t freq_hz, hal_timer_callback_t callback) {
     serial_puts("\n");
     
     /* Register timer IRQ handler */
+    serial_puts("  Registering timer IRQ handler for IRQ ");
+    serial_put_hex64(ARM_TIMER_IRQ);
+    serial_puts("\n");
     hal_interrupt_register(ARM_TIMER_IRQ, hal_timer_irq_handler, NULL);
     
     /* Set timer value and enable timer */
     write_cntp_tval_el0(tval);
     write_cntp_ctl_el0(CNTP_CTL_ENABLE);  /* Enable, unmask interrupt */
+    
+    /* Verify timer is enabled */
+    uint64_t ctl = read_cntp_ctl_el0();
+    serial_puts("  Timer control: ");
+    serial_put_hex64(ctl);
+    serial_puts(" (ENABLE=");
+    serial_puts((ctl & CNTP_CTL_ENABLE) ? "1" : "0");
+    serial_puts(", IMASK=");
+    serial_puts((ctl & CNTP_CTL_IMASK) ? "1" : "0");
+    serial_puts(", ISTATUS=");
+    serial_puts((ctl & CNTP_CTL_ISTATUS) ? "1" : "0");
+    serial_puts(")\n");
+    
+    /* Check current DAIF state */
+    uint64_t daif;
+    __asm__ volatile("mrs %0, daif" : "=r"(daif));
+    serial_puts("  Current DAIF: ");
+    serial_put_hex64(daif);
+    serial_puts(" (I=");
+    serial_puts((daif & (1 << 7)) ? "masked" : "enabled");
+    serial_puts(")\n");
+    
+    /* Read current counter value */
+    uint64_t cnt_before = read_cntpct_el0();
+    serial_puts("  Counter before delay: ");
+    serial_put_hex64(cnt_before);
+    serial_puts("\n");
+    
+    /* Wait a bit and check if timer interrupt is pending */
+    for (volatile int i = 0; i < 10000000; i++) {
+        __asm__ volatile("nop");
+    }
+    
+    uint64_t cnt_after = read_cntpct_el0();
+    serial_puts("  Counter after delay: ");
+    serial_put_hex64(cnt_after);
+    serial_puts(" (diff=");
+    serial_put_hex64(cnt_after - cnt_before);
+    serial_puts(")\n");
+    
+    ctl = read_cntp_ctl_el0();
+    serial_puts("  After delay - Timer control: ");
+    serial_put_hex64(ctl);
+    serial_puts(" (ISTATUS=");
+    serial_puts((ctl & CNTP_CTL_ISTATUS) ? "1" : "0");
+    serial_puts(")\n");
     
     serial_puts("HAL: ARM64 timer initialization complete\n");
 }

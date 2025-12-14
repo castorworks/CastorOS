@@ -14,6 +14,7 @@
 #include <lib/string.h>
 #include <kernel/panic.h>
 #include <kernel/sync/spinlock.h>
+#include <hal/hal.h>
 
 static uintptr_t heap_start;        ///< 堆起始地址
 static uintptr_t heap_end;          ///< 堆当前结束地址
@@ -26,6 +27,9 @@ static spinlock_t heap_lock;       ///< 堆自旋锁，保护堆的内部状态
  * @brief 扩展堆空间
  * @param size 需要扩展的字节数
  * @return 成功返回 true，失败返回 false
+ * 
+ * **Feature: arm64-kernel-integration**
+ * **Validates: Requirements 3.1**
  */
 static bool expand(size_t size) {
     size_t pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
@@ -57,7 +61,36 @@ static bool expand(size_t size) {
     memset((void*)heap_end, 0, pages * PAGE_SIZE);
     heap_end = new_heap_end;
     return true;
+#elif defined(ARCH_ARM64)
+    // ARM64: 引导时已经使用 1GB 块映射了物理内存到高半核
+    // 堆虚拟地址 = KERNEL_VIRTUAL_BASE + 物理地址
+    // 所以堆扩展只需要确保对应的物理地址在已映射范围内
+    //
+    // 堆地址布局：
+    //   heap_start = PHYS_TO_VIRT(pmm_data_end_phys)
+    //   heap_end 对应的物理地址 = VIRT_TO_PHYS(heap_end)
+    //
+    // 由于引导时使用 1GB 块映射（物理地址 X 映射到虚拟地址 KERNEL_VIRTUAL_BASE + X），
+    // 我们只需要验证堆扩展后的物理地址仍在已映射范围内
+    
+    uintptr_t new_heap_end = heap_end + pages * PAGE_SIZE;
+    uintptr_t new_heap_end_phys = VIRT_TO_PHYS(new_heap_end);
+    
+    // 验证扩展后的堆仍在物理内存范围内
+    // ARM64 QEMU virt machine: RAM at 0x40000000 - 0x60000000 (512MB with -m 512M)
+    // 但引导代码映射了 4GB，所以只需检查不超过 4GB
+    if (new_heap_end_phys > 0x100000000ULL) {  // 4GB
+        LOG_ERROR_MSG("heap: expand would exceed boot mapping (phys 0x%llx > 4GB)\n", 
+                     (unsigned long long)new_heap_end_phys);
+        return false;
+    }
+    
+    // 清零新扩展的堆空间（已经通过引导时的块映射可访问）
+    memset((void*)heap_end, 0, pages * PAGE_SIZE);
+    heap_end = new_heap_end;
+    return true;
 #else
+    // i686: 原有实现
     uintptr_t old_heap_end = heap_end;
     uintptr_t current_dir_phys = vmm_get_page_directory();
     

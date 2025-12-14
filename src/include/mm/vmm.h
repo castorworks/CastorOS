@@ -82,24 +82,24 @@ typedef enum vmm_error {
 #define PAGE_COW        0x200
 
 /* Architecture-specific page table types */
-#if defined(ARCH_X86_64)
-/* x86_64: 4-level paging with 64-bit entries, 512 entries per level */
+#if defined(ARCH_X86_64) || defined(ARCH_ARM64)
+/* x86_64/ARM64: 4-level paging with 64-bit entries, 512 entries per level */
 typedef uint64_t pde_t;  ///< 页目录项类型 (64-bit)
 typedef uint64_t pte_t;  ///< 页表项类型 (64-bit)
 
 typedef struct {
-    pte_t entries[512];   ///< 页表项数组 (512 entries for x86_64)
+    pte_t entries[512];   ///< 页表项数组 (512 entries for 64-bit archs)
 } __attribute__((aligned(PAGE_SIZE))) page_table_t;
 
 typedef struct {
-    pde_t entries[512];   ///< 页目录项数组 (512 entries for x86_64)
+    pde_t entries[512];   ///< 页目录项数组 (512 entries for 64-bit archs)
 } __attribute__((aligned(PAGE_SIZE))) page_directory_t;
 
-/* x86_64 uses PML4 -> PDPT -> PD -> PT */
-typedef page_directory_t pml4_t;   ///< PML4 (Level 4)
-typedef page_directory_t pdpt_t;   ///< PDPT (Level 3)
-typedef page_directory_t pd_t;     ///< Page Directory (Level 2)
-typedef page_table_t pt_t;         ///< Page Table (Level 1)
+/* 4-level paging: PML4/L0 -> PDPT/L1 -> PD/L2 -> PT/L3 */
+typedef page_directory_t pml4_t;   ///< PML4/Level 0 (Level 4)
+typedef page_directory_t pdpt_t;   ///< PDPT/Level 1 (Level 3)
+typedef page_directory_t pd_t;     ///< Page Directory/Level 2 (Level 2)
+typedef page_table_t pt_t;         ///< Page Table/Level 3 (Level 1)
 
 #else
 /* i686: 2-level paging with 32-bit entries, 1024 entries per level */

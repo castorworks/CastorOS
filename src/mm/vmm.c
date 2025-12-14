@@ -220,12 +220,79 @@ static page_table_t* create_page_table(void) {
  * 
  * 使用引导时创建的页目录，设置CR3寄存器
  * 扩展高半核映射以覆盖所有可用的物理内存
+ * 
+ * **Feature: arm64-kernel-integration**
+ * **Validates: Requirements 2.1**
  */
 void vmm_init(void) {
     // 初始化 VMM 自旋锁
     spinlock_init(&vmm_lock);
     
-#if defined(ARCH_X86_64)
+#if defined(ARCH_ARM64)
+    // ARM64: 引导代码已经设置了 4 级页表
+    // 使用 HAL MMU 接口获取当前页表
+    current_dir_phys = hal_mmu_get_current_page_table();
+    current_dir = (page_directory_t*)PADDR_TO_KVADDR(current_dir_phys);
+    
+    LOG_INFO_MSG("VMM: ARM64 mode - using boot page tables\n");
+    LOG_INFO_MSG("VMM: L0 table at phys 0x%llx, virt 0x%llx\n", 
+                 (unsigned long long)current_dir_phys, (unsigned long long)current_dir);
+    
+    // 获取 PMM 信息以确定需要映射的物理内存范围
+    pmm_info_t pmm_info = pmm_get_info();
+    uint64_t max_phys = (uint64_t)pmm_info.total_frames * PAGE_SIZE;
+    
+    LOG_INFO_MSG("VMM: Physical memory: %llu MB (%llu frames)\n", 
+                 (unsigned long long)(max_phys / (1024*1024)),
+                 (unsigned long long)pmm_info.total_frames);
+    
+    // ARM64 内核直接映射区：0xFFFF_0000_0000_0000 开始
+    // 引导代码已经映射了基本的内核区域，这里扩展映射以覆盖所有物理内存
+    // 使用 2MB 块映射提高效率
+    LOG_INFO_MSG("VMM: Extending kernel direct mapping using 2MB blocks...\n");
+    
+    // 计算需要映射的 2MB 块数量
+    uint64_t block_size = 2 * 1024 * 1024;  // 2MB
+    uint64_t num_blocks = (max_phys + block_size - 1) / block_size;
+    uint32_t mapped_blocks = 0;
+    
+    for (uint64_t i = 0; i < num_blocks; i++) {
+        uint64_t phys = i * block_size;
+        vaddr_t virt = (vaddr_t)(KERNEL_VIRTUAL_BASE + phys);
+        
+        // 检查是否已经映射（引导代码可能已经映射了部分区域）
+        paddr_t existing_phys;
+        if (hal_mmu_query(HAL_ADDR_SPACE_CURRENT, virt, &existing_phys, NULL)) {
+            // 已映射，跳过
+            continue;
+        }
+        
+        // 使用 2MB 块映射
+        uint32_t hal_flags = HAL_PAGE_PRESENT | HAL_PAGE_WRITE | HAL_PAGE_EXEC;
+        if (hal_mmu_map_huge(HAL_ADDR_SPACE_CURRENT, virt, (paddr_t)phys, hal_flags)) {
+            mapped_blocks++;
+        } else {
+            // 如果 2MB 块映射失败，尝试使用 4KB 页映射
+            LOG_WARN_MSG("VMM: 2MB block mapping failed at 0x%llx, falling back to 4KB pages\n",
+                        (unsigned long long)virt);
+            for (uint64_t offset = 0; offset < block_size; offset += PAGE_SIZE) {
+                vaddr_t page_virt = virt + offset;
+                paddr_t page_phys = phys + offset;
+                if (!hal_mmu_query(HAL_ADDR_SPACE_CURRENT, page_virt, NULL, NULL)) {
+                    hal_mmu_map(HAL_ADDR_SPACE_CURRENT, page_virt, page_phys, hal_flags);
+                }
+            }
+        }
+    }
+    
+    // 刷新 TLB
+    hal_mmu_flush_tlb_all();
+    
+    LOG_INFO_MSG("VMM: Extended mapping by %u 2MB blocks (total %llu MB)\n", 
+                 mapped_blocks, (unsigned long long)(num_blocks * 2));
+    LOG_INFO_MSG("VMM: ARM64 VMM initialization complete\n");
+    
+#elif defined(ARCH_X86_64)
     // x86_64: 引导代码已经设置了 4 级页表，映射了前 1GB
     // 暂时不扩展映射，直接使用引导时的页表
     // boot_page_directory 在 x86_64 上是指向 PML4 的指针
@@ -745,8 +812,11 @@ uintptr_t vmm_create_page_directory(void) {
  * 使用 HAL MMU 接口实现跨架构地址空间克隆
  */
 uintptr_t vmm_clone_page_directory(uintptr_t src_dir_phys) {
-#if defined(ARCH_X86_64)
-    // x86_64: 使用 HAL 接口克隆地址空间
+#if defined(ARCH_X86_64) || defined(ARCH_ARM64)
+    // x86_64/ARM64: 使用 HAL 接口克隆地址空间
+    // 
+    // **Feature: arm64-kernel-integration**
+    // **Validates: Requirements 7.1**
     bool irq_state;
     spinlock_lock_irqsave(&vmm_lock, &irq_state);
     

@@ -90,6 +90,12 @@
  * **Validates: Requirements 6.2**
  */
 .macro kernel_entry
+    /* 
+     * Simple approach: Trust that SP is valid when we enter from EL1.
+     * For EL0 exceptions, SP_EL1 is used automatically.
+     * No SP validation to avoid corrupting registers.
+     */
+    
     /* Allocate stack frame */
     sub     sp, sp, #FRAME_SIZE
 
@@ -197,83 +203,45 @@ el1t_serror:
 
 /* ============================================================================
  * Current EL with SPx (EL1h) - Kernel mode exceptions
+ * Vector entries must be small (branch only) to fit in 128 bytes
  * ========================================================================== */
 
 .balign 128
 el1h_sync:
-    kernel_entry
-    mov     x0, sp                      /* Pass frame pointer */
-    mov     x1, #EXCEPTION_SYNC
-    mov     x2, #EXCEPTION_FROM_EL1_SPX
-    bl      arm64_exception_handler
-    kernel_exit
+    b       el1h_sync_handler
 
 .balign 128
 el1h_irq:
-    kernel_entry
-    mov     x0, sp
-    mov     x1, #EXCEPTION_IRQ
-    mov     x2, #EXCEPTION_FROM_EL1_SPX
-    bl      arm64_exception_handler
-    kernel_exit
+    b       el1h_irq_handler
 
 .balign 128
 el1h_fiq:
-    kernel_entry
-    mov     x0, sp
-    mov     x1, #EXCEPTION_FIQ
-    mov     x2, #EXCEPTION_FROM_EL1_SPX
-    bl      arm64_exception_handler
-    kernel_exit
+    b       el1h_fiq_handler
 
 .balign 128
 el1h_serror:
-    kernel_entry
-    mov     x0, sp
-    mov     x1, #EXCEPTION_SERROR
-    mov     x2, #EXCEPTION_FROM_EL1_SPX
-    bl      arm64_exception_handler
-    kernel_exit
+    b       el1h_serror_handler
 
 /* ============================================================================
  * Lower EL using AArch64 (EL0) - User mode exceptions
+ * Vector entries must be small (branch only) to fit in 128 bytes
  * ========================================================================== */
 
 .balign 128
 el0_64_sync:
-    kernel_entry
-    mov     x0, sp
-    mov     x1, #EXCEPTION_SYNC
-    mov     x2, #EXCEPTION_FROM_EL0_64
-    bl      arm64_exception_handler
-    kernel_exit
+    b       el0_64_sync_handler
 
 .balign 128
 el0_64_irq:
-    kernel_entry
-    mov     x0, sp
-    mov     x1, #EXCEPTION_IRQ
-    mov     x2, #EXCEPTION_FROM_EL0_64
-    bl      arm64_exception_handler
-    kernel_exit
+    b       el0_64_irq_handler
 
 .balign 128
 el0_64_fiq:
-    kernel_entry
-    mov     x0, sp
-    mov     x1, #EXCEPTION_FIQ
-    mov     x2, #EXCEPTION_FROM_EL0_64
-    bl      arm64_exception_handler
-    kernel_exit
+    b       el0_64_fiq_handler
 
 .balign 128
 el0_64_serror:
-    kernel_entry
-    mov     x0, sp
-    mov     x1, #EXCEPTION_SERROR
-    mov     x2, #EXCEPTION_FROM_EL0_64
-    bl      arm64_exception_handler
-    kernel_exit
+    b       el0_64_serror_handler
 
 /* ============================================================================
  * Lower EL using AArch32 - Not supported
@@ -328,6 +296,79 @@ el1t_serror_handler:
     mov     x0, sp
     mov     x1, #EXCEPTION_SERROR
     mov     x2, #EXCEPTION_FROM_EL1_SP0
+    bl      arm64_exception_handler
+    kernel_exit
+
+/* ============================================================================
+ * EL1h Exception Handlers (SPx - normal kernel mode)
+ * ========================================================================== */
+
+el1h_sync_handler:
+    kernel_entry
+    mov     x0, sp
+    mov     x1, #EXCEPTION_SYNC
+    mov     x2, #EXCEPTION_FROM_EL1_SPX
+    bl      arm64_exception_handler
+    kernel_exit
+
+el1h_irq_handler:
+    kernel_entry
+    mov     x0, sp
+    mov     x1, #EXCEPTION_IRQ
+    mov     x2, #EXCEPTION_FROM_EL1_SPX
+    bl      arm64_exception_handler
+    kernel_exit
+
+el1h_fiq_handler:
+    kernel_entry
+    mov     x0, sp
+    mov     x1, #EXCEPTION_FIQ
+    mov     x2, #EXCEPTION_FROM_EL1_SPX
+    bl      arm64_exception_handler
+    kernel_exit
+
+el1h_serror_handler:
+    kernel_entry
+    mov     x0, sp
+    mov     x1, #EXCEPTION_SERROR
+    mov     x2, #EXCEPTION_FROM_EL1_SPX
+    bl      arm64_exception_handler
+    kernel_exit
+
+/* ============================================================================
+ * EL0 (64-bit) Exception Handlers - User mode
+ * ========================================================================== */
+
+el0_64_sync_handler:
+    kernel_entry
+    mov     x0, sp
+    mov     x1, #EXCEPTION_SYNC
+    mov     x2, #EXCEPTION_FROM_EL0_64
+    bl      arm64_exception_handler
+    kernel_exit
+
+el0_64_irq_handler:
+    /* Debug: We should see this if EL0 IRQs are being handled */
+    kernel_entry
+    mov     x0, sp
+    mov     x1, #EXCEPTION_IRQ
+    mov     x2, #EXCEPTION_FROM_EL0_64
+    bl      arm64_exception_handler
+    kernel_exit
+
+el0_64_fiq_handler:
+    kernel_entry
+    mov     x0, sp
+    mov     x1, #EXCEPTION_FIQ
+    mov     x2, #EXCEPTION_FROM_EL0_64
+    bl      arm64_exception_handler
+    kernel_exit
+
+el0_64_serror_handler:
+    kernel_entry
+    mov     x0, sp
+    mov     x1, #EXCEPTION_SERROR
+    mov     x2, #EXCEPTION_FROM_EL0_64
     bl      arm64_exception_handler
     kernel_exit
 

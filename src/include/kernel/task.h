@@ -26,7 +26,14 @@
 #define USER_STACK_SIZE (1 * 1024 * 1024)
 
 /** @brief 用户空间结束地址（内核空间起始地址） */
+#if defined(ARCH_ARM64)
+/* ARM64: User space is in TTBR0 region (0x0000_0000_0000_0000 - 0x0000_FFFF_FFFF_FFFF)
+ * We use a more conservative limit for user stack placement */
+#define USER_SPACE_END          0x0000800000000000ULL  /* 128TB - reasonable user space limit */
+#define ARM64_USER_STACK_TOP    0x00007FFFFF000000ULL  /* User stack top (below 128TB) */
+#else
 #define USER_SPACE_END 0x80000000
+#endif
 
 /** @brief 默认时间片（10ms） */
 #define DEFAULT_TIME_SLICE 10
@@ -57,7 +64,7 @@ typedef enum {
  * @brief CPU 上下文结构
  * 
  * 保存任务切换时需要保存/恢复的所有 CPU 寄存器
- * 架构相关：i686 使用 32 位寄存器，x86_64 使用 64 位寄存器
+ * 架构相关：i686 使用 32 位寄存器，x86_64 使用 64 位寄存器，ARM64 使用 64 位寄存器
  */
 #if defined(ARCH_X86_64)
 /* x86_64: 64-bit context structure */
@@ -109,6 +116,35 @@ typedef struct {
 #define esi rsi
 #define edi rdi
 #define ebp rbp
+
+#elif defined(ARCH_ARM64)
+/* ARM64: 64-bit context structure */
+typedef struct {
+    /* General purpose registers X0-X30 */
+    uint64_t x[31];              /* X0-X30 */
+    
+    /* Stack pointer */
+    uint64_t sp;
+    
+    /* Program counter - stored in ELR_EL1 */
+    uint64_t pc;
+    
+    /* Processor state - stored in SPSR_EL1 */
+    uint64_t pstate;
+    
+    /* User page table base register (TTBR0_EL1) */
+    uint64_t ttbr0;
+} __attribute__((packed, aligned(16))) cpu_context_t;
+
+/* Compatibility aliases for ARM64 */
+#define eip pc
+#define esp sp
+#define cr3 ttbr0
+
+/* ARM64 PSTATE bits */
+#define ARM64_PSTATE_EL0t   0x00    /* EL0 with SP_EL0 */
+#define ARM64_PSTATE_EL1t   0x04    /* EL1 with SP_EL0 */
+#define ARM64_PSTATE_EL1h   0x05    /* EL1 with SP_EL1 */
 
 #else
 /* i686: 32-bit context structure */

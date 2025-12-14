@@ -31,6 +31,7 @@
 /* 机器类型 */
 #define EM_386          3   // Intel 80386
 #define EM_X86_64       62  // AMD x86-64
+#define EM_AARCH64      183 // ARM64 (AArch64)
 
 /* 版本 */
 #define EV_CURRENT      1  // 当前版本

@@ -9,7 +9,9 @@
 #include <lib/kprintf.h>
 #include <mm/heap.h>
 #include <drivers/serial.h>
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
 #include <drivers/rtc.h>
+#endif
 #include <drivers/framebuffer.h>
 #include <kernel/io.h>
 
@@ -137,6 +139,28 @@ static uint32_t devconsole_read(fs_node_t *node, uint32_t offset,
     (void)node; (void)offset;
     
     // 从键盘读取（阻塞模式）
+#if defined(ARCH_ARM64)
+    // ARM64: 使用串口作为控制台输入
+    extern char serial_getchar(void);
+    extern bool serial_try_getchar(char *c);
+    
+    uint32_t bytes_read = 0;
+    for (uint32_t i = 0; i < size; i++) {
+        char c;
+        if (i == 0) {
+            c = serial_getchar();  // 阻塞等待
+            buffer[i] = c;
+            bytes_read++;
+        } else {
+            if (serial_try_getchar(&c)) {
+                buffer[i] = c;
+                bytes_read++;
+            } else {
+                break;
+            }
+        }
+    }
+#else
     extern bool keyboard_try_getchar(char *c);
     extern char keyboard_getchar(void);  // 阻塞读取
     
@@ -159,6 +183,7 @@ static uint32_t devconsole_read(fs_node_t *node, uint32_t offset,
             }
         }
     }
+#endif
     
     return bytes_read;
 }
@@ -168,7 +193,9 @@ static uint32_t devconsole_write(fs_node_t *node, uint32_t offset,
     (void)node; (void)offset;
     
     // 写入到控制台（优先使用图形终端，回退到 VGA 文本模式）
+#if !defined(ARCH_ARM64)
     extern void vga_putchar(char c);
+#endif
     
     for (uint32_t i = 0; i < size; i++) {
         // 同时输出到串口，确保在所有架构上都能看到输出
@@ -176,9 +203,12 @@ static uint32_t devconsole_write(fs_node_t *node, uint32_t offset,
         
         if (fb_is_initialized()) {
             fb_terminal_putchar(buffer[i]);
-        } else {
+        }
+#if !defined(ARCH_ARM64)
+        else {
             vga_putchar(buffer[i]);
         }
+#endif
     }
     
     // 如果使用图形模式，确保刷新输出
@@ -197,7 +227,8 @@ static uint32_t devrtc_read(fs_node_t *node, uint32_t offset,
                             uint32_t size, uint8_t *buffer) {
     (void)node; (void)offset;
     
-    // 获取 RTC 时间
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
+    // 获取 RTC 时间 (x86 only)
     uint16_t year;
     uint8_t month, day, hours, minutes, seconds;
     
@@ -233,6 +264,16 @@ static uint32_t devrtc_read(fs_node_t *node, uint32_t offset,
     
     memcpy(buffer, time_str + offset, to_copy);
     return to_copy;
+#else
+    // ARM64: RTC not yet implemented
+    (void)size;
+    const char *msg = "RTC not available\n";
+    size_t len = strlen(msg);
+    if (offset >= len) return 0;
+    size_t to_copy = (size < len - offset) ? size : len - offset;
+    memcpy(buffer, msg + offset, to_copy);
+    return to_copy;
+#endif
 }
 
 /**

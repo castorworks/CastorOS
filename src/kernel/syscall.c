@@ -16,11 +16,13 @@
 #include <kernel/syscalls/time.h>
 #include <kernel/syscalls/system.h>
 #include <kernel/syscalls/mm.h>
+#if !defined(ARCH_ARM64)
 #include <kernel/syscalls/net.h>
+#include <net/socket.h>
+#endif
 #include <kernel/utsname.h>
 #include <kernel/task.h>
 #include <hal/hal.h>
-#include <net/socket.h>
 #include <lib/klog.h>
 #include <lib/kprintf.h>
 #include <lib/string.h>
@@ -205,6 +207,15 @@ static syscall_arg_t sys_dup2_wrapper(syscall_arg_t *frame, syscall_arg_t oldfd,
     return sys_dup2((int32_t)oldfd, (int32_t)newfd);
 }
 
+#if defined(ARCH_ARM64)
+/* ARM64: stub for sys_ioctl (network ioctl not supported yet) */
+static int32_t sys_ioctl_stub(int32_t fd, uint32_t request, void *argp) {
+    (void)fd; (void)request; (void)argp;
+    return -38;  /* -ENOSYS */
+}
+#define sys_ioctl sys_ioctl_stub
+#endif
+
 static syscall_arg_t sys_ioctl_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t request, 
                                        syscall_arg_t argp, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
@@ -305,8 +316,10 @@ static syscall_arg_t sys_rename_wrapper(syscall_arg_t *frame, syscall_arg_t oldp
 
 /* ============================================================================
  * BSD Socket API 系统调用包装器 - 使用 syscall_arg_t 支持 32/64 位
+ * ARM64 暂不支持网络功能
  * ============================================================================ */
 
+#if !defined(ARCH_ARM64)
 static syscall_arg_t sys_socket_wrapper(syscall_arg_t *frame, syscall_arg_t domain, 
                                         syscall_arg_t type, syscall_arg_t protocol, 
                                         syscall_arg_t p4, syscall_arg_t p5) {
@@ -438,10 +451,25 @@ static syscall_arg_t sys_fcntl_wrapper(syscall_arg_t *frame, syscall_arg_t sockf
     (void)frame; (void)p4; (void)p5;
     return (syscall_arg_t)sys_fcntl((int)sockfd, (int)cmd, (int)arg);
 }
+#endif /* !ARCH_ARM64 */
+
+/* Debug counter for syscalls */
+static uint32_t syscall_count = 0;
 
 syscall_arg_t syscall_dispatcher(syscall_arg_t syscall_num, syscall_arg_t p1, syscall_arg_t p2, 
                                  syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5, 
                                  syscall_arg_t *frame) {
+    
+#if defined(ARCH_ARM64)
+    /* Debug: Print first few syscalls */
+    if (syscall_count < 10) {
+        LOG_INFO_MSG("ARM64 syscall: num=%lu, p1=0x%llx, p2=0x%llx\n",
+                     (unsigned long)syscall_num,
+                     (unsigned long long)p1,
+                     (unsigned long long)p2);
+        syscall_count++;
+    }
+#endif
     
     /* 检查系统调用号是否在有效范围内 */
     if (syscall_num >= SYS_MAX) {
@@ -524,7 +552,8 @@ void syscall_init(void) {
     syscall_table[SYS_POWEROFF]    = sys_poweroff_wrapper;
     syscall_table[SYS_UNAME]       = sys_uname_wrapper;
     
-    /* BSD Socket API */
+    /* BSD Socket API (not available on ARM64 yet) */
+#if !defined(ARCH_ARM64)
     syscall_table[SYS_SOCKET]      = sys_socket_wrapper;
     syscall_table[SYS_BIND]        = sys_bind_wrapper;
     syscall_table[SYS_LISTEN]      = sys_listen_wrapper;
@@ -541,9 +570,14 @@ void syscall_init(void) {
     syscall_table[SYS_GETPEERNAME] = sys_getpeername_wrapper;
     syscall_table[SYS_SELECT]      = sys_select_wrapper;
     syscall_table[SYS_FCNTL]       = sys_fcntl_wrapper;
+#endif
     
     /* Initialize architecture-specific system call entry mechanism via HAL */
     hal_syscall_init(NULL);
     
+#if defined(ARCH_ARM64)
+    LOG_INFO_MSG("System calls initialized (network syscalls not available on ARM64)\n");
+#else
     LOG_INFO_MSG("System calls initialized (POSIX-compliant BSD Socket API enabled)\n");
+#endif
 }

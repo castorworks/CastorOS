@@ -84,6 +84,16 @@
 .global hal_context_switch_asm
 .type hal_context_switch_asm, @function
 hal_context_switch_asm:
+    /* DEBUG: Print entry message */
+    stp     x0, x1, [sp, #-16]!
+    stp     x30, xzr, [sp, #-16]!
+    
+    adr     x0, .ctx_switch_entry_msg
+    bl      serial_puts
+    
+    ldp     x30, xzr, [sp], #16
+    ldp     x0, x1, [sp], #16
+    
     /* ========================================================================
      * Step 1: Save current task context
      * ======================================================================== */
@@ -138,8 +148,24 @@ hal_context_switch_asm:
      * Step 2: Load new task context
      * ======================================================================== */
     
+    /* DEBUG: Print load_new_context entry */
+    stp     x0, x1, [sp, #-16]!
+    stp     x30, xzr, [sp, #-16]!
+    adr     x0, .load_ctx_msg
+    bl      serial_puts
+    ldp     x30, xzr, [sp], #16
+    ldp     x0, x1, [sp], #16
+    
     /* x1 = new_ctx */
     cbz     x1, .done
+    
+    /* DEBUG: Print TTBR switch */
+    stp     x0, x1, [sp, #-16]!
+    stp     x30, xzr, [sp, #-16]!
+    adr     x0, .ttbr_switch_msg
+    bl      serial_puts
+    ldp     x30, xzr, [sp], #16
+    ldp     x0, x1, [sp], #16
     
     /* Switch TTBR0_EL1 (address space) if different */
     /* Property 10: Address Space Switch Correctness */
@@ -148,18 +174,104 @@ hal_context_switch_asm:
     cmp     x2, x3
     b.eq    .skip_ttbr_switch
     
-    /* Switch address space */
-    msr     ttbr0_el1, x2
-    isb                                 /* Instruction synchronization barrier */
-    tlbi    vmalle1                     /* Invalidate TLB */
-    dsb     sy                          /* Data synchronization barrier */
-    isb
+    /* DEBUG: Print old and new TTBR0 values */
+    stp     x0, x1, [sp, #-16]!
+    stp     x2, x3, [sp, #-16]!
+    stp     x30, xzr, [sp, #-16]!
+    
+    adr     x0, .ttbr_old_msg
+    bl      serial_puts
+    ldp     x2, x3, [sp, #16]           /* Get saved x3 (old TTBR0) */
+    mov     x0, x3
+    bl      serial_put_hex64
+    
+    adr     x0, .ttbr_new_msg
+    bl      serial_puts
+    ldp     x2, x3, [sp, #16]           /* Get saved x2 (new TTBR0) */
+    mov     x0, x2
+    bl      serial_put_hex64
+    
+    adr     x0, .newline
+    bl      serial_puts
+    
+    ldp     x30, xzr, [sp], #16
+    ldp     x2, x3, [sp], #16
+    ldp     x0, x1, [sp], #16
+    
+    /* Reload x2 with new TTBR0 value */
+    ldr     x2, [x1, #CTX_TTBR0]
+    
+    /* 
+     * Switch address space with proper barrier sequence.
+     * ARM ARM recommends: DSB, write TTBR, ISB for TTBR changes.
+     * We also invalidate TLB to ensure no stale entries.
+     */
+    dsb     ish                         /* Ensure all prior memory accesses complete */
+    tlbi    vmalle1is                   /* Invalidate all TLB entries (inner shareable) */
+    dsb     ish                         /* Wait for TLB invalidation to complete */
+    isb                                 /* Synchronize context */
+    
+    msr     ttbr0_el1, x2               /* Switch to new page tables */
+    isb                                 /* Ensure TTBR change takes effect */
+    
+    /* DEBUG: Print message after TTBR switch */
+    stp     x0, x1, [sp, #-16]!
+    stp     x30, xzr, [sp, #-16]!
+    adr     x0, .ttbr_done_msg
+    bl      serial_puts
+    ldp     x30, xzr, [sp], #16
+    ldp     x0, x1, [sp], #16
 
 .skip_ttbr_switch:
-    /* Check if returning to user mode or kernel mode */
-    ldr     x2, [x1, #CTX_PSTATE]
-    and     x3, x2, #0x0F               /* Extract M[3:0] field */
-    cmp     x3, #PSTATE_EL0t
+    /* 
+     * Check if returning to user mode or kernel mode.
+     * Use callee-saved registers (x19-x28) to preserve values across function calls.
+     * x19 = new_ctx pointer (preserved)
+     * x20 = PSTATE value
+     * x21 = M field
+     */
+    
+    /* Save callee-saved registers we'll use */
+    stp     x19, x20, [sp, #-16]!
+    stp     x21, x30, [sp, #-16]!
+    
+    /* Save new_ctx in callee-saved register */
+    mov     x19, x1
+    
+    /* Load PSTATE and extract M field */
+    ldr     x20, [x19, #CTX_PSTATE]
+    and     x21, x20, #0x0F             /* Extract M[3:0] field */
+    
+    /* DEBUG: Print PSTATE */
+    adr     x0, .pstate_check_msg
+    bl      serial_puts
+    mov     x0, x20
+    bl      serial_put_hex64
+    adr     x0, .newline
+    bl      serial_puts
+    
+    /* DEBUG: Print M field */
+    adr     x0, .m_field_msg
+    bl      serial_puts
+    mov     x0, x21
+    bl      serial_put_hex64
+    adr     x0, .newline
+    bl      serial_puts
+    
+    /* 
+     * Compare M field and branch.
+     * x21 still contains the M field value (callee-saved).
+     * x19 still contains the context pointer (callee-saved).
+     */
+    cmp     x21, #PSTATE_EL0t
+    
+    /* Restore x1 from x19 before restoring callee-saved registers */
+    mov     x1, x19
+    
+    /* Restore callee-saved registers */
+    ldp     x21, x30, [sp], #16
+    ldp     x19, x20, [sp], #16
+    
     b.eq    .restore_user
     
     /* ========================================================================
@@ -200,17 +312,89 @@ hal_context_switch_asm:
      * User mode restore (using ERET)
      * ======================================================================== */
 .restore_user:
+    /* DEBUG: Print restore_user entry */
+    stp     x0, x1, [sp, #-16]!
+    stp     x30, xzr, [sp, #-16]!
+    adr     x0, .restore_user_msg
+    bl      serial_puts
+    ldp     x30, xzr, [sp], #16
+    ldp     x0, x1, [sp], #16
+    
+    /* 
+     * CRITICAL: Set SP_EL1 to the task's kernel stack before ERET.
+     * When an exception occurs in user mode (EL0), the CPU will use SP_EL1
+     * as the kernel stack. We need to set this to the task's kernel stack.
+     * 
+     * The kernel stack top is stored in X28 of the context (callee-saved).
+     * We use X28 as a convention to pass the kernel stack pointer.
+     */
+    ldr     x2, [x1, #CTX_X28]
+    cbz     x2, .skip_sp_el1_setup      /* Skip if X28 is 0 */
+    mov     sp, x2                       /* Set SP_EL1 to kernel stack */
+    b       .do_eret_setup
+.skip_sp_el1_setup:
+    /* If no kernel stack in X28, use a default - this shouldn't happen */
+    adrp    x2, stack_top
+    add     x2, x2, :lo12:stack_top
+    mov     sp, x2
+.do_eret_setup:
+    /* Debug: Save SP_EL1 value for later verification */
+    mov     x20, sp                      /* Save SP_EL1 in x20 (will be restored later) */
+
     /* Set up ELR_EL1 (return address) */
     ldr     x2, [x1, #CTX_PC]
     msr     elr_el1, x2
     
-    /* Set up SPSR_EL1 (saved program status) */
+    /* Set up SPSR_EL1 (saved program status) 
+     * IMPORTANT: Ensure DAIF bits are clear (interrupts enabled in EL0)
+     * SPSR_EL1[9:6] = DAIF, should be 0 for interrupts enabled
+     */
     ldr     x2, [x1, #CTX_PSTATE]
+    bic     x2, x2, #0x3c0              /* Clear DAIF bits to enable interrupts */
     msr     spsr_el1, x2
     
     /* Restore stack pointer for EL0 */
     ldr     x2, [x1, #CTX_SP]
     msr     sp_el0, x2
+    
+    /* DEBUG: Print state before ERET */
+    /* Save x0, x1 which we'll need */
+    stp     x0, x1, [sp, #-16]!
+    
+    /* Print "ERET:" */
+    adr     x0, .eret_msg
+    bl      serial_puts
+    
+    /* Print SP_EL1 */
+    adr     x0, .sp_el1_msg
+    bl      serial_puts
+    mov     x0, x20
+    bl      serial_put_hex64
+    
+    /* Print ELR_EL1 */
+    adr     x0, .elr_msg
+    bl      serial_puts
+    mrs     x0, elr_el1
+    bl      serial_put_hex64
+    
+    /* Print SPSR_EL1 */
+    adr     x0, .spsr_msg
+    bl      serial_puts
+    mrs     x0, spsr_el1
+    bl      serial_put_hex64
+    
+    /* Print SP_EL0 */
+    adr     x0, .sp_el0_msg
+    bl      serial_puts
+    mrs     x0, sp_el0
+    bl      serial_put_hex64
+    
+    /* Print newline */
+    adr     x0, .newline
+    bl      serial_puts
+    
+    /* Restore x0, x1 */
+    ldp     x0, x1, [sp], #16
     
     /* Restore general purpose registers X2-X30 */
     ldp     x2, x3, [x1, #CTX_X2]
@@ -292,3 +476,39 @@ task_switch_context:
 task_enter_kernel_thread:
     b       hal_context_enter_kernel_thread
 .size task_enter_kernel_thread, . - task_enter_kernel_thread
+
+/* ============================================================================
+ * Debug string constants
+ * ========================================================================== */
+
+.section .rodata
+.eret_msg:
+    .asciz "ERET: "
+.sp_el1_msg:
+    .asciz "SP_EL1="
+.elr_msg:
+    .asciz " ELR="
+.spsr_msg:
+    .asciz " SPSR="
+.sp_el0_msg:
+    .asciz " SP_EL0="
+.newline:
+    .asciz "\n"
+.pstate_check_msg:
+    .asciz "CTX_PSTATE="
+.ctx_switch_entry_msg:
+    .asciz "[CTX_SWITCH] Entry\n"
+.load_ctx_msg:
+    .asciz "[CTX_SWITCH] load_new_context\n"
+.ttbr_switch_msg:
+    .asciz "[CTX_SWITCH] TTBR switch\n"
+.restore_user_msg:
+    .asciz "[CTX_SWITCH] restore_user\n"
+.m_field_msg:
+    .asciz "M_FIELD="
+.ttbr_old_msg:
+    .asciz "TTBR0_old="
+.ttbr_new_msg:
+    .asciz " TTBR0_new="
+.ttbr_done_msg:
+    .asciz "[CTX_SWITCH] TTBR switch done\n"

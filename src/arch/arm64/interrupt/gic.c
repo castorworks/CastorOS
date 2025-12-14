@@ -10,7 +10,7 @@
  * **Validates: Requirements 6.4**
  */
 
-#include "gic.h"
+#include "../include/gic.h"
 #include <hal/hal.h>
 #include <types.h>
 
@@ -109,14 +109,16 @@ static void gicd_init(void) {
         gicd_write(GICD_ICPENDR(i), 0xFFFFFFFF);
     }
     
-    /* Set all interrupts to Group 0 (secure) */
+    /* Set all interrupts to Group 0 (secure/FIQ by default, but we configure for IRQ) */
+    /* Group 0 interrupts are delivered as IRQ when GICC_CTLR.FIQEn=0 */
     for (i = 0; i < gic_num_interrupts / 32; i++) {
-        gicd_write(GICD_IGROUPR(i), 0);
+        gicd_write(GICD_IGROUPR(i), 0x00000000);  /* All Group 0 */
     }
+    serial_puts("  Set all interrupts to Group 0\n");
     
-    /* Set default priority for all interrupts */
+    /* Set default priority for all interrupts (lower value = higher priority) */
     for (i = 0; i < gic_num_interrupts / 4; i++) {
-        gicd_write(GICD_IPRIORITYR(i), 0xA0A0A0A0);
+        gicd_write(GICD_IPRIORITYR(i), 0x80808080);  /* Medium priority */
     }
     
     /* Set all SPIs to target CPU 0 */
@@ -129,10 +131,10 @@ static void gicd_init(void) {
         gicd_write(GICD_ICFGR(i), 0);
     }
     
-    /* Enable distributor */
+    /* Enable distributor for Group 0 only */
     gicd_write(GICD_CTLR, GICD_CTLR_ENABLE);
     
-    serial_puts("  GIC Distributor initialized\n");
+    serial_puts("  GIC Distributor initialized (Group 0 enabled)\n");
 }
 
 /**
@@ -150,10 +152,10 @@ static void gicc_init(void) {
     /* Set binary point to 0 (all priority bits used for preemption) */
     gicc_write(GICC_BPR, 0);
     
-    /* Enable CPU interface */
+    /* Enable CPU interface for Group 0 only, FIQEn=0 so Group 0 goes to IRQ */
     gicc_write(GICC_CTLR, GICC_CTLR_ENABLE);
     
-    serial_puts("  GIC CPU Interface initialized\n");
+    serial_puts("  GIC CPU Interface initialized (Group 0 enabled, FIQ disabled)\n");
 }
 
 /* ============================================================================
@@ -184,13 +186,58 @@ void gic_init(void) {
  */
 void gic_enable_irq(uint32_t irq) {
     if (irq >= gic_num_interrupts) {
+        serial_puts("GIC: IRQ ");
+        serial_put_hex64(irq);
+        serial_puts(" out of range (max=");
+        serial_put_hex64(gic_num_interrupts);
+        serial_puts(")\n");
         return;
     }
     
     uint32_t reg = irq / 32;
     uint32_t bit = irq % 32;
     
+    serial_puts("GIC: Enabling IRQ ");
+    serial_put_hex64(irq);
+    serial_puts(" (reg=");
+    serial_put_hex64(reg);
+    serial_puts(", bit=");
+    serial_put_hex64(bit);
+    serial_puts(")\n");
+    
+    /* For PPIs (16-31), set high priority */
+    if (irq >= GIC_PPI_BASE && irq < GIC_SPI_BASE) {
+        gic_set_priority(irq, GIC_PRIORITY_HIGH);
+        serial_puts("GIC: Set PPI priority to HIGH (0x40)\n");
+    }
+    
+    /* Ensure interrupt is in Group 0 */
+    uint32_t group_reg = irq / 32;
+    uint32_t group_bit = irq % 32;
+    uint32_t group = gicd_read(GICD_IGROUPR(group_reg));
+    group &= ~(1 << group_bit);  /* Clear bit = Group 0 */
+    gicd_write(GICD_IGROUPR(group_reg), group);
+    
+    /* Enable the interrupt */
     gicd_write(GICD_ISENABLER(reg), 1 << bit);
+    
+    /* Verify it was enabled */
+    uint32_t enabled = gicd_read(GICD_ISENABLER(reg));
+    serial_puts("GIC: ISENABLER[");
+    serial_put_hex64(reg);
+    serial_puts("] = ");
+    serial_put_hex64(enabled);
+    serial_puts("\n");
+    
+    /* Check group */
+    group = gicd_read(GICD_IGROUPR(group_reg));
+    serial_puts("GIC: IGROUPR[");
+    serial_put_hex64(group_reg);
+    serial_puts("] = ");
+    serial_put_hex64(group);
+    serial_puts(" (bit ");
+    serial_put_hex64(group_bit);
+    serial_puts(" should be 0 for Group 0)\n");
 }
 
 /**
@@ -299,8 +346,49 @@ void gic_handle_irq(void) {
     /* Acknowledge interrupt */
     irq = gic_acknowledge_irq();
     
-    /* Check for spurious interrupt */
-    if (irq == GICC_IAR_SPURIOUS) {
+    /* Check for spurious interrupt (1022 or 1023) */
+    if (irq >= 1020) {
+        /* Debug: Check why we're getting spurious interrupts */
+        static int spurious_count = 0;
+        if (spurious_count < 3) {
+            serial_puts("GIC: Spurious IRQ ");
+            serial_put_hex64(irq);
+            serial_puts(", checking state...\n");
+            
+            /* Check GICD state */
+            uint32_t pending = gicd_read(GICD_ISPENDR(0));
+            serial_puts("  GICD_ISPENDR[0] = ");
+            serial_put_hex64(pending);
+            serial_puts("\n");
+            
+            uint32_t enabled = gicd_read(GICD_ISENABLER(0));
+            serial_puts("  GICD_ISENABLER[0] = ");
+            serial_put_hex64(enabled);
+            serial_puts("\n");
+            
+            uint32_t ctlr = gicd_read(GICD_CTLR);
+            serial_puts("  GICD_CTLR = ");
+            serial_put_hex64(ctlr);
+            serial_puts("\n");
+            
+            /* Check GICC state */
+            uint32_t gicc_ctlr = gicc_read(GICC_CTLR);
+            serial_puts("  GICC_CTLR = ");
+            serial_put_hex64(gicc_ctlr);
+            serial_puts("\n");
+            
+            uint32_t pmr = gicc_read(GICC_PMR);
+            serial_puts("  GICC_PMR = ");
+            serial_put_hex64(pmr);
+            serial_puts("\n");
+            
+            uint32_t hppir = gicc_read(GICC_HPPIR);
+            serial_puts("  GICC_HPPIR = ");
+            serial_put_hex64(hppir);
+            serial_puts("\n");
+            
+            spurious_count++;
+        }
         return;
     }
     

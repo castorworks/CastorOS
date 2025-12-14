@@ -424,7 +424,7 @@ static int shell_resolve_path(const char *path, char *abs_path, size_t size) {
  * unlink 系统调用封装
  */
 static int shell_unlink(const char *path) {
-    return (int)syscall1(SYS_UNLINK, (uint32_t)path);
+    return (int)syscall1(SYS_UNLINK, (syscall_arg_t)(uintptr_t)path);
 }
 
 /**
@@ -2011,7 +2011,7 @@ static int cmd_mkdir(int argc, char **argv) {
     }
     
     // 创建目录（直接调用系统调用，避免函数名冲突）
-    int ret = (int)syscall2(SYS_MKDIR, (uint32_t)abs_path, 
+    int ret = (int)syscall2(SYS_MKDIR, (syscall_arg_t)(uintptr_t)abs_path, 
                             FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC);
     if (ret != 0) {
         printf("Error: Failed to create directory '%s'\n", abs_path);
@@ -3040,8 +3040,6 @@ static void shell_run(void) {
 // ============================================================================
 
 void _start(void) {
-    // 移除直接 I/O 操作的测试，避免权限问题
-    // 直接启动 shell
     shell_init();
     shell_run();
     exit(0);

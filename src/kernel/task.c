@@ -274,9 +274,120 @@ uint32_t task_get_count(void) {
 
 /**
  * @brief 为用户进程设置用户栈
+ * 
+ * ARM64: Uses HAL MMU interface for page mapping
+ * i686/x86_64: Uses VMM page directory interface
+ * 
+ * **Feature: arm64-kernel-integration**
+ * **Validates: Requirements 6.1**
  */
 bool task_setup_user_stack(task_t *task) {
-    if (!task || !task->is_user_process || !task->page_dir) {
+    if (!task || !task->is_user_process) {
+        LOG_ERROR_MSG("task_setup_user_stack: Invalid task\n");
+        return false;
+    }
+    
+#if defined(ARCH_ARM64)
+    /* ARM64: Use HAL MMU interface for user stack setup */
+    if (task->page_dir_phys == 0) {
+        LOG_ERROR_MSG("task_setup_user_stack: No address space for ARM64 task\n");
+        return false;
+    }
+    
+    /* ARM64 user stack is placed at a high address in user space (TTBR0 region) */
+    uintptr_t stack_top = ARM64_USER_STACK_TOP;
+    uintptr_t stack_bottom = stack_top - USER_STACK_SIZE;
+    
+    /* Number of pages to allocate */
+    uint32_t num_pages = USER_STACK_SIZE / PAGE_SIZE;
+    
+    LOG_DEBUG_MSG("task_setup_user_stack (ARM64): Allocating %u pages for user stack\n", num_pages);
+    LOG_DEBUG_MSG("  Stack range: 0x%llx - 0x%llx\n", 
+                 (unsigned long long)stack_bottom, (unsigned long long)stack_top);
+    
+    /* Use the task's address space for mapping */
+    hal_addr_space_t space = (hal_addr_space_t)task->page_dir_phys;
+    
+    for (uint32_t i = 0; i < num_pages; i++) {
+        uintptr_t virt_addr = stack_bottom + ((uintptr_t)i * PAGE_SIZE);
+        
+        /* Test mode: check if we should simulate allocation failure */
+        if (task_should_fail_stack_page(i)) {
+            LOG_DEBUG_MSG("task_setup_user_stack: Simulating allocation failure at page %u\n", i);
+            
+            /* Cleanup already allocated pages */
+            for (uint32_t j = 0; j < i; j++) {
+                uintptr_t cleanup_virt = stack_bottom + ((uintptr_t)j * PAGE_SIZE);
+                paddr_t phys = hal_mmu_unmap(space, cleanup_virt);
+                if (phys != PADDR_INVALID) {
+                    hal_mmu_flush_tlb(cleanup_virt);
+                    pmm_free_frame(phys);
+                }
+            }
+            
+            task->user_stack_base = 0;
+            task->user_stack = 0;
+            return false;
+        }
+        
+        /* Allocate physical page */
+        paddr_t phys_addr = pmm_alloc_frame();
+        if (phys_addr == PADDR_INVALID) {
+            LOG_ERROR_MSG("task_setup_user_stack: Failed to allocate physical page %u/%u\n", 
+                         i + 1, num_pages);
+            
+            /* Cleanup already allocated pages */
+            for (uint32_t j = 0; j < i; j++) {
+                uintptr_t cleanup_virt = stack_bottom + ((uintptr_t)j * PAGE_SIZE);
+                paddr_t cleanup_phys = hal_mmu_unmap(space, cleanup_virt);
+                if (cleanup_phys != PADDR_INVALID) {
+                    hal_mmu_flush_tlb(cleanup_virt);
+                    pmm_free_frame(cleanup_phys);
+                }
+            }
+            
+            return false;
+        }
+        
+        /* Map to user space (user read-write) */
+        uint32_t flags = HAL_PAGE_PRESENT | HAL_PAGE_WRITE | HAL_PAGE_USER;
+        if (!hal_mmu_map(space, virt_addr, phys_addr, flags)) {
+            LOG_ERROR_MSG("task_setup_user_stack: Failed to map page %u/%u at 0x%llx\n", 
+                         i + 1, num_pages, (unsigned long long)virt_addr);
+            
+            /* Free the just-allocated physical page */
+            pmm_free_frame(phys_addr);
+            
+            /* Cleanup previously mapped pages */
+            for (uint32_t j = 0; j < i; j++) {
+                uintptr_t cleanup_virt = stack_bottom + ((uintptr_t)j * PAGE_SIZE);
+                paddr_t cleanup_phys = hal_mmu_unmap(space, cleanup_virt);
+                if (cleanup_phys != PADDR_INVALID) {
+                    hal_mmu_flush_tlb(cleanup_virt);
+                    pmm_free_frame(cleanup_phys);
+                }
+            }
+            
+            return false;
+        }
+        
+        /* Zero the page (important for security) */
+        void *page_virt = (void*)PADDR_TO_KVADDR(phys_addr);
+        memset(page_virt, 0, PAGE_SIZE);
+    }
+    
+    /* Set stack pointers (stack grows downward, 16-byte aligned for ARM64 ABI) */
+    task->user_stack_base = stack_bottom;
+    task->user_stack = stack_top - 16;  /* 16-byte alignment for ARM64 */
+    
+    LOG_DEBUG_MSG("task_setup_user_stack (ARM64): User stack set up at 0x%llx-0x%llx\n", 
+                 (unsigned long long)stack_bottom, (unsigned long long)stack_top);
+    
+    return true;
+    
+#else
+    /* i686/x86_64: Use VMM page directory interface */
+    if (!task->page_dir) {
         LOG_ERROR_MSG("task_setup_user_stack: Invalid task\n");
         return false;
     }
@@ -367,6 +478,7 @@ bool task_setup_user_stack(task_t *task) {
                  stack_bottom, stack_top);
     
     return true;
+#endif
 }
 
 /**
@@ -427,7 +539,24 @@ uint32_t task_create_kernel_thread(void (*entry)(void), const char *name) {
     // 初始化上下文
     memset(&task->context, 0, sizeof(cpu_context_t));
     
-    // 设置段寄存器（内核段）
+#if defined(ARCH_ARM64)
+    // ARM64: 设置内核模式上下文
+    // 设置栈指针
+    task->context.sp = task->kernel_stack;
+    
+    // 设置入口点 - ARM64 使用 X30 (LR) 作为返回地址
+    task->context.pc = (uintptr_t)entry;
+    
+    // 设置 PSTATE (EL1h, 中断使能)
+    task->context.pstate = ARM64_PSTATE_EL1h;
+    
+    // 设置页表基址
+    task->context.ttbr0 = task->page_dir_phys;
+    
+    // ARM64 不需要在栈上压入入口函数地址
+    // 因为 PC 直接指向入口点
+#else
+    // x86: 设置段寄存器（内核段）
     task->context.cs = GDT_KERNEL_CODE_SEGMENT;  // 0x08
     task->context.ss = GDT_KERNEL_DATA_SEGMENT;  // 0x10
 #if !defined(ARCH_X86_64)
@@ -455,6 +584,7 @@ uint32_t task_create_kernel_thread(void (*entry)(void), const char *name) {
     uintptr_t *stack_ptr = (uintptr_t*)task->kernel_stack;
     stack_ptr[-1] = (uintptr_t)entry;       // 入口函数
     task->context.esp = (uintptr_t)&stack_ptr[-1];  // ESP/RSP 指向入口函数
+#endif
     
     // 文件描述符表（内核线程不需要）
     task->fd_table = NULL;
@@ -473,13 +603,31 @@ uint32_t task_create_kernel_thread(void (*entry)(void), const char *name) {
 
 /**
  * @brief 创建用户进程
+ * 
+ * **Feature: arm64-kernel-integration**
+ * **Validates: Requirements 6.1, 6.2**
  */
 uint32_t task_create_user_process(const char *name, uintptr_t entry_point,
                                    page_directory_t *page_dir, uintptr_t program_end) {
+#if defined(ARCH_ARM64)
+    /* ARM64: page_dir is actually the address space handle (TTBR0 physical address) */
+    if (!name || entry_point == 0) {
+        LOG_ERROR_MSG("task_create_user_process: Invalid parameters\n");
+        return 0;
+    }
+    
+    /* For ARM64, page_dir is cast from hal_addr_space_t */
+    hal_addr_space_t addr_space = (hal_addr_space_t)(uintptr_t)page_dir;
+    if (addr_space == HAL_ADDR_SPACE_INVALID) {
+        LOG_ERROR_MSG("task_create_user_process: Invalid address space\n");
+        return 0;
+    }
+#else
     if (!name || !page_dir || entry_point == 0) {
         LOG_ERROR_MSG("task_create_user_process: Invalid parameters\n");
         return 0;
     }
+#endif
     
     // 分配 PCB
     task_t *task = task_alloc();
@@ -506,9 +654,15 @@ uint32_t task_create_user_process(const char *name, uintptr_t entry_point,
     
     task->kernel_stack = task->kernel_stack_base + KERNEL_STACK_SIZE;
     
+#if defined(ARCH_ARM64)
+    // ARM64: 设置地址空间
+    task->page_dir_phys = (uintptr_t)addr_space;
+    task->page_dir = NULL;  // ARM64 doesn't use page_directory_t*
+#else
     // 设置页目录
     task->page_dir_phys = VIRT_TO_PHYS((uintptr_t)page_dir);
     task->page_dir = page_dir;
+#endif
     
     // 设置用户栈
     if (!task_setup_user_stack(task)) {
@@ -521,7 +675,38 @@ uint32_t task_create_user_process(const char *name, uintptr_t entry_point,
     // 初始化上下文
     memset(&task->context, 0, sizeof(cpu_context_t));
     
-    // 设置段寄存器（用户段，Ring 3）
+#if defined(ARCH_ARM64)
+    // ARM64: 设置用户模式上下文 (EL0)
+    // 设置用户栈指针
+    task->context.sp = task->user_stack;
+    
+    // 设置用户入口点
+    task->context.pc = entry_point;
+    
+    // 设置 PSTATE (EL0t, 用户模式, 中断使能)
+    task->context.pstate = ARM64_PSTATE_EL0t;
+    
+    // 设置用户页表基址
+    task->context.ttbr0 = task->page_dir_phys;
+    
+    // 关键：设置内核栈指针到 X28
+    // 当从用户模式发生异常时，context_asm.S 会使用 X28 来设置 SP_EL1
+    task->context.x[28] = task->kernel_stack;
+    
+    LOG_DEBUG_MSG("ARM64 user process context:\n");
+    LOG_DEBUG_MSG("  PC=0x%llx, SP=0x%llx\n", 
+                 (unsigned long long)task->context.pc,
+                 (unsigned long long)task->context.sp);
+    LOG_DEBUG_MSG("  user_stack=0x%llx, user_stack_base=0x%llx\n",
+                 (unsigned long long)task->user_stack,
+                 (unsigned long long)task->user_stack_base);
+    LOG_DEBUG_MSG("  PSTATE=0x%llx, TTBR0=0x%llx\n",
+                 (unsigned long long)task->context.pstate,
+                 (unsigned long long)task->context.ttbr0);
+    LOG_DEBUG_MSG("  Kernel stack (X28)=0x%llx\n",
+                 (unsigned long long)task->context.x[28]);
+#else
+    // x86: 设置段寄存器（用户段，Ring 3）
     task->context.cs = GDT_USER_CODE_SEGMENT | 3;  // 0x1B
     task->context.ss = GDT_USER_DATA_SEGMENT | 3;  // 0x23
 #if !defined(ARCH_X86_64)
@@ -543,6 +728,7 @@ uint32_t task_create_user_process(const char *name, uintptr_t entry_point,
     
     // 设置 CR3
     task->context.cr3 = task->page_dir_phys;
+#endif
     
     // 分配文件描述符表
     task->fd_table = (fd_table_t*)kmalloc(sizeof(fd_table_t));
@@ -575,8 +761,10 @@ uint32_t task_create_user_process(const char *name, uintptr_t entry_point,
     // 堆最大值：留出 8MB 给栈（栈在用户空间顶部）
     task->heap_max = task->user_stack_base - (8 * 1024 * 1024);
     
-    LOG_DEBUG_MSG("  Heap: start=0x%x, end=0x%x, max=0x%x\n", 
-                 task->heap_start, task->heap_end, task->heap_max);
+    LOG_DEBUG_MSG("  Heap: start=0x%llx, end=0x%llx, max=0x%llx\n", 
+                 (unsigned long long)task->heap_start, 
+                 (unsigned long long)task->heap_end, 
+                 (unsigned long long)task->heap_max);
     
     // 工作目录
     strcpy(task->cwd, "/");
@@ -585,11 +773,60 @@ uint32_t task_create_user_process(const char *name, uintptr_t entry_point,
     task->state = TASK_READY;
     ready_queue_add(task);
     
-    LOG_INFO_MSG("Created user process: PID=%u, name=%s, entry=0x%x\n", 
-                 task->pid, task->name, entry_point);
+    LOG_INFO_MSG("Created user process: PID=%u, name=%s, entry=0x%llx\n", 
+                 task->pid, task->name, (unsigned long long)entry_point);
     
     return task->pid;
 }
+
+#if defined(ARCH_ARM64)
+/**
+ * @brief Create a user process with a new address space (ARM64)
+ * 
+ * This is a convenience function that creates a new address space using
+ * hal_mmu_create_space() and then creates a user process in that space.
+ * 
+ * **Feature: arm64-kernel-integration**
+ * **Validates: Requirements 6.1**
+ * 
+ * @param name Process name
+ * @param entry_point User program entry point
+ * @param program_end End address of loaded program (for heap setup)
+ * @return PID on success, 0 on failure
+ */
+uint32_t task_create_user_process_arm64(const char *name, uintptr_t entry_point,
+                                         uintptr_t program_end) {
+    if (!name || entry_point == 0) {
+        LOG_ERROR_MSG("task_create_user_process_arm64: Invalid parameters\n");
+        return 0;
+    }
+    
+    /* Create a new address space for the user process */
+    hal_addr_space_t addr_space = hal_mmu_create_space();
+    if (addr_space == HAL_ADDR_SPACE_INVALID) {
+        LOG_ERROR_MSG("task_create_user_process_arm64: Failed to create address space\n");
+        return 0;
+    }
+    
+    LOG_DEBUG_MSG("task_create_user_process_arm64: Created address space at 0x%llx\n",
+                 (unsigned long long)addr_space);
+    
+    /* Create the user process using the new address space */
+    /* Cast addr_space to page_directory_t* for compatibility with existing API */
+    uint32_t pid = task_create_user_process(name, entry_point, 
+                                            (page_directory_t*)(uintptr_t)addr_space, 
+                                            program_end);
+    
+    if (pid == 0) {
+        /* Failed to create process, destroy the address space */
+        hal_mmu_destroy_space(addr_space);
+        LOG_ERROR_MSG("task_create_user_process_arm64: Failed to create process\n");
+        return 0;
+    }
+    
+    return pid;
+}
+#endif /* ARCH_ARM64 */
 
 /* ============================================================================
  * idle 任务
@@ -644,6 +881,14 @@ static bool task_create_idle(void) {
     // 初始化上下文
     memset(&idle_task->context, 0, sizeof(cpu_context_t));
     
+#if defined(ARCH_ARM64)
+    // ARM64: 设置内核模式上下文
+    idle_task->context.sp = idle_task->kernel_stack;
+    idle_task->context.pc = (uintptr_t)idle_task_loop;
+    idle_task->context.pstate = ARM64_PSTATE_EL1h;
+    idle_task->context.ttbr0 = idle_task->page_dir_phys;
+#else
+    // x86: 设置段寄存器
     idle_task->context.cs = GDT_KERNEL_CODE_SEGMENT;
     idle_task->context.ss = GDT_KERNEL_DATA_SEGMENT;
 #if !defined(ARCH_X86_64)
@@ -665,6 +910,7 @@ static bool task_create_idle(void) {
     uintptr_t *stack_ptr = (uintptr_t*)idle_task->kernel_stack;
     stack_ptr[-1] = (uintptr_t)idle_task_loop;  // 入口函数地址
     idle_task->context.esp = (uintptr_t)&stack_ptr[-1];  // ESP/RSP 指向入口函数
+#endif
     
     idle_task->fd_table = NULL;
     strcpy(idle_task->cwd, "/");
@@ -771,14 +1017,18 @@ void task_schedule(void) {
     next_task->state = TASK_RUNNING;
     current_task = next_task;
     
-    // 更新 TSS 内核栈
+    // 更新内核栈（架构相关）
     if (next_task->is_user_process) {
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
+        // x86: 更新 TSS 内核栈
         tss_set_kernel_stack(next_task->kernel_stack);
 #if defined(ARCH_X86_64)
         // x86_64: Also set kernel stack for SYSCALL mechanism
         extern void hal_syscall_set_kernel_stack(uint64_t stack_ptr);
         hal_syscall_set_kernel_stack((uint64_t)next_task->kernel_stack);
 #endif
+#endif
+        // ARM64: 内核栈在上下文切换时自动处理
     }
     
     // 关键修复：在上下文切换前，先同步 VMM 的 current_dir_phys
@@ -833,6 +1083,19 @@ void task_schedule(void) {
             LOG_INFO_MSG("  CR3=0x%llx\n", (unsigned long long)next_task->context.cr3);
         }
 #endif
+
+#if defined(ARCH_ARM64)
+        // Debug: Print context before switching to user process
+        if (next_task->is_user_process) {
+            LOG_INFO_MSG("ARM64: Switching to user process %u (%s):\n", next_task->pid, next_task->name);
+            LOG_INFO_MSG("  PC=0x%llx, SP=0x%llx\n", 
+                         (unsigned long long)next_task->context.pc,
+                         (unsigned long long)next_task->context.sp);
+            LOG_INFO_MSG("  PSTATE=0x%llx, TTBR0=0x%llx\n",
+                         (unsigned long long)next_task->context.pstate,
+                         (unsigned long long)next_task->context.ttbr0);
+        }
+#endif
         
         task_switch_context(&old_ctx_ptr, &next_task->context);
         
@@ -846,10 +1109,21 @@ void task_schedule(void) {
 /**
  * @brief 定时器中断处理
  */
+static uint32_t timer_tick_count = 0;
+
 void task_timer_tick(void) {
     if (!scheduler_initialized || !current_task) {
         return;
     }
+    
+#if defined(ARCH_ARM64)
+    /* Debug: Print timer tick every 100 ticks (1 second at 100Hz) */
+    timer_tick_count++;
+    if (timer_tick_count % 100 == 0) {
+        LOG_INFO_MSG("Timer tick %u, current task: %s (PID %u)\n",
+                     timer_tick_count, current_task->name, current_task->pid);
+    }
+#endif
     
     // 更新当前任务的运行时间
     uint32_t tick_ms = 1000 / timer_get_frequency();

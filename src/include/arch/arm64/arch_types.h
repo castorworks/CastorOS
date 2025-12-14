@@ -42,11 +42,41 @@ typedef long long           arch_ssize_t;
 /** Kernel virtual base address (higher-half kernel, TTBR1 region) */
 #define KERNEL_VIRTUAL_BASE     0xFFFF000000000000ULL
 
-/** User space ends at TTBR0 limit */
-#define USER_SPACE_END          0x0000FFFFFFFFFFFFULL
+/** User space ends at TTBR0 limit (defined in task.h for ARM64) */
+/* Note: USER_SPACE_END is defined in kernel/task.h with architecture-specific values */
 
 /** User space starts at 0 (after NULL page) */
 #define USER_SPACE_START        0x0000000000001000ULL
+
+/* ============================================================================
+ * Kernel Heap Configuration
+ * 
+ * ARM64 kernel heap is located in the TTBR1 region, AFTER the direct-mapped
+ * physical memory area. The heap uses demand paging - pages are allocated
+ * and mapped as needed when the heap expands.
+ * 
+ * Memory Layout (TTBR1 region):
+ *   0xFFFF_0000_0000_0000 - Direct mapped physical memory start
+ *   0xFFFF_0000_4000_0000 - Physical memory at 1GB (QEMU virt machine)
+ *   0xFFFF_0001_0000_0000 - Kernel heap start (4GB offset, after direct map)
+ *   0xFFFF_0001_4000_0000 - Kernel heap max end (5GB offset, 1GB heap max)
+ * 
+ * The heap is placed at 4GB offset to ensure it doesn't conflict with the
+ * direct-mapped physical memory region, which typically covers the first
+ * few GB of physical address space.
+ * 
+ * **Feature: arm64-kernel-integration**
+ * **Validates: Requirements 3.1**
+ * ========================================================================== */
+
+/** Kernel heap start address (4GB offset from KERNEL_VIRTUAL_BASE) */
+#define ARM64_HEAP_START        0xFFFF000100000000ULL
+
+/** Kernel heap maximum size (1GB) */
+#define ARM64_HEAP_MAX_SIZE     (1024ULL * 1024ULL * 1024ULL)
+
+/** Kernel heap initial size (16MB) */
+#define ARM64_HEAP_INIT_SIZE    (16ULL * 1024ULL * 1024ULL)
 
 /* ============================================================================
  * Page Table Constants

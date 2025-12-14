@@ -1,0 +1,141 @@
+# CastorOS ARM64 GDB Configuration
+# ============================================================================
+# Usage:
+#   1. Start QEMU with GDB server: make debug ARCH=arm64
+#   2. In another terminal: aarch64-elf-gdb -x .gdbinit-arm64
+#   Or: gdb-multiarch -x .gdbinit-arm64
+# ============================================================================
+
+# Set architecture to AArch64
+set architecture aarch64
+
+# Connect to QEMU GDB server (default port 1234)
+target remote localhost:1234
+
+# Load kernel symbols
+symbol-file build/arm64/castor.bin
+
+# Disable pagination for continuous output
+set pagination off
+
+# Print arrays nicely
+set print array on
+set print pretty on
+
+# ARM64 specific settings
+set arm force-mode auto
+
+# ============================================================================
+# Useful breakpoints for kernel debugging
+# ============================================================================
+
+# Uncomment to break at kernel entry
+# break _start
+
+# Uncomment to break at kernel_main
+# break kernel_main
+
+# Uncomment to break at exception handlers
+# break exception_handler
+# break sync_exception_handler
+
+# Uncomment to break at page fault handler
+# break arm64_page_fault_handler
+
+# Uncomment to break at syscall entry
+# break svc_handler
+
+# ============================================================================
+# Useful commands for ARM64 debugging
+# ============================================================================
+
+# Define command to show ARM64 system registers
+define arm64-sysregs
+    echo === ARM64 System Registers ===\n
+    info registers cpsr
+    echo \n
+end
+
+# Define command to show current exception level
+define arm64-el
+    echo === Exception Level ===\n
+    echo Check PSTATE.EL bits in CPSR\n
+    info registers cpsr
+end
+
+# Define command to show page table base registers
+define arm64-ttbr
+    echo === Translation Table Base Registers ===\n
+    echo TTBR0_EL1 (user space): Check memory at appropriate location\n
+    echo TTBR1_EL1 (kernel space): Check memory at appropriate location\n
+end
+
+# Define command to show current task context
+define arm64-context
+    echo === ARM64 Context ===\n
+    info registers x0 x1 x2 x3 x4 x5 x6 x7
+    info registers x8 x9 x10 x11 x12 x13 x14 x15
+    info registers x16 x17 x18 x19 x20 x21 x22 x23
+    info registers x24 x25 x26 x27 x28 x29 x30
+    info registers sp pc cpsr
+end
+
+# Define command to show stack backtrace with frame info
+define arm64-bt
+    echo === ARM64 Backtrace ===\n
+    bt full
+end
+
+# Define command to examine memory as ARM64 instructions
+define arm64-disas
+    if $argc == 0
+        disassemble $pc, +40
+    else
+        disassemble $arg0, +40
+    end
+end
+
+# ============================================================================
+# Kernel-specific helpers
+# ============================================================================
+
+# Show kernel memory layout
+define kernel-layout
+    echo === Kernel Memory Layout (ARM64) ===\n
+    echo Kernel Virtual Base: 0xFFFF000000000000\n
+    echo Kernel Heap Start:   0xFFFF000040000000\n
+    echo User Space:          0x0000000000000000 - 0x0000FFFFFFFFFFFF\n
+end
+
+# Show PMM status (if symbols available)
+define pmm-status
+    echo === PMM Status ===\n
+    print pmm_total_frames
+    print pmm_free_frames
+end
+
+# Show current task (if symbols available)
+define current-task
+    echo === Current Task ===\n
+    print *current_task
+end
+
+# ============================================================================
+# Initial setup
+# ============================================================================
+
+echo \n
+echo ╔══════════════════════════════════════════════════════════════╗\n
+echo ║           CastorOS ARM64 GDB Session Started                 ║\n
+echo ╠══════════════════════════════════════════════════════════════╣\n
+echo ║ Useful commands:                                             ║\n
+echo ║   arm64-context  - Show all registers                        ║\n
+echo ║   arm64-bt       - Show full backtrace                       ║\n
+echo ║   arm64-disas    - Disassemble at PC                         ║\n
+echo ║   kernel-layout  - Show memory layout                        ║\n
+echo ║   pmm-status     - Show PMM status                           ║\n
+echo ║   current-task   - Show current task                         ║\n
+echo ╠══════════════════════════════════════════════════════════════╣\n
+echo ║ Press 'c' to continue execution                              ║\n
+echo ╚══════════════════════════════════════════════════════════════╝\n
+echo \n

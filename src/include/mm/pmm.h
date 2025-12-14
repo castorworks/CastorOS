@@ -56,12 +56,24 @@ typedef struct {
  *============================================================================*/
 
 /**
- * @brief 初始化物理内存管理器
- * @param mbi Multiboot信息结构指针（i686/x86_64）或 DTB（ARM64）
+ * @brief 初始化物理内存管理器 (Multiboot)
+ * @param mbi Multiboot信息结构指针（i686/x86_64）
  * 
  * 解析内存映射，初始化位图，标记已使用和空闲的页帧
  */
 void pmm_init(multiboot_info_t *mbi);
+
+/**
+ * @brief 初始化物理内存管理器 (boot_info_t)
+ * @param boot_info 标准化引导信息结构指针（ARM64 DTB 或其他来源）
+ * 
+ * 使用架构无关的 boot_info_t 结构初始化 PMM。
+ * 适用于 ARM64 (DTB) 和其他非 Multiboot 引导方式。
+ * 
+ * @see Requirements 1.1, 1.4
+ */
+struct boot_info;
+void pmm_init_boot_info(struct boot_info *boot_info);
 
 /**
  * @brief 分配一个物理页帧
@@ -224,6 +236,14 @@ uint32_t pmm_frame_get_refcount(paddr_t frame);
  * @return 物理内存信息结构
  */
 pmm_info_t pmm_get_info(void);
+
+/**
+ * @brief 获取 PMM 数据结构结束的虚拟地址
+ * @return PMM 数据结构（位图+引用计数表）结束后的虚拟地址
+ * 
+ * 用于确定堆的起始位置，确保堆不会与 PMM 数据结构重叠。
+ */
+uintptr_t pmm_get_data_end_virt(void);
 
 /**
  * @brief 打印物理内存使用信息

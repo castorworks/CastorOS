@@ -223,4 +223,34 @@ const char *arm64_exception_class_name(uint32_t ec);
  */
 const char *arm64_fault_status_name(uint32_t fsc);
 
+/* ============================================================================
+ * Signal Definitions (for user process termination)
+ * 
+ * **Feature: arm64-kernel-integration**
+ * **Validates: Requirements 6.3**
+ * ========================================================================== */
+
+/** Signal numbers (POSIX-like) */
+#define ARM64_SIGNAL_SEGV       11  /**< Segmentation fault (SIGSEGV) */
+#define ARM64_SIGNAL_BUS        7   /**< Bus error (SIGBUS) */
+#define ARM64_SIGNAL_ILL        4   /**< Illegal instruction (SIGILL) */
+#define ARM64_SIGNAL_FPE        8   /**< Floating point exception (SIGFPE) */
+#define ARM64_SIGNAL_TRAP       5   /**< Trace/breakpoint trap (SIGTRAP) */
+
+/**
+ * @brief Terminate a user process due to a fatal exception
+ * 
+ * This function is called when a user process causes an unhandled exception
+ * (e.g., segmentation fault, illegal instruction). It terminates the process
+ * and schedules another task.
+ * 
+ * **Feature: arm64-kernel-integration**
+ * **Validates: Requirements 6.3**
+ * 
+ * @param regs Pointer to saved register frame
+ * @param signal Signal number (ARM64_SIGNAL_*)
+ * @param fault_addr Faulting address (for debugging)
+ */
+void arm64_terminate_user_process(arm64_regs_t *regs, uint32_t signal, uint64_t fault_addr);
+
 #endif /* _ARCH_ARM64_EXCEPTION_H_ */

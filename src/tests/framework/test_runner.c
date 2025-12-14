@@ -59,6 +59,7 @@
 #include <tests/arch/arm64/arm64_mmu_test.h>
 #include <tests/arch/arm64/arm64_exception_test.h>
 #include <tests/arch/arm64/arm64_fault_test.h>
+#include <tests/arch/arm64/arm64_syscall_test.h>
 #endif
 #include <lib/kprintf.h>
 
@@ -341,6 +342,7 @@ static const test_entry_t test_suite[] = {
     TEST_ENTRY("ARM64 MMU Property Tests", run_arm64_mmu_tests),
     TEST_ENTRY("ARM64 Exception Register Preservation Tests", run_arm64_exception_tests),
     TEST_ENTRY("ARM64 Page Fault Interpretation Tests", run_arm64_fault_tests),
+    TEST_ENTRY("ARM64 System Call Integration Tests", run_arm64_syscall_tests),
 #endif
 };
 

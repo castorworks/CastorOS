@@ -13,8 +13,8 @@
  *
  * Return value is placed in X0.
  *
- * **Feature: multi-arch-support**
- * **Validates: Requirements 7.5, 8.1, 8.2**
+ * **Feature: arm64-kernel-integration**
+ * **Validates: Requirements 5.1, 5.2, 5.3**
  */
 
 .section .text
@@ -53,52 +53,85 @@
  *
  * The syscall arguments are extracted from the saved frame:
  *   - X8 (frame[8])  = syscall number
- *   - X0 (frame[0])  = arg1
- *   - X1 (frame[1])  = arg2
- *   - X2 (frame[2])  = arg3
- *   - X3 (frame[3])  = arg4
- *   - X4 (frame[4])  = arg5
- *   - X5 (frame[5])  = arg6
+ *   - X0 (frame[0])  = arg1 (p1)
+ *   - X1 (frame[1])  = arg2 (p2)
+ *   - X2 (frame[2])  = arg3 (p3)
+ *   - X3 (frame[3])  = arg4 (p4)
+ *   - X4 (frame[4])  = arg5 (p5)
+ *   - X5 (frame[5])  = arg6 (unused, frame passed instead)
+ *
+ * syscall_dispatcher signature:
+ *   syscall_arg_t syscall_dispatcher(syscall_arg_t syscall_num,
+ *                                    syscall_arg_t p1, syscall_arg_t p2,
+ *                                    syscall_arg_t p3, syscall_arg_t p4,
+ *                                    syscall_arg_t p5, syscall_arg_t *frame)
+ *
+ * ARM64 ABI argument registers: x0, x1, x2, x3, x4, x5, x6, x7
+ *   x0 = syscall_num (from X8 in saved frame)
+ *   x1 = p1 (from X0 in saved frame)
+ *   x2 = p2 (from X1 in saved frame)
+ *   x3 = p3 (from X2 in saved frame)
+ *   x4 = p4 (from X3 in saved frame)
+ *   x5 = p5 (from X4 in saved frame)
+ *   x6 = frame pointer
  *
  * Return value is stored back to X0 in the frame.
+ *
+ * **Feature: arm64-kernel-integration**
+ * **Validates: Requirements 5.1, 5.2**
  * ============================================================================
  */
 .global arm64_syscall_handler
 arm64_syscall_handler:
-    /* Save frame pointer */
+    /* Save callee-saved registers we use, plus link register (16-byte aligned) */
+    stp     x29, x30, [sp, #-32]!       /* Push FP and LR */
+    stp     x19, x20, [sp, #16]         /* Push x19, x20 (we use x19) */
+    mov     x29, sp                      /* Set up frame pointer */
+    
+    /* Save frame pointer in callee-saved register */
     mov     x19, x0                     /* x19 = frame pointer (callee-saved) */
     
     /* Extract syscall number from X8 in the saved frame */
-    ldr     x8, [x19, #FRAME_X8]        /* syscall_num = frame->x[8] */
+    ldr     x9, [x19, #FRAME_X8]        /* x9 = syscall_num = frame->x[8] */
     
-    /* Extract arguments from saved frame */
-    ldr     x0, [x19, #FRAME_X0]        /* arg1 = frame->x[0] */
-    ldr     x1, [x19, #FRAME_X1]        /* arg2 = frame->x[1] */
-    ldr     x2, [x19, #FRAME_X2]        /* arg3 = frame->x[2] */
-    ldr     x3, [x19, #FRAME_X3]        /* arg4 = frame->x[3] */
-    ldr     x4, [x19, #FRAME_X4]        /* arg5 = frame->x[4] */
-    ldr     x5, [x19, #FRAME_X5]        /* arg6 = frame->x[5] */
-    
-    /* Prepare arguments for syscall_dispatcher:
-     * syscall_dispatcher(syscall_num, p1, p2, p3, p4, p5, frame)
-     * ARM64 ABI: x0, x1, x2, x3, x4, x5, x6
+    /* Extract arguments from saved frame into temporary registers
+     * We need to be careful about the order since we're reusing x0-x5
      */
-    mov     x6, x19                     /* frame pointer as 7th argument */
-    mov     x7, x5                      /* temporarily save arg6 */
-    mov     x5, x4                      /* p5 = arg5 */
-    mov     x4, x3                      /* p4 = arg4 */
-    mov     x3, x2                      /* p3 = arg3 */
-    mov     x2, x1                      /* p2 = arg2 */
-    mov     x1, x0                      /* p1 = arg1 */
-    mov     x0, x8                      /* syscall_num */
+    ldr     x10, [x19, #FRAME_X0]       /* x10 = p1 = frame->x[0] */
+    ldr     x11, [x19, #FRAME_X1]       /* x11 = p2 = frame->x[1] */
+    ldr     x12, [x19, #FRAME_X2]       /* x12 = p3 = frame->x[2] */
+    ldr     x13, [x19, #FRAME_X3]       /* x13 = p4 = frame->x[3] */
+    ldr     x14, [x19, #FRAME_X4]       /* x14 = p5 = frame->x[4] */
     
-    /* Call the C syscall dispatcher */
+    /* Now set up arguments for syscall_dispatcher in the correct order:
+     * syscall_dispatcher(syscall_num, p1, p2, p3, p4, p5, frame)
+     */
+    mov     x0, x9                      /* x0 = syscall_num */
+    mov     x1, x10                     /* x1 = p1 */
+    mov     x2, x11                     /* x2 = p2 */
+    mov     x3, x12                     /* x3 = p3 */
+    mov     x4, x13                     /* x4 = p4 */
+    mov     x5, x14                     /* x5 = p5 */
+    mov     x6, x19                     /* x6 = frame pointer */
+    
+    /* Call the C syscall dispatcher
+     * 
+     * **Feature: arm64-kernel-integration**
+     * **Validates: Requirements 5.1**
+     */
     bl      syscall_dispatcher
     
-    /* Store return value back to X0 in the frame */
+    /* Store return value back to X0 in the frame
+     * This ensures the return value is correctly passed back to user space
+     * 
+     * **Feature: arm64-kernel-integration**
+     * **Validates: Requirements 5.3**
+     */
     str     x0, [x19, #FRAME_X0]
     
-    /* Return to exception handler (kernel_exit will restore registers) */
+    /* Restore callee-saved registers and return */
+    ldp     x19, x20, [sp, #16]         /* Pop x19, x20 */
+    ldp     x29, x30, [sp], #32         /* Pop FP and LR */
     ret
 
 

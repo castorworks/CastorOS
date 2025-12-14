@@ -5,15 +5,18 @@
  * Implements the C-level exception handling for ARM64.
  * Called from the assembly vectors after register state is saved.
  * 
- * Requirements: 4.5, 6.2
+ * Requirements: 4.5, 6.2, 6.3
  * 
  * **Feature: multi-arch-support, Property 7: Interrupt Register State Preservation (ARM64)**
- * **Validates: Requirements 6.2**
+ * **Feature: arm64-kernel-integration**
+ * **Validates: Requirements 6.2, 2.3, 6.3**
  */
 
 #include "exception.h"
 #include <hal/hal.h>
 #include <types.h>
+#include <mm/vmm.h>
+#include <kernel/task.h>
 
 /* Forward declaration for serial output */
 extern void serial_puts(const char *str);
@@ -23,6 +26,9 @@ extern void serial_put_hex64(uint64_t value);
 extern void gic_handle_irq(void);
 extern uint32_t gic_acknowledge_irq(void);
 extern void gic_end_irq(uint32_t irq);
+
+/* Forward declaration for ARM64 COW fault check */
+extern bool arm64_is_cow_fault(uint64_t esr);
 
 /* ============================================================================
  * Exception Class Names
@@ -194,16 +200,47 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
     uint32_t ec = (esr >> ESR_EC_SHIFT) & 0x3F;
     uint32_t iss = esr & ESR_ISS_MASK;
     
-    /* Handle SVC (system call) quickly without debug output */
+    /* Debug: Print first few sync exceptions from EL0 */
+    static int el0_sync_count = 0;
+    if (source == EXCEPTION_FROM_EL0_64 && el0_sync_count < 5) {
+        serial_puts("[SYNC] From EL0, EC=");
+        serial_put_hex64(ec);
+        serial_puts(", ELR=");
+        serial_put_hex64(regs->elr);
+        serial_puts("\n");
+        el0_sync_count++;
+    }
+    
+    /* Handle SVC (system call) */
     if (ec == ESR_EC_SVC64) {
+        /* Debug: Print first few syscalls */
+        static int syscall_count = 0;
+        if (syscall_count < 10) {
+            serial_puts("[SVC] Syscall from EL0, X8=");
+            serial_put_hex64(regs->x[8]);
+            serial_puts("\n");
+            syscall_count++;
+        }
         /* Dispatch to syscall handler
          * The syscall handler will extract arguments from the saved frame
          * and call syscall_dispatcher
          */
         arm64_syscall_handler(regs);
         
-        /* Advance PC past the SVC instruction (4 bytes) */
-        regs->elr += 4;
+        /* NOTE: For SVC exceptions, ARM64 hardware already sets ELR_EL1 to PC+4
+         * (the preferred return address), so we do NOT need to advance it here.
+         * This is different from some other exception types where ELR points
+         * to the faulting instruction.
+         */
+        
+        /* Debug: Print return info */
+        if (syscall_count <= 10) {
+            serial_puts("[SVC] Return: X0=");
+            serial_put_hex64(regs->x[0]);
+            serial_puts(" ELR=");
+            serial_put_hex64(regs->elr);
+            serial_puts("\n");
+        }
         return;
     }
     
@@ -223,24 +260,123 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
     switch (ec) {
         case ESR_EC_IABT_LOW:
         case ESR_EC_IABT_CUR:
-            /* Instruction abort */
-            serial_puts("Instruction abort\n");
-            serial_puts("Fault status: ");
-            serial_puts(arm64_fault_status_name(iss & ESR_ISS_DFSC_MASK));
-            serial_puts("\n");
+            /* Instruction abort - try to handle via VMM first */
+            {
+                uint32_t ifsc = iss & ESR_ISS_DFSC_MASK;
+                bool is_user = (ec == ESR_EC_IABT_LOW);
+                
+                /* 
+                 * Check for kernel page fault (might need page table sync)
+                 * 
+                 * **Feature: arm64-kernel-integration**
+                 * **Validates: Requirements 2.3**
+                 */
+                if (!is_user && far >= KERNEL_VIRTUAL_BASE) {
+                    if (vmm_handle_kernel_page_fault((uintptr_t)far)) {
+                        /* Kernel page fault handled, return to faulting instruction */
+                        return;
+                    }
+                }
+                
+                /* 
+                 * Unhandled instruction abort
+                 * 
+                 * **Feature: arm64-kernel-integration**
+                 * **Validates: Requirements 6.3**
+                 */
+                serial_puts("Instruction abort\n");
+                serial_puts("Fault status: ");
+                serial_puts(arm64_fault_status_name(ifsc));
+                serial_puts("\n");
+                serial_puts("User mode: ");
+                serial_puts(is_user ? "Yes" : "No");
+                serial_puts("\n");
+                
+                /* 
+                 * For user mode faults, terminate the process with SIGSEGV-like behavior
+                 * 
+                 * **Feature: arm64-kernel-integration**
+                 * **Validates: Requirements 6.3**
+                 */
+                if (is_user) {
+                    serial_puts("Terminating user process due to illegal instruction fetch\n");
+                    arm64_terminate_user_process(regs, ARM64_SIGNAL_SEGV, far);
+                    return;  /* Should not reach here */
+                }
+            }
             break;
             
         case ESR_EC_DABT_LOW:
         case ESR_EC_DABT_CUR:
-            /* Data abort */
-            serial_puts("Data abort\n");
-            serial_puts("Fault status: ");
-            serial_puts(arm64_fault_status_name(iss & ESR_ISS_DFSC_MASK));
-            serial_puts("\n");
-            serial_puts("Operation: ");
-            serial_puts((iss & ESR_ISS_WNR) ? "Write" : "Read");
-            serial_puts("\n");
-            /* TODO: Handle page fault via VMM */
+            /* Data abort - try to handle via VMM first */
+            {
+                uint32_t dfsc = iss & ESR_ISS_DFSC_MASK;
+                bool is_write = (iss & ESR_ISS_WNR) != 0;
+                bool is_user = (ec == ESR_EC_DABT_LOW);
+                
+                /* 
+                 * Try to handle page fault via VMM
+                 * 
+                 * **Feature: arm64-kernel-integration**
+                 * **Validates: Requirements 2.3**
+                 */
+                
+                /* Check for COW fault first (permission fault + write) */
+                if (arm64_is_cow_fault(esr)) {
+                    /* 
+                     * Convert ARM64 fault info to x86-compatible error code for vmm_handle_cow_page_fault:
+                     * Bit 0 (P): 1 = page present (permission fault means page exists)
+                     * Bit 1 (W): 1 = write operation
+                     * Bit 2 (U): 1 = user mode
+                     */
+                    uint32_t error_code = 0x3;  /* Present + Write */
+                    if (is_user) {
+                        error_code |= 0x4;  /* User mode */
+                    }
+                    
+                    if (vmm_handle_cow_page_fault((uintptr_t)far, error_code)) {
+                        /* COW fault handled successfully, return to faulting instruction */
+                        return;
+                    }
+                }
+                
+                /* Check for kernel page fault (might need page table sync) */
+                if (!is_user && far >= KERNEL_VIRTUAL_BASE) {
+                    if (vmm_handle_kernel_page_fault((uintptr_t)far)) {
+                        /* Kernel page fault handled, return to faulting instruction */
+                        return;
+                    }
+                }
+                
+                /* 
+                 * Unhandled page fault
+                 * 
+                 * **Feature: arm64-kernel-integration**
+                 * **Validates: Requirements 6.3**
+                 */
+                serial_puts("Data abort\n");
+                serial_puts("Fault status: ");
+                serial_puts(arm64_fault_status_name(dfsc));
+                serial_puts("\n");
+                serial_puts("Operation: ");
+                serial_puts(is_write ? "Write" : "Read");
+                serial_puts("\n");
+                serial_puts("User mode: ");
+                serial_puts(is_user ? "Yes" : "No");
+                serial_puts("\n");
+                
+                /* 
+                 * For user mode faults, terminate the process with SIGSEGV-like behavior
+                 * 
+                 * **Feature: arm64-kernel-integration**
+                 * **Validates: Requirements 6.3**
+                 */
+                if (is_user) {
+                    serial_puts("Terminating user process due to segmentation fault\n");
+                    arm64_terminate_user_process(regs, ARM64_SIGNAL_SEGV, far);
+                    return;  /* Should not reach here */
+                }
+            }
             break;
             
         case ESR_EC_PC_ALIGN:
@@ -278,7 +414,21 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
  */
 static void handle_irq(arm64_regs_t *regs, uint32_t source) {
     (void)regs;
-    (void)source;
+    
+    /* Debug: Print source to see if we're getting EL0 IRQs */
+    static int irq_count = 0;
+    irq_count++;
+    
+    if (irq_count <= 5) {
+        serial_puts("[IRQ] source=");
+        serial_put_hex64(source);
+        if (source == EXCEPTION_FROM_EL0_64) {
+            serial_puts(" (EL0)");
+        } else if (source == EXCEPTION_FROM_EL1_SPX) {
+            serial_puts(" (EL1)");
+        }
+        serial_puts("\n");
+    }
     
     /* Acknowledge and handle IRQ via GIC */
     gic_handle_irq();
@@ -332,6 +482,22 @@ static void handle_serror(arm64_regs_t *regs, uint32_t source) {
  * @param source Exception source (EXCEPTION_FROM_EL1_SPX, etc.)
  */
 void arm64_exception_handler(arm64_regs_t *regs, uint32_t type, uint32_t source) {
+    /* Debug: Track first few exceptions from each source */
+    static int el0_exception_count = 0;
+    static int el1_exception_count = 0;
+    
+    if (source == EXCEPTION_FROM_EL0_64 && el0_exception_count < 5) {
+        serial_puts("[EXC] From EL0: type=");
+        serial_put_hex64(type);
+        serial_puts(", ELR=");
+        serial_put_hex64(regs->elr);
+        serial_puts("\n");
+        el0_exception_count++;
+    } else if (source == EXCEPTION_FROM_EL1_SPX && el1_exception_count < 3) {
+        /* Only print first few EL1 exceptions to avoid spam */
+        el1_exception_count++;
+    }
+    
     switch (type) {
         case EXCEPTION_SYNC:
             handle_sync_exception(regs, source);
@@ -371,4 +537,96 @@ void arm64_exception_init(void) {
     arm64_install_vectors();
     
     serial_puts("Exception vectors installed at VBAR_EL1\n");
+}
+
+/* ============================================================================
+ * User Process Termination
+ * 
+ * **Feature: arm64-kernel-integration**
+ * **Validates: Requirements 6.3**
+ * ========================================================================== */
+
+/**
+ * @brief Get signal name string
+ * @param signal Signal number
+ * @return Human-readable signal name
+ */
+static const char *arm64_signal_name(uint32_t signal) {
+    switch (signal) {
+        case ARM64_SIGNAL_SEGV: return "SIGSEGV";
+        case ARM64_SIGNAL_BUS:  return "SIGBUS";
+        case ARM64_SIGNAL_ILL:  return "SIGILL";
+        case ARM64_SIGNAL_FPE:  return "SIGFPE";
+        case ARM64_SIGNAL_TRAP: return "SIGTRAP";
+        default: return "UNKNOWN";
+    }
+}
+
+/**
+ * @brief Terminate a user process due to a fatal exception
+ * 
+ * This function is called when a user process causes an unhandled exception
+ * (e.g., segmentation fault, illegal instruction). It terminates the process
+ * and schedules another task.
+ * 
+ * **Feature: arm64-kernel-integration**
+ * **Validates: Requirements 6.3**
+ * 
+ * @param regs Pointer to saved register frame
+ * @param signal Signal number (ARM64_SIGNAL_*)
+ * @param fault_addr Faulting address (for debugging)
+ */
+void arm64_terminate_user_process(arm64_regs_t *regs, uint32_t signal, uint64_t fault_addr) {
+    task_t *current = task_get_current();
+    
+    serial_puts("\n========== USER PROCESS TERMINATED ==========\n");
+    serial_puts("Signal: ");
+    serial_puts(arm64_signal_name(signal));
+    serial_puts("\n");
+    
+    if (current) {
+        serial_puts("Process: PID=");
+        serial_put_hex64(current->pid);
+        serial_puts(", name=");
+        serial_puts(current->name);
+        serial_puts("\n");
+    }
+    
+    serial_puts("Fault address: ");
+    serial_put_hex64(fault_addr);
+    serial_puts("\n");
+    
+    serial_puts("PC at fault: ");
+    serial_put_hex64(regs->elr);
+    serial_puts("\n");
+    
+    serial_puts("User SP: ");
+    serial_put_hex64(regs->sp_el0);
+    serial_puts("\n");
+    
+    serial_puts("==============================================\n\n");
+    
+    /* 
+     * Terminate the current process
+     * 
+     * The exit code encodes the signal number in the upper bits
+     * (similar to how POSIX encodes signal termination)
+     * Exit code = 128 + signal_number
+     */
+    if (current) {
+        /* Mark the process as terminated by signal */
+        current->exit_signaled = true;
+        current->exit_signal = signal;
+        
+        /* Call task_exit with signal-based exit code */
+        task_exit(128 + signal);
+        
+        /* task_exit should not return, but just in case... */
+    }
+    
+    /* If no current task or task_exit returned, halt */
+    serial_puts("ERROR: Failed to terminate user process, halting\n");
+    while (1) {
+        __asm__ volatile("wfi");
+    }
 }

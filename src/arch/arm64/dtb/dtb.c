@@ -341,16 +341,16 @@ static void parse_property(parse_context_t *ctx, const char *node_name,
  */
 static bool parse_structure_block(const uint8_t *struct_block, 
                                   uint32_t struct_size) {
-    parse_context_t ctx = {
-        .addr_cells = 2,  /* Default for ARM64 */
-        .size_cells = 1,
-        .depth = 0
-    };
+    parse_context_t ctx;
+    ctx.addr_cells = 2;  /* Default for ARM64 */
+    ctx.size_cells = 1;
+    ctx.depth = 0;
     ctx.path[0] = '\0';
     
     const uint32_t *p = (const uint32_t *)struct_block;
     const uint32_t *end = (const uint32_t *)(struct_block + struct_size);
-    char current_node[64] = "";
+    char current_node[64];
+    current_node[0] = '\0';
     
     while (p < end) {
         uint32_t token = be32_to_cpu(*p++);
