@@ -223,6 +223,11 @@ void kernel_main(void *dtb_addr) {
     hal_timer_init(100, task_timer_tick);  // 100 Hz = 10ms tick
     LOG_INFO_MSG("  [4.1] Timer initialized (100 Hz)\n");
     
+    // 4.2 Initialize framebuffer console (virtio-gpu)
+    extern void fb_terminal_init(void);
+    fb_terminal_init();
+    LOG_INFO_MSG("  [4.2] Framebuffer console initialized\n");
+    
     // Note: ARM64 doesn't have VGA, keyboard, ATA, PCI, ACPI, E1000, USB
     // These are x86-specific devices
     LOG_INFO_MSG("  [4.x] ARM64: x86-specific drivers skipped\n");
