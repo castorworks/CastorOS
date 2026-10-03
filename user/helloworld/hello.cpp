@@ -6,9 +6,7 @@
 #include <time.h>
 
 // 主函数
-// 程序入口：由链接脚本 ENTRY(_start) 引用，需使用 C 链接
-extern "C" void _start(void);
-void _start(void) {
+int main() {
     printf("Hello from hello.elf!\n");
     printf("My PID: %d, Parent PID: %d\n", getpid(), getppid());
 
@@ -18,5 +16,5 @@ void _start(void) {
     }
 
     printf("Goodbye!\n");
-    exit(0);
+    return 0;
 }

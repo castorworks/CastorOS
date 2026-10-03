@@ -312,14 +312,50 @@ static void test_mmap(void) {
 }
 
 // 主函数
-// 程序入口：由链接脚本 ENTRY(_start) 引用，需使用 C 链接
-extern "C" void _start(void);
-void _start(void) {
+// ============================================================================
+// C++ 运行时测试：全局对象构造函数应在 main() 之前由 crt0 调用
+// ============================================================================
+
+namespace {
+
+volatile int g_ctor_seed = 41;
+
+struct CtorProbe {
+    int value;
+    CtorProbe() : value(g_ctor_seed + 1) {}
+};
+
+CtorProbe g_ctor_probe;
+
+struct Animal {
+    virtual int legs() const = 0;
+};
+
+struct Bird final : Animal {
+    int legs() const override { return 2; }
+};
+
+} // namespace
+
+static void test_cxx_runtime(void) {
+    printf("\n=== C++ Runtime Tests ===\n");
+    printf("  [%s] global constructor ran before main (value=%d)\n",
+           g_ctor_probe.value == 42 ? "PASS" : "FAIL", g_ctor_probe.value);
+
+    Bird bird;
+    const Animal &animal = bird;
+    printf("  [%s] virtual dispatch\n", animal.legs() == 2 ? "PASS" : "FAIL");
+}
+
+int main() {
     printf("========================================\n");
     printf("    CastorOS System Call Tests\n");
     printf("========================================\n");
     printf("PID: %d, Parent PID: %d\n", getpid(), getppid());
     
+    // C++ 运行时测试
+    test_cxx_runtime();
+
     // 运行 stat/fstat 测试
     test_stat();
     test_fstat();
@@ -334,5 +370,5 @@ void _start(void) {
     printf("    All tests completed!\n");
     printf("========================================\n");
     
-    exit(0);
+    return 0;
 }

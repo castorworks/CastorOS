@@ -88,7 +88,7 @@ $(BUILD_DIR)/%.o: %.cpp
 $(ELF): $(OBJECTS) $(LIBRARY)
 	@mkdir -p $(dir $@)
 	@echo "[LD] $@"
-	$(LD) -T $(LDSCRIPT) -nostdlib -o $@ $(OBJECTS) $(LIBRARY)
+	$(LD) -T $(LDSCRIPT) -nostdlib -u _start -o $@ $(OBJECTS) $(LIBRARY)
 
 # 转换为纯二进制（可选）
 $(BINARY): $(ELF)

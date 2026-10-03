@@ -3039,10 +3039,8 @@ static void shell_run(void) {
 // 程序入口
 // ============================================================================
 
-// 程序入口：由链接脚本 ENTRY(_start) 引用，需使用 C 链接
-extern "C" void _start(void);
-void _start(void) {
+int main() {
     shell_init();
     shell_run();
-    exit(0);
+    return 0;
 }
