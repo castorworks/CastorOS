@@ -97,7 +97,7 @@ bool load_user_shell(void) {
     
     // 创建用户进程
     LOG_DEBUG_MSG("Shell: Creating user process...\n");
-    uint32_t pid = task_create_user_process("shell", entry_point, page_dir, program_end);
+    uint32_t pid = kernel::Scheduler::create_user_process("shell", entry_point, page_dir, program_end);
     if (pid == 0) {
         LOG_ERROR_MSG("Failed to create shell process\n");
         hal_mmu_destroy_space(addr_space);
@@ -135,7 +135,7 @@ bool load_user_shell(void) {
     
     // 创建用户进程
     LOG_DEBUG_MSG("Shell: Creating user process...\n");
-    uint32_t pid = task_create_user_process("shell", entry_point, page_dir, program_end);
+    uint32_t pid = kernel::Scheduler::create_user_process("shell", entry_point, page_dir, program_end);
     if (pid == 0) {
         LOG_ERROR_MSG("Failed to create shell process\n");
         mm::Vmm::free_page_directory(page_dir_phys);

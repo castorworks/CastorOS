@@ -28,7 +28,7 @@
  * @return 成功返回新的堆结束地址，失败返回 (uint32_t)-1
  */
 uint32_t sys_brk(uint32_t addr) {
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current) {
         LOG_ERROR_MSG("sys_brk: no current task\n");
         return (uint32_t)-1;
@@ -329,7 +329,7 @@ static uint32_t do_mmap_file(task_t *current, uint32_t vaddr, uint32_t length,
  */
 uint32_t sys_mmap(uint32_t addr, uint32_t length, uint32_t prot,
                   uint32_t flags, int32_t fd, uint32_t offset) {
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current) {
         LOG_ERROR_MSG("sys_mmap: no current task\n");
         return (uint32_t)-1;
@@ -435,7 +435,7 @@ uint32_t sys_mmap(uint32_t addr, uint32_t length, uint32_t prot,
  * @return 成功返回 0，失败返回 (uint32_t)-1
  */
 uint32_t sys_munmap(uint32_t addr, uint32_t length) {
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current) {
         LOG_ERROR_MSG("sys_munmap: no current task\n");
         return (uint32_t)-1;

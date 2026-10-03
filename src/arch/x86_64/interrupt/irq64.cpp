@@ -9,6 +9,7 @@
  */
 
 #include "irq64.h"
+#include <kernel/task.h>
 #include "isr64.h"
 #include "idt64.h"
 #include "gdt64.h"
@@ -112,8 +113,7 @@ static void timer_handler(registers_t *regs) {
     timer_ticks = timer_ticks + 1;
     
     /* Call task manager timer tick handler */
-    extern void task_timer_tick(void);
-    task_timer_tick();
+    kernel::Scheduler::timer_tick();
 }
 
 /* Forward declaration for scheduler */

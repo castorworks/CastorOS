@@ -623,7 +623,7 @@ static uint32_t procfs_status_read(fs_node_t *node, uint32_t offset, uint32_t si
     
     // 从 impl_data 中获取 PID
     uint32_t pid = node->impl_data;
-    task_t *task = task_get_by_pid(pid);
+    task_t *task = kernel::Scheduler::get_by_pid(pid);
     
     if (!task || task->state == TASK_UNUSED) {
         return 0;  // 进程不存在
@@ -733,7 +733,7 @@ static fs_node_t *procfs_pid_finddir(fs_node_t *node, const char *name) {
         uint32_t pid = node->impl_data;
         
         // 验证进程仍然存在
-        task_t *task = task_get_by_pid(pid);
+        task_t *task = kernel::Scheduler::get_by_pid(pid);
         if (!task || task->state == TASK_UNUSED) {
             return NULL;
         }
@@ -849,7 +849,7 @@ static struct dirent *procfs_root_readdir(fs_node_t *node, uint32_t index) {
     // 遍历所有任务，找到第 pid_index 个有效进程
     uint32_t found_count = 0;
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
-        task_t *task = task_get_by_pid(i);
+        task_t *task = kernel::Scheduler::get_by_pid(i);
         if (task && task->state != TASK_UNUSED) {
             if (found_count == pid_index) {
                 // 找到对应的进程，返回其 PID 目录名
@@ -919,7 +919,7 @@ static fs_node_t *procfs_root_finddir(fs_node_t *node, const char *name) {
     
     // 如果解析成功且进程存在
     if (*p == '\0' && pid > 0) {
-        task_t *task = task_get_by_pid(pid);
+        task_t *task = kernel::Scheduler::get_by_pid(pid);
         if (task && task->state != TASK_UNUSED) {
             // 每次都创建新的进程目录节点（由 VFS 引用计数管理生命周期）
             fs_node_t *pid_dir = (fs_node_t *)kmalloc(sizeof(fs_node_t));

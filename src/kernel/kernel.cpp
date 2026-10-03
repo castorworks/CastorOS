@@ -224,7 +224,7 @@ void kernel_main(void *dtb_addr) {
     // 4.1 Initialize timer with scheduler integration
     // ARM64 uses ARM Generic Timer via HAL
     extern void hal_timer_init(uint32_t freq_hz, void (*callback)(void));
-    hal_timer_init(100, task_timer_tick);  // 100 Hz = 10ms tick
+    hal_timer_init(100, kernel::Scheduler::timer_tick);  // 100 Hz = 10ms tick
     LOG_INFO_MSG("  [4.1] Timer initialized (100 Hz)\n");
     
     // 4.2 Initialize framebuffer console (virtio-gpu)
@@ -243,7 +243,7 @@ void kernel_main(void *dtb_addr) {
     LOG_INFO_MSG("[Stage 5] Initializing advanced subsystems...\n");
     
     // 5.1 Initialize task management
-    task_init();
+    kernel::Scheduler::init();
     LOG_INFO_MSG("  [5.1] Task management initialized\n");
     
     // 5.2 Initialize file system (VFS + ramfs + devfs)
@@ -354,7 +354,7 @@ void kernel_main(void *dtb_addr) {
     }
     kprintf("\n");
     
-    task_schedule();
+    kernel::Scheduler::schedule();
     
     // Idle loop - should never reach here
     while (1) {
@@ -635,14 +635,14 @@ void kernel_main(multiboot_info_t* mbi) {
     // DEBUG: 验证堆状态
     {
         heap_block_t *fb = (heap_block_t*)heap_start;
-        LOG_INFO_MSG("  DEBUG: first_block magic before task_init = 0x%x\n", fb->magic);
+        LOG_INFO_MSG("  DEBUG: first_block magic before kernel::Scheduler::init = 0x%x\n", fb->magic);
         LOG_INFO_MSG("  DEBUG: task_pool addr = 0x%llx, size = %llu\n", 
                      (unsigned long long)(uintptr_t)task_pool, 
                      (unsigned long long)sizeof(task_pool));
     }
 
     // 5.1 初始化进程管理
-    task_init();
+    kernel::Scheduler::init();
     LOG_INFO_MSG("  [5.1] Task management initialized\n");
 
     // 5.2 初始化文件系统
@@ -671,14 +671,14 @@ void kernel_main(multiboot_info_t* mbi) {
         LOG_INFO_MSG("  [6.2] Kernel shell initialized\n");
         
         // 将 Shell 作为内核线程运行，这样它会出现在进程列表中
-        task_create_kernel_thread(kernel_shell_run, "kernel_shell");
+        kernel::Scheduler::create_kernel_thread(kernel_shell_run, "kernel_shell");
     }
     
     // 主线程进入空闲循环（让调度器接管）
     LOG_INFO_MSG("Kernel entering scheduler...\n");
     
     // 触发首次调度，切换到用户进程
-    task_schedule();
+    kernel::Scheduler::schedule();
     
     // Idle loop - use HAL for architecture-independent CPU halt
     while (1) {

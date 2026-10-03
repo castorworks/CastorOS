@@ -576,7 +576,7 @@ static const char *arm64_signal_name(uint32_t signal) {
  * @param fault_addr Faulting address (for debugging)
  */
 void arm64_terminate_user_process(arm64_regs_t *regs, uint32_t signal, uint64_t fault_addr) {
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     
     serial_puts("\n========== USER PROCESS TERMINATED ==========\n");
     serial_puts("Signal: ");

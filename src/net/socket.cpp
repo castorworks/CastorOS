@@ -745,7 +745,7 @@ int sys_select(int nfds, fd_set *readfds, fd_set *writefds,
         if (elapsed >= timeout_ms) break;
         
         // 让出 CPU（简单忙等待，实际应该使用调度器）
-        // 这里可以调用 task_yield() 但为了简单起见先忙等
+        // 这里可以调用 kernel::Scheduler::yield() 但为了简单起见先忙等
     }
     
     // 复制结果

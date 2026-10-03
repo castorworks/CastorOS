@@ -106,7 +106,7 @@ uint32_t sys_fstat(int32_t fd, struct stat *buf) {
         return (uint32_t)-1;
     }
     
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
         LOG_ERROR_MSG("sys_fstat: no current task or fd_table\n");
         return (uint32_t)-1;
@@ -137,7 +137,7 @@ uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
         return (uint32_t)-1;
     }
     
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
         LOG_ERROR_MSG("sys_open: no current task or fd_table\n");
         return (uint32_t)-1;
@@ -211,7 +211,7 @@ uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
  * 避免双重 close 问题
  */
 uint32_t sys_close(int32_t fd) {
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
         LOG_ERROR_MSG("sys_close: no current task or fd_table\n");
         return (uint32_t)-1;
@@ -235,7 +235,7 @@ uint32_t sys_read(int32_t fd, void *buf, uint32_t count) {
         return (uint32_t)-1;
     }
     
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
         LOG_ERROR_MSG("sys_read: no current task or fd_table\n");
         return (uint32_t)-1;
@@ -272,7 +272,7 @@ uint32_t sys_write(int32_t fd, const void *buf, uint32_t count) {
         return (uint32_t)-1;
     }
     
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
         LOG_ERROR_MSG("sys_write: no current task or fd_table\n");
         return (uint32_t)-1;
@@ -342,7 +342,7 @@ uint32_t sys_write(int32_t fd, const void *buf, uint32_t count) {
  * sys_lseek - 移动文件指针
  */
 uint32_t sys_lseek(int32_t fd, int32_t offset, int32_t whence) {
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
         LOG_ERROR_MSG("sys_lseek: no current task or fd_table\n");
         return (uint32_t)-1;
@@ -533,7 +533,7 @@ uint32_t sys_chdir(const char *path) {
         return (uint32_t)-1;
     }
     
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current) {
         LOG_ERROR_MSG("sys_chdir: no current task\n");
         return (uint32_t)-1;
@@ -617,7 +617,7 @@ uintptr_t sys_getcwd(char *buffer, size_t size) {
         return (uintptr_t)-1;
     }
     
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current) {
         LOG_ERROR_MSG("sys_getcwd: no current task\n");
         return (uintptr_t)-1;
@@ -644,7 +644,7 @@ uintptr_t sys_getcwd(char *buffer, size_t size) {
  * sys_ftruncate - 截断文件到指定大小
  */
 uint32_t sys_ftruncate(int32_t fd, uint32_t length) {
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
         LOG_ERROR_MSG("sys_ftruncate: no current task or fd_table\n");
         return (uint32_t)-1;
@@ -691,7 +691,7 @@ uint32_t sys_getdents(int32_t fd, uint32_t index, void *dirent) {
         return (uint32_t)-1;
     }
     
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
         LOG_ERROR_MSG("sys_getdents: no current task or fd_table\n");
         return (uint32_t)-1;
@@ -737,7 +737,7 @@ uint32_t sys_pipe(int32_t *fds) {
         return (uint32_t)-1;
     }
     
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
         LOG_ERROR_MSG("sys_pipe: no current task or fd_table\n");
         return (uint32_t)-1;
@@ -794,7 +794,7 @@ uint32_t sys_pipe(int32_t *fds) {
  * @oldfd: 要复制的文件描述符
  */
 uint32_t sys_dup(int32_t oldfd) {
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
         LOG_ERROR_MSG("sys_dup: no current task or fd_table\n");
         return (uint32_t)-1;
@@ -839,7 +839,7 @@ uint32_t sys_dup2(int32_t oldfd, int32_t newfd) {
     // 如果 oldfd 和 newfd 相同，直接返回
     if (oldfd == newfd) {
         // 验证 oldfd 有效
-        task_t *current = task_get_current();
+        task_t *current = kernel::Scheduler::get_current();
         if (!current || !current->fd_table) {
             return (uint32_t)-1;
         }
@@ -850,7 +850,7 @@ uint32_t sys_dup2(int32_t oldfd, int32_t newfd) {
         return (uint32_t)newfd;
     }
     
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
         LOG_ERROR_MSG("sys_dup2: no current task or fd_table\n");
         return (uint32_t)-1;

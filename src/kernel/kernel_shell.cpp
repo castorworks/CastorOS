@@ -725,7 +725,7 @@ static int cmd_ps(int argc, char **argv) {
     
     // 遍历所有任务
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
-        task_t *task = task_get_by_pid(i);
+        task_t *task = kernel::Scheduler::get_by_pid(i);
         if (task == NULL || task->state == TASK_UNUSED) {
             continue;
         }

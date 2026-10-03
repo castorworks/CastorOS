@@ -384,9 +384,9 @@ bool keyboard_has_key(void) {
 char keyboard_getchar(void) {
     char c;
     while (!buffer_get(&c)) {
-        // 在多任务环境下，使用 task_yield() 让出 CPU
+        // 在多任务环境下，使用 kernel::Scheduler::yield() 让出 CPU
         // 这样其他任务可以继续运行，而不是使用 hlt 阻塞整个 CPU
-        task_yield();
+        kernel::Scheduler::yield();
     }
     return c;
 }

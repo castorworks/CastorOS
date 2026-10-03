@@ -40,7 +40,7 @@ static void timer_callback(registers_t *regs) {
     timer_ticks = timer_ticks + 1;
 
     // 每次定时器中断时，更新任务运行时间并处理调度
-    task_timer_tick();
+    kernel::Scheduler::timer_tick();
     
     /* 处理定时器回调 */
     for (uint32_t i = 0; i < MAX_TIMER_CALLBACKS; i++) {

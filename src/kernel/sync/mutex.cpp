@@ -6,7 +6,7 @@
 namespace sync {
 
 static inline task_t *mutex_current_task(void) {
-    return task_get_current();
+    return kernel::Scheduler::get_current();
 }
 
 void Mutex::init() {
@@ -75,7 +75,7 @@ task_t *current = mutex_current_task();
         lock_.unlock();
         
         // 现在可以安全地调度到其他任务了
-        task_schedule();
+        kernel::Scheduler::schedule();
         
         interrupts_restore(irq_state);
         
@@ -111,7 +111,7 @@ task_t *current = mutex_current_task();
     lock_.unlock();
 
     if (should_wakeup) {
-        task_wakeup(this);
+        kernel::Scheduler::wakeup(this);
     }
 
     interrupts_restore(irq_state);

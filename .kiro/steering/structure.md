@@ -60,7 +60,13 @@ CastorOS/
 
 ### Naming Conventions
 
-- Kernel functions: `subsystem_action()` (e.g., `pmm_alloc_frame()`, `vfs_open()`)
+- Kernel subsystems: namespace + class, e.g. `mm::Pmm::alloc_frame()`, `fs::Vfs::open()`,
+  `net::Tcp::input()`, `kernel::Scheduler::yield()`. Singleton modules use static member functions;
+  object-like types use real members (e.g. `sync::Spinlock::lock()`).
+- Prefer RAII guards (`sync::SpinlockIrqGuard`, `sync::MutexGuard`) over manual lock/unlock pairs.
+- Not yet converted (still `subsystem_action()` free functions): drivers, syscalls, netbuf/netdev/socket,
+  blockdev, fd_table, HAL/arch code, user space.
+- `kmalloc()`/`kfree()` and the C string functions stay global.
 - HAL functions: `hal_category_action()` (e.g., `hal_cpu_init()`, `hal_mmu_map()`)
 - Test cases: `test_<name>` with `TEST_CASE()` macro
 - Assembly files: `.asm` (NASM) or `.S` (GNU as for ARM64)

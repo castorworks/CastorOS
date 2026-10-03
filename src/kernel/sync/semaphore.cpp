@@ -19,7 +19,7 @@ bool Semaphore::try_consume() {
 }
 
 void Semaphore::wait() {
-task_t *current = task_get_current();
+task_t *current = kernel::Scheduler::get_current();
     if (current == NULL) {
         return;
     }
@@ -43,7 +43,7 @@ task_t *current = task_get_current();
         lock_.unlock();
         
         // 现在可以安全地调度到其他任务了
-        task_schedule();
+        kernel::Scheduler::schedule();
         
         interrupts_restore(irq_state);
         
@@ -75,7 +75,7 @@ bool irq_state = interrupts_disable();
     
     lock_.unlock();
 
-    task_wakeup(this);
+    kernel::Scheduler::wakeup(this);
     interrupts_restore(irq_state);
 }
 

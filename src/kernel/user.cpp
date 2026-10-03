@@ -45,7 +45,7 @@ extern "C" void enter_usermode_arm64(uint64_t entry_point, uint64_t user_stack);
  */
 void task_enter_usermode(uintptr_t entry_point, uintptr_t user_stack)
 {
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
 
     /* Set kernel stack in TSS for privilege level transitions */
     tss_set_kernel_stack(current->kernel_stack);

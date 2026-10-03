@@ -51,8 +51,7 @@ static void timer_handler(registers_t *regs) {
     
     // 调用任务管理器的定时器处理函数
     // 用于更新任务运行时间、唤醒睡眠任务、时间片轮转等
-    extern void task_timer_tick(void);
-    task_timer_tick();
+    kernel::Scheduler::timer_tick();
 }
 
 

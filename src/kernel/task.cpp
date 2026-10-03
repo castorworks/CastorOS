@@ -19,6 +19,11 @@
 /* GDT is x86-specific */
 #if defined(ARCH_I686) || defined(ARCH_X86_64)
 #include <kernel/gdt.h>
+
+#if defined(ARCH_X86_64)
+/* 定义在 arch/x86_64/syscall/syscall64.cpp */
+extern void hal_syscall_set_kernel_stack(uint64_t stack_ptr);
+#endif
 #endif
 
 // 辅助函数：检查页目录项是否存在
@@ -67,7 +72,7 @@ static task_t *pending_cleanup_task = NULL;
 /**
  * @brief 将任务添加到就绪队列尾部
  */
-void ready_queue_add(task_t *task) {
+void kernel::Scheduler::ready_queue_add(task_t *task) {
     if (!task) {
         return;
     }
@@ -99,7 +104,7 @@ void ready_queue_add(task_t *task) {
 /**
  * @brief 从就绪队列移除任务
  */
-void ready_queue_remove(task_t *task) {
+void kernel::Scheduler::ready_queue_remove(task_t *task) {
     if (!task) {
         return;
     }
@@ -153,7 +158,7 @@ static task_t* ready_queue_pop(void) {
 /**
  * @brief 分配一个空闲的任务控制块
  */
-task_t* task_alloc(void) {
+task_t* kernel::Scheduler::alloc() {
     bool irq_state;
     task_lock.lock_irqsave(irq_state);
     
@@ -172,14 +177,14 @@ task_t* task_alloc(void) {
     }
     
     task_lock.unlock_irqrestore(irq_state);
-    LOG_ERROR_MSG("task_alloc: No free PCB available (max: %d)\n", MAX_TASKS);
+    LOG_ERROR_MSG("kernel::Scheduler::alloc: No free PCB available (max: %d)\n", MAX_TASKS);
     return NULL;
 }
 
 /**
  * @brief 释放任务控制块
  */
-void task_free(task_t *task) {
+void kernel::Scheduler::free(task_t *task) {
     if (!task) {
         return;
     }
@@ -224,7 +229,7 @@ void task_free(task_t *task) {
 /**
  * @brief 根据 PID 查找任务
  */
-task_t* task_get_by_pid(uint32_t pid) {
+task_t* kernel::Scheduler::get_by_pid(uint32_t pid) {
     sync::SpinlockIrqGuard guard(task_lock);
     
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
@@ -239,14 +244,14 @@ task_t* task_get_by_pid(uint32_t pid) {
 /**
  * @brief 获取当前任务
  */
-task_t* task_get_current(void) {
+task_t* kernel::Scheduler::get_current() {
     return current_task;
 }
 
 /**
  * @brief 获取活动任务数量
  */
-uint32_t task_get_count(void) {
+uint32_t kernel::Scheduler::get_count() {
     sync::SpinlockIrqGuard guard(task_lock);
     uint32_t count = active_task_count;
     return count;
@@ -265,16 +270,16 @@ uint32_t task_get_count(void) {
  * **Feature: arm64-kernel-integration**
  * **Validates: Requirements 6.1**
  */
-bool task_setup_user_stack(task_t *task) {
+bool kernel::Scheduler::setup_user_stack(task_t *task) {
     if (!task || !task->is_user_process) {
-        LOG_ERROR_MSG("task_setup_user_stack: Invalid task\n");
+        LOG_ERROR_MSG("kernel::Scheduler::setup_user_stack: Invalid task\n");
         return false;
     }
     
 #if defined(ARCH_ARM64)
     /* ARM64: Use HAL MMU interface for user stack setup */
     if (task->page_dir_phys == 0) {
-        LOG_ERROR_MSG("task_setup_user_stack: No address space for ARM64 task\n");
+        LOG_ERROR_MSG("kernel::Scheduler::setup_user_stack: No address space for ARM64 task\n");
         return false;
     }
     
@@ -285,7 +290,7 @@ bool task_setup_user_stack(task_t *task) {
     /* Number of pages to allocate */
     uint32_t num_pages = USER_STACK_SIZE / PAGE_SIZE;
     
-    LOG_DEBUG_MSG("task_setup_user_stack (ARM64): Allocating %u pages for user stack\n", num_pages);
+    LOG_DEBUG_MSG("kernel::Scheduler::setup_user_stack (ARM64): Allocating %u pages for user stack\n", num_pages);
     LOG_DEBUG_MSG("  Stack range: 0x%llx - 0x%llx\n", 
                  (unsigned long long)stack_bottom, (unsigned long long)stack_top);
     
@@ -296,8 +301,8 @@ bool task_setup_user_stack(task_t *task) {
         uintptr_t virt_addr = stack_bottom + ((uintptr_t)i * PAGE_SIZE);
         
         /* Test mode: check if we should simulate allocation failure */
-        if (task_should_fail_stack_page(i)) {
-            LOG_DEBUG_MSG("task_setup_user_stack: Simulating allocation failure at page %u\n", i);
+        if (kernel::Scheduler::should_fail_stack_page(i)) {
+            LOG_DEBUG_MSG("kernel::Scheduler::setup_user_stack: Simulating allocation failure at page %u\n", i);
             
             /* Cleanup already allocated pages */
             for (uint32_t j = 0; j < i; j++) {
@@ -317,7 +322,7 @@ bool task_setup_user_stack(task_t *task) {
         /* Allocate physical page */
         paddr_t phys_addr = mm::Pmm::alloc_frame();
         if (phys_addr == PADDR_INVALID) {
-            LOG_ERROR_MSG("task_setup_user_stack: Failed to allocate physical page %u/%u\n", 
+            LOG_ERROR_MSG("kernel::Scheduler::setup_user_stack: Failed to allocate physical page %u/%u\n", 
                          i + 1, num_pages);
             
             /* Cleanup already allocated pages */
@@ -336,7 +341,7 @@ bool task_setup_user_stack(task_t *task) {
         /* Map to user space (user read-write) */
         uint32_t flags = HAL_PAGE_PRESENT | HAL_PAGE_WRITE | HAL_PAGE_USER;
         if (!hal_mmu_map(space, virt_addr, phys_addr, flags)) {
-            LOG_ERROR_MSG("task_setup_user_stack: Failed to map page %u/%u at 0x%llx\n", 
+            LOG_ERROR_MSG("kernel::Scheduler::setup_user_stack: Failed to map page %u/%u at 0x%llx\n", 
                          i + 1, num_pages, (unsigned long long)virt_addr);
             
             /* Free the just-allocated physical page */
@@ -364,7 +369,7 @@ bool task_setup_user_stack(task_t *task) {
     task->user_stack_base = stack_bottom;
     task->user_stack = stack_top - 16;  /* 16-byte alignment for ARM64 */
     
-    LOG_DEBUG_MSG("task_setup_user_stack (ARM64): User stack set up at 0x%llx-0x%llx\n", 
+    LOG_DEBUG_MSG("kernel::Scheduler::setup_user_stack (ARM64): User stack set up at 0x%llx-0x%llx\n", 
                  (unsigned long long)stack_bottom, (unsigned long long)stack_top);
     
     return true;
@@ -372,7 +377,7 @@ bool task_setup_user_stack(task_t *task) {
 #else
     /* i686/x86_64: Use VMM page directory interface */
     if (!task->page_dir) {
-        LOG_ERROR_MSG("task_setup_user_stack: Invalid task\n");
+        LOG_ERROR_MSG("kernel::Scheduler::setup_user_stack: Invalid task\n");
         return false;
     }
     
@@ -383,14 +388,14 @@ bool task_setup_user_stack(task_t *task) {
     // 分配并映射用户栈页面
     uint32_t num_pages = USER_STACK_SIZE / PAGE_SIZE;
     
-    LOG_DEBUG_MSG("task_setup_user_stack: Allocating %u pages for user stack\n", num_pages);
+    LOG_DEBUG_MSG("kernel::Scheduler::setup_user_stack: Allocating %u pages for user stack\n", num_pages);
     
     for (uint32_t i = 0; i < num_pages; i++) {
         uint32_t virt_addr = stack_bottom + (i * PAGE_SIZE);
         
         // 测试模式：检查是否应该模拟分配失败
-        if (task_should_fail_stack_page(i)) {
-            LOG_DEBUG_MSG("task_setup_user_stack: Simulating allocation failure at page %u\n", i);
+        if (kernel::Scheduler::should_fail_stack_page(i)) {
+            LOG_DEBUG_MSG("kernel::Scheduler::setup_user_stack: Simulating allocation failure at page %u\n", i);
             
             // 清理已分配的页面
             for (uint32_t j = 0; j < i; j++) {
@@ -412,7 +417,7 @@ bool task_setup_user_stack(task_t *task) {
         // 分配物理页
         paddr_t phys_addr = mm::Pmm::alloc_frame();
         if (phys_addr == PADDR_INVALID) {
-            LOG_ERROR_MSG("task_setup_user_stack: Failed to allocate physical page %u/%u\n", 
+            LOG_ERROR_MSG("kernel::Scheduler::setup_user_stack: Failed to allocate physical page %u/%u\n", 
                          i + 1, num_pages);
             
             // 清理已分配的页面
@@ -433,7 +438,7 @@ bool task_setup_user_stack(task_t *task) {
         // 映射到用户空间（用户可读写）
         if (!mm::Vmm::map_page_in_directory(task->page_dir_phys, virt_addr, (uintptr_t)phys_addr,
                                        PAGE_PRESENT | PAGE_WRITE | PAGE_USER)) {
-            LOG_ERROR_MSG("task_setup_user_stack: Failed to map page %u/%u\n", i + 1, num_pages);
+            LOG_ERROR_MSG("kernel::Scheduler::setup_user_stack: Failed to map page %u/%u\n", i + 1, num_pages);
             
             // 释放刚分配的物理页
             mm::Pmm::free_frame(phys_addr);
@@ -458,7 +463,7 @@ bool task_setup_user_stack(task_t *task) {
     task->user_stack_base = stack_bottom;
     task->user_stack = stack_top - 4;
     
-    LOG_DEBUG_MSG("task_setup_user_stack: User stack set up at 0x%x-0x%x\n", 
+    LOG_DEBUG_MSG("kernel::Scheduler::setup_user_stack: User stack set up at 0x%x-0x%x\n", 
                  stack_bottom, stack_top);
     
     return true;
@@ -471,7 +476,7 @@ bool task_setup_user_stack(task_t *task) {
  * 这是一个弱符号实现，测试代码可以覆盖它
  */
 __attribute__((weak))
-bool task_should_fail_stack_page(uint32_t page_index) {
+bool kernel::Scheduler::should_fail_stack_page(uint32_t page_index) {
     // 默认实现：永不失败
     // 测试代码会覆盖这个函数
     (void)page_index;
@@ -485,16 +490,16 @@ bool task_should_fail_stack_page(uint32_t page_index) {
 /**
  * @brief 创建内核线程
  */
-uint32_t task_create_kernel_thread(void (*entry)(void), const char *name) {
+uint32_t kernel::Scheduler::create_kernel_thread(void (*entry)(void), const char *name) {
     if (!entry) {
-        LOG_ERROR_MSG("task_create_kernel_thread: Invalid entry point\n");
+        LOG_ERROR_MSG("kernel::Scheduler::create_kernel_thread: Invalid entry point\n");
         return 0;
     }
     
     // 分配 PCB
-    task_t *task = task_alloc();
+    task_t *task = kernel::Scheduler::alloc();
     if (!task) {
-        LOG_ERROR_MSG("task_create_kernel_thread: Failed to allocate PCB\n");
+        LOG_ERROR_MSG("kernel::Scheduler::create_kernel_thread: Failed to allocate PCB\n");
         return 0;
     }
     
@@ -508,8 +513,8 @@ uint32_t task_create_kernel_thread(void (*entry)(void), const char *name) {
     // 分配内核栈
     task->kernel_stack_base = (uintptr_t)kmalloc(KERNEL_STACK_SIZE);
     if (!task->kernel_stack_base) {
-        LOG_ERROR_MSG("task_create_kernel_thread: Failed to allocate kernel stack\n");
-        task_free(task);
+        LOG_ERROR_MSG("kernel::Scheduler::create_kernel_thread: Failed to allocate kernel stack\n");
+        kernel::Scheduler::free(task);
         return 0;
     }
     
@@ -578,7 +583,7 @@ uint32_t task_create_kernel_thread(void (*entry)(void), const char *name) {
     
     // 添加到就绪队列
     task->state = TASK_READY;
-    ready_queue_add(task);
+    kernel::Scheduler::ready_queue_add(task);
     
     LOG_INFO_MSG("Created kernel thread: PID=%u, name=%s\n", task->pid, task->name);
     
@@ -591,32 +596,32 @@ uint32_t task_create_kernel_thread(void (*entry)(void), const char *name) {
  * **Feature: arm64-kernel-integration**
  * **Validates: Requirements 6.1, 6.2**
  */
-uint32_t task_create_user_process(const char *name, uintptr_t entry_point,
+uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entry_point,
                                    page_directory_t *page_dir, uintptr_t program_end) {
 #if defined(ARCH_ARM64)
     /* ARM64: page_dir is actually the address space handle (TTBR0 physical address) */
     if (!name || entry_point == 0) {
-        LOG_ERROR_MSG("task_create_user_process: Invalid parameters\n");
+        LOG_ERROR_MSG("kernel::Scheduler::create_user_process: Invalid parameters\n");
         return 0;
     }
     
     /* For ARM64, page_dir is cast from hal_addr_space_t */
     hal_addr_space_t addr_space = (hal_addr_space_t)(uintptr_t)page_dir;
     if (addr_space == HAL_ADDR_SPACE_INVALID) {
-        LOG_ERROR_MSG("task_create_user_process: Invalid address space\n");
+        LOG_ERROR_MSG("kernel::Scheduler::create_user_process: Invalid address space\n");
         return 0;
     }
 #else
     if (!name || !page_dir || entry_point == 0) {
-        LOG_ERROR_MSG("task_create_user_process: Invalid parameters\n");
+        LOG_ERROR_MSG("kernel::Scheduler::create_user_process: Invalid parameters\n");
         return 0;
     }
 #endif
     
     // 分配 PCB
-    task_t *task = task_alloc();
+    task_t *task = kernel::Scheduler::alloc();
     if (!task) {
-        LOG_ERROR_MSG("task_create_user_process: Failed to allocate PCB\n");
+        LOG_ERROR_MSG("kernel::Scheduler::create_user_process: Failed to allocate PCB\n");
         return 0;
     }
     
@@ -631,8 +636,8 @@ uint32_t task_create_user_process(const char *name, uintptr_t entry_point,
     // 分配内核栈
     task->kernel_stack_base = (uintptr_t)kmalloc(KERNEL_STACK_SIZE);
     if (!task->kernel_stack_base) {
-        LOG_ERROR_MSG("task_create_user_process: Failed to allocate kernel stack\n");
-        task_free(task);
+        LOG_ERROR_MSG("kernel::Scheduler::create_user_process: Failed to allocate kernel stack\n");
+        kernel::Scheduler::free(task);
         return 0;
     }
     
@@ -649,10 +654,10 @@ uint32_t task_create_user_process(const char *name, uintptr_t entry_point,
 #endif
     
     // 设置用户栈
-    if (!task_setup_user_stack(task)) {
-        LOG_ERROR_MSG("task_create_user_process: Failed to setup user stack\n");
+    if (!kernel::Scheduler::setup_user_stack(task)) {
+        LOG_ERROR_MSG("kernel::Scheduler::create_user_process: Failed to setup user stack\n");
         kfree((void*)task->kernel_stack_base);
-        task_free(task);
+        kernel::Scheduler::free(task);
         return 0;
     }
     
@@ -717,9 +722,9 @@ uint32_t task_create_user_process(const char *name, uintptr_t entry_point,
     // 分配文件描述符表
     task->fd_table = (fd_table_t*)kmalloc(sizeof(fd_table_t));
     if (!task->fd_table) {
-        LOG_ERROR_MSG("task_create_user_process: Failed to allocate fd_table\n");
+        LOG_ERROR_MSG("kernel::Scheduler::create_user_process: Failed to allocate fd_table\n");
         kfree((void*)task->kernel_stack_base);
-        task_free(task);
+        kernel::Scheduler::free(task);
         return 0;
     }
     
@@ -755,7 +760,7 @@ uint32_t task_create_user_process(const char *name, uintptr_t entry_point,
     
     // 添加到就绪队列
     task->state = TASK_READY;
-    ready_queue_add(task);
+    kernel::Scheduler::ready_queue_add(task);
     
     LOG_INFO_MSG("Created user process: PID=%u, name=%s, entry=0x%llx\n", 
                  task->pid, task->name, (unsigned long long)entry_point);
@@ -797,7 +802,7 @@ uint32_t task_create_user_process_arm64(const char *name, uintptr_t entry_point,
     
     /* Create the user process using the new address space */
     /* Cast addr_space to page_directory_t* for compatibility with existing API */
-    uint32_t pid = task_create_user_process(name, entry_point, 
+    uint32_t pid = kernel::Scheduler::create_user_process(name, entry_point, 
                                             (page_directory_t*)(uintptr_t)addr_space, 
                                             program_end);
     
@@ -830,7 +835,7 @@ static void idle_task_loop(void) {
         
         // 在中断返回后，主动让出 CPU
         // 这样如果有任务被唤醒，它们就能得到执行
-        task_yield();
+        kernel::Scheduler::yield();
     }
 }
 
@@ -912,7 +917,7 @@ static bool task_create_idle(void) {
 /**
  * @brief 任务调度器
  */
-void task_schedule(void) {
+void kernel::Scheduler::schedule() {
     if (!scheduler_initialized) {
         return;
     }
@@ -928,7 +933,7 @@ void task_schedule(void) {
         LOG_INFO_MSG("Cleaning up terminated task %u (%s)\n", 
                      task_to_cleanup->pid, task_to_cleanup->name);
         
-        // 保存需要释放的资源信息（在 task_free 会清空 PCB）
+        // 保存需要释放的资源信息（在 kernel::Scheduler::free 会清空 PCB）
         uintptr_t kernel_stack_base = task_to_cleanup->kernel_stack_base;
         bool is_user = task_to_cleanup->is_user_process;
         uintptr_t page_dir_phys = task_to_cleanup->page_dir_phys;
@@ -984,7 +989,7 @@ void task_schedule(void) {
         } else if (prev_task->state == TASK_RUNNING) {
             // 将还在运行的任务加回就绪队列
             prev_task->state = TASK_READY;
-            ready_queue_add(prev_task);
+            kernel::Scheduler::ready_queue_add(prev_task);
         }
     }
     
@@ -1008,7 +1013,6 @@ void task_schedule(void) {
         tss_set_kernel_stack(next_task->kernel_stack);
 #if defined(ARCH_X86_64)
         // x86_64: Also set kernel stack for SYSCALL mechanism
-        extern void hal_syscall_set_kernel_stack(uint64_t stack_ptr);
         hal_syscall_set_kernel_stack((uint64_t)next_task->kernel_stack);
 #endif
 #endif
@@ -1095,7 +1099,7 @@ void task_schedule(void) {
  */
 static uint32_t timer_tick_count = 0;
 
-void task_timer_tick(void) {
+void kernel::Scheduler::timer_tick() {
     if (!scheduler_initialized || !current_task) {
         return;
     }
@@ -1116,7 +1120,7 @@ void task_timer_tick(void) {
     // 检查睡眠任务是否应该唤醒
     uint64_t current_time_ms = timer_get_uptime_ms();
     
-    // 收集需要唤醒的任务（避免在持有锁时调用 ready_queue_add）
+    // 收集需要唤醒的任务（避免在持有锁时调用 kernel::Scheduler::ready_queue_add）
     task_t *tasks_to_wake[MAX_TASKS];
     uint32_t wake_count = 0;
     
@@ -1139,7 +1143,7 @@ void task_timer_tick(void) {
     
     // 在锁外将任务添加到就绪队列
     for (uint32_t i = 0; i < wake_count; i++) {
-        ready_queue_add(tasks_to_wake[i]);
+        kernel::Scheduler::ready_queue_add(tasks_to_wake[i]);
     }
     
     // 时间片轮转调度
@@ -1149,7 +1153,7 @@ void task_timer_tick(void) {
     
     if (tick_count >= current_task->time_slice) {
         tick_count = 0;
-        // 在 IRQ 上下文中不调用 task_schedule()
+        // 在 IRQ 上下文中不调用 kernel::Scheduler::schedule()
         // 调度会在 IRQ handler 返回时自动处理
     }
 }
@@ -1217,7 +1221,7 @@ void task_exit(uint32_t exit_code) {
     
     // 在锁外清理僵尸子进程
     for (uint32_t i = 0; i < zombie_count; i++) {
-        task_free(zombie_children[i]);
+        kernel::Scheduler::free(zombie_children[i]);
     }
     
     // 如果有父进程，变成僵尸进程等待父进程回收
@@ -1232,12 +1236,12 @@ void task_exit(uint32_t exit_code) {
     }
     
     // 释放资源
-    // 注意：不能在这里调用 task_free，因为我们还在使用当前任务的栈
+    // 注意：不能在这里调用 kernel::Scheduler::free，因为我们还在使用当前任务的栈
     // 清理工作由调度器或父进程的 wait/waitpid 完成
     
     // 切换到其他任务
     current_task = NULL;
-    task_schedule();
+    kernel::Scheduler::schedule();
     
     // 永远不会执行到这里
     while (1) {
@@ -1248,14 +1252,14 @@ void task_exit(uint32_t exit_code) {
 /**
  * @brief 主动让出 CPU
  */
-void task_yield(void) {
-    task_schedule();
+void kernel::Scheduler::yield() {
+    kernel::Scheduler::schedule();
 }
 
 /**
  * @brief 任务睡眠
  */
-void task_sleep(uint32_t ms) {
+void kernel::Scheduler::sleep(uint32_t ms) {
     if (!current_task || ms == 0) {
         return;
     }
@@ -1268,7 +1272,7 @@ void task_sleep(uint32_t ms) {
     current_task->state = TASK_BLOCKED;
     
     // 切换到其他任务
-    task_schedule();
+    kernel::Scheduler::schedule();
     
     interrupts_restore(prev_state);
 }
@@ -1278,7 +1282,7 @@ void task_sleep(uint32_t ms) {
  * 
  * @param wait_object 等待对象指针（用于调试）
  */
-void task_block(void *wait_object) {
+void kernel::Scheduler::block(void *wait_object) {
     (void)wait_object;  // 暂不使用
     
     if (!current_task) {
@@ -1293,7 +1297,7 @@ void task_block(void *wait_object) {
                  current_task->pid, current_task->name, wait_object);
     
     // 触发调度，切换到其他任务
-    task_schedule();
+    kernel::Scheduler::schedule();
     
     interrupts_restore(prev_state);
 }
@@ -1303,7 +1307,7 @@ void task_block(void *wait_object) {
  * 
  * @param wait_object 等待对象指针（用于调试）
  */
-void task_wakeup(void *wait_object) {
+void kernel::Scheduler::wakeup(void *wait_object) {
     (void)wait_object;  // 暂不使用
     
     task_t *task_to_wake = NULL;
@@ -1328,7 +1332,7 @@ void task_wakeup(void *wait_object) {
     
     // 在锁外添加到就绪队列
     if (task_to_wake) {
-        ready_queue_add(task_to_wake);
+        kernel::Scheduler::ready_queue_add(task_to_wake);
     }
 }
 
@@ -1342,7 +1346,7 @@ void task_wakeup(void *wait_object) {
 void schedule_from_irq(void *regs) {
     (void)regs;
     
-    // 注意：不能在 IRQ 上下文中直接调用 task_schedule()！
+    // 注意：不能在 IRQ 上下文中直接调用 kernel::Scheduler::schedule()！
     // 因为我们还在 IRQ 处理程序的栈帧中，切换任务会导致栈混乱
     // 
     // 正确的做法是：
@@ -1359,7 +1363,7 @@ void schedule_from_irq(void *regs) {
 /**
  * @brief 初始化任务管理系统
  */
-void task_init(void) {
+void kernel::Scheduler::init() {
     LOG_INFO_MSG("Initializing task management...\n");
     
     // 初始化任务管理锁
@@ -1401,7 +1405,7 @@ void task_init(void) {
 /**
  * @brief 打印所有任务信息
  */
-void task_print_all(void) {
+void kernel::Scheduler::print_all() {
     kprintf("\n=== Task List ===\n");
     kprintf("PID  State     Priority  Runtime(ms)  Name\n");
     kprintf("---  --------  --------  -----------  ----\n");

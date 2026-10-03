@@ -18,7 +18,7 @@
 
 static uint32_t g_task_stack_fail_index = UINT32_MAX;
 
-bool task_should_fail_stack_page(uint32_t page_index) {
+bool kernel::Scheduler::should_fail_stack_page(uint32_t page_index) {
     return page_index == g_task_stack_fail_index;
 }
 
@@ -43,7 +43,7 @@ TEST_CASE(test_user_stack_cleanup_on_partial_failure) {
 
     g_task_stack_fail_index = 3;
 
-    bool ok = task_setup_user_stack(&task);
+    bool ok = kernel::Scheduler::setup_user_stack(&task);
     ASSERT_FALSE(ok);
 
     ASSERT_EQ_UINT(0, task.user_stack_base);
@@ -66,7 +66,7 @@ TEST_CASE(test_user_stack_full_allocation_and_release) {
     init_dummy_task(&task);
     ASSERT_NE_U(0, task.page_dir_phys);
 
-    bool ok = task_setup_user_stack(&task);
+    bool ok = kernel::Scheduler::setup_user_stack(&task);
     ASSERT_TRUE(ok);
 
     ASSERT_NE_U(0, task.user_stack_base);

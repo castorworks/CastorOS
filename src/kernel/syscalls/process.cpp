@@ -37,7 +37,7 @@ static inline uint32_t get_frame(uint32_t pde) { return pde & 0xFFFFF000; }
 void sys_exit(uint32_t code) {
     LOG_DEBUG_MSG("sys_exit: exit_code=%u\n", code);
     
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (current) {
         current->exit_code = code;
         LOG_DEBUG_MSG("sys_exit: process %u (%s) exiting with code %u\n", 
@@ -63,7 +63,7 @@ uint32_t sys_fork(uintptr_t *frame) {
     // 禁用中断，保证 fork 过程的原子性
     bool prev_state = interrupts_disable();
     
-    task_t *parent = task_get_current();
+    task_t *parent = kernel::Scheduler::get_current();
     if (!parent) {
         LOG_ERROR_MSG("sys_fork: No current task\n");
         interrupts_restore(prev_state);
@@ -187,7 +187,7 @@ uint32_t sys_fork(uintptr_t *frame) {
 #endif
     
     // 分配子进程 PCB
-    task_t *child = task_alloc();
+    task_t *child = kernel::Scheduler::alloc();
     if (!child) {
         LOG_ERROR_MSG("sys_fork: Failed to allocate PCB\n");
         interrupts_restore(prev_state);
@@ -204,7 +204,7 @@ uint32_t sys_fork(uintptr_t *frame) {
     child->page_dir_phys = mm::Vmm::clone_page_directory(parent->page_dir_phys);
     if (!child->page_dir_phys) {
         LOG_ERROR_MSG("sys_fork: Failed to clone page directory\n");
-        task_free(child);
+        kernel::Scheduler::free(child);
         interrupts_restore(prev_state);
         return (uint32_t)-12;
     }
@@ -215,7 +215,7 @@ uint32_t sys_fork(uintptr_t *frame) {
     if (!child->kernel_stack_base) {
         LOG_ERROR_MSG("sys_fork: Failed to allocate kernel stack\n");
         mm::Vmm::free_page_directory(child->page_dir_phys);
-        task_free(child);
+        kernel::Scheduler::free(child);
         interrupts_restore(prev_state);
         return (uint32_t)-12;
     }
@@ -305,7 +305,7 @@ uint32_t sys_fork(uintptr_t *frame) {
             LOG_ERROR_MSG("sys_fork: Failed to allocate fd_table\n");
             kfree((void*)child->kernel_stack_base);
             mm::Vmm::free_page_directory(child->page_dir_phys);
-            task_free(child);
+            kernel::Scheduler::free(child);
             interrupts_restore(prev_state);
             return (uint32_t)-12;
         }
@@ -318,7 +318,7 @@ uint32_t sys_fork(uintptr_t *frame) {
             kfree(child->fd_table);
             kfree((void*)child->kernel_stack_base);
             mm::Vmm::free_page_directory(child->page_dir_phys);
-            task_free(child);
+            kernel::Scheduler::free(child);
             interrupts_restore(prev_state);
             return (uint32_t)-1;
         }
@@ -332,7 +332,7 @@ uint32_t sys_fork(uintptr_t *frame) {
     
     // 添加到就绪队列
     child->state = TASK_READY;
-    ready_queue_add(child);
+    kernel::Scheduler::ready_queue_add(child);
     
     LOG_INFO_MSG("sys_fork: Created child PID %u\n", child->pid);
     
@@ -356,7 +356,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
         return (uint32_t)-1;
     }
     
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current) {
         LOG_ERROR_MSG("sys_execve: no current task\n");
         return (uint32_t)-1;
@@ -449,7 +449,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     // 释放 ELF 数据（已经加载到新页目录的物理页中了）
     kfree(elf_data);
     
-    // 临时更新进程的页目录指针，以便 task_setup_user_stack 操作新目录
+    // 临时更新进程的页目录指针，以便 kernel::Scheduler::setup_user_stack 操作新目录
     current->page_dir = new_dir;
     current->page_dir_phys = new_dir_phys;
     
@@ -468,7 +468,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     }
     
     // 在新页目录中设置用户栈
-    if (!task_setup_user_stack(current)) {
+    if (!kernel::Scheduler::setup_user_stack(current)) {
         LOG_ERROR_MSG("sys_execve: failed to setup user stack\n");
         // 回滚
         current->page_dir = old_dir;
@@ -680,7 +680,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
  * sys_getpid - 获取当前进程 PID
  */
 uint32_t sys_getpid(void) {
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current) {
         LOG_ERROR_MSG("sys_getpid: no current task\n");
         return (uint32_t)-1;
@@ -695,7 +695,7 @@ uint32_t sys_getpid(void) {
  * @return 父进程 PID，如果没有父进程返回 0
  */
 uint32_t sys_getppid(void) {
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current) {
         LOG_ERROR_MSG("sys_getppid: no current task\n");
         return 0;
@@ -718,7 +718,7 @@ uint32_t sys_yield(void) {
     LOG_DEBUG_MSG("sys_yield: yielding CPU\n");
     
     // 调用任务管理器的让出函数
-    task_yield();
+    kernel::Scheduler::yield();
     
     return 0;
 }
@@ -749,7 +749,7 @@ uint32_t sys_nanosleep(const struct timespec *req, struct timespec *rem) {
             total_ms = 0xFFFFFFFFull;
         }
         uint32_t sleep_ms = (uint32_t)total_ms;
-        task_sleep(sleep_ms);
+        kernel::Scheduler::sleep(sleep_ms);
     }
 
     if (rem) {
@@ -767,7 +767,7 @@ uint32_t sys_nanosleep(const struct timespec *req, struct timespec *rem) {
  * 未来可以扩展为支持信号处理和不同的信号行为
  */
 uint32_t sys_kill(uint32_t pid, uint32_t signal) {
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current) {
         LOG_ERROR_MSG("sys_kill: no current task\n");
         return (uint32_t)-1;
@@ -783,7 +783,7 @@ uint32_t sys_kill(uint32_t pid, uint32_t signal) {
     }
     
     // 查找目标进程
-    task_t *target = task_get_by_pid(pid);
+    task_t *target = kernel::Scheduler::get_by_pid(pid);
     if (!target) {
         LOG_WARN_MSG("sys_kill: process %u not found\n", pid);
         return (uint32_t)-1;
@@ -835,7 +835,7 @@ uint32_t sys_kill(uint32_t pid, uint32_t signal) {
     // 处理目标进程的所有子进程
     // 遍历任务池，查找目标进程的子进程
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
-        task_t *task = task_get_by_pid(i);
+        task_t *task = kernel::Scheduler::get_by_pid(i);
         if (!task || task->state == TASK_UNUSED) {
             continue;
         }
@@ -847,7 +847,7 @@ uint32_t sys_kill(uint32_t pid, uint32_t signal) {
                 LOG_DEBUG_MSG("sys_kill: cleaning up zombie child %u of process %u\n", 
                              task->pid, target->pid);
                 // 直接释放资源，因为僵尸进程不在就绪队列中
-                task_free(task);
+                kernel::Scheduler::free(task);
             } else {
                 // 运行中的子进程：变成孤儿进程
                 LOG_DEBUG_MSG("sys_kill: orphaning child %u of process %u\n", 
@@ -859,7 +859,7 @@ uint32_t sys_kill(uint32_t pid, uint32_t signal) {
     
     // 如果目标进程在就绪队列中，需要移除它
     if (target->state == TASK_READY) {
-        ready_queue_remove(target);
+        kernel::Scheduler::ready_queue_remove(target);
         LOG_DEBUG_MSG("sys_kill: removed process %u from ready queue\n", pid);
     }
     
@@ -899,7 +899,7 @@ uint32_t sys_kill(uint32_t pid, uint32_t signal) {
             // kill 其他没有父进程的进程，可以安全地立即清理
             LOG_DEBUG_MSG("sys_kill: process %u has no valid parent, freeing immediately\n", 
                          target->pid);
-            task_free(target);
+            kernel::Scheduler::free(target);
             interrupts_restore(prev_state);
             LOG_DEBUG_MSG("sys_kill: process %u freed\n", pid);
         }
@@ -917,7 +917,7 @@ uint32_t sys_kill(uint32_t pid, uint32_t signal) {
  * @return 成功返回子进程 PID，没有子进程返回 (uint32_t)-1，WNOHANG 时无退出子进程返回 0
  */
 uint32_t sys_waitpid(int32_t pid, uint32_t *wstatus, uint32_t options) {
-    task_t *current = task_get_current();
+    task_t *current = kernel::Scheduler::get_current();
     if (!current) {
         LOG_ERROR_MSG("sys_waitpid: no current task\n");
         return (uint32_t)-1;
@@ -988,7 +988,7 @@ uint32_t sys_waitpid(int32_t pid, uint32_t *wstatus, uint32_t options) {
                          child_pid, status);
             
             // 回收子进程资源
-            task_free(found_child);
+            kernel::Scheduler::free(found_child);
             
             interrupts_restore(prev_state);
             return child_pid;
@@ -1015,6 +1015,6 @@ uint32_t sys_waitpid(int32_t pid, uint32_t *wstatus, uint32_t options) {
         // 阻塞等待：让出 CPU，稍后重试
         // 这里使用简单的轮询 + yield 策略
         // 更好的实现应该让进程进入 BLOCKED 状态，并在子进程退出时唤醒
-        task_yield();
+        kernel::Scheduler::yield();
     }
 }
