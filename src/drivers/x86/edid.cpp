@@ -79,7 +79,7 @@ static void edid_parse_detailed_timing(const uint8_t *dtd, edid_info_t *info) {
  * 公共函数
  * ============================================================================ */
 
-bool edid_validate(const uint8_t *data) {
+bool drivers::Edid::validate(const uint8_t *data) {
     if (!data) {
         return false;
     }
@@ -98,7 +98,7 @@ bool edid_validate(const uint8_t *data) {
     return sum == 0;
 }
 
-int edid_parse(const uint8_t *data, edid_info_t *info) {
+int drivers::Edid::parse(const uint8_t *data, edid_info_t *info) {
     if (!data || !info) {
         return -1;
     }
@@ -107,7 +107,7 @@ int edid_parse(const uint8_t *data, edid_info_t *info) {
     memset(info, 0, sizeof(edid_info_t));
     
     // 验证 EDID
-    if (!edid_validate(data)) {
+    if (!drivers::Edid::validate(data)) {
         info->valid = false;
         return -2;
     }
@@ -149,7 +149,7 @@ int edid_parse(const uint8_t *data, edid_info_t *info) {
     return 0;
 }
 
-int edid_read_from_radeon(volatile uint32_t *mmio_base, edid_info_t *info) {
+int drivers::Edid::read_from_radeon(volatile uint32_t *mmio_base, edid_info_t *info) {
     if (!mmio_base || !info) {
         return -1;
     }
@@ -171,7 +171,7 @@ int edid_read_from_radeon(volatile uint32_t *mmio_base, edid_info_t *info) {
     return -3;  // 未实现
 }
 
-void edid_print_info(const edid_info_t *info) {
+void drivers::Edid::print_info(const edid_info_t *info) {
     if (!info || !info->valid) {
         kprintf("EDID: Invalid or not available\n");
         return;

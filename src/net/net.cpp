@@ -47,7 +47,7 @@ void net_init(void) {
     socket_init();
     
     // 9. 注册 TCP 定时器（每 100ms 调用一次）
-    tcp_timer_id = timer_register_callback(net_tcp_timer_callback, NULL, 100, true);
+    tcp_timer_id = drivers::Timer::register_callback(net_tcp_timer_callback, NULL, 100, true);
     if (tcp_timer_id == 0) {
         LOG_WARN_MSG("net: Failed to register TCP timer\n");
     }
@@ -136,9 +136,9 @@ int net_ping(const char *ip_str, int count) {
         sent++;
         
         // 等待响应（最多 1 秒）
-        uint32_t start = (uint32_t)timer_get_uptime_ms();
+        uint32_t start = (uint32_t)drivers::Timer::get_uptime_ms();
         while (!ping_result.received && 
-               (uint32_t)timer_get_uptime_ms() - start < 1000) {
+               (uint32_t)drivers::Timer::get_uptime_ms() - start < 1000) {
             // 忙等待（简单实现）
             // 实际应该使用事件等待
         }
@@ -161,7 +161,7 @@ int net_ping(const char *ip_str, int count) {
         
         // 等待 1 秒再发送下一个
         if (i < count - 1) {
-            timer_wait(1000);
+            drivers::Timer::wait(1000);
         }
     }
     

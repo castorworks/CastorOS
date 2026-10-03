@@ -15,7 +15,12 @@
 // E1000 is x86-specific (PCI), provide empty stubs for other architectures
 #include <types.h>
 
-static inline void e1000_init(void) {}
+namespace drivers {
+class E1000 {
+public:
+    static inline void init(void) {}
+};
+} // namespace drivers
 
 #endif
 

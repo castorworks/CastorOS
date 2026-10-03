@@ -3,6 +3,8 @@
 // ============================================================================
 
 #include <fs/devfs.h>
+#include <drivers/keyboard.h>
+#include <drivers/vga.h>
 #include <fs/vfs.h>
 #include <lib/string.h>
 #include <lib/klog.h>
@@ -124,7 +126,7 @@ static uint32_t devserial_write(fs_node_t *node, uint32_t offset,
     
     // 将数据写入串口
     for (uint32_t i = 0; i < size; i++) {
-        serial_putchar(buffer[i]);
+        drivers::Serial::putchar(buffer[i]);
     }
     
     return size;
@@ -141,14 +143,13 @@ static uint32_t devconsole_read(fs_node_t *node, uint32_t offset,
     // 从键盘读取（阻塞模式）
 #if defined(ARCH_ARM64)
     // ARM64: 使用串口作为控制台输入
-    extern char serial_getchar(void);
     extern bool serial_try_getchar(char *c);
     
     uint32_t bytes_read = 0;
     for (uint32_t i = 0; i < size; i++) {
         char c;
         if (i == 0) {
-            c = serial_getchar();  // 阻塞等待
+            c = drivers::Serial::getchar();  // 阻塞等待
             buffer[i] = c;
             bytes_read++;
         } else {
@@ -161,8 +162,6 @@ static uint32_t devconsole_read(fs_node_t *node, uint32_t offset,
         }
     }
 #else
-    extern bool keyboard_try_getchar(char *c);
-    extern char keyboard_getchar(void);  // 阻塞读取
     
     uint32_t bytes_read = 0;
     for (uint32_t i = 0; i < size; i++) {
@@ -170,12 +169,12 @@ static uint32_t devconsole_read(fs_node_t *node, uint32_t offset,
         
         // 对于第一个字符，使用阻塞读取等待输入
         if (i == 0) {
-            c = keyboard_getchar();  // 阻塞等待
+            c = drivers::Keyboard::getchar();  // 阻塞等待
             buffer[i] = c;
             bytes_read++;
         } else {
             // 后续字符使用非阻塞读取（处理缓冲区中的多个字符）
-            if (keyboard_try_getchar(&c)) {
+            if (drivers::Keyboard::try_getchar(&c)) {
                 buffer[i] = c;
                 bytes_read++;
             } else {
@@ -194,26 +193,25 @@ static uint32_t devconsole_write(fs_node_t *node, uint32_t offset,
     
     // 写入到控制台（优先使用图形终端，回退到 VGA 文本模式）
 #if !defined(ARCH_ARM64)
-    extern void vga_putchar(char c);
 #endif
     
     for (uint32_t i = 0; i < size; i++) {
         // 同时输出到串口，确保在所有架构上都能看到输出
-        serial_putchar(buffer[i]);
+        drivers::Serial::putchar(buffer[i]);
         
-        if (fb_is_initialized()) {
-            fb_terminal_putchar(buffer[i]);
+        if (drivers::Framebuffer::is_initialized()) {
+            drivers::Framebuffer::terminal_putchar(buffer[i]);
         }
 #if !defined(ARCH_ARM64)
         else {
-            vga_putchar(buffer[i]);
+            drivers::Vga::putchar(buffer[i]);
         }
 #endif
     }
     
     // 如果使用图形模式，确保刷新输出
-    if (fb_is_initialized()) {
-        fb_flush();
+    if (drivers::Framebuffer::is_initialized()) {
+        drivers::Framebuffer::flush();
     }
     
     return size;
@@ -232,9 +230,9 @@ static uint32_t devrtc_read(fs_node_t *node, uint32_t offset,
     uint16_t year;
     uint8_t month, day, hours, minutes, seconds;
     
-    rtc_get_date(&year, &month, &day);
-    rtc_get_time(&hours, &minutes, &seconds);
-    uint8_t weekday = rtc_get_weekday();
+    drivers::Rtc::get_date(&year, &month, &day);
+    drivers::Rtc::get_time(&hours, &minutes, &seconds);
+    uint8_t weekday = drivers::Rtc::get_weekday();
     
     // 星期几名称
     static const char *weekday_names[] = {

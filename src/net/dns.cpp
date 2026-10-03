@@ -210,7 +210,7 @@ static int dns_parse_ip(const char *str, uint32_t *ip) {
 int net::Dns::cache_lookup(const char *hostname, uint32_t *ip) {
     if (!hostname || !ip) return -1;
     
-    uint32_t now = (uint32_t)timer_get_uptime_ms();
+    uint32_t now = (uint32_t)drivers::Timer::get_uptime_ms();
     
     sync::SpinlockIrqGuard guard(dns_lock);
     
@@ -237,7 +237,7 @@ int net::Dns::cache_lookup(const char *hostname, uint32_t *ip) {
 void net::Dns::cache_add(const char *hostname, uint32_t ip, uint32_t ttl) {
     if (!hostname || ip == 0) return;
     
-    uint32_t now = (uint32_t)timer_get_uptime_ms();
+    uint32_t now = (uint32_t)drivers::Timer::get_uptime_ms();
     uint32_t expire = now + (ttl * 1000);
     if (expire < now) expire = 0xFFFFFFFF;  // 防止溢出
     
@@ -309,7 +309,7 @@ int net::Dns::cache_dump(char *buf, size_t size) {
         } \
     } while(0)
     
-    uint32_t now = (uint32_t)timer_get_uptime_ms();
+    uint32_t now = (uint32_t)drivers::Timer::get_uptime_ms();
     
     bool irq_state;
     dns_lock.lock_irqsave(irq_state);
@@ -413,10 +413,10 @@ static int dns_do_query(uint32_t server_ip, const char *hostname, uint32_t *ip) 
     }
     
     // 等待响应（轮询方式，因为当前没有阻塞机制）
-    uint32_t start = (uint32_t)timer_get_uptime_ms();
+    uint32_t start = (uint32_t)drivers::Timer::get_uptime_ms();
     int result = -1;
     
-    while ((uint32_t)timer_get_uptime_ms() - start < DNS_QUERY_TIMEOUT) {
+    while ((uint32_t)drivers::Timer::get_uptime_ms() - start < DNS_QUERY_TIMEOUT) {
         // 检查是否收到响应
         net::Netbuf *resp = net::Udp::recv_poll(pcb);
         if (!resp) {
@@ -533,7 +533,7 @@ void net::Dns::init() {
     memset(dns_cache, 0, sizeof(dns_cache));
     dns_server_primary = 0;
     dns_server_secondary = 0;
-    dns_query_id = (uint16_t)(timer_get_uptime_ms() & 0xFFFF);
+    dns_query_id = (uint16_t)(drivers::Timer::get_uptime_ms() & 0xFFFF);
 }
 
 /**

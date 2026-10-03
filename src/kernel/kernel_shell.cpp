@@ -43,10 +43,10 @@ static shell_state_t shell_state;
  * 设置控制台颜色（自动选择 VGA 或 FB）
  */
 static void shell_set_color(vga_color_t fg, vga_color_t bg) {
-    if (fb_is_initialized()) {
-        fb_terminal_set_vga_color((uint8_t)fg, (uint8_t)bg);
+    if (drivers::Framebuffer::is_initialized()) {
+        drivers::Framebuffer::terminal_set_vga_color((uint8_t)fg, (uint8_t)bg);
     } else {
-        vga_set_color(fg, bg);
+        drivers::Vga::set_color(fg, bg);
     }
 }
 
@@ -54,10 +54,10 @@ static void shell_set_color(vga_color_t fg, vga_color_t bg) {
  * 清空控制台屏幕（自动选择 VGA 或 FB）
  */
 static void shell_clear_screen(void) {
-    if (fb_is_initialized()) {
-        fb_terminal_clear();
+    if (drivers::Framebuffer::is_initialized()) {
+        drivers::Framebuffer::terminal_clear();
     } else {
-        vga_clear();
+        drivers::Vga::clear();
     }
 }
 
@@ -521,7 +521,7 @@ static size_t shell_read_line(char *buffer, size_t size) {
     size_t i = 0;
     
     while (i < size - 1) {
-        char c = keyboard_getchar();
+        char c = drivers::Keyboard::getchar();
         
         if (c == '\n') {
             buffer[i] = '\0';
@@ -674,7 +674,7 @@ static int cmd_uptime(int argc, char **argv) {
     (void)argv;
     
     char uptime_str[128];
-    uint32_t uptime_ms = timer_get_ticks() * 10;  // 假设 100 Hz
+    uint32_t uptime_ms = drivers::Timer::get_ticks() * 10;  // 假设 100 Hz
     format_uptime(uptime_ms, uptime_str, sizeof(uptime_str));
     
     kprintf("System uptime: %s\n", uptime_str);
@@ -1837,7 +1837,7 @@ static int cmd_lspci(int argc, char **argv) {
     (void)argc;
     (void)argv;
     
-    pci_print_all_devices();
+    drivers::Pci::print_all_devices();
     return 0;
 }
 
@@ -1848,14 +1848,14 @@ static int cmd_fbinfo(int argc, char **argv) {
     (void)argc;
     (void)argv;
     
-    if (!fb_is_initialized()) {
+    if (!drivers::Framebuffer::is_initialized()) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Framebuffer not initialized (text mode)\n");
         shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
-    fb_print_info();
+    drivers::Framebuffer::print_info();
     return 0;
 }
 
@@ -1866,7 +1866,7 @@ static int cmd_gfxdemo(int argc, char **argv) {
     (void)argc;
     (void)argv;
     
-    if (!fb_is_initialized()) {
+    if (!drivers::Framebuffer::is_initialized()) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Framebuffer not initialized (text mode)\n");
         shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
@@ -1877,16 +1877,16 @@ static int cmd_gfxdemo(int argc, char **argv) {
     kprintf("Press any key to return to shell.\n");
     
     // 等待用户确认
-    keyboard_getchar();
+    drivers::Keyboard::getchar();
     
     // 运行图形演示
-    fb_demo();
+    drivers::Framebuffer::demo();
     
     // 等待用户按键返回
-    keyboard_getchar();
+    drivers::Keyboard::getchar();
     
     // 恢复终端
-    fb_terminal_init();
+    drivers::Framebuffer::terminal_init();
     shell_print_welcome();
     
     return 0;
@@ -1899,14 +1899,14 @@ static int cmd_acpi(int argc, char **argv) {
     (void)argc;
     (void)argv;
     
-    if (!acpi_is_initialized()) {
+    if (!drivers::Acpi::is_initialized()) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("ACPI: Not initialized\n");
         shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         return -1;
     }
     
-    acpi_print_info();
+    drivers::Acpi::print_info();
     return 0;
 }
 
@@ -1916,7 +1916,7 @@ static int cmd_acpi(int argc, char **argv) {
 static int cmd_usb(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "scan") == 0) {
         kprintf("Scanning for USB devices...\n");
-        usb_scan_devices();
+        drivers::Usb::scan_devices();
         kprintf("Scan complete.\n");
         return 0;
     }
@@ -1926,9 +1926,9 @@ static int cmd_usb(int argc, char **argv) {
     kprintf("\n=== UHCI Controllers ===\n");
     shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     
-    uhci_controller_t *hc = uhci_get_controller(0);
+    uhci_controller_t *hc = drivers::Uhci::get_controller(0);
     if (hc) {
-        uhci_print_info(hc);
+        drivers::Uhci::print_info(hc);
     } else {
         kprintf("No UHCI controllers found.\n");
     }
@@ -1938,10 +1938,10 @@ static int cmd_usb(int argc, char **argv) {
     kprintf("\n=== USB Mass Storage Devices ===\n");
     shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     
-    usb_msc_device_t *msc = usb_msc_get_devices();
+    usb_msc_device_t *msc = drivers::UsbMsc::get_devices();
     if (msc) {
         while (msc) {
-            usb_msc_print_info(msc);
+            drivers::UsbMsc::print_info(msc);
             kprintf("\n");
             msc = msc->next;
         }

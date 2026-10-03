@@ -15,7 +15,12 @@
 // UHCI is x86-specific (PCI), provide empty stubs for other architectures
 #include <types.h>
 
-static inline void uhci_init(void) {}
+namespace drivers {
+class Uhci {
+public:
+    static inline void init(void) {}
+};
+} // namespace drivers
 
 #endif
 

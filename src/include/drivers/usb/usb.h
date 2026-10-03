@@ -15,7 +15,12 @@
 // USB is x86-specific for now, provide empty stubs for other architectures
 #include <types.h>
 
-static inline void usb_init(void) {}
+namespace drivers {
+class Usb {
+public:
+    static inline void init(void) {}
+};
+} // namespace drivers
 
 #endif
 

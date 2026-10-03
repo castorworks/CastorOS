@@ -142,7 +142,7 @@ static int probe_device(platform_device_t *dev, platform_driver_t *drv) {
  * 驱动注册 API 实现
  * ============================================================================ */
 
-hal_error_t platform_driver_register(platform_driver_t *drv) {
+hal_error_t drivers::Platform::driver_register(platform_driver_t *drv) {
     if (!drv || !drv->name) {
         return HAL_ERR_INVALID_PARAM;
     }
@@ -180,7 +180,7 @@ hal_error_t platform_driver_register(platform_driver_t *drv) {
     return HAL_OK;
 }
 
-hal_error_t platform_driver_unregister(platform_driver_t *drv) {
+hal_error_t drivers::Platform::driver_unregister(platform_driver_t *drv) {
     if (!drv) {
         return HAL_ERR_INVALID_PARAM;
     }
@@ -226,7 +226,7 @@ hal_error_t platform_driver_unregister(platform_driver_t *drv) {
  * 设备注册 API 实现
  * ============================================================================ */
 
-platform_device_t *platform_device_alloc(const char *name, int id) {
+platform_device_t *drivers::Platform::device_alloc(const char *name, int id) {
     if (!name) {
         return NULL;
     }
@@ -257,7 +257,7 @@ platform_device_t *platform_device_alloc(const char *name, int id) {
     return NULL;
 }
 
-void platform_device_free(platform_device_t *dev) {
+void drivers::Platform::device_free(platform_device_t *dev) {
     if (!dev) return;
     
     /* 确保设备已注销 */
@@ -270,7 +270,7 @@ void platform_device_free(platform_device_t *dev) {
     dev->driver = NULL;
 }
 
-hal_error_t platform_device_register(platform_device_t *dev) {
+hal_error_t drivers::Platform::device_register(platform_device_t *dev) {
     if (!dev || !dev->in_use) {
         return HAL_ERR_INVALID_PARAM;
     }
@@ -317,7 +317,7 @@ hal_error_t platform_device_register(platform_device_t *dev) {
     return HAL_OK;
 }
 
-hal_error_t platform_device_unregister(platform_device_t *dev) {
+hal_error_t drivers::Platform::device_unregister(platform_device_t *dev) {
     if (!dev) {
         return HAL_ERR_INVALID_PARAM;
     }
@@ -340,7 +340,7 @@ hal_error_t platform_device_unregister(platform_device_t *dev) {
  * 资源访问 API 实现
  * ============================================================================ */
 
-platform_resource_t *platform_get_resource(platform_device_t *dev,
+platform_resource_t *drivers::Platform::get_resource(platform_device_t *dev,
                                            platform_res_type_t type,
                                            uint32_t index) {
     if (!dev) return NULL;
@@ -358,20 +358,20 @@ platform_resource_t *platform_get_resource(platform_device_t *dev,
     return NULL;
 }
 
-int32_t platform_get_irq(platform_device_t *dev, uint32_t index) {
-    platform_resource_t *res = platform_get_resource(dev, PLATFORM_RES_IRQ, index);
+int32_t drivers::Platform::get_irq(platform_device_t *dev, uint32_t index) {
+    platform_resource_t *res = drivers::Platform::get_resource(dev, PLATFORM_RES_IRQ, index);
     if (!res) return -1;
     return (int32_t)res->start;
 }
 
-uint64_t platform_get_mmio_base(platform_device_t *dev, uint32_t index) {
-    platform_resource_t *res = platform_get_resource(dev, PLATFORM_RES_MEM, index);
+uint64_t drivers::Platform::get_mmio_base(platform_device_t *dev, uint32_t index) {
+    platform_resource_t *res = drivers::Platform::get_resource(dev, PLATFORM_RES_MEM, index);
     if (!res) return 0;
     return res->start;
 }
 
-uint64_t platform_get_mmio_size(platform_device_t *dev, uint32_t index) {
-    platform_resource_t *res = platform_get_resource(dev, PLATFORM_RES_MEM, index);
+uint64_t drivers::Platform::get_mmio_size(platform_device_t *dev, uint32_t index) {
+    platform_resource_t *res = drivers::Platform::get_resource(dev, PLATFORM_RES_MEM, index);
     if (!res) return 0;
     return res->end - res->start + 1;
 }
@@ -380,7 +380,7 @@ uint64_t platform_get_mmio_size(platform_device_t *dev, uint32_t index) {
  * 资源添加 API 实现
  * ============================================================================ */
 
-hal_error_t platform_device_add_mem_resource(platform_device_t *dev,
+hal_error_t drivers::Platform::device_add_mem_resource(platform_device_t *dev,
                                               uint64_t start,
                                               uint64_t size,
                                               uint32_t flags) {
@@ -398,7 +398,7 @@ hal_error_t platform_device_add_mem_resource(platform_device_t *dev,
     return HAL_OK;
 }
 
-hal_error_t platform_device_add_irq_resource(platform_device_t *dev,
+hal_error_t drivers::Platform::device_add_irq_resource(platform_device_t *dev,
                                               uint32_t irq,
                                               uint32_t flags) {
     if (!dev || dev->num_resources >= PLATFORM_MAX_RESOURCES) {
@@ -419,7 +419,7 @@ hal_error_t platform_device_add_irq_resource(platform_device_t *dev,
  * 框架初始化
  * ============================================================================ */
 
-hal_error_t platform_init(void) {
+hal_error_t drivers::Platform::init() {
     if (g_platform_initialized) {
         return HAL_OK;
     }
@@ -438,7 +438,7 @@ hal_error_t platform_init(void) {
     return HAL_OK;
 }
 
-int platform_match_devices(void) {
+int drivers::Platform::match_devices() {
     int matched = 0;
     
     for (int i = 0; i < g_device_count; i++) {
@@ -463,7 +463,7 @@ int platform_match_devices(void) {
  * ============================================================================ */
 
 #ifndef ARCH_ARM64
-void platform_print_devices(void) {
+void drivers::Platform::print_devices() {
     kprintf("\n===== Platform Devices (%d) =====\n", g_device_count);
     
     for (int i = 0; i < PLATFORM_MAX_DEVICES; i++) {
@@ -517,7 +517,7 @@ void platform_print_devices(void) {
     }
 }
 
-void platform_print_drivers(void) {
+void drivers::Platform::print_drivers() {
     kprintf("\n===== Platform Drivers (%d) =====\n", g_driver_count);
     
     for (int i = 0; i < g_driver_count; i++) {
@@ -551,11 +551,11 @@ void platform_print_drivers(void) {
 }
 #else
 /* ARM64 stubs - no kprintf available */
-void platform_print_devices(void) {
+void drivers::Platform::print_devices() {
     /* Not implemented for ARM64 */
 }
 
-void platform_print_drivers(void) {
+void drivers::Platform::print_drivers() {
     /* Not implemented for ARM64 */
 }
 #endif /* !ARCH_ARM64 */

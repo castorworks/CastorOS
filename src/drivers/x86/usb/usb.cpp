@@ -37,7 +37,7 @@ static usb_driver_t *usb_driver_list = NULL;
  * @brief 等待指定毫秒数
  */
 static void usb_delay_ms(uint32_t ms) {
-    timer_wait(ms);
+    drivers::Timer::wait(ms);
 }
 
 /**
@@ -160,7 +160,7 @@ static void usb_probe_device_drivers(usb_device_t *dev) {
  * USB 核心 API 实现
  * ============================================================================ */
 
-int usb_init(void) {
+int drivers::Usb::init() {
     usb_hc_list = NULL;
     usb_driver_list = NULL;
     
@@ -168,7 +168,7 @@ int usb_init(void) {
     return 0;
 }
 
-int usb_register_hc(usb_host_controller_t *hc) {
+int drivers::Usb::register_hc(usb_host_controller_t *hc) {
     if (!hc) {
         return -1;
     }
@@ -182,7 +182,7 @@ int usb_register_hc(usb_host_controller_t *hc) {
     return 0;
 }
 
-usb_device_t *usb_alloc_device(void) {
+usb_device_t *drivers::Usb::alloc_device() {
     usb_device_t *dev = (usb_device_t *)kmalloc(sizeof(usb_device_t));
     if (!dev) {
         return NULL;
@@ -199,7 +199,7 @@ usb_device_t *usb_alloc_device(void) {
     return dev;
 }
 
-void usb_free_device(usb_device_t *dev) {
+void drivers::Usb::free_device(usb_device_t *dev) {
     if (!dev) {
         return;
     }
@@ -211,7 +211,7 @@ void usb_free_device(usb_device_t *dev) {
     kfree(dev);
 }
 
-usb_urb_t *usb_alloc_urb(void) {
+usb_urb_t *drivers::Usb::alloc_urb() {
     usb_urb_t *urb = (usb_urb_t *)kmalloc(sizeof(usb_urb_t));
     if (!urb) {
         return NULL;
@@ -223,13 +223,13 @@ usb_urb_t *usb_alloc_urb(void) {
     return urb;
 }
 
-void usb_free_urb(usb_urb_t *urb) {
+void drivers::Usb::free_urb(usb_urb_t *urb) {
     if (urb) {
         kfree(urb);
     }
 }
 
-int usb_submit_urb(usb_urb_t *urb) {
+int drivers::Usb::submit_urb(usb_urb_t *urb) {
     if (!urb || !urb->device || !urb->device->hc) {
         return -1;
     }
@@ -242,14 +242,14 @@ int usb_submit_urb(usb_urb_t *urb) {
     return hc->ops->submit_urb(hc->private_data, urb);
 }
 
-int usb_control_msg(usb_device_t *dev, uint8_t request_type, uint8_t request,
+int drivers::Usb::control_msg(usb_device_t *dev, uint8_t request_type, uint8_t request,
                     uint16_t value, uint16_t index, void *data, uint16_t length,
                     uint32_t timeout_ms) {
     if (!dev || !dev->hc) {
         return -1;
     }
     
-    usb_urb_t *urb = usb_alloc_urb();
+    usb_urb_t *urb = drivers::Usb::alloc_urb();
     if (!urb) {
         return -1;
     }
@@ -272,16 +272,16 @@ int usb_control_msg(usb_device_t *dev, uint8_t request_type, uint8_t request,
     urb->complete = NULL;  // 同步传输
     
     /* 提交 URB */
-    int ret = usb_submit_urb(urb);
+    int ret = drivers::Usb::submit_urb(urb);
     if (ret < 0) {
-        usb_free_urb(urb);
+        drivers::Usb::free_urb(urb);
         return ret;
     }
     
     /* 等待完成（轮询方式） */
-    uint64_t start_time = timer_get_uptime_ms();
+    uint64_t start_time = drivers::Timer::get_uptime_ms();
     while (urb->status == URB_STATUS_PENDING) {
-        if (timer_get_uptime_ms() - start_time > timeout_ms) {
+        if (drivers::Timer::get_uptime_ms() - start_time > timeout_ms) {
             urb->status = URB_STATUS_TIMEOUT;
             break;
         }
@@ -297,11 +297,11 @@ int usb_control_msg(usb_device_t *dev, uint8_t request_type, uint8_t request,
         result = urb->status;
     }
     
-    usb_free_urb(urb);
+    drivers::Usb::free_urb(urb);
     return result;
 }
 
-int usb_bulk_transfer(usb_device_t *dev, uint8_t endpoint, void *data,
+int drivers::Usb::bulk_transfer(usb_device_t *dev, uint8_t endpoint, void *data,
                       uint32_t length, uint32_t *actual_length, uint32_t timeout_ms) {
     if (!dev || !dev->hc || !data) {
         return -1;
@@ -325,7 +325,7 @@ int usb_bulk_transfer(usb_device_t *dev, uint8_t endpoint, void *data,
         return -1;
     }
     
-    usb_urb_t *urb = usb_alloc_urb();
+    usb_urb_t *urb = drivers::Usb::alloc_urb();
     if (!urb) {
         return -1;
     }
@@ -338,16 +338,16 @@ int usb_bulk_transfer(usb_device_t *dev, uint8_t endpoint, void *data,
     urb->status = URB_STATUS_PENDING;
     urb->complete = NULL;
     
-    int ret = usb_submit_urb(urb);
+    int ret = drivers::Usb::submit_urb(urb);
     if (ret < 0) {
-        usb_free_urb(urb);
+        drivers::Usb::free_urb(urb);
         return ret;
     }
     
     /* 等待完成 */
-    uint64_t start_time = timer_get_uptime_ms();
+    uint64_t start_time = drivers::Timer::get_uptime_ms();
     while (urb->status == URB_STATUS_PENDING) {
-        if (timer_get_uptime_ms() - start_time > timeout_ms) {
+        if (drivers::Timer::get_uptime_ms() - start_time > timeout_ms) {
             urb->status = URB_STATUS_TIMEOUT;
             break;
         }
@@ -359,14 +359,14 @@ int usb_bulk_transfer(usb_device_t *dev, uint8_t endpoint, void *data,
     }
     
     int result = (urb->status == URB_STATUS_COMPLETE) ? 0 : urb->status;
-    usb_free_urb(urb);
+    drivers::Usb::free_urb(urb);
     
     return result;
 }
 
-int usb_get_descriptor(usb_device_t *dev, uint8_t type, uint8_t index,
+int drivers::Usb::get_descriptor(usb_device_t *dev, uint8_t type, uint8_t index,
                        void *buffer, uint16_t length) {
-    return usb_control_msg(dev,
+    return drivers::Usb::control_msg(dev,
                           USB_REQTYPE_DEV_TO_HOST | USB_REQTYPE_STANDARD | USB_REQTYPE_DEVICE,
                           USB_REQ_GET_DESCRIPTOR,
                           (type << 8) | index,
@@ -376,8 +376,8 @@ int usb_get_descriptor(usb_device_t *dev, uint8_t type, uint8_t index,
                           USB_CTRL_TIMEOUT_MS);
 }
 
-int usb_set_address(usb_device_t *dev, uint8_t address) {
-    int ret = usb_control_msg(dev,
+int drivers::Usb::set_address(usb_device_t *dev, uint8_t address) {
+    int ret = drivers::Usb::control_msg(dev,
                              USB_REQTYPE_HOST_TO_DEV | USB_REQTYPE_STANDARD | USB_REQTYPE_DEVICE,
                              USB_REQ_SET_ADDRESS,
                              address,
@@ -395,8 +395,8 @@ int usb_set_address(usb_device_t *dev, uint8_t address) {
     return (ret >= 0) ? 0 : ret;
 }
 
-int usb_set_configuration(usb_device_t *dev, uint8_t configuration) {
-    int ret = usb_control_msg(dev,
+int drivers::Usb::set_configuration(usb_device_t *dev, uint8_t configuration) {
+    int ret = drivers::Usb::control_msg(dev,
                              USB_REQTYPE_HOST_TO_DEV | USB_REQTYPE_STANDARD | USB_REQTYPE_DEVICE,
                              USB_REQ_SET_CONFIGURATION,
                              configuration,
@@ -412,8 +412,8 @@ int usb_set_configuration(usb_device_t *dev, uint8_t configuration) {
     return (ret >= 0) ? 0 : ret;
 }
 
-int usb_clear_halt(usb_device_t *dev, uint8_t endpoint) {
-    int ret = usb_control_msg(dev,
+int drivers::Usb::clear_halt(usb_device_t *dev, uint8_t endpoint) {
+    int ret = drivers::Usb::control_msg(dev,
                              USB_REQTYPE_HOST_TO_DEV | USB_REQTYPE_STANDARD | USB_REQTYPE_ENDPOINT,
                              USB_REQ_CLEAR_FEATURE,
                              USB_FEATURE_ENDPOINT_HALT,
@@ -438,7 +438,7 @@ int usb_clear_halt(usb_device_t *dev, uint8_t endpoint) {
     return (ret >= 0) ? 0 : ret;
 }
 
-usb_device_t *usb_enumerate_device(usb_host_controller_t *hc, int port) {
+usb_device_t *drivers::Usb::enumerate_device(usb_host_controller_t *hc, int port) {
     if (!hc || !hc->ops) {
         return NULL;
     }
@@ -467,7 +467,7 @@ usb_device_t *usb_enumerate_device(usb_host_controller_t *hc, int port) {
     }
     
     /* 分配设备结构 */
-    usb_device_t *dev = usb_alloc_device();
+    usb_device_t *dev = drivers::Usb::alloc_device();
     if (!dev) {
         LOG_ERROR_MSG("usb: Failed to allocate device\n");
         return NULL;
@@ -485,10 +485,10 @@ usb_device_t *usb_enumerate_device(usb_host_controller_t *hc, int port) {
     
     /* 读取设备描述符（仅前 8 字节，获取 bMaxPacketSize0） */
     usb_device_descriptor_t partial_desc;
-    int ret = usb_get_descriptor(dev, USB_DESC_DEVICE, 0, &partial_desc, 8);
+    int ret = drivers::Usb::get_descriptor(dev, USB_DESC_DEVICE, 0, &partial_desc, 8);
     if (ret < 8) {
         LOG_ERROR_MSG("usb: Failed to get device descriptor (ret=%d)\n", ret);
-        usb_free_device(dev);
+        drivers::Usb::free_device(dev);
         return NULL;
     }
     
@@ -504,24 +504,24 @@ usb_device_t *usb_enumerate_device(usb_host_controller_t *hc, int port) {
     uint8_t new_address = hc->next_address++;
     if (new_address > 127) {
         LOG_ERROR_MSG("usb: No more device addresses available\n");
-        usb_free_device(dev);
+        drivers::Usb::free_device(dev);
         return NULL;
     }
     
-    ret = usb_set_address(dev, new_address);
+    ret = drivers::Usb::set_address(dev, new_address);
     if (ret < 0) {
         LOG_ERROR_MSG("usb: Failed to set address %d\n", new_address);
-        usb_free_device(dev);
+        drivers::Usb::free_device(dev);
         return NULL;
     }
     
     LOG_INFO_MSG("usb: Device assigned address %d\n", dev->address);
     
     /* 读取完整设备描述符 */
-    ret = usb_get_descriptor(dev, USB_DESC_DEVICE, 0, &dev->device_desc, sizeof(usb_device_descriptor_t));
+    ret = drivers::Usb::get_descriptor(dev, USB_DESC_DEVICE, 0, &dev->device_desc, sizeof(usb_device_descriptor_t));
     if (ret < (int)sizeof(usb_device_descriptor_t)) {
         LOG_ERROR_MSG("usb: Failed to get full device descriptor\n");
-        usb_free_device(dev);
+        drivers::Usb::free_device(dev);
         return NULL;
     }
     
@@ -532,10 +532,10 @@ usb_device_t *usb_enumerate_device(usb_host_controller_t *hc, int port) {
     /* 读取配置描述符 */
     if (dev->device_desc.bNumConfigurations > 0) {
         usb_configuration_descriptor_t cfg_header;
-        ret = usb_get_descriptor(dev, USB_DESC_CONFIGURATION, 0, &cfg_header, sizeof(cfg_header));
+        ret = drivers::Usb::get_descriptor(dev, USB_DESC_CONFIGURATION, 0, &cfg_header, sizeof(cfg_header));
         if (ret < (int)sizeof(cfg_header)) {
             LOG_ERROR_MSG("usb: Failed to get configuration descriptor header\n");
-            usb_free_device(dev);
+            drivers::Usb::free_device(dev);
             return NULL;
         }
         
@@ -544,15 +544,15 @@ usb_device_t *usb_enumerate_device(usb_host_controller_t *hc, int port) {
         dev->config_desc_buf = (uint8_t *)kmalloc(dev->config_desc_len);
         if (!dev->config_desc_buf) {
             LOG_ERROR_MSG("usb: Failed to allocate config descriptor buffer\n");
-            usb_free_device(dev);
+            drivers::Usb::free_device(dev);
             return NULL;
         }
         
-        ret = usb_get_descriptor(dev, USB_DESC_CONFIGURATION, 0, 
+        ret = drivers::Usb::get_descriptor(dev, USB_DESC_CONFIGURATION, 0, 
                                 dev->config_desc_buf, dev->config_desc_len);
         if (ret < (int)dev->config_desc_len) {
             LOG_ERROR_MSG("usb: Failed to get full configuration descriptor\n");
-            usb_free_device(dev);
+            drivers::Usb::free_device(dev);
             return NULL;
         }
         
@@ -560,10 +560,10 @@ usb_device_t *usb_enumerate_device(usb_host_controller_t *hc, int port) {
         usb_parse_configuration(dev, dev->config_desc_buf, dev->config_desc_len);
         
         /* 设置配置 */
-        ret = usb_set_configuration(dev, cfg_header.bConfigurationValue);
+        ret = drivers::Usb::set_configuration(dev, cfg_header.bConfigurationValue);
         if (ret < 0) {
             LOG_ERROR_MSG("usb: Failed to set configuration\n");
-            usb_free_device(dev);
+            drivers::Usb::free_device(dev);
             return NULL;
         }
     }
@@ -580,7 +580,7 @@ usb_device_t *usb_enumerate_device(usb_host_controller_t *hc, int port) {
     return dev;
 }
 
-int usb_register_driver(usb_driver_t *driver) {
+int drivers::Usb::register_driver(usb_driver_t *driver) {
     if (!driver) {
         return -1;
     }
@@ -607,7 +607,7 @@ int usb_register_driver(usb_driver_t *driver) {
     return 0;
 }
 
-void usb_unregister_driver(usb_driver_t *driver) {
+void drivers::Usb::unregister_driver(usb_driver_t *driver) {
     if (!driver) {
         return;
     }
@@ -622,7 +622,7 @@ void usb_unregister_driver(usb_driver_t *driver) {
     }
 }
 
-usb_endpoint_t *usb_find_endpoint(usb_device_t *dev, uint8_t iface_num,
+usb_endpoint_t *drivers::Usb::find_endpoint(usb_device_t *dev, uint8_t iface_num,
                                    uint8_t type, uint8_t dir) {
     if (!dev) {
         return NULL;
@@ -645,7 +645,7 @@ usb_endpoint_t *usb_find_endpoint(usb_device_t *dev, uint8_t iface_num,
     return NULL;
 }
 
-void usb_print_device_info(usb_device_t *dev) {
+void drivers::Usb::print_device_info(usb_device_t *dev) {
     if (!dev) {
         return;
     }
@@ -683,7 +683,7 @@ void usb_print_device_info(usb_device_t *dev) {
     }
 }
 
-void usb_scan_devices(void) {
+void drivers::Usb::scan_devices() {
     LOG_INFO_MSG("usb: Scanning for devices...\n");
     
     for (usb_host_controller_t *hc = usb_hc_list; hc; hc = hc->next) {
@@ -698,17 +698,17 @@ void usb_scan_devices(void) {
         
         for (int port = 0; port < port_count; port++) {
             if (hc->ops->port_connected(hc->private_data, port)) {
-                usb_enumerate_device(hc, port);
+                drivers::Usb::enumerate_device(hc, port);
             }
         }
     }
 }
 
-usb_host_controller_t *usb_get_hc_list(void) {
+usb_host_controller_t *drivers::Usb::get_hc_list() {
     return usb_hc_list;
 }
 
-int usb_get_device_count(void) {
+int drivers::Usb::get_device_count() {
     int count = 0;
     for (usb_host_controller_t *hc = usb_hc_list; hc; hc = hc->next) {
         for (usb_device_t *dev = hc->devices; dev; dev = dev->next) {
@@ -718,7 +718,7 @@ int usb_get_device_count(void) {
     return count;
 }
 
-usb_device_t *usb_get_device(int index) {
+usb_device_t *drivers::Usb::get_device(int index) {
     int count = 0;
     for (usb_host_controller_t *hc = usb_hc_list; hc; hc = hc->next) {
         for (usb_device_t *dev = hc->devices; dev; dev = dev->next) {
@@ -731,7 +731,7 @@ usb_device_t *usb_get_device(int index) {
     return NULL;
 }
 
-usb_device_t *usb_find_device_by_port(usb_host_controller_t *hc, int port) {
+usb_device_t *drivers::Usb::find_device_by_port(usb_host_controller_t *hc, int port) {
     if (!hc) {
         return NULL;
     }
@@ -744,7 +744,7 @@ usb_device_t *usb_find_device_by_port(usb_host_controller_t *hc, int port) {
     return NULL;
 }
 
-void usb_disconnect_device(usb_host_controller_t *hc, usb_device_t *dev) {
+void drivers::Usb::disconnect_device(usb_host_controller_t *hc, usb_device_t *dev) {
     if (!hc || !dev) {
         return;
     }
@@ -778,12 +778,12 @@ void usb_disconnect_device(usb_host_controller_t *hc, usb_device_t *dev) {
     }
     
     /* 释放设备资源 */
-    usb_free_device(dev);
+    drivers::Usb::free_device(dev);
     
     LOG_INFO_MSG("usb: Device disconnected and freed\n");
 }
 
-usb_device_t *usb_handle_port_connect(usb_host_controller_t *hc, int port) {
+usb_device_t *drivers::Usb::handle_port_connect(usb_host_controller_t *hc, int port) {
     if (!hc) {
         return NULL;
     }
@@ -791,7 +791,7 @@ usb_device_t *usb_handle_port_connect(usb_host_controller_t *hc, int port) {
     LOG_INFO_MSG("usb: Device connected on port %d\n", port);
     
     /* 枚举新设备 */
-    usb_device_t *dev = usb_enumerate_device(hc, port);
+    usb_device_t *dev = drivers::Usb::enumerate_device(hc, port);
     if (dev) {
         LOG_INFO_MSG("usb: New device enumerated: VID=%04x PID=%04x\n",
                     dev->device_desc.idVendor, dev->device_desc.idProduct);
@@ -800,7 +800,7 @@ usb_device_t *usb_handle_port_connect(usb_host_controller_t *hc, int port) {
     return dev;
 }
 
-void usb_handle_port_disconnect(usb_host_controller_t *hc, int port) {
+void drivers::Usb::handle_port_disconnect(usb_host_controller_t *hc, int port) {
     if (!hc) {
         return;
     }
@@ -808,9 +808,9 @@ void usb_handle_port_disconnect(usb_host_controller_t *hc, int port) {
     LOG_INFO_MSG("usb: Device disconnected from port %d\n", port);
     
     /* 查找并断开该端口上的设备 */
-    usb_device_t *dev = usb_find_device_by_port(hc, port);
+    usb_device_t *dev = drivers::Usb::find_device_by_port(hc, port);
     if (dev) {
-        usb_disconnect_device(hc, dev);
+        drivers::Usb::disconnect_device(hc, dev);
     }
 }
 

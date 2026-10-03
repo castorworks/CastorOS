@@ -17,12 +17,12 @@
  */
 
 #include <drivers/arm/timer.h>
+#include <drivers/serial.h>
 #include <types.h>
 
 /* Forward declarations for serial output */
 extern "C" void serial_puts(const char *str);
 extern "C" void serial_put_hex64(uint64_t value);
-extern void serial_put_dec(uint64_t value);
 
 /* ============================================================================
  * ARM Generic Timer System Registers
@@ -172,13 +172,13 @@ static timer_callback_entry_t timer_callbacks[MAX_TIMER_CALLBACKS];
  * 
  * @param frequency Target frequency in Hz (e.g., 100 for 100 Hz / 10ms ticks)
  */
-void timer_init(uint32_t frequency) {
+void drivers::Timer::init(uint32_t frequency) {
     serial_puts("Timer: Initializing ARM Generic Timer...\n");
     
     /* Read counter frequency from system register */
     counter_frequency = read_cntfrq_el0();
     serial_puts("  Counter frequency: ");
-    serial_put_dec(counter_frequency);
+    drivers::Serial::put_dec(counter_frequency);
     serial_puts(" Hz\n");
     
     if (counter_frequency == 0) {
@@ -192,7 +192,7 @@ void timer_init(uint32_t frequency) {
     /* Calculate ticks per interrupt */
     ticks_per_interrupt = counter_frequency / frequency;
     serial_puts("  Ticks per interrupt: ");
-    serial_put_dec(ticks_per_interrupt);
+    drivers::Serial::put_dec(ticks_per_interrupt);
     serial_puts("\n");
     
     /* Record boot counter value */
@@ -215,7 +215,7 @@ void timer_init(uint32_t frequency) {
     timer_initialized = true;
     
     serial_puts("  Timer initialized at ");
-    serial_put_dec(frequency);
+    drivers::Serial::put_dec(frequency);
     serial_puts(" Hz\n");
 }
 
@@ -223,7 +223,7 @@ void timer_init(uint32_t frequency) {
  * @brief Check if timer is initialized
  * @return true if initialized, false otherwise
  */
-bool timer_is_initialized(void) {
+bool drivers::Timer::is_initialized() {
     return timer_initialized;
 }
 
@@ -231,7 +231,7 @@ bool timer_is_initialized(void) {
  * @brief Get the counter frequency
  * @return Counter frequency in Hz
  */
-uint64_t timer_get_counter_frequency(void) {
+uint64_t drivers::Timer::get_counter_frequency() {
     return counter_frequency;
 }
 
@@ -239,7 +239,7 @@ uint64_t timer_get_counter_frequency(void) {
  * @brief Get the current counter value
  * @return Current counter value
  */
-uint64_t timer_get_counter(void) {
+uint64_t drivers::Timer::get_counter() {
     return read_cntpct_el0();
 }
 
@@ -247,7 +247,7 @@ uint64_t timer_get_counter(void) {
  * @brief Get system uptime in milliseconds
  * @return Milliseconds since boot
  */
-uint64_t timer_get_uptime_ms(void) {
+uint64_t drivers::Timer::get_uptime_ms() {
     if (counter_frequency == 0) {
         return 0;
     }
@@ -262,7 +262,7 @@ uint64_t timer_get_uptime_ms(void) {
  * @brief Get system uptime in seconds
  * @return Seconds since boot
  */
-uint32_t timer_get_uptime_sec(void) {
+uint32_t drivers::Timer::get_uptime_sec() {
     if (counter_frequency == 0) {
         return 0;
     }
@@ -275,7 +275,7 @@ uint32_t timer_get_uptime_sec(void) {
  * @brief Get timer tick count
  * @return Number of timer interrupts since initialization
  */
-uint64_t timer_get_ticks(void) {
+uint64_t drivers::Timer::get_ticks() {
     return timer_ticks;
 }
 
@@ -283,7 +283,7 @@ uint64_t timer_get_ticks(void) {
  * @brief Get timer frequency
  * @return Timer frequency in Hz
  */
-uint32_t timer_get_frequency(void) {
+uint32_t drivers::Timer::get_frequency() {
     return timer_frequency;
 }
 
@@ -291,7 +291,7 @@ uint32_t timer_get_frequency(void) {
  * @brief Busy-wait delay in milliseconds
  * @param ms Milliseconds to wait
  */
-void timer_wait(uint32_t ms) {
+void drivers::Timer::wait(uint32_t ms) {
     if (counter_frequency == 0) {
         return;
     }
@@ -308,7 +308,7 @@ void timer_wait(uint32_t ms) {
  * @brief Busy-wait delay in microseconds
  * @param us Microseconds to wait
  */
-void timer_udelay(uint32_t us) {
+void drivers::Timer::udelay(uint32_t us) {
     if (counter_frequency == 0) {
         return;
     }
@@ -334,7 +334,7 @@ void timer_udelay(uint32_t us) {
  * @param repeat Whether to repeat (true) or one-shot (false)
  * @return Timer ID (1-based), or 0 on failure
  */
-uint32_t timer_register_callback(timer_callback_t callback, void *data,
+uint32_t drivers::Timer::register_callback(timer_callback_t callback, void *data,
                                   uint32_t interval_ms, bool repeat) {
     if (!callback || interval_ms == 0 || timer_frequency == 0) {
         return 0;
@@ -368,7 +368,7 @@ uint32_t timer_register_callback(timer_callback_t callback, void *data,
  * @param timer_id Timer ID to unregister
  * @return true on success, false on failure
  */
-bool timer_unregister_callback(uint32_t timer_id) {
+bool drivers::Timer::unregister_callback(uint32_t timer_id) {
     if (timer_id == 0 || timer_id > MAX_TIMER_CALLBACKS) {
         return false;
     }
@@ -386,7 +386,7 @@ bool timer_unregister_callback(uint32_t timer_id) {
  * @brief Get number of active timer callbacks
  * @return Number of active timers
  */
-uint32_t timer_get_active_count(void) {
+uint32_t drivers::Timer::get_active_count() {
     uint32_t count = 0;
     for (int i = 0; i < MAX_TIMER_CALLBACKS; i++) {
         if (timer_callbacks[i].active) {
@@ -408,7 +408,7 @@ uint32_t timer_get_active_count(void) {
  * Called from the GIC interrupt handler when the timer interrupt fires.
  * Increments the tick counter, reloads the timer, and processes callbacks.
  */
-void timer_irq_handler(void) {
+void drivers::Timer::irq_handler() {
     /* Increment tick counter */
     timer_ticks = timer_ticks + 1;
     
@@ -439,14 +439,14 @@ void timer_irq_handler(void) {
 /**
  * @brief Enable the timer
  */
-void timer_enable(void) {
+void drivers::Timer::enable() {
     write_cntp_ctl_el0(CNTP_CTL_ENABLE);
 }
 
 /**
  * @brief Disable the timer
  */
-void timer_disable(void) {
+void drivers::Timer::disable() {
     write_cntp_ctl_el0(0);
 }
 
@@ -454,14 +454,14 @@ void timer_disable(void) {
  * @brief Check if timer interrupt is pending
  * @return true if interrupt is pending, false otherwise
  */
-bool timer_interrupt_pending(void) {
+bool drivers::Timer::interrupt_pending() {
     return (read_cntp_ctl_el0() & CNTP_CTL_ISTATUS) != 0;
 }
 
 /**
  * @brief Mask the timer interrupt
  */
-void timer_mask_interrupt(void) {
+void drivers::Timer::mask_interrupt() {
     uint64_t ctl = read_cntp_ctl_el0();
     ctl |= CNTP_CTL_IMASK;
     write_cntp_ctl_el0(ctl);
@@ -470,7 +470,7 @@ void timer_mask_interrupt(void) {
 /**
  * @brief Unmask the timer interrupt
  */
-void timer_unmask_interrupt(void) {
+void drivers::Timer::unmask_interrupt() {
     uint64_t ctl = read_cntp_ctl_el0();
     ctl &= ~CNTP_CTL_IMASK;
     write_cntp_ctl_el0(ctl);

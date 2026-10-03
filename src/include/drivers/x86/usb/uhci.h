@@ -198,110 +198,119 @@ typedef struct uhci_controller {
     usb_device_t *port_device[UHCI_NUM_PORTS]; // 端口上的设备
 } uhci_controller_t;
 
-/* ============================================================================
- * 函数声明
- * ============================================================================ */
+namespace drivers {
 
 /**
- * @brief 初始化 UHCI 驱动
- * @return 检测到的控制器数量
+ * @brief UHCI USB 1.1 主机控制器驱动
  */
-int uhci_init(void);
+class Uhci {
+public:
+    /* ============================================================================
+     * 函数声明
+     * ============================================================================ */
 
-/**
- * @brief 获取 UHCI 控制器
- * @param index 控制器索引
- * @return 控制器指针，失败返回 NULL
- */
-uhci_controller_t *uhci_get_controller(int index);
+    /**
+     * @brief 初始化 UHCI 驱动
+     * @return 检测到的控制器数量
+     */
+    static int init();
 
-/**
- * @brief 提交 URB 到 UHCI 控制器
- * @param hc 控制器指针
- * @param urb URB 指针
- * @return 0 成功，-1 失败
- */
-int uhci_submit_urb(uhci_controller_t *hc, usb_urb_t *urb);
+    /**
+     * @brief 获取 UHCI 控制器
+     * @param index 控制器索引
+     * @return 控制器指针，失败返回 NULL
+     */
+    static uhci_controller_t *get_controller(int index);
 
-/**
- * @brief 复位端口
- * @param hc 控制器
- * @param port 端口号 (0 或 1)
- * @return 0 成功，-1 失败
- */
-int uhci_reset_port(uhci_controller_t *hc, int port);
+    /**
+     * @brief 提交 URB 到 UHCI 控制器
+     * @param hc 控制器指针
+     * @param urb URB 指针
+     * @return 0 成功，-1 失败
+     */
+    static int submit_urb(uhci_controller_t *hc, usb_urb_t *urb);
 
-/**
- * @brief 启用端口
- * @param hc 控制器
- * @param port 端口号
- * @return 0 成功，-1 失败
- */
-int uhci_enable_port(uhci_controller_t *hc, int port);
+    /**
+     * @brief 复位端口
+     * @param hc 控制器
+     * @param port 端口号 (0 或 1)
+     * @return 0 成功，-1 失败
+     */
+    static int reset_port(uhci_controller_t *hc, int port);
 
-/**
- * @brief 获取端口状态
- * @param hc 控制器
- * @param port 端口号
- * @return 端口状态
- */
-uint16_t uhci_get_port_status(uhci_controller_t *hc, int port);
+    /**
+     * @brief 启用端口
+     * @param hc 控制器
+     * @param port 端口号
+     * @return 0 成功，-1 失败
+     */
+    static int enable_port(uhci_controller_t *hc, int port);
 
-/**
- * @brief 检查端口是否有设备连接
- * @param hc 控制器
- * @param port 端口号
- * @return true 有设备连接
- */
-bool uhci_port_connected(uhci_controller_t *hc, int port);
+    /**
+     * @brief 获取端口状态
+     * @param hc 控制器
+     * @param port 端口号
+     * @return 端口状态
+     */
+    static uint16_t get_port_status(uhci_controller_t *hc, int port);
 
-/**
- * @brief 检查端口是否为低速设备
- * @param hc 控制器
- * @param port 端口号
- * @return true 低速设备
- */
-bool uhci_port_low_speed(uhci_controller_t *hc, int port);
+    /**
+     * @brief 检查端口是否有设备连接
+     * @param hc 控制器
+     * @param port 端口号
+     * @return true 有设备连接
+     */
+    static bool port_connected(uhci_controller_t *hc, int port);
 
-/**
- * @brief 打印 UHCI 控制器信息
- * @param hc 控制器指针
- */
-void uhci_print_info(uhci_controller_t *hc);
+    /**
+     * @brief 检查端口是否为低速设备
+     * @param hc 控制器
+     * @param port 端口号
+     * @return true 低速设备
+     */
+    static bool port_low_speed(uhci_controller_t *hc, int port);
 
-/**
- * @brief 检查端口状态变化（热插拔检测）
- * @param hc 控制器指针
- */
-void uhci_check_port_changes(uhci_controller_t *hc);
+    /**
+     * @brief 打印 UHCI 控制器信息
+     * @param hc 控制器指针
+     */
+    static void print_info(uhci_controller_t *hc);
 
-/**
- * @brief 处理所有控制器的端口状态变化
- */
-void uhci_poll_port_changes(void);
+    /**
+     * @brief 检查端口状态变化（热插拔检测）
+     * @param hc 控制器指针
+     */
+    static void check_port_changes(uhci_controller_t *hc);
 
-/**
- * @brief 获取控制器数量
- * @return 控制器数量
- */
-int uhci_get_controller_count(void);
+    /**
+     * @brief 处理所有控制器的端口状态变化
+     */
+    static void poll_port_changes();
 
-/**
- * @brief 同步端口设备映射
- * 在初始设备扫描后调用，建立端口到设备的映射
- */
-void uhci_sync_port_devices(void);
+    /**
+     * @brief 获取控制器数量
+     * @return 控制器数量
+     */
+    static int get_controller_count();
 
-/**
- * @brief 启动热插拔监控
- * 注册周期性定时器检查端口状态变化
- */
-void uhci_start_hotplug_monitor(void);
+    /**
+     * @brief 同步端口设备映射
+     * 在初始设备扫描后调用，建立端口到设备的映射
+     */
+    static void sync_port_devices();
 
-/**
- * @brief 停止热插拔监控
- */
-void uhci_stop_hotplug_monitor(void);
+    /**
+     * @brief 启动热插拔监控
+     * 注册周期性定时器检查端口状态变化
+     */
+    static void start_hotplug_monitor();
+
+    /**
+     * @brief 停止热插拔监控
+     */
+    static void stop_hotplug_monitor();
+};
+
+} // namespace drivers
 
 #endif // _DRIVERS_X86_USB_UHCI_H_
-

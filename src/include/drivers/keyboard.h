@@ -15,9 +15,14 @@
 // PS/2 keyboard is x86-specific, provide empty stubs for other architectures
 #include <types.h>
 
-static inline void keyboard_init(void) {}
-static inline char keyboard_getchar(void) { return 0; }
-static inline bool keyboard_has_key(void) { return false; }
+namespace drivers {
+class Keyboard {
+public:
+    static inline void init(void) {}
+    static inline char getchar(void) { return 0; }
+    static inline bool has_key(void) { return false; }
+};
+} // namespace drivers
 
 #endif
 

@@ -143,162 +143,171 @@ typedef struct pci_device {
     uint8_t bar_type[6];    ///< BAR 类型（内存/IO）
 } pci_device_t;
 
-/* ============================================================================
- * 函数声明
- * ============================================================================ */
+namespace drivers {
 
 /**
- * @brief 初始化 PCI 总线驱动
+ * @brief PCI 总线驱动
  */
-void pci_init(void);
+class Pci {
+public:
+    /* ============================================================================
+     * 函数声明
+     * ============================================================================ */
 
-/**
- * @brief 扫描所有 PCI 设备
- * @return 发现的设备数量
- */
-int pci_scan_devices(void);
+    /**
+     * @brief 初始化 PCI 总线驱动
+     */
+    static void init();
 
-/**
- * @brief 根据厂商 ID 和设备 ID 查找设备
- * @param vendor_id 厂商 ID
- * @param device_id 设备 ID
- * @return 设备指针，未找到返回 NULL
- */
-pci_device_t *pci_find_device(uint16_t vendor_id, uint16_t device_id);
+    /**
+     * @brief 扫描所有 PCI 设备
+     * @return 发现的设备数量
+     */
+    static int scan_devices();
 
-/**
- * @brief 根据类别查找设备
- * @param class_code 类别代码
- * @param subclass 子类别（0xFF 表示任意）
- * @return 设备指针，未找到返回 NULL
- */
-pci_device_t *pci_find_class(uint8_t class_code, uint8_t subclass);
+    /**
+     * @brief 根据厂商 ID 和设备 ID 查找设备
+     * @param vendor_id 厂商 ID
+     * @param device_id 设备 ID
+     * @return 设备指针，未找到返回 NULL
+     */
+    static pci_device_t *find_device(uint16_t vendor_id, uint16_t device_id);
 
-/**
- * @brief 获取设备数量
- * @return 已发现的设备数量
- */
-int pci_get_device_count(void);
+    /**
+     * @brief 根据类别查找设备
+     * @param class_code 类别代码
+     * @param subclass 子类别（0xFF 表示任意）
+     * @return 设备指针，未找到返回 NULL
+     */
+    static pci_device_t *find_class(uint8_t class_code, uint8_t subclass);
 
-/**
- * @brief 获取设备（按索引）
- * @param index 设备索引
- * @return 设备指针，索引无效返回 NULL
- */
-pci_device_t *pci_get_device(int index);
+    /**
+     * @brief 获取设备数量
+     * @return 已发现的设备数量
+     */
+    static int get_device_count();
 
-/**
- * @brief 读取 PCI 配置空间（8 位）
- * @param bus 总线号
- * @param slot 插槽号
- * @param func 功能号
- * @param offset 寄存器偏移
- * @return 读取的值
- */
-uint8_t pci_read_config8(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset);
+    /**
+     * @brief 获取设备（按索引）
+     * @param index 设备索引
+     * @return 设备指针，索引无效返回 NULL
+     */
+    static pci_device_t *get_device(int index);
 
-/**
- * @brief 读取 PCI 配置空间（16 位）
- * @param bus 总线号
- * @param slot 插槽号
- * @param func 功能号
- * @param offset 寄存器偏移
- * @return 读取的值
- */
-uint16_t pci_read_config16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset);
+    /**
+     * @brief 读取 PCI 配置空间（8 位）
+     * @param bus 总线号
+     * @param slot 插槽号
+     * @param func 功能号
+     * @param offset 寄存器偏移
+     * @return 读取的值
+     */
+    static uint8_t read_config8(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset);
 
-/**
- * @brief 读取 PCI 配置空间（32 位）
- * @param bus 总线号
- * @param slot 插槽号
- * @param func 功能号
- * @param offset 寄存器偏移
- * @return 读取的值
- */
-uint32_t pci_read_config32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset);
+    /**
+     * @brief 读取 PCI 配置空间（16 位）
+     * @param bus 总线号
+     * @param slot 插槽号
+     * @param func 功能号
+     * @param offset 寄存器偏移
+     * @return 读取的值
+     */
+    static uint16_t read_config16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset);
 
-/**
- * @brief 写入 PCI 配置空间（8 位）
- * @param bus 总线号
- * @param slot 插槽号
- * @param func 功能号
- * @param offset 寄存器偏移
- * @param value 要写入的值
- */
-void pci_write_config8(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint8_t value);
+    /**
+     * @brief 读取 PCI 配置空间（32 位）
+     * @param bus 总线号
+     * @param slot 插槽号
+     * @param func 功能号
+     * @param offset 寄存器偏移
+     * @return 读取的值
+     */
+    static uint32_t read_config32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset);
 
-/**
- * @brief 写入 PCI 配置空间（16 位）
- * @param bus 总线号
- * @param slot 插槽号
- * @param func 功能号
- * @param offset 寄存器偏移
- * @param value 要写入的值
- */
-void pci_write_config16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint16_t value);
+    /**
+     * @brief 写入 PCI 配置空间（8 位）
+     * @param bus 总线号
+     * @param slot 插槽号
+     * @param func 功能号
+     * @param offset 寄存器偏移
+     * @param value 要写入的值
+     */
+    static void write_config8(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint8_t value);
 
-/**
- * @brief 写入 PCI 配置空间（32 位）
- * @param bus 总线号
- * @param slot 插槽号
- * @param func 功能号
- * @param offset 寄存器偏移
- * @param value 要写入的值
- */
-void pci_write_config32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value);
+    /**
+     * @brief 写入 PCI 配置空间（16 位）
+     * @param bus 总线号
+     * @param slot 插槽号
+     * @param func 功能号
+     * @param offset 寄存器偏移
+     * @param value 要写入的值
+     */
+    static void write_config16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint16_t value);
 
-/**
- * @brief 启用设备的总线主控功能
- * @param dev 设备指针
- */
-void pci_enable_bus_master(pci_device_t *dev);
+    /**
+     * @brief 写入 PCI 配置空间（32 位）
+     * @param bus 总线号
+     * @param slot 插槽号
+     * @param func 功能号
+     * @param offset 寄存器偏移
+     * @param value 要写入的值
+     */
+    static void write_config32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value);
 
-/**
- * @brief 启用设备的内存空间访问
- * @param dev 设备指针
- */
-void pci_enable_memory_space(pci_device_t *dev);
+    /**
+     * @brief 启用设备的总线主控功能
+     * @param dev 设备指针
+     */
+    static void enable_bus_master(pci_device_t *dev);
 
-/**
- * @brief 启用设备的 I/O 空间访问
- * @param dev 设备指针
- */
-void pci_enable_io_space(pci_device_t *dev);
+    /**
+     * @brief 启用设备的内存空间访问
+     * @param dev 设备指针
+     */
+    static void enable_memory_space(pci_device_t *dev);
 
-/**
- * @brief 获取 BAR 地址
- * @param dev 设备指针
- * @param bar_index BAR 索引（0-5）
- * @return BAR 基地址，失败返回 0
- */
-uint32_t pci_get_bar_address(pci_device_t *dev, int bar_index);
+    /**
+     * @brief 启用设备的 I/O 空间访问
+     * @param dev 设备指针
+     */
+    static void enable_io_space(pci_device_t *dev);
 
-/**
- * @brief 获取 BAR 大小
- * @param dev 设备指针
- * @param bar_index BAR 索引（0-5）
- * @return BAR 大小，失败返回 0
- */
-uint32_t pci_get_bar_size(pci_device_t *dev, int bar_index);
+    /**
+     * @brief 获取 BAR 地址
+     * @param dev 设备指针
+     * @param bar_index BAR 索引（0-5）
+     * @return BAR 基地址，失败返回 0
+     */
+    static uint32_t get_bar_address(pci_device_t *dev, int bar_index);
 
-/**
- * @brief 检查 BAR 是否为 I/O 类型
- * @param dev 设备指针
- * @param bar_index BAR 索引（0-5）
- * @return true 如果是 I/O BAR
- */
-bool pci_bar_is_io(pci_device_t *dev, int bar_index);
+    /**
+     * @brief 获取 BAR 大小
+     * @param dev 设备指针
+     * @param bar_index BAR 索引（0-5）
+     * @return BAR 大小，失败返回 0
+     */
+    static uint32_t get_bar_size(pci_device_t *dev, int bar_index);
 
-/**
- * @brief 打印设备信息
- * @param dev 设备指针
- */
-void pci_print_device(pci_device_t *dev);
+    /**
+     * @brief 检查 BAR 是否为 I/O 类型
+     * @param dev 设备指针
+     * @param bar_index BAR 索引（0-5）
+     * @return true 如果是 I/O BAR
+     */
+    static bool bar_is_io(pci_device_t *dev, int bar_index);
 
-/**
- * @brief 打印所有已发现的设备
- */
-void pci_print_all_devices(void);
+    /**
+     * @brief 打印设备信息
+     * @param dev 设备指针
+     */
+    static void print_device(pci_device_t *dev);
+
+    /**
+     * @brief 打印所有已发现的设备
+     */
+    static void print_all_devices();
+};
+
+} // namespace drivers
 
 #endif // _DRIVERS_X86_PCI_H_
-

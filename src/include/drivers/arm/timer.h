@@ -30,157 +30,167 @@
 #define ARM_TIMER_PHYS_IRQ      30  /**< Physical timer IRQ (PPI 14) */
 #define ARM_TIMER_VIRT_IRQ      27  /**< Virtual timer IRQ (PPI 11) */
 
-/* ============================================================================
- * Initialization
- * ========================================================================== */
-
-/**
- * @brief Initialize the ARM Generic Timer
- * 
- * Configures the physical timer to generate periodic interrupts at the
- * specified frequency.
- * 
- * @param frequency Target frequency in Hz (e.g., 100 for 100 Hz / 10ms ticks)
- */
-void timer_init(uint32_t frequency);
-
-/**
- * @brief Check if timer is initialized
- * @return true if initialized, false otherwise
- */
-bool timer_is_initialized(void);
-
-/* ============================================================================
- * Time Queries
- * ========================================================================== */
-
-/**
- * @brief Get the counter frequency
- * @return Counter frequency in Hz (from CNTFRQ_EL0)
- */
-uint64_t timer_get_counter_frequency(void);
-
-/**
- * @brief Get the current counter value
- * @return Current counter value (from CNTPCT_EL0)
- */
-uint64_t timer_get_counter(void);
-
-/**
- * @brief Get system uptime in milliseconds
- * @return Milliseconds since boot
- */
-uint64_t timer_get_uptime_ms(void);
-
-/**
- * @brief Get system uptime in seconds
- * @return Seconds since boot
- */
-uint32_t timer_get_uptime_sec(void);
-
-/**
- * @brief Get timer tick count
- * @return Number of timer interrupts since initialization
- */
-uint64_t timer_get_ticks(void);
-
-/**
- * @brief Get timer frequency
- * @return Timer frequency in Hz
- */
-uint32_t timer_get_frequency(void);
-
-/* ============================================================================
- * Delay Functions
- * ========================================================================== */
-
-/**
- * @brief Busy-wait delay in milliseconds
- * @param ms Milliseconds to wait
- */
-void timer_wait(uint32_t ms);
-
-/**
- * @brief Busy-wait delay in microseconds
- * @param us Microseconds to wait
- */
-void timer_udelay(uint32_t us);
-
-/* ============================================================================
- * Timer Callbacks
- * ========================================================================== */
-
 /**
  * @brief Timer callback function type
  * @param data User data passed to callback
  */
 typedef void (*timer_callback_t)(void *data);
 
-/**
- * @brief Register a timer callback
- * 
- * @param callback Callback function
- * @param data User data passed to callback
- * @param interval_ms Interval in milliseconds
- * @param repeat Whether to repeat (true) or one-shot (false)
- * @return Timer ID (1-based), or 0 on failure
- */
-uint32_t timer_register_callback(timer_callback_t callback, void *data,
-                                  uint32_t interval_ms, bool repeat);
+namespace drivers {
 
 /**
- * @brief Unregister a timer callback
- * @param timer_id Timer ID to unregister
- * @return true on success, false on failure
+ * @brief 系统定时器（x86: PIT；ARM64: Generic Timer）
  */
-bool timer_unregister_callback(uint32_t timer_id);
+class Timer {
+public:
+    /* ============================================================================
+     * Initialization
+     * ========================================================================== */
 
-/**
- * @brief Get number of active timer callbacks
- * @return Number of active timers
- */
-uint32_t timer_get_active_count(void);
+    /**
+     * @brief Initialize the ARM Generic Timer
+     * 
+     * Configures the physical timer to generate periodic interrupts at the
+     * specified frequency.
+     * 
+     * @param frequency Target frequency in Hz (e.g., 100 for 100 Hz / 10ms ticks)
+     */
+    static void init(uint32_t frequency);
 
-/* ============================================================================
- * Timer Control
- * ========================================================================== */
+    /**
+     * @brief Check if timer is initialized
+     * @return true if initialized, false otherwise
+     */
+    static bool is_initialized();
 
-/**
- * @brief Enable the timer
- */
-void timer_enable(void);
+    /* ============================================================================
+     * Time Queries
+     * ========================================================================== */
 
-/**
- * @brief Disable the timer
- */
-void timer_disable(void);
+    /**
+     * @brief Get the counter frequency
+     * @return Counter frequency in Hz (from CNTFRQ_EL0)
+     */
+    static uint64_t get_counter_frequency();
 
-/**
- * @brief Check if timer interrupt is pending
- * @return true if interrupt is pending, false otherwise
- */
-bool timer_interrupt_pending(void);
+    /**
+     * @brief Get the current counter value
+     * @return Current counter value (from CNTPCT_EL0)
+     */
+    static uint64_t get_counter();
 
-/**
- * @brief Mask the timer interrupt
- */
-void timer_mask_interrupt(void);
+    /**
+     * @brief Get system uptime in milliseconds
+     * @return Milliseconds since boot
+     */
+    static uint64_t get_uptime_ms();
 
-/**
- * @brief Unmask the timer interrupt
- */
-void timer_unmask_interrupt(void);
+    /**
+     * @brief Get system uptime in seconds
+     * @return Seconds since boot
+     */
+    static uint32_t get_uptime_sec();
 
-/* ============================================================================
- * IRQ Handler (called from interrupt context)
- * ========================================================================== */
+    /**
+     * @brief Get timer tick count
+     * @return Number of timer interrupts since initialization
+     */
+    static uint64_t get_ticks();
 
-/**
- * @brief Timer interrupt handler
- * 
- * Called from the GIC interrupt handler when the timer interrupt fires.
- * Increments the tick counter, reloads the timer, and processes callbacks.
- */
-void timer_irq_handler(void);
+    /**
+     * @brief Get timer frequency
+     * @return Timer frequency in Hz
+     */
+    static uint32_t get_frequency();
+
+    /* ============================================================================
+     * Delay Functions
+     * ========================================================================== */
+
+    /**
+     * @brief Busy-wait delay in milliseconds
+     * @param ms Milliseconds to wait
+     */
+    static void wait(uint32_t ms);
+
+    /**
+     * @brief Busy-wait delay in microseconds
+     * @param us Microseconds to wait
+     */
+    static void udelay(uint32_t us);
+
+    /* ============================================================================
+     * Timer Callbacks
+     * ========================================================================== */
+
+    /**
+     * @brief Register a timer callback
+     * 
+     * @param callback Callback function
+     * @param data User data passed to callback
+     * @param interval_ms Interval in milliseconds
+     * @param repeat Whether to repeat (true) or one-shot (false)
+     * @return Timer ID (1-based), or 0 on failure
+     */
+    static uint32_t register_callback(timer_callback_t callback, void *data,
+                                      uint32_t interval_ms, bool repeat);
+
+    /**
+     * @brief Unregister a timer callback
+     * @param timer_id Timer ID to unregister
+     * @return true on success, false on failure
+     */
+    static bool unregister_callback(uint32_t timer_id);
+
+    /**
+     * @brief Get number of active timer callbacks
+     * @return Number of active timers
+     */
+    static uint32_t get_active_count();
+
+    /* ============================================================================
+     * Timer Control
+     * ========================================================================== */
+
+    /**
+     * @brief Enable the timer
+     */
+    static void enable();
+
+    /**
+     * @brief Disable the timer
+     */
+    static void disable();
+
+    /**
+     * @brief Check if timer interrupt is pending
+     * @return true if interrupt is pending, false otherwise
+     */
+    static bool interrupt_pending();
+
+    /**
+     * @brief Mask the timer interrupt
+     */
+    static void mask_interrupt();
+
+    /**
+     * @brief Unmask the timer interrupt
+     */
+    static void unmask_interrupt();
+
+    /* ============================================================================
+     * IRQ Handler (called from interrupt context)
+     * ========================================================================== */
+
+    /**
+     * @brief Timer interrupt handler
+     * 
+     * Called from the GIC interrupt handler when the timer interrupt fires.
+     * Increments the tick counter, reloads the timer, and processes callbacks.
+     */
+    static void irq_handler();
+};
+
+} // namespace drivers
 
 #endif /* _DRIVERS_ARM_TIMER_H_ */

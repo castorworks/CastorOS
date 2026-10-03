@@ -95,7 +95,7 @@ static uint8_t days_in_month(uint16_t year, uint8_t month) {
 /**
  * 获取当前时间
  */
-void rtc_get_time(uint8_t *hours, uint8_t *minutes, uint8_t *seconds) {
+void drivers::Rtc::get_time(uint8_t *hours, uint8_t *minutes, uint8_t *seconds) {
     if (!hours || !minutes || !seconds) {
         return;
     }
@@ -138,7 +138,7 @@ void rtc_get_time(uint8_t *hours, uint8_t *minutes, uint8_t *seconds) {
 /**
  * 获取当前日期
  */
-void rtc_get_date(uint16_t *year, uint8_t *month, uint8_t *day) {
+void drivers::Rtc::get_date(uint16_t *year, uint8_t *month, uint8_t *day) {
     if (!year || !month || !day) {
         return;
     }
@@ -186,7 +186,7 @@ void rtc_get_date(uint16_t *year, uint8_t *month, uint8_t *day) {
 /**
  * 获取星期几
  */
-uint8_t rtc_get_weekday(void) {
+uint8_t drivers::Rtc::get_weekday() {
     rtc_wait_update();
     
     uint8_t status_b = cmos_read(RTC_STATUS_B);
@@ -205,12 +205,12 @@ uint8_t rtc_get_weekday(void) {
  * 获取 Unix 时间戳
  * 将 RTC 日期时间转换为自 1970-01-01 00:00:00 UTC 以来的秒数
  */
-uint32_t rtc_get_unix_time(void) {
+uint32_t drivers::Rtc::get_unix_time() {
     uint16_t year;
     uint8_t month, day, hours, minutes, seconds;
     
-    rtc_get_date(&year, &month, &day);
-    rtc_get_time(&hours, &minutes, &seconds);
+    drivers::Rtc::get_date(&year, &month, &day);
+    drivers::Rtc::get_time(&hours, &minutes, &seconds);
     
     // 计算从 1970 年到现在的天数
     uint32_t days = 0;
@@ -240,27 +240,27 @@ uint32_t rtc_get_unix_time(void) {
 /**
  * 初始化 RTC 驱动
  */
-void rtc_init(void) {
+void drivers::Rtc::init() {
     LOG_INFO_MSG("RTC: Initializing real-time clock driver...\n");
     
     uint16_t year;
     uint8_t month, day, hours, minutes, seconds;
     
-    rtc_get_date(&year, &month, &day);
-    rtc_get_time(&hours, &minutes, &seconds);
+    drivers::Rtc::get_date(&year, &month, &day);
+    drivers::Rtc::get_time(&hours, &minutes, &seconds);
     
     // 星期几的名称
     static const char *weekday_names[] = {
         "", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
     };
-    uint8_t weekday = rtc_get_weekday();
+    uint8_t weekday = drivers::Rtc::get_weekday();
     const char *weekday_name = (weekday >= 1 && weekday <= 7) ? weekday_names[weekday] : "???";
     
     LOG_INFO_MSG("RTC: Current time: %04u-%02u-%02u (%s) %02u:%02u:%02u\n",
                  year, month, day, weekday_name, hours, minutes, seconds);
     
     // 显示 Unix 时间戳
-    uint32_t unix_time = rtc_get_unix_time();
+    uint32_t unix_time = drivers::Rtc::get_unix_time();
     LOG_INFO_MSG("RTC: Unix timestamp: %u\n", unix_time);
     
     LOG_INFO_MSG("RTC: Driver initialized\n");

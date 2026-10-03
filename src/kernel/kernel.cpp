@@ -69,6 +69,7 @@
 
 /* Boot info for ARM64 */
 #if defined(ARCH_ARM64)
+#include <drivers/framebuffer.h>
 #include <boot/boot_info.h>
 #include <arch/arm64/arch_types.h>
 #include <fs/vfs.h>
@@ -102,7 +103,7 @@ void kernel_main(void *dtb_addr) {
     // ========================================================================
     // 阶段 0: 早期初始化 (ARM64)
     // ========================================================================
-    serial_init();  // Initialize PL011 UART
+    drivers::Serial::init();  // Initialize PL011 UART
     
     // 日志配置
     // klog_set_level(LOG_DEBUG);  // Uncomment for debug output
@@ -228,8 +229,7 @@ void kernel_main(void *dtb_addr) {
     LOG_INFO_MSG("  [4.1] Timer initialized (100 Hz)\n");
     
     // 4.2 Initialize framebuffer console (virtio-gpu)
-    extern void fb_terminal_init(void);
-    fb_terminal_init();
+    drivers::Framebuffer::terminal_init();
     LOG_INFO_MSG("  [4.2] Framebuffer console initialized\n");
     
     // Note: ARM64 doesn't have VGA, keyboard, ATA, PCI, ACPI, E1000, USB
@@ -377,8 +377,8 @@ void kernel_main(multiboot_info_t* mbi) {
     // ========================================================================
     // 阶段 0: 早期初始化
     // ========================================================================    
-    vga_init(); // 初始化 VGA
-    serial_init(); // 初始化串口
+    drivers::Vga::init(); // 初始化 VGA
+    drivers::Serial::init(); // 初始化串口
     
     // 日志配置：
     // - 默认级别为 INFO（过滤 DEBUG 信息）
@@ -506,31 +506,31 @@ void kernel_main(multiboot_info_t* mbi) {
     LOG_INFO_MSG("[Stage 4] Initializing device drivers...\n");
     
     // 4.1 初始化 PIT（Programmable Interval Timer - 可编程定时器）
-    timer_init(100);  // 100 Hz
+    drivers::Timer::init(100);  // 100 Hz
     LOG_INFO_MSG("  [4.1] PIT initialized (100 Hz)\n");
     
     // 4.2 初始化键盘驱动
-    keyboard_init();
+    drivers::Keyboard::init();
     LOG_INFO_MSG("  [4.2] Keyboard initialized\n");
 
     // 4.3 初始化 ATA 驱动
-    ata_init();
+    drivers::Ata::init();
     LOG_INFO_MSG("  [4.3] ATA driver initialized\n");
 
     // 4.4 初始化 RTC（实时时钟）
-    rtc_init();
+    drivers::Rtc::init();
     LOG_INFO_MSG("  [4.4] RTC initialized\n");
 
     // 4.5 初始化 PCI 总线
-    pci_init();
-    pci_scan_devices();
+    drivers::Pci::init();
+    drivers::Pci::scan_devices();
     LOG_INFO_MSG("  [4.5] PCI bus scanned\n");
 
     // 4.6 初始化 ACPI 子系统
-    int acpi_result = acpi_init();
+    int acpi_result = drivers::Acpi::init();
     if (acpi_result == 0) {
         LOG_INFO_MSG("  [4.6] ACPI initialized\n");
-        acpi_print_info();
+        drivers::Acpi::print_info();
     } else {
         LOG_WARN_MSG("  [4.6] ACPI initialization failed (code=%d)\n", acpi_result);
         LOG_WARN_MSG("        Power management may not work correctly\n");
@@ -546,7 +546,7 @@ void kernel_main(multiboot_info_t* mbi) {
     LOG_WARN_MSG("  [4.8] E1000 driver skipped (x86_64 VMM MMIO not ready)\n");
     int e1000_count = 0;
 #else
-    int e1000_count = e1000_init();
+    int e1000_count = drivers::E1000::init();
 #endif
     if (e1000_count > 0) {
         LOG_INFO_MSG("  [4.8] E1000 driver initialized (%d device(s))\n", e1000_count);
@@ -566,9 +566,9 @@ void kernel_main(multiboot_info_t* mbi) {
     // ARM64: 暂时跳过帧缓冲，因为 VMM MMIO 映射尚未支持
     LOG_WARN_MSG("  [4.9] Framebuffer skipped (ARM64 VMM MMIO not ready)\n");
 #else
-    int fb_result = fb_init(mbi);
+    int fb_result = drivers::Framebuffer::init(mbi);
     if (fb_result == 0) {
-        framebuffer_info_t *fb = fb_get_info();
+        framebuffer_info_t *fb = drivers::Framebuffer::get_info();
         LOG_INFO_MSG("  [4.9] Framebuffer initialized: %ux%u @ %ubpp\n",
                      fb->width, fb->height, fb->bpp);
         
@@ -586,7 +586,7 @@ void kernel_main(multiboot_info_t* mbi) {
         LOG_INFO_MSG("  Display mode: %s\n", resolution_name);
         
         // 初始化图形终端（用于后续输出）
-        fb_terminal_init();
+        drivers::Framebuffer::terminal_init();
     } else {
         LOG_DEBUG_MSG("  [4.9] Framebuffer not available (code=%d), using text mode\n", fb_result);
     }
@@ -600,11 +600,11 @@ void kernel_main(multiboot_info_t* mbi) {
     LOG_INFO_MSG("  [4.10] Initializing USB subsystem...\n");
     
     // 4.10.1 初始化 USB 核心层
-    usb_init();
+    drivers::Usb::init();
     LOG_DEBUG_MSG("    [4.10.1] USB core initialized\n");
     
     // 4.10.2 初始化 UHCI 控制器
-    int uhci_count = uhci_init();
+    int uhci_count = drivers::Uhci::init();
     if (uhci_count > 0) {
         LOG_INFO_MSG("    [4.10.2] UHCI initialized (%d controller(s))\n", uhci_count);
     } else {
@@ -612,18 +612,18 @@ void kernel_main(multiboot_info_t* mbi) {
     }
     
     // 4.10.3 初始化 USB Mass Storage 驱动
-    usb_msc_init();
+    drivers::UsbMsc::init();
     LOG_DEBUG_MSG("    [4.10.3] USB Mass Storage driver initialized\n");
     
     // 4.10.4 扫描 USB 设备
-    usb_scan_devices();
-    uhci_sync_port_devices();  // 建立端口到设备的映射（热插拔支持）
+    drivers::Usb::scan_devices();
+    drivers::Uhci::sync_port_devices();  // 建立端口到设备的映射（热插拔支持）
     LOG_INFO_MSG("    [4.10.4] USB device scan complete\n");
 #endif
     
 #if !defined(ARCH_X86_64)
     // 4.10.5 启动 USB 热插拔监控
-    uhci_start_hotplug_monitor();
+    drivers::Uhci::start_hotplug_monitor();
     LOG_DEBUG_MSG("    [4.10.5] USB hot-plug monitor started\n");
 #endif
 

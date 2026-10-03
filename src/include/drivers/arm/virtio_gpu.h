@@ -198,52 +198,62 @@ struct virtq_used {
     struct virtq_used_elem ring[];
 } __attribute__((packed));
 
-/* ============================================================================
- * Public API
- * ========================================================================== */
+namespace drivers {
 
 /**
- * @brief Initialize the virtio-gpu driver
- * @return 0 on success, negative on error
+ * @brief VirtIO GPU 驱动
  */
-int virtio_gpu_init(void);
+class VirtioGpu {
+public:
+    /* ============================================================================
+     * Public API
+     * ========================================================================== */
 
-/**
- * @brief Check if virtio-gpu is initialized
- * @return true if initialized
- */
-bool virtio_gpu_is_initialized(void);
+    /**
+     * @brief Initialize the virtio-gpu driver
+     * @return 0 on success, negative on error
+     */
+    static int init();
 
-/**
- * @brief Get display width
- * @return Display width in pixels
- */
-uint32_t virtio_gpu_get_width(void);
+    /**
+     * @brief Check if virtio-gpu is initialized
+     * @return true if initialized
+     */
+    static bool is_initialized();
 
-/**
- * @brief Get display height
- * @return Display height in pixels
- */
-uint32_t virtio_gpu_get_height(void);
+    /**
+     * @brief Get display width
+     * @return Display width in pixels
+     */
+    static uint32_t get_width();
 
-/**
- * @brief Get framebuffer pointer
- * @return Pointer to framebuffer memory
- */
-uint32_t *virtio_gpu_get_framebuffer(void);
+    /**
+     * @brief Get display height
+     * @return Display height in pixels
+     */
+    static uint32_t get_height();
 
-/**
- * @brief Flush a region of the framebuffer to display
- * @param x X coordinate
- * @param y Y coordinate
- * @param width Width of region
- * @param height Height of region
- */
-void virtio_gpu_flush(uint32_t x, uint32_t y, uint32_t width, uint32_t height);
+    /**
+     * @brief Get framebuffer pointer
+     * @return Pointer to framebuffer memory
+     */
+    static uint32_t *get_framebuffer();
 
-/**
- * @brief Flush entire framebuffer
- */
-void virtio_gpu_flush_all(void);
+    /**
+     * @brief Flush a region of the framebuffer to display
+     * @param x X coordinate
+     * @param y Y coordinate
+     * @param width Width of region
+     * @param height Height of region
+     */
+    static void flush(uint32_t x, uint32_t y, uint32_t width, uint32_t height);
+
+    /**
+     * @brief Flush entire framebuffer
+     */
+    static void flush_all();
+};
+
+} // namespace drivers
 
 #endif /* _DRIVERS_ARM_VIRTIO_GPU_H_ */

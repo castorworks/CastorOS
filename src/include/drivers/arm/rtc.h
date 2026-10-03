@@ -24,21 +24,31 @@ typedef struct {
     uint8_t weekday;
 } rtc_time_t;
 
-/**
- * Initialize ARM64 RTC
- */
-void rtc_init(void);
+namespace drivers {
 
 /**
- * Read current time from RTC
- * @param time Output time structure
+ * @brief 实时时钟
  */
-void rtc_read_time(rtc_time_t *time);
+class Rtc {
+public:
+    /**
+     * Initialize ARM64 RTC
+     */
+    static void init();
 
-/**
- * Get Unix timestamp
- * @return Seconds since Unix epoch
- */
-uint32_t rtc_get_unix_time(void);
+    /**
+     * Read current time from RTC
+     * @param time Output time structure
+     */
+    static void read_time(rtc_time_t *time);
+
+    /**
+     * Get Unix timestamp
+     * @return Seconds since Unix epoch
+     */
+    static uint32_t get_unix_time();
+};
+
+} // namespace drivers
 
 #endif /* _DRIVERS_ARM_RTC_H_ */

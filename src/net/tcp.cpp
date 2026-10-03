@@ -42,7 +42,7 @@ static void tcp_free_ooseq(tcp_pcb_t *pcb);
  */
 static uint32_t tcp_gen_isn(void) {
     // 简单实现：使用计时器值
-    tcp_isn += (uint32_t)timer_get_uptime_ms() * 250000;
+    tcp_isn += (uint32_t)drivers::Timer::get_uptime_ms() * 250000;
     return tcp_isn;
 }
 
@@ -113,7 +113,7 @@ static int tcp_queue_unacked(tcp_pcb_t *pcb, uint32_t seq, uint8_t flags,
         memcpy(seg->data, data, data_len);
     }
     
-    seg->send_time = (uint32_t)timer_get_uptime_ms();
+    seg->send_time = (uint32_t)drivers::Timer::get_uptime_ms();
     seg->retransmit_time = seg->send_time + pcb->rto;
     seg->retries = 0;
     
@@ -145,7 +145,7 @@ static int tcp_queue_unacked(tcp_pcb_t *pcb, uint32_t seq, uint8_t flags,
  * @brief 处理 ACK，移除已确认的段
  */
 static void tcp_ack_received(tcp_pcb_t *pcb, uint32_t ack) {
-    uint32_t now = (uint32_t)timer_get_uptime_ms();
+    uint32_t now = (uint32_t)drivers::Timer::get_uptime_ms();
     
     while (pcb->unacked) {
         tcp_segment_t *seg = pcb->unacked;
@@ -213,7 +213,7 @@ static void tcp_dup_ack(tcp_pcb_t *pcb) {
         tcp_send_segment(pcb, seg->flags | TCP_FLAG_ACK, seg->data, seg->data_len);
         
         seg->retries++;
-        seg->retransmit_time = (uint32_t)timer_get_uptime_ms() + pcb->rto;
+        seg->retransmit_time = (uint32_t)drivers::Timer::get_uptime_ms() + pcb->rto;
     }
 }
 
@@ -444,7 +444,7 @@ static int tcp_send_segment(tcp_pcb_t *pcb, uint8_t flags, uint8_t *data, uint32
     pcb->snd_nxt += len;
     
     // 记录发送时间
-    pcb->last_send_time = (uint32_t)timer_get_uptime_ms();
+    pcb->last_send_time = (uint32_t)drivers::Timer::get_uptime_ms();
     
     // 发送
     int ret = net::Ip::output(dev, buf, pcb->remote_ip, IP_PROTO_TCP);
@@ -508,7 +508,7 @@ void net::Tcp::init() {
     tcp_pcbs = NULL;
     tcp_listen_pcbs = NULL;
     next_ephemeral_port = TCP_EPHEMERAL_PORT_MIN;
-    tcp_isn = (uint32_t)timer_get_uptime_ms();
+    tcp_isn = (uint32_t)drivers::Timer::get_uptime_ms();
     
     LOG_INFO_MSG("tcp: TCP protocol initialized\n");
 }
@@ -809,7 +809,7 @@ void net::Tcp::input(net::Netdev *dev, net::Netbuf *buf, uint32_t src_ip, uint32
                     case TCP_FIN_WAIT_2:
                         pcb->state = TCP_TIME_WAIT;
                         // 启动 TIME_WAIT 定时器 (2MSL = 60秒)
-                        pcb->timer_time_wait = (uint32_t)timer_get_uptime_ms() + TCP_TIME_WAIT_TIMEOUT;
+                        pcb->timer_time_wait = (uint32_t)drivers::Timer::get_uptime_ms() + TCP_TIME_WAIT_TIMEOUT;
                         tcp_free_unacked(pcb);
                         break;
                     default:
@@ -1316,7 +1316,7 @@ int net::Tcp::pcb_list_dump(char *buf, size_t size) {
  * - TIME_WAIT 定时器：等待 2MSL 后关闭连接
  */
 void net::Tcp::timer() {
-    uint32_t now = (uint32_t)timer_get_uptime_ms();
+    uint32_t now = (uint32_t)drivers::Timer::get_uptime_ms();
     
     bool irq_state;
     tcp_lock.lock_irqsave(irq_state);

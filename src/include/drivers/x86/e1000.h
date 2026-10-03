@@ -270,66 +270,75 @@ typedef struct e1000_device {
     bool full_duplex;
 } e1000_device_t;
 
-/* ============================================================================
- * 函数声明
- * ============================================================================ */
+namespace drivers {
 
 /**
- * @brief 初始化 E1000 驱动
- * 扫描 PCI 总线，检测并初始化所有 E1000 网卡
- * @return 检测到的网卡数量，-1 表示错误
+ * @brief Intel E1000 网卡驱动
  */
-int e1000_init(void);
+class E1000 {
+public:
+    /* ============================================================================
+     * 函数声明
+     * ============================================================================ */
 
-/**
- * @brief 获取 E1000 设备
- * @param index 设备索引
- * @return 设备指针，不存在返回 NULL
- */
-e1000_device_t *e1000_get_device(int index);
+    /**
+     * @brief 初始化 E1000 驱动
+     * 扫描 PCI 总线，检测并初始化所有 E1000 网卡
+     * @return 检测到的网卡数量，-1 表示错误
+     */
+    static int init();
 
-/**
- * @brief 发送数据包
- * @param dev 设备指针
- * @param data 数据指针
- * @param len 数据长度
- * @return 0 成功，-1 失败
- */
-int e1000_send(e1000_device_t *dev, void *data, uint32_t len);
+    /**
+     * @brief 获取 E1000 设备
+     * @param index 设备索引
+     * @return 设备指针，不存在返回 NULL
+     */
+    static e1000_device_t *get_device(int index);
 
-/**
- * @brief 接收数据包（由中断处理程序调用）
- * @param dev 设备指针
- */
-void e1000_receive(e1000_device_t *dev);
+    /**
+     * @brief 发送数据包
+     * @param dev 设备指针
+     * @param data 数据指针
+     * @param len 数据长度
+     * @return 0 成功，-1 失败
+     */
+    static int send(e1000_device_t *dev, void *data, uint32_t len);
 
-/**
- * @brief 获取 MAC 地址
- * @param dev 设备指针
- * @param mac 输出 MAC 地址（6 字节）
- */
-void e1000_get_mac(e1000_device_t *dev, uint8_t *mac);
+    /**
+     * @brief 接收数据包（由中断处理程序调用）
+     * @param dev 设备指针
+     */
+    static void receive(e1000_device_t *dev);
 
-/**
- * @brief 启用/禁用设备
- * @param dev 设备指针
- * @param enable true 启用，false 禁用
- * @return 0 成功，-1 失败
- */
-int e1000_set_enable(e1000_device_t *dev, bool enable);
+    /**
+     * @brief 获取 MAC 地址
+     * @param dev 设备指针
+     * @param mac 输出 MAC 地址（6 字节）
+     */
+    static void get_mac(e1000_device_t *dev, uint8_t *mac);
 
-/**
- * @brief 获取链路状态
- * @param dev 设备指针
- * @return true 链路已建立，false 链路断开
- */
-bool e1000_link_up(e1000_device_t *dev);
+    /**
+     * @brief 启用/禁用设备
+     * @param dev 设备指针
+     * @param enable true 启用，false 禁用
+     * @return 0 成功，-1 失败
+     */
+    static int set_enable(e1000_device_t *dev, bool enable);
 
-/**
- * @brief 打印设备信息（调试用）
- * @param dev 设备指针
- */
-void e1000_print_info(e1000_device_t *dev);
+    /**
+     * @brief 获取链路状态
+     * @param dev 设备指针
+     * @return true 链路已建立，false 链路断开
+     */
+    static bool link_up(e1000_device_t *dev);
+
+    /**
+     * @brief 打印设备信息（调试用）
+     * @param dev 设备指针
+     */
+    static void print_info(e1000_device_t *dev);
+};
+
+} // namespace drivers
 
 #endif // _DRIVERS_X86_E1000_H_
-

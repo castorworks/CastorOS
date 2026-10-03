@@ -4,6 +4,7 @@
  */
 
 #include <net/socket.h>
+#include <drivers/timer.h>
 #include <net/tcp.h>
 #include <net/udp.h>
 #include <net/ip.h>
@@ -652,8 +653,7 @@ int sys_select(int nfds, fd_set *readfds, fd_set *writefds,
     }
     
     // 需要包含 timer.h
-    extern uint64_t timer_get_uptime_ms(void);
-    uint32_t start = (uint32_t)timer_get_uptime_ms();
+    uint32_t start = (uint32_t)drivers::Timer::get_uptime_ms();
     
     int ready_count = 0;
     
@@ -741,7 +741,7 @@ int sys_select(int nfds, fd_set *readfds, fd_set *writefds,
         if (ready_count > 0) break;
         
         // 检查超时
-        uint32_t elapsed = (uint32_t)timer_get_uptime_ms() - start;
+        uint32_t elapsed = (uint32_t)drivers::Timer::get_uptime_ms() - start;
         if (elapsed >= timeout_ms) break;
         
         // 让出 CPU（简单忙等待，实际应该使用调度器）

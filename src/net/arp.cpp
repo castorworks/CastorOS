@@ -182,7 +182,7 @@ int net::Arp::resolve(net::Netdev *dev, uint32_t ip, uint8_t *mac) {
         if (entry->state == ARP_STATE_RESOLVED) {
             // 已解析，复制 MAC 地址
             memcpy(mac, entry->mac_addr, 6);
-            entry->timestamp = (uint32_t)timer_get_uptime_ms();
+            entry->timestamp = (uint32_t)drivers::Timer::get_uptime_ms();
             arp_cache_lock.unlock_irqrestore(irq_state);
             return 0;
         } else if (entry->state == ARP_STATE_PENDING) {
@@ -202,7 +202,7 @@ int net::Arp::resolve(net::Netdev *dev, uint32_t ip, uint8_t *mac) {
         
         entry->ip_addr = ip;
         entry->state = ARP_STATE_PENDING;
-        entry->timestamp = (uint32_t)timer_get_uptime_ms();
+        entry->timestamp = (uint32_t)drivers::Timer::get_uptime_ms();
         entry->retries = 0;
         entry->pending_queue = NULL;
         memset(entry->mac_addr, 0, 6);
@@ -315,7 +315,7 @@ void net::Arp::cache_update(uint32_t ip, const uint8_t *mac) {
     // 更新条目
     memcpy(entry->mac_addr, mac, 6);
     entry->state = ARP_STATE_RESOLVED;
-    entry->timestamp = (uint32_t)timer_get_uptime_ms();
+    entry->timestamp = (uint32_t)drivers::Timer::get_uptime_ms();
     entry->retries = 0;
     
     // 发送等待的数据包
@@ -367,7 +367,7 @@ int net::Arp::cache_delete(uint32_t ip) {
 }
 
 void net::Arp::cache_cleanup() {
-    uint32_t now = (uint32_t)timer_get_uptime_ms();
+    uint32_t now = (uint32_t)drivers::Timer::get_uptime_ms();
     
     sync::SpinlockIrqGuard guard(arp_cache_lock);
     

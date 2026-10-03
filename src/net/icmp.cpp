@@ -90,7 +90,7 @@ void net::Icmp::input(net::Netdev *dev, net::Netbuf *buf, uint32_t src_ip) {
             
             // 计算 RTT
             if (last_ping.waiting && last_ping.id == id && last_ping.seq == seq) {
-                uint32_t now = (uint32_t)timer_get_uptime_ms();
+                uint32_t now = (uint32_t)drivers::Timer::get_uptime_ms();
                 uint32_t rtt = now - last_ping.send_time;
                 last_rtt = rtt;
                 last_ping.waiting = false;
@@ -162,7 +162,7 @@ int net::Icmp::send_echo_request(uint32_t dst_ip, uint16_t id, uint16_t seq,
     // 记录发送时间（用于计算 RTT）
     last_ping.id = id;
     last_ping.seq = seq;
-    last_ping.send_time = (uint32_t)timer_get_uptime_ms();
+    last_ping.send_time = (uint32_t)drivers::Timer::get_uptime_ms();
     last_ping.waiting = true;
     last_rtt = -1;  // 重置 RTT，等待新的回复
     

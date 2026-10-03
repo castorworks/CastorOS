@@ -9,6 +9,7 @@
  */
 
 #include <drivers/platform.h>
+#include <drivers/dtb_platform.h>
 #include <lib/klog.h>
 #include <lib/kprintf.h>
 #include <lib/string.h>
@@ -29,7 +30,7 @@ static platform_device_t *create_platform_device_from_dtb(const dtb_device_t *dt
     if (!dtb_dev || !dtb_dev->valid) return NULL;
     
     /* 分配平台设备 */
-    platform_device_t *pdev = platform_device_alloc(dtb_dev->name, -1);
+    platform_device_t *pdev = drivers::Platform::device_alloc(dtb_dev->name, -1);
     if (!pdev) {
         LOG_WARN_MSG("dtb_platform: Failed to allocate platform device\n");
         return NULL;
@@ -78,7 +79,7 @@ static platform_device_t *create_gic_platform_device(const dtb_gic_info_t *gic) 
     
     const char *name = (gic->version == 3) ? "arm,gic-v3" : "arm,gic-400";
     
-    platform_device_t *pdev = platform_device_alloc(name, 0);
+    platform_device_t *pdev = drivers::Platform::device_alloc(name, 0);
     if (!pdev) return NULL;
     
     pdev->source = PLATFORM_SRC_DTB;
@@ -87,16 +88,16 @@ static platform_device_t *create_gic_platform_device(const dtb_gic_info_t *gic) 
     
     /* 添加 GICD (Distributor) 资源 */
     if (gic->distributor_base != 0) {
-        platform_device_add_mem_resource(pdev, gic->distributor_base, 
+        drivers::Platform::device_add_mem_resource(pdev, gic->distributor_base, 
                                           0x10000, 0);  /* 64KB typical */
     }
     
     /* 添加 GICC/GICR 资源 */
     if (gic->version == 2 && gic->cpu_interface_base != 0) {
-        platform_device_add_mem_resource(pdev, gic->cpu_interface_base,
+        drivers::Platform::device_add_mem_resource(pdev, gic->cpu_interface_base,
                                           0x2000, 0);  /* 8KB typical */
     } else if (gic->version == 3 && gic->redistributor_base != 0) {
-        platform_device_add_mem_resource(pdev, gic->redistributor_base,
+        drivers::Platform::device_add_mem_resource(pdev, gic->redistributor_base,
                                           0x20000, 0);  /* 128KB typical */
     }
     
@@ -109,7 +110,7 @@ static platform_device_t *create_gic_platform_device(const dtb_gic_info_t *gic) 
 static platform_device_t *create_uart_platform_device(const dtb_info_t *info) {
     if (!info || !info->uart_found || info->uart_base == 0) return NULL;
     
-    platform_device_t *pdev = platform_device_alloc("arm,pl011", 0);
+    platform_device_t *pdev = drivers::Platform::device_alloc("arm,pl011", 0);
     if (!pdev) return NULL;
     
     pdev->source = PLATFORM_SRC_DTB;
@@ -117,11 +118,11 @@ static platform_device_t *create_uart_platform_device(const dtb_info_t *info) {
     pdev->dtb.node_name = "uart";
     
     /* 添加 MMIO 资源 */
-    platform_device_add_mem_resource(pdev, info->uart_base, 0x1000, 0);
+    drivers::Platform::device_add_mem_resource(pdev, info->uart_base, 0x1000, 0);
     
     /* 添加 IRQ 资源 */
     if (info->uart_irq != 0) {
-        platform_device_add_irq_resource(pdev, info->uart_irq, 0);
+        drivers::Platform::device_add_irq_resource(pdev, info->uart_irq, 0);
     }
     
     return pdev;
@@ -133,7 +134,7 @@ static platform_device_t *create_uart_platform_device(const dtb_info_t *info) {
 static platform_device_t *create_timer_platform_device(const dtb_info_t *info) {
     if (!info || !info->timer_found) return NULL;
     
-    platform_device_t *pdev = platform_device_alloc("arm,armv8-timer", 0);
+    platform_device_t *pdev = drivers::Platform::device_alloc("arm,armv8-timer", 0);
     if (!pdev) return NULL;
     
     pdev->source = PLATFORM_SRC_DTB;
@@ -142,7 +143,7 @@ static platform_device_t *create_timer_platform_device(const dtb_info_t *info) {
     
     /* Timer 没有 MMIO，只有 IRQ */
     if (info->timer_irq != 0) {
-        platform_device_add_irq_resource(pdev, info->timer_irq, 0);
+        drivers::Platform::device_add_irq_resource(pdev, info->timer_irq, 0);
     }
     
     return pdev;
@@ -157,7 +158,7 @@ static platform_device_t *create_timer_platform_device(const dtb_info_t *info) {
  * 
  * @return 创建的平台设备数量
  */
-int dtb_platform_scan(void) {
+int drivers::DtbPlatform::scan() {
     int count = 0;
     
     dtb_info_t *info = dtb_get_info();
@@ -171,7 +172,7 @@ int dtb_platform_scan(void) {
     /* 创建 GIC 平台设备 */
     if (info->gic.found) {
         platform_device_t *pdev = create_gic_platform_device(&info->gic);
-        if (pdev && HAL_SUCCESS(platform_device_register(pdev))) {
+        if (pdev && HAL_SUCCESS(drivers::Platform::device_register(pdev))) {
             count++;
             LOG_DEBUG_MSG("dtb_platform: Created GICv%d platform device\n",
                           info->gic.version);
@@ -181,7 +182,7 @@ int dtb_platform_scan(void) {
     /* 创建 UART 平台设备 */
     if (info->uart_found) {
         platform_device_t *pdev = create_uart_platform_device(info);
-        if (pdev && HAL_SUCCESS(platform_device_register(pdev))) {
+        if (pdev && HAL_SUCCESS(drivers::Platform::device_register(pdev))) {
             count++;
             LOG_DEBUG_MSG("dtb_platform: Created UART platform device @ 0x%llx\n",
                           (unsigned long long)info->uart_base);
@@ -191,7 +192,7 @@ int dtb_platform_scan(void) {
     /* 创建 Timer 平台设备 */
     if (info->timer_found) {
         platform_device_t *pdev = create_timer_platform_device(info);
-        if (pdev && HAL_SUCCESS(platform_device_register(pdev))) {
+        if (pdev && HAL_SUCCESS(drivers::Platform::device_register(pdev))) {
             count++;
             LOG_DEBUG_MSG("dtb_platform: Created Timer platform device\n");
         }
@@ -203,7 +204,7 @@ int dtb_platform_scan(void) {
         if (!dtb_dev->valid) continue;
         
         platform_device_t *pdev = create_platform_device_from_dtb(dtb_dev);
-        if (pdev && HAL_SUCCESS(platform_device_register(pdev))) {
+        if (pdev && HAL_SUCCESS(drivers::Platform::device_register(pdev))) {
             count++;
             LOG_DEBUG_MSG("dtb_platform: Created platform device '%s'\n",
                           dtb_dev->name);
@@ -221,7 +222,7 @@ int dtb_platform_scan(void) {
  * @param compatible compatible 字符串
  * @return 平台设备指针，未找到返回 NULL
  */
-platform_device_t *dtb_platform_find_device(const char *compatible) {
+platform_device_t *drivers::DtbPlatform::find_device(const char *compatible) {
     if (!compatible) return NULL;
     
     /* 首先在 DTB 中查找 */
@@ -231,7 +232,7 @@ platform_device_t *dtb_platform_find_device(const char *compatible) {
     /* 创建平台设备 */
     platform_device_t *pdev = create_platform_device_from_dtb(dtb_dev);
     if (pdev) {
-        platform_device_register(pdev);
+        drivers::Platform::device_register(pdev);
     }
     
     return pdev;
@@ -241,12 +242,12 @@ platform_device_t *dtb_platform_find_device(const char *compatible) {
 
 /* 非 ARM64 架构的空实现 */
 
-int dtb_platform_scan(void) {
+int drivers::DtbPlatform::scan() {
     LOG_DEBUG_MSG("dtb_platform: DTB not supported on this architecture\n");
     return 0;
 }
 
-platform_device_t *dtb_platform_find_device(const char *compatible) {
+platform_device_t *drivers::DtbPlatform::find_device(const char *compatible) {
     (void)compatible;
     return NULL;
 }

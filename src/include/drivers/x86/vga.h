@@ -28,39 +28,49 @@ typedef enum {
     VGA_COLOR_WHITE = 15,
 } vga_color_t;
 
-/**
- * 初始化 VGA 驱动
- */
-void vga_init(void);
+namespace drivers {
 
 /**
- * 清空屏幕
+ * @brief VGA 文本模式驱动
  */
-void vga_clear(void);
+class Vga {
+public:
+    /**
+     * 初始化 VGA 驱动
+     */
+    static void init();
 
-/**
- * 输出字符串
- * @param msg 要输出的字符串，支持 '\n' 换行符
- */
-void vga_print(const char *msg);
+    /**
+     * 清空屏幕
+     */
+    static void clear();
 
-/**
- * 输出一个字符
- * @param c 要输出的字符，支持 '\n' 换行符
- */
-void vga_putchar(char c);
+    /**
+     * 输出字符串
+     * @param msg 要输出的字符串，支持 '\n' 换行符
+     */
+    static void print(const char *msg);
 
-/**
- * 设置颜色
- * @param fg 前景色（文字颜色）
- * @param bg 背景色
- */
-void vga_set_color(vga_color_t fg, vga_color_t bg);
+    /**
+     * 输出一个字符
+     * @param c 要输出的字符，支持 '\n' 换行符
+     */
+    static void putchar(char c);
 
-/**
- * 获取当前颜色属性
- * @return 当前的颜色属性字节
- */
-uint8_t vga_get_color(void);
+    /**
+     * 设置颜色
+     * @param fg 前景色（文字颜色）
+     * @param bg 背景色
+     */
+    static void set_color(vga_color_t fg, vga_color_t bg);
+
+    /**
+     * 获取当前颜色属性
+     * @return 当前的颜色属性字节
+     */
+    static uint8_t get_color();
+};
+
+} // namespace drivers
 
 #endif /* _DRIVERS_X86_VGA_H_ */

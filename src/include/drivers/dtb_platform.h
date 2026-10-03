@@ -13,22 +13,32 @@
 
 #include <drivers/platform.h>
 
-/**
- * @brief 扫描 DTB 并创建平台设备
- * 
- * 遍历设备树中的所有设备，为每个设备创建对应的平台设备。
- * 包括 GIC、UART、Timer 等核心设备。
- * 
- * @return 创建的平台设备数量
- */
-int dtb_platform_scan(void);
+namespace drivers {
 
 /**
- * @brief 根据 compatible 字符串查找并创建平台设备
- * 
- * @param compatible compatible 字符串
- * @return 平台设备指针，未找到返回 NULL
+ * @brief 设备树平台设备适配
  */
-platform_device_t *dtb_platform_find_device(const char *compatible);
+class DtbPlatform {
+public:
+    /**
+     * @brief 扫描 DTB 并创建平台设备
+     * 
+     * 遍历设备树中的所有设备，为每个设备创建对应的平台设备。
+     * 包括 GIC、UART、Timer 等核心设备。
+     * 
+     * @return 创建的平台设备数量
+     */
+    static int scan();
+
+    /**
+     * @brief 根据 compatible 字符串查找并创建平台设备
+     * 
+     * @param compatible compatible 字符串
+     * @return 平台设备指针，未找到返回 NULL
+     */
+    static platform_device_t *find_device(const char *compatible);
+};
+
+} // namespace drivers
 
 #endif /* _DRIVERS_DTB_PLATFORM_H_ */

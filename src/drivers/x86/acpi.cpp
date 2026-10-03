@@ -305,7 +305,7 @@ static bool acpi_parse_s5(void) {
  * 公共函数实现
  * ============================================================================ */
 
-int acpi_init(void) {
+int drivers::Acpi::init() {
     LOG_INFO_MSG("ACPI: Initializing ACPI subsystem...\n");
     
     memset(&acpi_info, 0, sizeof(acpi_info));
@@ -388,7 +388,7 @@ int acpi_init(void) {
     acpi_parse_s5();
     
     // 步骤 6: 启用 ACPI（如果需要）
-    acpi_enable();
+    drivers::Acpi::enable();
     
     acpi_info.initialized = true;
     LOG_INFO_MSG("ACPI: Initialization complete\n");
@@ -396,15 +396,15 @@ int acpi_init(void) {
     return 0;
 }
 
-bool acpi_is_initialized(void) {
+bool drivers::Acpi::is_initialized() {
     return acpi_info.initialized;
 }
 
-acpi_info_t *acpi_get_info(void) {
+acpi_info_t *drivers::Acpi::get_info() {
     return &acpi_info;
 }
 
-int acpi_enable(void) {
+int drivers::Acpi::enable() {
     if (!acpi_info.fadt) {
         return -1;
     }
@@ -453,7 +453,7 @@ int acpi_enable(void) {
     return -1;
 }
 
-int acpi_poweroff(void) {
+int drivers::Acpi::poweroff() {
     if (!acpi_info.initialized) {
         LOG_ERROR_MSG("ACPI: Not initialized, cannot power off\n");
         return -1;
@@ -520,7 +520,7 @@ int acpi_poweroff(void) {
     return -1;
 }
 
-int acpi_reset(void) {
+int drivers::Acpi::reset() {
     if (!acpi_info.initialized || !acpi_info.fadt) {
         return -1;
     }
@@ -574,7 +574,7 @@ int acpi_reset(void) {
     return -1;  // 如果到这里说明重置失败
 }
 
-void acpi_print_info(void) {
+void drivers::Acpi::print_info() {
     kprintf("\n=============================== ACPI Info ==================================\n");
     
     if (!acpi_info.initialized) {

@@ -130,12 +130,12 @@ static bool serial_initialized = false;
 /**
  * @brief Set the UART base address
  * 
- * This should be called before serial_init() if the UART is not at
+ * This should be called before drivers::Serial::init() if the UART is not at
  * the default address (e.g., when parsed from DTB).
  * 
  * @param base Physical base address of the PL011 UART
  */
-void serial_set_base(uint64_t base) {
+void drivers::Serial::set_base(uint64_t base) {
     uart_base = (volatile uint8_t *)base;
 }
 
@@ -143,7 +143,7 @@ void serial_set_base(uint64_t base) {
  * @brief Get the current UART base address
  * @return Current UART base address
  */
-uint64_t serial_get_base(void) {
+uint64_t drivers::Serial::get_base() {
     return (uint64_t)uart_base;
 }
 
@@ -154,7 +154,7 @@ uint64_t serial_get_base(void) {
  * QEMU's PL011 emulation doesn't require baud rate configuration, but we
  * set it anyway for compatibility with real hardware.
  */
-void serial_init(void) {
+void drivers::Serial::init() {
     /* Disable UART while configuring */
     pl011_write(PL011_CR, 0);
     
@@ -208,7 +208,7 @@ void serial_init(void) {
  * @brief Check if serial port is initialized
  * @return true if initialized, false otherwise
  */
-bool serial_is_initialized(void) {
+bool drivers::Serial::is_initialized() {
     return serial_initialized;
 }
 
@@ -219,7 +219,7 @@ bool serial_is_initialized(void) {
  * 
  * @param c Character to output
  */
-void serial_putchar(char c) {
+void drivers::Serial::putchar(char c) {
     /* Wait until transmit FIFO is not full */
     while (pl011_read(PL011_FR) & PL011_FR_TXFF) {
         __asm__ volatile("nop");
@@ -236,25 +236,25 @@ void serial_putchar(char c) {
  * 
  * @param msg String to output
  */
-void serial_print(const char *msg) {
+void drivers::Serial::print(const char *msg) {
     if (!msg) {
         return;
     }
     
     while (*msg) {
         if (*msg == '\n') {
-            serial_putchar('\r');
+            drivers::Serial::putchar('\r');
         }
-        serial_putchar(*msg++);
+        drivers::Serial::putchar(*msg++);
     }
 }
 
 /**
- * @brief Output a null-terminated string (alias for serial_print)
+ * @brief Output a null-terminated string (alias for drivers::Serial::print)
  * @param str String to output
  */
 void serial_puts(const char *str) {
-    serial_print(str);
+    drivers::Serial::print(str);
 }
 
 /**
@@ -264,7 +264,7 @@ void serial_puts(const char *str) {
  * 
  * @return Character read from serial port
  */
-char serial_getchar(void) {
+char drivers::Serial::getchar() {
     /* Wait until receive FIFO is not empty */
     while (pl011_read(PL011_FR) & PL011_FR_RXFE) {
         __asm__ volatile("nop");
@@ -278,7 +278,7 @@ char serial_getchar(void) {
  * @brief Check if a character is available to read
  * @return true if a character is available, false otherwise
  */
-bool serial_has_char(void) {
+bool drivers::Serial::has_char() {
     return !(pl011_read(PL011_FR) & PL011_FR_RXFE);
 }
 
@@ -286,7 +286,7 @@ bool serial_has_char(void) {
  * @brief Read a character without blocking
  * @return Character read, or -1 if no character available
  */
-int serial_getchar_nonblock(void) {
+int drivers::Serial::getchar_nonblock() {
     if (pl011_read(PL011_FR) & PL011_FR_RXFE) {
         return -1;
     }
@@ -298,7 +298,7 @@ int serial_getchar_nonblock(void) {
  * 
  * Waits until all pending transmissions are complete.
  */
-void serial_flush(void) {
+void drivers::Serial::flush() {
     /* Wait until transmit FIFO is empty and UART is not busy */
     while (!(pl011_read(PL011_FR) & PL011_FR_TXFE) ||
            (pl011_read(PL011_FR) & PL011_FR_BUSY)) {
@@ -315,9 +315,9 @@ void serial_flush(void) {
  */
 static void serial_put_hex_digit(uint8_t digit) {
     if (digit < 10) {
-        serial_putchar('0' + digit);
+        drivers::Serial::putchar('0' + digit);
     } else {
-        serial_putchar('a' + digit - 10);
+        drivers::Serial::putchar('a' + digit - 10);
     }
 }
 
@@ -325,7 +325,7 @@ static void serial_put_hex_digit(uint8_t digit) {
  * @brief Output a 32-bit value in hexadecimal
  * @param value Value to output
  */
-void serial_put_hex32(uint32_t value) {
+void drivers::Serial::put_hex32(uint32_t value) {
     serial_puts("0x");
     for (int i = 28; i >= 0; i -= 4) {
         serial_put_hex_digit((value >> i) & 0xF);
@@ -347,13 +347,13 @@ void serial_put_hex64(uint64_t value) {
  * @brief Output a decimal number
  * @param value Value to output
  */
-void serial_put_dec(uint64_t value) {
+void drivers::Serial::put_dec(uint64_t value) {
     char buf[21];  /* Max 20 digits for 64-bit number + null */
     int i = 20;
     buf[i] = '\0';
     
     if (value == 0) {
-        serial_putchar('0');
+        drivers::Serial::putchar('0');
         return;
     }
     
@@ -372,7 +372,7 @@ void serial_put_dec(uint64_t value) {
 /**
  * @brief Enable receive interrupt
  */
-void serial_enable_rx_interrupt(void) {
+void drivers::Serial::enable_rx_interrupt() {
     uint32_t imsc = pl011_read(PL011_IMSC);
     imsc |= PL011_INT_RX | PL011_INT_RT;
     pl011_write(PL011_IMSC, imsc);
@@ -381,7 +381,7 @@ void serial_enable_rx_interrupt(void) {
 /**
  * @brief Disable receive interrupt
  */
-void serial_disable_rx_interrupt(void) {
+void drivers::Serial::disable_rx_interrupt() {
     uint32_t imsc = pl011_read(PL011_IMSC);
     imsc &= ~(PL011_INT_RX | PL011_INT_RT);
     pl011_write(PL011_IMSC, imsc);
@@ -390,7 +390,7 @@ void serial_disable_rx_interrupt(void) {
 /**
  * @brief Clear pending interrupts
  */
-void serial_clear_interrupts(void) {
+void drivers::Serial::clear_interrupts() {
     pl011_write(PL011_ICR, 0x7FF);
 }
 
@@ -398,7 +398,7 @@ void serial_clear_interrupts(void) {
  * @brief Get masked interrupt status
  * @return Masked interrupt status register value
  */
-uint32_t serial_get_interrupt_status(void) {
+uint32_t drivers::Serial::get_interrupt_status() {
     return pl011_read(PL011_MIS);
 }
 

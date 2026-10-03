@@ -188,199 +188,209 @@ typedef struct platform_driver {
     int (*resume)(platform_device_t *dev);  /**< 设备恢复回调（可选） */
 } platform_driver_t;
 
-/* ============================================================================
- * 驱动注册 API
- * ============================================================================ */
+namespace drivers {
 
 /**
- * @brief 注册平台驱动
- * 
- * @param drv 驱动结构指针
- * @return HAL_OK 成功，其他为错误码
- * 
- * 注册驱动后，框架会自动尝试将其与已发现的设备匹配。
+ * @brief 平台设备/驱动模型
  */
-hal_error_t platform_driver_register(platform_driver_t *drv);
+class Platform {
+public:
+    /* ============================================================================
+     * 驱动注册 API
+     * ============================================================================ */
 
-/**
- * @brief 注销平台驱动
- * 
- * @param drv 驱动结构指针
- * @return HAL_OK 成功，其他为错误码
- * 
- * 注销前会调用驱动的 remove 回调移除所有绑定的设备。
- */
-hal_error_t platform_driver_unregister(platform_driver_t *drv);
+    /**
+     * @brief 注册平台驱动
+     * 
+     * @param drv 驱动结构指针
+     * @return HAL_OK 成功，其他为错误码
+     * 
+     * 注册驱动后，框架会自动尝试将其与已发现的设备匹配。
+     */
+    static hal_error_t driver_register(platform_driver_t *drv);
 
-/* ============================================================================
- * 设备注册 API
- * ============================================================================ */
+    /**
+     * @brief 注销平台驱动
+     * 
+     * @param drv 驱动结构指针
+     * @return HAL_OK 成功，其他为错误码
+     * 
+     * 注销前会调用驱动的 remove 回调移除所有绑定的设备。
+     */
+    static hal_error_t driver_unregister(platform_driver_t *drv);
 
-/**
- * @brief 注册平台设备
- * 
- * @param dev 设备结构指针
- * @return HAL_OK 成功，其他为错误码
- * 
- * 注册设备后，框架会自动尝试将其与已注册的驱动匹配。
- */
-hal_error_t platform_device_register(platform_device_t *dev);
+    /* ============================================================================
+     * 设备注册 API
+     * ============================================================================ */
 
-/**
- * @brief 注销平台设备
- * 
- * @param dev 设备结构指针
- * @return HAL_OK 成功，其他为错误码
- */
-hal_error_t platform_device_unregister(platform_device_t *dev);
+    /**
+     * @brief 注册平台设备
+     * 
+     * @param dev 设备结构指针
+     * @return HAL_OK 成功，其他为错误码
+     * 
+     * 注册设备后，框架会自动尝试将其与已注册的驱动匹配。
+     */
+    static hal_error_t device_register(platform_device_t *dev);
 
-/**
- * @brief 分配一个新的平台设备结构
- * 
- * @param name 设备名称
- * @param id 设备实例 ID（-1 表示自动分配）
- * @return 设备指针，失败返回 NULL
- */
-platform_device_t *platform_device_alloc(const char *name, int id);
+    /**
+     * @brief 注销平台设备
+     * 
+     * @param dev 设备结构指针
+     * @return HAL_OK 成功，其他为错误码
+     */
+    static hal_error_t device_unregister(platform_device_t *dev);
 
-/**
- * @brief 释放平台设备结构
- * 
- * @param dev 设备指针
- */
-void platform_device_free(platform_device_t *dev);
+    /**
+     * @brief 分配一个新的平台设备结构
+     * 
+     * @param name 设备名称
+     * @param id 设备实例 ID（-1 表示自动分配）
+     * @return 设备指针，失败返回 NULL
+     */
+    static platform_device_t *device_alloc(const char *name, int id);
 
-/* ============================================================================
- * 资源访问 API
- * ============================================================================ */
+    /**
+     * @brief 释放平台设备结构
+     * 
+     * @param dev 设备指针
+     */
+    static void device_free(platform_device_t *dev);
 
-/**
- * @brief 获取设备资源
- * 
- * @param dev 设备指针
- * @param type 资源类型
- * @param index 资源索引（同类型资源中的第几个）
- * @return 资源指针，未找到返回 NULL
- */
-platform_resource_t *platform_get_resource(platform_device_t *dev,
-                                           platform_res_type_t type,
-                                           uint32_t index);
+    /* ============================================================================
+     * 资源访问 API
+     * ============================================================================ */
 
-/**
- * @brief 获取设备 IRQ 号
- * 
- * @param dev 设备指针
- * @param index IRQ 索引
- * @return IRQ 号，失败返回 -1
- */
-int32_t platform_get_irq(platform_device_t *dev, uint32_t index);
+    /**
+     * @brief 获取设备资源
+     * 
+     * @param dev 设备指针
+     * @param type 资源类型
+     * @param index 资源索引（同类型资源中的第几个）
+     * @return 资源指针，未找到返回 NULL
+     */
+    static platform_resource_t *get_resource(platform_device_t *dev,
+                                               platform_res_type_t type,
+                                               uint32_t index);
 
-/**
- * @brief 获取设备 MMIO 基地址
- * 
- * @param dev 设备指针
- * @param index MMIO 区域索引
- * @return MMIO 基地址，失败返回 0
- */
-uint64_t platform_get_mmio_base(platform_device_t *dev, uint32_t index);
+    /**
+     * @brief 获取设备 IRQ 号
+     * 
+     * @param dev 设备指针
+     * @param index IRQ 索引
+     * @return IRQ 号，失败返回 -1
+     */
+    static int32_t get_irq(platform_device_t *dev, uint32_t index);
 
-/**
- * @brief 获取设备 MMIO 区域大小
- * 
- * @param dev 设备指针
- * @param index MMIO 区域索引
- * @return 区域大小，失败返回 0
- */
-uint64_t platform_get_mmio_size(platform_device_t *dev, uint32_t index);
+    /**
+     * @brief 获取设备 MMIO 基地址
+     * 
+     * @param dev 设备指针
+     * @param index MMIO 区域索引
+     * @return MMIO 基地址，失败返回 0
+     */
+    static uint64_t get_mmio_base(platform_device_t *dev, uint32_t index);
 
-/* ============================================================================
- * 设备数据 API
- * ============================================================================ */
+    /**
+     * @brief 获取设备 MMIO 区域大小
+     * 
+     * @param dev 设备指针
+     * @param index MMIO 区域索引
+     * @return 区域大小，失败返回 0
+     */
+    static uint64_t get_mmio_size(platform_device_t *dev, uint32_t index);
 
-/**
- * @brief 设置驱动私有数据
- * 
- * @param dev 设备指针
- * @param data 私有数据指针
- */
-static inline void platform_set_drvdata(platform_device_t *dev, void *data) {
-    if (dev) {
-        dev->driver_data = data;
+    /* ============================================================================
+     * 设备数据 API
+     * ============================================================================ */
+
+    /**
+     * @brief 设置驱动私有数据
+     * 
+     * @param dev 设备指针
+     * @param data 私有数据指针
+     */
+    static inline void set_drvdata(platform_device_t *dev, void *data) {
+        if (dev) {
+            dev->driver_data = data;
+        }
     }
-}
 
-/**
- * @brief 获取驱动私有数据
- * 
- * @param dev 设备指针
- * @return 私有数据指针
- */
-static inline void *platform_get_drvdata(platform_device_t *dev) {
-    return dev ? dev->driver_data : NULL;
-}
+    /**
+     * @brief 获取驱动私有数据
+     * 
+     * @param dev 设备指针
+     * @return 私有数据指针
+     */
+    static inline void *get_drvdata(platform_device_t *dev) {
+        return dev ? dev->driver_data : NULL;
+    }
 
-/* ============================================================================
- * 资源添加 API
- * ============================================================================ */
+    /* ============================================================================
+     * 资源添加 API
+     * ============================================================================ */
 
-/**
- * @brief 向设备添加内存资源
- * 
- * @param dev 设备指针
- * @param start 起始地址
- * @param size 区域大小
- * @param flags 资源标志
- * @return HAL_OK 成功，其他为错误码
- */
-hal_error_t platform_device_add_mem_resource(platform_device_t *dev,
-                                              uint64_t start,
-                                              uint64_t size,
-                                              uint32_t flags);
+    /**
+     * @brief 向设备添加内存资源
+     * 
+     * @param dev 设备指针
+     * @param start 起始地址
+     * @param size 区域大小
+     * @param flags 资源标志
+     * @return HAL_OK 成功，其他为错误码
+     */
+    static hal_error_t device_add_mem_resource(platform_device_t *dev,
+                                                  uint64_t start,
+                                                  uint64_t size,
+                                                  uint32_t flags);
 
-/**
- * @brief 向设备添加 IRQ 资源
- * 
- * @param dev 设备指针
- * @param irq IRQ 号
- * @param flags 资源标志
- * @return HAL_OK 成功，其他为错误码
- */
-hal_error_t platform_device_add_irq_resource(platform_device_t *dev,
-                                              uint32_t irq,
-                                              uint32_t flags);
+    /**
+     * @brief 向设备添加 IRQ 资源
+     * 
+     * @param dev 设备指针
+     * @param irq IRQ 号
+     * @param flags 资源标志
+     * @return HAL_OK 成功，其他为错误码
+     */
+    static hal_error_t device_add_irq_resource(platform_device_t *dev,
+                                                  uint32_t irq,
+                                                  uint32_t flags);
 
-/* ============================================================================
- * 框架初始化
- * ============================================================================ */
+    /* ============================================================================
+     * 框架初始化
+     * ============================================================================ */
 
-/**
- * @brief 初始化平台设备框架
- * 
- * @return HAL_OK 成功，其他为错误码
- */
-hal_error_t platform_init(void);
+    /**
+     * @brief 初始化平台设备框架
+     * 
+     * @return HAL_OK 成功，其他为错误码
+     */
+    static hal_error_t init();
 
-/**
- * @brief 触发设备与驱动的匹配
- * 
- * 在所有设备和驱动注册完成后调用，尝试匹配并探测设备。
- * 
- * @return 成功匹配的设备数量
- */
-int platform_match_devices(void);
+    /**
+     * @brief 触发设备与驱动的匹配
+     * 
+     * 在所有设备和驱动注册完成后调用，尝试匹配并探测设备。
+     * 
+     * @return 成功匹配的设备数量
+     */
+    static int match_devices();
 
-/* ============================================================================
- * 调试 API
- * ============================================================================ */
+    /* ============================================================================
+     * 调试 API
+     * ============================================================================ */
 
-/**
- * @brief 打印所有已注册的平台设备
- */
-void platform_print_devices(void);
+    /**
+     * @brief 打印所有已注册的平台设备
+     */
+    static void print_devices();
 
-/**
- * @brief 打印所有已注册的平台驱动
- */
-void platform_print_drivers(void);
+    /**
+     * @brief 打印所有已注册的平台驱动
+     */
+    static void print_drivers();
+};
+
+} // namespace drivers
 
 #endif /* _DRIVERS_PLATFORM_H_ */

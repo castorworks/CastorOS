@@ -207,64 +207,73 @@ typedef struct {
     uint16_t sci_int;           // SCI 中断号
 } acpi_info_t;
 
-/* ============================================================================
- * 函数声明
- * ============================================================================ */
+namespace drivers {
 
 /**
- * @brief 初始化 ACPI 子系统
- * 
- * 搜索 RSDP，解析 RSDT/FADT/DSDT，提取电源管理信息
- * 
- * @return 0 成功，-1 失败
+ * @brief ACPI 电源管理
  */
-int acpi_init(void);
+class Acpi {
+public:
+    /* ============================================================================
+     * 函数声明
+     * ============================================================================ */
 
-/**
- * @brief 检查 ACPI 是否已初始化
- * 
- * @return true 已初始化，false 未初始化
- */
-bool acpi_is_initialized(void);
+    /**
+     * @brief 初始化 ACPI 子系统
+     * 
+     * 搜索 RSDP，解析 RSDT/FADT/DSDT，提取电源管理信息
+     * 
+     * @return 0 成功，-1 失败
+     */
+    static int init();
 
-/**
- * @brief 获取 ACPI 信息结构
- * 
- * @return ACPI 信息结构指针
- */
-acpi_info_t *acpi_get_info(void);
+    /**
+     * @brief 检查 ACPI 是否已初始化
+     * 
+     * @return true 已初始化，false 未初始化
+     */
+    static bool is_initialized();
 
-/**
- * @brief 通过 ACPI 关机
- * 
- * 使用 ACPI PM1 控制寄存器触发 S5（软关机）状态
- * 
- * @return 如果失败返回 -1，成功则不返回
- */
-int acpi_poweroff(void);
+    /**
+     * @brief 获取 ACPI 信息结构
+     * 
+     * @return ACPI 信息结构指针
+     */
+    static acpi_info_t *get_info();
 
-/**
- * @brief 通过 ACPI 重启
- * 
- * 使用 ACPI Reset 寄存器触发重启（如果支持）
- * 
- * @return 如果失败返回 -1，成功则不返回
- */
-int acpi_reset(void);
+    /**
+     * @brief 通过 ACPI 关机
+     * 
+     * 使用 ACPI PM1 控制寄存器触发 S5（软关机）状态
+     * 
+     * @return 如果失败返回 -1，成功则不返回
+     */
+    static int poweroff();
 
-/**
- * @brief 启用 ACPI 模式
- * 
- * 向 SMI 命令端口发送 ACPI_ENABLE 命令
- * 
- * @return 0 成功，-1 失败
- */
-int acpi_enable(void);
+    /**
+     * @brief 通过 ACPI 重启
+     * 
+     * 使用 ACPI Reset 寄存器触发重启（如果支持）
+     * 
+     * @return 如果失败返回 -1，成功则不返回
+     */
+    static int reset();
 
-/**
- * @brief 打印 ACPI 信息
- */
-void acpi_print_info(void);
+    /**
+     * @brief 启用 ACPI 模式
+     * 
+     * 向 SMI 命令端口发送 ACPI_ENABLE 命令
+     * 
+     * @return 0 成功，-1 失败
+     */
+    static int enable();
+
+    /**
+     * @brief 打印 ACPI 信息
+     */
+    static void print_info();
+};
+
+} // namespace drivers
 
 #endif /* _DRIVERS_X86_ACPI_H_ */
-

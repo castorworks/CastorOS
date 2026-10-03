@@ -62,7 +62,7 @@ static inline uint16_t cpu_to_be16(uint16_t val) {
  */
 static int msc_send_cbw(usb_msc_device_t *msc, usb_msc_cbw_t *cbw) {
     uint32_t actual;
-    int ret = usb_bulk_transfer(msc->usb_dev, msc->ep_out->address,
+    int ret = drivers::Usb::bulk_transfer(msc->usb_dev, msc->ep_out->address,
                                 cbw, sizeof(usb_msc_cbw_t), &actual,
                                 MSC_COMMAND_TIMEOUT_MS);
     
@@ -84,7 +84,7 @@ static int msc_send_cbw(usb_msc_device_t *msc, usb_msc_cbw_t *cbw) {
  */
 static int msc_recv_csw(usb_msc_device_t *msc, usb_msc_csw_t *csw, uint32_t expected_tag) {
     uint32_t actual;
-    int ret = usb_bulk_transfer(msc->usb_dev, msc->ep_in->address,
+    int ret = drivers::Usb::bulk_transfer(msc->usb_dev, msc->ep_in->address,
                                 csw, sizeof(usb_msc_csw_t), &actual,
                                 MSC_COMMAND_TIMEOUT_MS);
     
@@ -92,8 +92,8 @@ static int msc_recv_csw(usb_msc_device_t *msc, usb_msc_csw_t *csw, uint32_t expe
         LOG_ERROR_MSG("msc: Failed to receive CSW, ret=%d\n", ret);
         
         /* 尝试清除 HALT 并重试 */
-        usb_clear_halt(msc->usb_dev, msc->ep_in->address);
-        ret = usb_bulk_transfer(msc->usb_dev, msc->ep_in->address,
+        drivers::Usb::clear_halt(msc->usb_dev, msc->ep_in->address);
+        ret = drivers::Usb::bulk_transfer(msc->usb_dev, msc->ep_in->address,
                                 csw, sizeof(usb_msc_csw_t), &actual,
                                 MSC_COMMAND_TIMEOUT_MS);
         if (ret < 0) {
@@ -151,13 +151,13 @@ static int msc_scsi_command(usb_msc_device_t *msc, uint8_t *cmd, uint8_t cmd_len
         uint8_t ep_addr = (direction == USB_MSC_CBW_DIR_IN) ? 
                            msc->ep_in->address : msc->ep_out->address;
         
-        ret = usb_bulk_transfer(msc->usb_dev, ep_addr, data, data_len,
+        ret = drivers::Usb::bulk_transfer(msc->usb_dev, ep_addr, data, data_len,
                                 &transferred, MSC_DATA_TIMEOUT_MS);
         
         if (ret < 0 && ret != URB_STATUS_STALL) {
             LOG_ERROR_MSG("msc: Data transfer failed, ret=%d\n", ret);
             /* 尝试恢复 */
-            usb_clear_halt(msc->usb_dev, ep_addr);
+            drivers::Usb::clear_halt(msc->usb_dev, ep_addr);
         }
     }
     
@@ -351,7 +351,7 @@ static uint32_t msc_blockdev_get_block_size(void *dev) {
  * 设备探测和断开
  * ============================================================================ */
 
-int usb_msc_probe(usb_device_t *dev, usb_interface_t *iface) {
+int drivers::UsbMsc::probe(usb_device_t *dev, usb_interface_t *iface) {
     if (!dev || !iface) {
         return -1;
     }
@@ -437,7 +437,7 @@ int usb_msc_probe(usb_device_t *dev, usb_interface_t *iface) {
         scsi_request_sense_response_t sense;
         msc_request_sense(msc, &sense);
         
-        timer_wait(500);
+        drivers::Timer::wait(500);
         retries--;
     }
     
@@ -493,7 +493,7 @@ int usb_msc_probe(usb_device_t *dev, usb_interface_t *iface) {
     return 0;
 }
 
-void usb_msc_disconnect(usb_device_t *dev, usb_interface_t *iface) {
+void drivers::UsbMsc::disconnect(usb_device_t *dev, usb_interface_t *iface) {
     if (!iface || !iface->driver_data) {
         return;
     }
@@ -526,15 +526,15 @@ void usb_msc_disconnect(usb_device_t *dev, usb_interface_t *iface) {
  * 公共 API
  * ============================================================================ */
 
-int usb_msc_read(usb_msc_device_t *msc, uint32_t lba, uint32_t count, uint8_t *buffer) {
+int drivers::UsbMsc::read(usb_msc_device_t *msc, uint32_t lba, uint32_t count, uint8_t *buffer) {
     return msc_blockdev_read(msc, lba, count, buffer);
 }
 
-int usb_msc_write(usb_msc_device_t *msc, uint32_t lba, uint32_t count, const uint8_t *buffer) {
+int drivers::UsbMsc::write(usb_msc_device_t *msc, uint32_t lba, uint32_t count, const uint8_t *buffer) {
     return msc_blockdev_write(msc, lba, count, buffer);
 }
 
-int usb_msc_get_capacity(usb_msc_device_t *msc, uint32_t *block_count, uint32_t *block_size) {
+int drivers::UsbMsc::get_capacity(usb_msc_device_t *msc, uint32_t *block_count, uint32_t *block_size) {
     if (!msc || !msc->ready) {
         return -1;
     }
@@ -545,11 +545,11 @@ int usb_msc_get_capacity(usb_msc_device_t *msc, uint32_t *block_count, uint32_t 
     return 0;
 }
 
-usb_msc_device_t *usb_msc_get_devices(void) {
+usb_msc_device_t *drivers::UsbMsc::get_devices() {
     return msc_devices;
 }
 
-blockdev_t *usb_msc_get_blockdev(const char *name) {
+blockdev_t *drivers::UsbMsc::get_blockdev(const char *name) {
     for (usb_msc_device_t *msc = msc_devices; msc; msc = msc->next) {
         if (strcmp(msc->blockdev.name, name) == 0) {
             return &msc->blockdev;
@@ -558,7 +558,7 @@ blockdev_t *usb_msc_get_blockdev(const char *name) {
     return NULL;
 }
 
-void usb_msc_print_info(usb_msc_device_t *msc) {
+void drivers::UsbMsc::print_info(usb_msc_device_t *msc) {
     if (!msc) return;
     
     kprintf("USB Mass Storage Device:\n");
@@ -572,7 +572,7 @@ void usb_msc_print_info(usb_msc_device_t *msc) {
     kprintf("  Ready: %s\n", msc->ready ? "Yes" : "No");
 }
 
-int usb_msc_init(void) {
+int drivers::UsbMsc::init() {
     msc_devices = NULL;
     msc_device_count = 0;
     
@@ -583,10 +583,10 @@ int usb_msc_init(void) {
     usb_msc_driver.id.protocol = USB_MSC_PROTO_BBB;
     usb_msc_driver.id.vendor_id = 0xFFFF;
     usb_msc_driver.id.product_id = 0xFFFF;
-    usb_msc_driver.probe = usb_msc_probe;
-    usb_msc_driver.disconnect = usb_msc_disconnect;
+    usb_msc_driver.probe = drivers::UsbMsc::probe;
+    usb_msc_driver.disconnect = drivers::UsbMsc::disconnect;
     
-    usb_register_driver(&usb_msc_driver);
+    drivers::Usb::register_driver(&usb_msc_driver);
     
     LOG_INFO_MSG("msc: USB Mass Storage driver initialized\n");
     return 0;

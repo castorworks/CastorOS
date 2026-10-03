@@ -10,9 +10,9 @@
 //
 // 测试覆盖:
 //   - Serial 初始化
-//   - 字符发送 (serial_putchar)
-//   - 字符串发送 (serial_print)
-//   - 字符接收 (ARM64 only: serial_getchar, serial_has_char)
+//   - 字符发送 (drivers::Serial::putchar)
+//   - 字符串发送 (drivers::Serial::print)
+//   - 字符接收 (ARM64 only: drivers::Serial::getchar, drivers::Serial::has_char)
 //   - 特殊字符处理（换行符转换）
 // ============================================================================
 
@@ -27,7 +27,7 @@
 
 /**
  * 测试输出标记字符串
- * 用于验证 serial_print 是否正常工作
+ * 用于验证 drivers::Serial::print 是否正常工作
  */
 static const char *test_marker = "[SERIAL_TEST]";
 
@@ -36,61 +36,61 @@ static const char *test_marker = "[SERIAL_TEST]";
 // ============================================================================
 
 /**
- * 测试 serial_putchar 发送单个字符
+ * 测试 drivers::Serial::putchar 发送单个字符
  * 验证函数可调用且不崩溃
  */
 TEST_CASE(test_serial_putchar_basic) {
     // 发送一个简单字符
-    serial_putchar('X');
+    drivers::Serial::putchar('X');
     
     // 如果没有崩溃，测试通过
     ASSERT_TRUE(true);
 }
 
 /**
- * 测试 serial_putchar 发送多个字符
+ * 测试 drivers::Serial::putchar 发送多个字符
  * 验证连续发送不会出错
  */
 TEST_CASE(test_serial_putchar_multiple) {
     // 发送多个字符
-    serial_putchar('[');
-    serial_putchar('T');
-    serial_putchar('E');
-    serial_putchar('S');
-    serial_putchar('T');
-    serial_putchar(']');
+    drivers::Serial::putchar('[');
+    drivers::Serial::putchar('T');
+    drivers::Serial::putchar('E');
+    drivers::Serial::putchar('S');
+    drivers::Serial::putchar('T');
+    drivers::Serial::putchar(']');
     
     // 如果没有崩溃，测试通过
     ASSERT_TRUE(true);
 }
 
 /**
- * 测试 serial_putchar 发送特殊字符
+ * 测试 drivers::Serial::putchar 发送特殊字符
  * 验证特殊字符（换行、回车、制表符）处理
  */
 TEST_CASE(test_serial_putchar_special_chars) {
     // 发送换行符
-    serial_putchar('\n');
+    drivers::Serial::putchar('\n');
     
     // 发送回车符
-    serial_putchar('\r');
+    drivers::Serial::putchar('\r');
     
     // 发送制表符
-    serial_putchar('\t');
+    drivers::Serial::putchar('\t');
     
     // 发送空格
-    serial_putchar(' ');
+    drivers::Serial::putchar(' ');
     
     // 如果没有崩溃，测试通过
     ASSERT_TRUE(true);
 }
 
 /**
- * 测试 serial_putchar 发送数字字符
+ * 测试 drivers::Serial::putchar 发送数字字符
  */
 TEST_CASE(test_serial_putchar_digits) {
     for (char c = '0'; c <= '9'; c++) {
-        serial_putchar(c);
+        drivers::Serial::putchar(c);
     }
     
     // 如果没有崩溃，测试通过
@@ -98,17 +98,17 @@ TEST_CASE(test_serial_putchar_digits) {
 }
 
 /**
- * 测试 serial_putchar 发送字母字符
+ * 测试 drivers::Serial::putchar 发送字母字符
  */
 TEST_CASE(test_serial_putchar_letters) {
     // 发送小写字母
     for (char c = 'a'; c <= 'z'; c++) {
-        serial_putchar(c);
+        drivers::Serial::putchar(c);
     }
     
     // 发送大写字母
     for (char c = 'A'; c <= 'Z'; c++) {
-        serial_putchar(c);
+        drivers::Serial::putchar(c);
     }
     
     // 如果没有崩溃，测试通过
@@ -120,58 +120,58 @@ TEST_CASE(test_serial_putchar_letters) {
 // ============================================================================
 
 /**
- * 测试 serial_print 发送空字符串
+ * 测试 drivers::Serial::print 发送空字符串
  */
 TEST_CASE(test_serial_print_empty) {
-    serial_print("");
+    drivers::Serial::print("");
     
     // 如果没有崩溃，测试通过
     ASSERT_TRUE(true);
 }
 
 /**
- * 测试 serial_print 发送简单字符串
+ * 测试 drivers::Serial::print 发送简单字符串
  */
 TEST_CASE(test_serial_print_simple) {
-    serial_print(test_marker);
-    serial_print(" Hello, Serial!\n");
+    drivers::Serial::print(test_marker);
+    drivers::Serial::print(" Hello, Serial!\n");
     
     // 如果没有崩溃，测试通过
     ASSERT_TRUE(true);
 }
 
 /**
- * 测试 serial_print 发送包含换行符的字符串
+ * 测试 drivers::Serial::print 发送包含换行符的字符串
  * 验证换行符自动转换为 \r\n
  */
 TEST_CASE(test_serial_print_newlines) {
-    serial_print("Line 1\n");
-    serial_print("Line 2\n");
-    serial_print("Line 3\n");
+    drivers::Serial::print("Line 1\n");
+    drivers::Serial::print("Line 2\n");
+    drivers::Serial::print("Line 3\n");
     
     // 如果没有崩溃，测试通过
     ASSERT_TRUE(true);
 }
 
 /**
- * 测试 serial_print 发送长字符串
+ * 测试 drivers::Serial::print 发送长字符串
  */
 TEST_CASE(test_serial_print_long_string) {
-    serial_print("This is a longer test string that spans multiple words ");
-    serial_print("to verify that the serial driver can handle longer output.\n");
+    drivers::Serial::print("This is a longer test string that spans multiple words ");
+    drivers::Serial::print("to verify that the serial driver can handle longer output.\n");
     
     // 如果没有崩溃，测试通过
     ASSERT_TRUE(true);
 }
 
 /**
- * 测试 serial_print 连续调用
+ * 测试 drivers::Serial::print 连续调用
  */
 TEST_CASE(test_serial_print_consecutive) {
     for (int i = 0; i < 10; i++) {
-        serial_print(".");
+        drivers::Serial::print(".");
     }
-    serial_print("\n");
+    drivers::Serial::print("\n");
     
     // 如果没有崩溃，测试通过
     ASSERT_TRUE(true);
@@ -182,30 +182,30 @@ TEST_CASE(test_serial_print_consecutive) {
 // ============================================================================
 
 /**
- * 测试 serial_putchar 发送 NULL 字符
+ * 测试 drivers::Serial::putchar 发送 NULL 字符
  */
 TEST_CASE(test_serial_putchar_null_char) {
     // 发送 NULL 字符（应该被处理但不显示）
-    serial_putchar('\0');
+    drivers::Serial::putchar('\0');
     
     // 如果没有崩溃，测试通过
     ASSERT_TRUE(true);
 }
 
 /**
- * 测试 serial_putchar 发送高位字符
+ * 测试 drivers::Serial::putchar 发送高位字符
  */
 TEST_CASE(test_serial_putchar_high_chars) {
     // 发送一些高位 ASCII 字符
-    serial_putchar((char)0x80);
-    serial_putchar((char)0xFF);
+    drivers::Serial::putchar((char)0x80);
+    drivers::Serial::putchar((char)0xFF);
     
     // 如果没有崩溃，测试通过
     ASSERT_TRUE(true);
 }
 
 /**
- * 测试 serial_print 发送 NULL 指针
+ * 测试 drivers::Serial::print 发送 NULL 指针
  * 注意：某些实现可能不检查 NULL，这里测试是否安全处理
  */
 TEST_CASE(test_serial_print_null_ptr) {
@@ -213,7 +213,7 @@ TEST_CASE(test_serial_print_null_ptr) {
     // 这个测试在 x86 上可能会崩溃，所以我们跳过它
     // 只验证非 NULL 情况
     const char *valid_str = "valid";
-    serial_print(valid_str);
+    drivers::Serial::print(valid_str);
     
     // 如果没有崩溃，测试通过
     ASSERT_TRUE(true);
@@ -226,72 +226,72 @@ TEST_CASE(test_serial_print_null_ptr) {
 #if defined(ARCH_ARM64)
 
 /**
- * 测试 serial_has_char 函数
+ * 测试 drivers::Serial::has_char 函数
  * 验证函数可调用并返回有效值
  */
 TEST_CASE(test_serial_has_char) {
     // 检查是否有字符可读
-    bool has_char = serial_has_char();
+    bool has_char = drivers::Serial::has_char();
     
     // 结果应该是 true 或 false
     ASSERT_TRUE(has_char == true || has_char == false);
 }
 
 /**
- * 测试 serial_getchar_nonblock 函数
+ * 测试 drivers::Serial::getchar_nonblock 函数
  * 验证非阻塞读取功能
  */
 TEST_CASE(test_serial_getchar_nonblock) {
     // 非阻塞读取
-    int result = serial_getchar_nonblock();
+    int result = drivers::Serial::getchar_nonblock();
     
     // 结果应该是 -1（无字符）或有效字符
     ASSERT_TRUE(result == -1 || (result >= 0 && result <= 255));
 }
 
 /**
- * 测试 serial_flush 函数
+ * 测试 drivers::Serial::flush 函数
  * 验证刷新发送缓冲区
  */
 TEST_CASE(test_serial_flush) {
     // 发送一些字符
-    serial_print("Flush test\n");
+    drivers::Serial::print("Flush test\n");
     
     // 刷新缓冲区
-    serial_flush();
+    drivers::Serial::flush();
     
     // 如果没有崩溃，测试通过
     ASSERT_TRUE(true);
 }
 
 /**
- * 测试 serial_is_initialized 函数
+ * 测试 drivers::Serial::is_initialized 函数
  * 验证初始化状态检查
  */
 TEST_CASE(test_serial_is_initialized) {
     // 串口应该已经初始化
-    bool initialized = serial_is_initialized();
+    bool initialized = drivers::Serial::is_initialized();
     
     ASSERT_TRUE(initialized);
 }
 
 /**
- * 测试 serial_get_base 函数
+ * 测试 drivers::Serial::get_base 函数
  * 验证获取 UART 基地址
  */
 TEST_CASE(test_serial_get_base) {
-    uint64_t base = serial_get_base();
+    uint64_t base = drivers::Serial::get_base();
     
     // 基地址应该是有效的非零值
     ASSERT_TRUE(base != 0);
 }
 
 /**
- * 测试 serial_put_hex32 函数
+ * 测试 drivers::Serial::put_hex32 函数
  */
 TEST_CASE(test_serial_put_hex32) {
-    serial_put_hex32(0x12345678);
-    serial_putchar('\n');
+    drivers::Serial::put_hex32(0x12345678);
+    drivers::Serial::putchar('\n');
     
     // 如果没有崩溃，测试通过
     ASSERT_TRUE(true);
@@ -302,20 +302,20 @@ TEST_CASE(test_serial_put_hex32) {
  */
 TEST_CASE(test_serial_put_hex64) {
     serial_put_hex64(0x123456789ABCDEF0ULL);
-    serial_putchar('\n');
+    drivers::Serial::putchar('\n');
     
     // 如果没有崩溃，测试通过
     ASSERT_TRUE(true);
 }
 
 /**
- * 测试 serial_put_dec 函数
+ * 测试 drivers::Serial::put_dec 函数
  */
 TEST_CASE(test_serial_put_dec) {
-    serial_put_dec(12345);
-    serial_putchar('\n');
-    serial_put_dec(0);
-    serial_putchar('\n');
+    drivers::Serial::put_dec(12345);
+    drivers::Serial::putchar('\n');
+    drivers::Serial::put_dec(0);
+    drivers::Serial::putchar('\n');
     
     // 如果没有崩溃，测试通过
     ASSERT_TRUE(true);

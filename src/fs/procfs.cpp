@@ -216,7 +216,7 @@ static uint32_t procfs_pci_read(fs_node_t *node, uint32_t offset, uint32_t size,
     static char pci_buf[8192];
     int len = 0;
     
-    int device_count = pci_get_device_count();
+    int device_count = drivers::Pci::get_device_count();
     
     // 表头
     len += ksnprintf(pci_buf + len, sizeof(pci_buf) - (size_t)len,
@@ -228,7 +228,7 @@ static uint32_t procfs_pci_read(fs_node_t *node, uint32_t offset, uint32_t size,
     
     // 遍历所有 PCI 设备
     for (int i = 0; i < device_count && len < (int)sizeof(pci_buf) - 128; i++) {
-        pci_device_t *dev = pci_get_device(i);
+        pci_device_t *dev = drivers::Pci::get_device(i);
         if (!dev) continue;
         
         const char *class_name = pci_get_class_name(dev->class_code, dev->subclass);
@@ -333,7 +333,7 @@ static uint32_t procfs_usb_read(fs_node_t *node, uint32_t offset, uint32_t size,
     static char usb_buf[4096];
     int len = 0;
     
-    int device_count = usb_get_device_count();
+    int device_count = drivers::Usb::get_device_count();
     
     // 表头
     len += ksnprintf(usb_buf + len, sizeof(usb_buf) - (size_t)len,
@@ -345,7 +345,7 @@ static uint32_t procfs_usb_read(fs_node_t *node, uint32_t offset, uint32_t size,
     
     // 遍历所有 USB 设备
     for (int i = 0; i < device_count && len < (int)sizeof(usb_buf) - 128; i++) {
-        usb_device_t *dev = usb_get_device(i);
+        usb_device_t *dev = drivers::Usb::get_device(i);
         if (!dev) continue;
         
         // 获取类别名称（优先使用设备类，否则使用接口类）

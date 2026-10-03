@@ -1114,11 +1114,11 @@ void kernel::Scheduler::timer_tick() {
 #endif
     
     // 更新当前任务的运行时间
-    uint32_t tick_ms = 1000 / timer_get_frequency();
+    uint32_t tick_ms = 1000 / drivers::Timer::get_frequency();
     current_task->runtime_ms += tick_ms;
     
     // 检查睡眠任务是否应该唤醒
-    uint64_t current_time_ms = timer_get_uptime_ms();
+    uint64_t current_time_ms = drivers::Timer::get_uptime_ms();
     
     // 收集需要唤醒的任务（避免在持有锁时调用 kernel::Scheduler::ready_queue_add）
     task_t *tasks_to_wake[MAX_TASKS];
@@ -1267,7 +1267,7 @@ void kernel::Scheduler::sleep(uint32_t ms) {
     bool prev_state = interrupts_disable();
     
     // 计算唤醒时间
-    uint64_t wake_time = timer_get_uptime_ms() + ms;
+    uint64_t wake_time = drivers::Timer::get_uptime_ms() + ms;
     current_task->sleep_until_ms = wake_time;
     current_task->state = TASK_BLOCKED;
     

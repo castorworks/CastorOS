@@ -216,11 +216,11 @@ static void uhci_reset(uhci_controller_t *hc) {
     
     /* 全局复位 */
     uhci_write16(hc, UHCI_REG_USBCMD, UHCI_CMD_GRESET);
-    timer_wait(50);  // 等待 50ms
+    drivers::Timer::wait(50);  // 等待 50ms
     
     /* 清除全局复位 */
     uhci_write16(hc, UHCI_REG_USBCMD, 0);
-    timer_wait(10);
+    drivers::Timer::wait(10);
     
     /* 主机控制器复位 */
     uhci_write16(hc, UHCI_REG_USBCMD, UHCI_CMD_HCRESET);
@@ -228,7 +228,7 @@ static void uhci_reset(uhci_controller_t *hc) {
     /* 等待复位完成 */
     int timeout = 100;
     while ((uhci_read16(hc, UHCI_REG_USBCMD) & UHCI_CMD_HCRESET) && timeout > 0) {
-        timer_wait(1);
+        drivers::Timer::wait(1);
         timeout--;
     }
     
@@ -269,7 +269,7 @@ static void uhci_start(uhci_controller_t *hc) {
  * 端口操作
  * ============================================================================ */
 
-uint16_t uhci_get_port_status(uhci_controller_t *hc, int port) {
+uint16_t drivers::Uhci::get_port_status(uhci_controller_t *hc, int port) {
     if (port < 0 || port >= UHCI_NUM_PORTS) return 0;
     uint16_t reg = (port == 0) ? UHCI_REG_PORTSC1 : UHCI_REG_PORTSC2;
     return uhci_read16(hc, reg);
@@ -281,56 +281,56 @@ static void uhci_set_port_status(uhci_controller_t *hc, int port, uint16_t value
     uhci_write16(hc, reg, value);
 }
 
-bool uhci_port_connected(uhci_controller_t *hc, int port) {
-    return (uhci_get_port_status(hc, port) & UHCI_PORT_CCS) != 0;
+bool drivers::Uhci::port_connected(uhci_controller_t *hc, int port) {
+    return (drivers::Uhci::get_port_status(hc, port) & UHCI_PORT_CCS) != 0;
 }
 
-bool uhci_port_low_speed(uhci_controller_t *hc, int port) {
-    return (uhci_get_port_status(hc, port) & UHCI_PORT_LSDA) != 0;
+bool drivers::Uhci::port_low_speed(uhci_controller_t *hc, int port) {
+    return (drivers::Uhci::get_port_status(hc, port) & UHCI_PORT_LSDA) != 0;
 }
 
-int uhci_reset_port(uhci_controller_t *hc, int port) {
+int drivers::Uhci::reset_port(uhci_controller_t *hc, int port) {
     if (port < 0 || port >= UHCI_NUM_PORTS) return -1;
     
     uint16_t status;
     
     /* 设置复位位 */
-    status = uhci_get_port_status(hc, port);
+    status = drivers::Uhci::get_port_status(hc, port);
     status &= ~UHCI_PORT_W1C_MASK;  // 不清除 W1C 位
     uhci_set_port_status(hc, port, status | UHCI_PORT_PR);
     
     /* 等待至少 50ms */
-    timer_wait(60);
+    drivers::Timer::wait(60);
     
     /* 清除复位位 */
-    status = uhci_get_port_status(hc, port);
+    status = drivers::Uhci::get_port_status(hc, port);
     status &= ~(UHCI_PORT_W1C_MASK | UHCI_PORT_PR);
     uhci_set_port_status(hc, port, status);
     
     /* 等待复位完成 */
-    timer_wait(10);
+    drivers::Timer::wait(10);
     
     /* 清除状态变化位 */
-    status = uhci_get_port_status(hc, port);
+    status = drivers::Uhci::get_port_status(hc, port);
     uhci_set_port_status(hc, port, status | UHCI_PORT_CSC | UHCI_PORT_PEC);
     
-    LOG_DEBUG_MSG("uhci: Port %d reset, status=0x%04x\n", port, uhci_get_port_status(hc, port));
+    LOG_DEBUG_MSG("uhci: Port %d reset, status=0x%04x\n", port, drivers::Uhci::get_port_status(hc, port));
     return 0;
 }
 
-int uhci_enable_port(uhci_controller_t *hc, int port) {
+int drivers::Uhci::enable_port(uhci_controller_t *hc, int port) {
     if (port < 0 || port >= UHCI_NUM_PORTS) return -1;
     
-    uint16_t status = uhci_get_port_status(hc, port);
+    uint16_t status = drivers::Uhci::get_port_status(hc, port);
     
     /* 启用端口 */
     status &= ~UHCI_PORT_W1C_MASK;
     uhci_set_port_status(hc, port, status | UHCI_PORT_PE);
     
-    timer_wait(10);
+    drivers::Timer::wait(10);
     
     /* 验证端口已启用 */
-    status = uhci_get_port_status(hc, port);
+    status = drivers::Uhci::get_port_status(hc, port);
     if (!(status & UHCI_PORT_PE)) {
         LOG_WARN_MSG("uhci: Port %d enable failed\n", port);
         return -1;
@@ -613,7 +613,7 @@ static int uhci_submit_control(uhci_controller_t *hc, usb_urb_t *urb) {
             break;
         }
         
-        timer_wait(1);
+        drivers::Timer::wait(1);
         timeout--;
     }
     
@@ -739,7 +739,7 @@ static int uhci_submit_bulk(uhci_controller_t *hc, usb_urb_t *urb) {
             break;
         }
         
-        timer_wait(1);
+        drivers::Timer::wait(1);
         timeout--;
     }
     
@@ -765,7 +765,7 @@ static int uhci_submit_bulk(uhci_controller_t *hc, usb_urb_t *urb) {
     return (urb->status == URB_STATUS_COMPLETE) ? 0 : urb->status;
 }
 
-int uhci_submit_urb(uhci_controller_t *hc, usb_urb_t *urb) {
+int drivers::Uhci::submit_urb(uhci_controller_t *hc, usb_urb_t *urb) {
     if (!hc || !urb || !urb->device || !urb->endpoint) {
         return -1;
     }
@@ -820,7 +820,7 @@ static void uhci_irq_handler(registers_t *regs) {
         }
         
         /* 检查端口状态变化（热插拔） */
-        uhci_check_port_changes(hc);
+        drivers::Uhci::check_port_changes(hc);
     }
 }
 
@@ -829,27 +829,27 @@ static void uhci_irq_handler(registers_t *regs) {
  * ============================================================================ */
 
 static int uhci_hc_submit_urb(void *hc_data, usb_urb_t *urb) {
-    return uhci_submit_urb((uhci_controller_t *)hc_data, urb);
+    return drivers::Uhci::submit_urb((uhci_controller_t *)hc_data, urb);
 }
 
 static int uhci_hc_reset_port(void *hc_data, int port) {
-    return uhci_reset_port((uhci_controller_t *)hc_data, port);
+    return drivers::Uhci::reset_port((uhci_controller_t *)hc_data, port);
 }
 
 static int uhci_hc_enable_port(void *hc_data, int port) {
-    return uhci_enable_port((uhci_controller_t *)hc_data, port);
+    return drivers::Uhci::enable_port((uhci_controller_t *)hc_data, port);
 }
 
 static uint16_t uhci_hc_get_port_status(void *hc_data, int port) {
-    return uhci_get_port_status((uhci_controller_t *)hc_data, port);
+    return drivers::Uhci::get_port_status((uhci_controller_t *)hc_data, port);
 }
 
 static bool uhci_hc_port_connected(void *hc_data, int port) {
-    return uhci_port_connected((uhci_controller_t *)hc_data, port);
+    return drivers::Uhci::port_connected((uhci_controller_t *)hc_data, port);
 }
 
 static bool uhci_hc_port_low_speed(void *hc_data, int port) {
-    return uhci_port_low_speed((uhci_controller_t *)hc_data, port);
+    return drivers::Uhci::port_low_speed((uhci_controller_t *)hc_data, port);
 }
 
 static int uhci_hc_get_port_count(void *hc_data) {
@@ -891,16 +891,16 @@ static int uhci_init_controller(pci_device_t *pci_dev) {
     hc->irq = pci_dev->interrupt_line;
     
     /* 获取 I/O 基地址（BAR4） */
-    uint32_t bar4 = pci_get_bar_address(pci_dev, 4);
-    if (bar4 == 0 || !pci_bar_is_io(pci_dev, 4)) {
+    uint32_t bar4 = drivers::Pci::get_bar_address(pci_dev, 4);
+    if (bar4 == 0 || !drivers::Pci::bar_is_io(pci_dev, 4)) {
         LOG_ERROR_MSG("uhci: Invalid BAR4\n");
         return -1;
     }
     hc->io_base = (uint16_t)bar4;
     
     /* 启用 PCI 总线主控和 I/O 空间 */
-    pci_enable_bus_master(pci_dev);
-    pci_enable_io_space(pci_dev);
+    drivers::Pci::enable_bus_master(pci_dev);
+    drivers::Pci::enable_io_space(pci_dev);
     
     /* 复位控制器 */
     uhci_reset(hc);
@@ -934,7 +934,7 @@ static int uhci_init_controller(pci_device_t *pci_dev) {
     hc->usb_hc.devices = NULL;
     
     /* 注册到 USB 核心 */
-    usb_register_hc(&hc->usb_hc);
+    drivers::Usb::register_hc(&hc->usb_hc);
     
     uhci_controller_count++;
     
@@ -943,18 +943,18 @@ static int uhci_init_controller(pci_device_t *pci_dev) {
     
     /* 初始化热插拔跟踪 */
     for (int port = 0; port < UHCI_NUM_PORTS; port++) {
-        hc->port_status[port] = uhci_get_port_status(hc, port);
+        hc->port_status[port] = drivers::Uhci::get_port_status(hc, port);
         hc->port_device[port] = NULL;
         
         /* 清除任何挂起的状态变化位 */
         if (hc->port_status[port] & UHCI_PORT_W1C_MASK) {
             uhci_set_port_status(hc, port, hc->port_status[port] | UHCI_PORT_W1C_MASK);
-            hc->port_status[port] = uhci_get_port_status(hc, port);
+            hc->port_status[port] = drivers::Uhci::get_port_status(hc, port);
         }
         
-        if (uhci_port_connected(hc, port)) {
+        if (drivers::Uhci::port_connected(hc, port)) {
             LOG_INFO_MSG("uhci: Device detected on port %d (%s speed)\n",
-                        port, uhci_port_low_speed(hc, port) ? "low" : "full");
+                        port, drivers::Uhci::port_low_speed(hc, port) ? "low" : "full");
         }
     }
     
@@ -964,13 +964,13 @@ static int uhci_init_controller(pci_device_t *pci_dev) {
 /**
  * @brief 初始化 UHCI 驱动
  */
-int uhci_init(void) {
+int drivers::Uhci::init() {
     uhci_controller_count = 0;
     
     /* 扫描 PCI 总线查找 UHCI 控制器 */
-    int pci_count = pci_get_device_count();
+    int pci_count = drivers::Pci::get_device_count();
     for (int i = 0; i < pci_count; i++) {
-        pci_device_t *dev = pci_get_device(i);
+        pci_device_t *dev = drivers::Pci::get_device(i);
         if (dev && 
             dev->class_code == UHCI_PCI_CLASS &&
             dev->subclass == UHCI_PCI_SUBCLASS &&
@@ -991,14 +991,14 @@ int uhci_init(void) {
     return uhci_controller_count;
 }
 
-uhci_controller_t *uhci_get_controller(int index) {
+uhci_controller_t *drivers::Uhci::get_controller(int index) {
     if (index < 0 || index >= uhci_controller_count) {
         return NULL;
     }
     return &uhci_controllers[index];
 }
 
-void uhci_print_info(uhci_controller_t *hc) {
+void drivers::Uhci::print_info(uhci_controller_t *hc) {
     if (!hc) return;
     
     kprintf("UHCI Controller Info:\n");
@@ -1009,11 +1009,11 @@ void uhci_print_info(uhci_controller_t *hc) {
     kprintf("  USBSTS: 0x%04x\n", uhci_read16(hc, UHCI_REG_USBSTS));
     kprintf("  FRNUM: %d\n", uhci_read16(hc, UHCI_REG_FRNUM));
     kprintf("  FRBASEADD: 0x%08x\n", uhci_read32(hc, UHCI_REG_FRBASEADD));
-    kprintf("  Port 0: 0x%04x\n", uhci_get_port_status(hc, 0));
-    kprintf("  Port 1: 0x%04x\n", uhci_get_port_status(hc, 1));
+    kprintf("  Port 0: 0x%04x\n", drivers::Uhci::get_port_status(hc, 0));
+    kprintf("  Port 1: 0x%04x\n", drivers::Uhci::get_port_status(hc, 1));
 }
 
-int uhci_get_controller_count(void) {
+int drivers::Uhci::get_controller_count() {
     return uhci_controller_count;
 }
 
@@ -1021,11 +1021,11 @@ int uhci_get_controller_count(void) {
  * 热插拔支持
  * ============================================================================ */
 
-void uhci_check_port_changes(uhci_controller_t *hc) {
+void drivers::Uhci::check_port_changes(uhci_controller_t *hc) {
     if (!hc) return;
     
     for (int port = 0; port < UHCI_NUM_PORTS; port++) {
-        uint16_t status = uhci_get_port_status(hc, port);
+        uint16_t status = drivers::Uhci::get_port_status(hc, port);
         
         /* 检查连接状态变化 (CSC) */
         if (status & UHCI_PORT_CSC) {
@@ -1044,22 +1044,22 @@ void uhci_check_port_changes(uhci_controller_t *hc) {
             if (connected && !was_connected) {
                 /* 新设备连接 */
                 /* 延迟一下等待设备稳定 */
-                timer_wait(100);
+                drivers::Timer::wait(100);
                 
                 /* 检查设备是否仍然连接 */
-                status = uhci_get_port_status(hc, port);
+                status = drivers::Uhci::get_port_status(hc, port);
                 if (status & UHCI_PORT_CCS) {
-                    usb_device_t *dev = usb_handle_port_connect(&hc->usb_hc, port);
+                    usb_device_t *dev = drivers::Usb::handle_port_connect(&hc->usb_hc, port);
                     hc->port_device[port] = dev;
                 }
             } else if (!connected && was_connected) {
                 /* 设备断开 */
-                usb_handle_port_disconnect(&hc->usb_hc, port);
+                drivers::Usb::handle_port_disconnect(&hc->usb_hc, port);
                 hc->port_device[port] = NULL;
             }
             
             /* 更新记录的端口状态 */
-            hc->port_status[port] = uhci_get_port_status(hc, port);
+            hc->port_status[port] = drivers::Uhci::get_port_status(hc, port);
         }
         
         /* 检查端口使能变化 (PEC) */
@@ -1072,10 +1072,10 @@ void uhci_check_port_changes(uhci_controller_t *hc) {
     }
 }
 
-void uhci_poll_port_changes(void) {
+void drivers::Uhci::poll_port_changes() {
     for (int i = 0; i < uhci_controller_count; i++) {
         uhci_controller_t *hc = &uhci_controllers[i];
-        uhci_check_port_changes(hc);
+        drivers::Uhci::check_port_changes(hc);
     }
 }
 
@@ -1084,7 +1084,7 @@ void uhci_poll_port_changes(void) {
  * 
  * 遍历已枚举的设备，更新 port_device 数组
  */
-void uhci_sync_port_devices(void) {
+void drivers::Uhci::sync_port_devices() {
     for (int i = 0; i < uhci_controller_count; i++) {
         uhci_controller_t *hc = &uhci_controllers[i];
         
@@ -1118,7 +1118,7 @@ static uint32_t uhci_hotplug_timer_id = 0;
  */
 static void uhci_hotplug_timer_callback(void *data) {
     (void)data;
-    uhci_poll_port_changes();
+    drivers::Uhci::poll_port_changes();
 }
 
 /**
@@ -1127,7 +1127,7 @@ static void uhci_hotplug_timer_callback(void *data) {
  * 注册周期性定时器，定期检查端口状态变化
  * 应在系统初始化完成后调用
  */
-void uhci_start_hotplug_monitor(void) {
+void drivers::Uhci::start_hotplug_monitor() {
     if (uhci_controller_count == 0) {
         return;  // 没有 UHCI 控制器，不需要监控
     }
@@ -1136,7 +1136,7 @@ void uhci_start_hotplug_monitor(void) {
         return;  // 已经启动
     }
     
-    uhci_hotplug_timer_id = timer_register_callback(
+    uhci_hotplug_timer_id = drivers::Timer::register_callback(
         uhci_hotplug_timer_callback,
         NULL,
         UHCI_HOTPLUG_POLL_INTERVAL_MS,
@@ -1154,9 +1154,9 @@ void uhci_start_hotplug_monitor(void) {
 /**
  * @brief 停止热插拔监控
  */
-void uhci_stop_hotplug_monitor(void) {
+void drivers::Uhci::stop_hotplug_monitor() {
     if (uhci_hotplug_timer_id != 0) {
-        timer_unregister_callback(uhci_hotplug_timer_id);
+        drivers::Timer::unregister_callback(uhci_hotplug_timer_id);
         uhci_hotplug_timer_id = 0;
         LOG_INFO_MSG("uhci: Hot-plug monitor stopped\n");
     }

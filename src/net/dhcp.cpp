@@ -63,7 +63,7 @@ static dhcp_client_t *dhcp_alloc_client(net::Netdev *dev) {
 static uint32_t dhcp_generate_xid(void) {
     static uint32_t seed = 0x12345678;
     seed = seed * 1103515245 + 12345;
-    return seed ^ (uint32_t)timer_get_uptime_ms();
+    return seed ^ (uint32_t)drivers::Timer::get_uptime_ms();
 }
 
 /**
@@ -426,7 +426,7 @@ static void dhcp_handle_ack(dhcp_client_t *client, dhcp_packet_t *pkt,
     }
     
     // 记录租约开始时间
-    client->info.lease_start = (uint32_t)timer_get_uptime_ms();
+    client->info.lease_start = (uint32_t)drivers::Timer::get_uptime_ms();
     
     // 配置网络接口
     net::Netdev::set_ipaddr(client->dev, client->info.ip_addr);
@@ -636,7 +636,7 @@ dhcp_state_t net::Dhcp::get_status(net::Netdev *dev, dhcp_info_t *info) {
  * @brief DHCP 定时器处理
  */
 void net::Dhcp::timer() {
-    uint32_t now = (uint32_t)timer_get_uptime_ms();
+    uint32_t now = (uint32_t)drivers::Timer::get_uptime_ms();
     
     sync::SpinlockIrqGuard guard(dhcp_lock);
     

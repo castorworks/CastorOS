@@ -220,13 +220,13 @@ static void vga_clear_locked(void) {
     ansi_param_count = 0;
 }
 
-void vga_init(void) {
+void drivers::Vga::init() {
     vga_lock.init();
     sync::SpinlockIrqGuard guard(vga_lock);
     vga_clear_locked();
 }
 
-void vga_clear(void) {
+void drivers::Vga::clear() {
     sync::SpinlockIrqGuard guard(vga_lock);
     vga_clear_locked();
 }
@@ -370,12 +370,12 @@ static void vga_handle_char(char c) {
     vga_update_cursor();
 }
 
-void vga_putchar(char c) {
+void drivers::Vga::putchar(char c) {
     sync::SpinlockIrqGuard guard(vga_lock);
     vga_handle_char(c);
 }
 
-void vga_print(const char *msg) {
+void drivers::Vga::print(const char *msg) {
     if (msg == NULL) {
         return;
     }
@@ -386,12 +386,12 @@ void vga_print(const char *msg) {
     }
 }
 
-void vga_set_color(vga_color_t fg, vga_color_t bg) {
+void drivers::Vga::set_color(vga_color_t fg, vga_color_t bg) {
     sync::SpinlockIrqGuard guard(vga_lock);
     vga_color = vga_make_color(fg, bg);
 }
 
-uint8_t vga_get_color(void) {
+uint8_t drivers::Vga::get_color() {
     sync::SpinlockIrqGuard guard(vga_lock);
     uint8_t color = vga_color;
     return color;

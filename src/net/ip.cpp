@@ -57,14 +57,14 @@ static ip_reassembly_t *ip_reass_find(uint32_t src, uint32_t dst,
             r->dst_ip = dst;
             r->id = id;
             r->protocol = proto;
-            r->timeout = (uint32_t)timer_get_uptime_ms() + IP_REASS_TIMEOUT;
+            r->timeout = (uint32_t)drivers::Timer::get_uptime_ms() + IP_REASS_TIMEOUT;
             r->valid = true;
             return r;
         }
     }
     
     // 表满，尝试替换最旧的（超时的）条目
-    uint32_t now = (uint32_t)timer_get_uptime_ms();
+    uint32_t now = (uint32_t)drivers::Timer::get_uptime_ms();
     for (int i = 0; i < IP_REASS_MAX_ENTRIES; i++) {
         ip_reassembly_t *r = &reass_table[i];
         if (r->valid && now >= r->timeout) {
@@ -231,7 +231,7 @@ static net::Netbuf *ip_reassemble(net::Netdev *dev, net::Netbuf *buf, ip_header_
  * @brief IP 分片重组定时器
  */
 void net::Ip::reass_timer() {
-    uint32_t now = (uint32_t)timer_get_uptime_ms();
+    uint32_t now = (uint32_t)drivers::Timer::get_uptime_ms();
     
     for (int i = 0; i < IP_REASS_MAX_ENTRIES; i++) {
         ip_reassembly_t *r = &reass_table[i];

@@ -7,6 +7,8 @@
  */
 
 #include <drivers/arm/framebuffer.h>
+#include <drivers/framebuffer.h>
+#include <drivers/serial.h>
 #include <drivers/arm/virtio_gpu.h>
 #include <drivers/arm/font8x16.h>
 #include <lib/string.h>
@@ -104,11 +106,11 @@ static void fb_put_pixel_fast(int x, int y, uint32_t pixel) {
     fb_info.buffer[y * fb_info.width + x] = pixel;
 }
 
-static int fb_get_cols(void) {
+int drivers::Framebuffer::get_cols() {
     return fb_info.width / font_width;
 }
 
-static int fb_get_rows(void) {
+int drivers::Framebuffer::get_rows() {
     return fb_info.height / font_height;
 }
 
@@ -116,7 +118,7 @@ static int fb_get_rows(void) {
  * Drawing Functions
  * ========================================================================== */
 
-static void fb_draw_char(int x, int y, char c, color_t fg, color_t bg) {
+void drivers::Framebuffer::draw_char(int x, int y, char c, color_t fg, color_t bg) {
     if (!fb_initialized || !current_font) return;
     
     const uint8_t *glyph = current_font + (unsigned char)c * font_height;
@@ -134,7 +136,7 @@ static void fb_draw_char(int x, int y, char c, color_t fg, color_t bg) {
     mark_dirty(y, y + font_height);
 }
 
-static void fb_fill_rect(int x, int y, int width, int height, color_t color) {
+void drivers::Framebuffer::fill_rect(int x, int y, int width, int height, color_t color) {
     if (!fb_initialized) return;
     
     /* Clamp to screen bounds */
@@ -178,7 +180,7 @@ static void fb_scroll(int lines) {
         
         mark_dirty(0, fb_info.height);
     } else {
-        fb_clear(term_bg);
+        drivers::Framebuffer::clear(term_bg);
     }
 }
 
@@ -234,15 +236,15 @@ static void fb_handle_sgr(void) {
  * Public API
  * ========================================================================== */
 
-bool fb_is_initialized(void) {
+bool drivers::Framebuffer::is_initialized() {
     return fb_initialized;
 }
 
-framebuffer_info_t *fb_get_info(void) {
+framebuffer_info_t *drivers::Framebuffer::get_info() {
     return fb_initialized ? &fb_info : NULL;
 }
 
-void fb_clear(color_t color) {
+void drivers::Framebuffer::clear(color_t color) {
     if (!fb_initialized) return;
     
     uint32_t pixel = color_to_pixel(color);
@@ -253,20 +255,20 @@ void fb_clear(color_t color) {
     }
     
     mark_dirty(0, fb_info.height);
-    fb_flush();
+    drivers::Framebuffer::flush();
 }
 
-void fb_terminal_init(void) {
+void drivers::Framebuffer::terminal_init() {
     /* Initialize virtio-gpu */
-    if (virtio_gpu_init() < 0) {
+    if (drivers::VirtioGpu::init() < 0) {
         serial_puts("fb: virtio-gpu init failed\n");
         return;
     }
     
     /* Setup framebuffer info */
-    fb_info.width = virtio_gpu_get_width();
-    fb_info.height = virtio_gpu_get_height();
-    fb_info.buffer = virtio_gpu_get_framebuffer();
+    fb_info.width = drivers::VirtioGpu::get_width();
+    fb_info.height = drivers::VirtioGpu::get_height();
+    fb_info.buffer = drivers::VirtioGpu::get_framebuffer();
     fb_info.pitch = fb_info.width * 4;
     fb_info.bpp = 32;
     fb_info.format = FB_FORMAT_BGRA8888;
@@ -289,35 +291,34 @@ void fb_terminal_init(void) {
     fb_initialized = true;
     
     /* Clear screen to black */
-    fb_clear(term_bg);
+    drivers::Framebuffer::clear(term_bg);
     
     serial_puts("fb: Terminal initialized (");
-    extern void serial_put_hex32(uint32_t);
-    serial_put_hex32(fb_info.width);
+    drivers::Serial::put_hex32(fb_info.width);
     serial_puts("x");
-    serial_put_hex32(fb_info.height);
+    drivers::Serial::put_hex32(fb_info.height);
     serial_puts(", ");
-    serial_put_hex32(fb_get_cols());
+    drivers::Serial::put_hex32(drivers::Framebuffer::get_cols());
     serial_puts("x");
-    serial_put_hex32(fb_get_rows());
+    drivers::Serial::put_hex32(drivers::Framebuffer::get_rows());
     serial_puts(" chars)\n");
 }
 
-void fb_terminal_clear(void) {
+void drivers::Framebuffer::terminal_clear() {
     if (!fb_initialized) return;
     
-    fb_clear(term_bg);
+    drivers::Framebuffer::clear(term_bg);
     term_cursor_col = 0;
     term_cursor_row = 0;
     ansi_state = ANSI_NORMAL;
     ansi_param_count = 0;
 }
 
-void fb_terminal_putchar(char c) {
+void drivers::Framebuffer::terminal_putchar(char c) {
     if (!fb_initialized) return;
     
-    int max_cols = fb_get_cols();
-    int max_rows = fb_get_rows();
+    int max_cols = drivers::Framebuffer::get_cols();
+    int max_rows = drivers::Framebuffer::get_rows();
     
     /* ANSI escape sequence parsing */
     if (ansi_state == ANSI_NORMAL) {
@@ -361,7 +362,7 @@ void fb_terminal_putchar(char c) {
         } else if (c == 'J') {
             int param = (ansi_param_count > 0) ? ansi_params[0] : 0;
             if (param == 2 || param == 0) {
-                fb_terminal_clear();
+                drivers::Framebuffer::terminal_clear();
             }
             ansi_state = ANSI_NORMAL;
             ansi_param_count = 0;
@@ -398,14 +399,14 @@ void fb_terminal_putchar(char c) {
         case '\b':
             if (term_cursor_col > 0) {
                 term_cursor_col--;
-                fb_fill_rect(term_cursor_col * font_width,
+                drivers::Framebuffer::fill_rect(term_cursor_col * font_width,
                             term_cursor_row * font_height,
                             font_width, font_height, term_bg);
             }
             break;
             
         default:
-            fb_draw_char(term_cursor_col * font_width,
+            drivers::Framebuffer::draw_char(term_cursor_col * font_width,
                         term_cursor_row * font_height,
                         c, term_fg, term_bg);
             term_cursor_col++;
@@ -425,24 +426,24 @@ void fb_terminal_putchar(char c) {
     }
 }
 
-void fb_terminal_write(const char *str) {
+void drivers::Framebuffer::terminal_write(const char *str) {
     if (!str) return;
     
     while (*str) {
-        fb_terminal_putchar(*str++);
+        drivers::Framebuffer::terminal_putchar(*str++);
     }
     
-    fb_flush();
+    drivers::Framebuffer::flush();
 }
 
-void fb_terminal_set_vga_color(uint8_t fg, uint8_t bg) {
+void drivers::Framebuffer::terminal_set_vga_color(uint8_t fg, uint8_t bg) {
     if (fg > 15) fg = 15;
     if (bg > 15) bg = 15;
     term_fg = vga_palette[fg];
     term_bg = vga_palette[bg];
 }
 
-void fb_flush(void) {
+void drivers::Framebuffer::flush() {
     if (!fb_initialized) return;
     
     if (dirty_y_start >= 0 && dirty_y_end > dirty_y_start) {
@@ -450,7 +451,7 @@ void fb_flush(void) {
         if (dirty_y_start < 0) dirty_y_start = 0;
         if (dirty_y_end > (int)fb_info.height) dirty_y_end = fb_info.height;
         
-        virtio_gpu_flush(0, dirty_y_start, fb_info.width, dirty_y_end - dirty_y_start);
+        drivers::VirtioGpu::flush(0, dirty_y_start, fb_info.width, dirty_y_end - dirty_y_start);
         
         dirty_y_start = -1;
         dirty_y_end = -1;

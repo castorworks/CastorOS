@@ -7,12 +7,12 @@
  */
 
 #include <drivers/arm/virtio_gpu.h>
+#include <drivers/serial.h>
 #include <lib/string.h>
 
 /* Forward declarations for serial output */
 extern "C" void serial_puts(const char *str);
 extern "C" void serial_put_hex64(uint64_t value);
-extern void serial_put_hex32(uint32_t value);
 
 /* ============================================================================
  * Configuration
@@ -230,7 +230,7 @@ static int virtio_gpu_cmd(void *cmd, uint32_t cmd_len, void *resp, uint32_t resp
     if (hdr->type >= 0x1200) {
         /* Error response */
         serial_puts("virtio-gpu: Error response type ");
-        serial_put_hex32(hdr->type);
+        drivers::Serial::put_hex32(hdr->type);
         serial_puts("\n");
         return -1;
     }
@@ -265,11 +265,11 @@ static int gpu_get_display_info(void) {
             display_width = resp->pmodes[i].r.width;
             display_height = resp->pmodes[i].r.height;
             serial_puts("virtio-gpu: Display ");
-            serial_put_hex32(i);
+            drivers::Serial::put_hex32(i);
             serial_puts(" enabled: ");
-            serial_put_hex32(display_width);
+            drivers::Serial::put_hex32(display_width);
             serial_puts("x");
-            serial_put_hex32(display_height);
+            drivers::Serial::put_hex32(display_height);
             serial_puts("\n");
             return 0;
         }
@@ -399,7 +399,7 @@ static volatile uint8_t *find_virtio_gpu(void) {
  * Public API
  * ========================================================================== */
 
-int virtio_gpu_init(void) {
+int drivers::VirtioGpu::init() {
     serial_puts("virtio-gpu: Initializing...\n");
     
     /* Find virtio-gpu device */
@@ -412,7 +412,7 @@ int virtio_gpu_init(void) {
     /* Check version - support both legacy (1) and modern (2) */
     uint32_t version = virtio_read32(VIRTIO_MMIO_VERSION);
     serial_puts("virtio-gpu: Version ");
-    serial_put_hex32(version);
+    drivers::Serial::put_hex32(version);
     serial_puts("\n");
     
     if (version != 1 && version != 2) {
@@ -434,7 +434,7 @@ int virtio_gpu_init(void) {
     virtio_write32(VIRTIO_MMIO_DEVICE_FEATURES_SEL, 0);
     uint32_t features = virtio_read32(VIRTIO_MMIO_DEVICE_FEATURES);
     serial_puts("virtio-gpu: Device features: ");
-    serial_put_hex32(features);
+    drivers::Serial::put_hex32(features);
     serial_puts("\n");
     
     virtio_write32(VIRTIO_MMIO_DRIVER_FEATURES_SEL, 0);
@@ -592,23 +592,23 @@ int virtio_gpu_init(void) {
     return 0;
 }
 
-bool virtio_gpu_is_initialized(void) {
+bool drivers::VirtioGpu::is_initialized() {
     return gpu_initialized;
 }
 
-uint32_t virtio_gpu_get_width(void) {
+uint32_t drivers::VirtioGpu::get_width() {
     return display_width;
 }
 
-uint32_t virtio_gpu_get_height(void) {
+uint32_t drivers::VirtioGpu::get_height() {
     return display_height;
 }
 
-uint32_t *virtio_gpu_get_framebuffer(void) {
+uint32_t *drivers::VirtioGpu::get_framebuffer() {
     return framebuffer;
 }
 
-void virtio_gpu_flush(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+void drivers::VirtioGpu::flush(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
     if (!gpu_initialized) return;
     
     /* Clamp to display bounds */
@@ -626,6 +626,6 @@ void virtio_gpu_flush(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
     gpu_resource_flush(FB_RESOURCE_ID, x, y, width, height);
 }
 
-void virtio_gpu_flush_all(void) {
-    virtio_gpu_flush(0, 0, display_width, display_height);
+void drivers::VirtioGpu::flush_all() {
+    drivers::VirtioGpu::flush(0, 0, display_width, display_height);
 }

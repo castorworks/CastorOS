@@ -220,7 +220,7 @@ static void keyboard_callback(registers_t *regs) {
                 modifiers.caps_lock = !modifiers.caps_lock;
                 // 注意：在解锁后更新 LED，避免持锁时长等待
                 keyboard_lock.unlock();
-                keyboard_update_leds();
+                drivers::Keyboard::update_leds();
                 return;
             }
             is_extended = false;
@@ -231,7 +231,7 @@ static void keyboard_callback(registers_t *regs) {
             if (!is_release) {
                 modifiers.num_lock = !modifiers.num_lock;
                 keyboard_lock.unlock();
-                keyboard_update_leds();
+                drivers::Keyboard::update_leds();
                 return;
             }
             is_extended = false;
@@ -242,7 +242,7 @@ static void keyboard_callback(registers_t *regs) {
             if (!is_release) {
                 modifiers.scroll_lock = !modifiers.scroll_lock;
                 keyboard_lock.unlock();
-                keyboard_update_leds();
+                drivers::Keyboard::update_leds();
                 return;
             }
             is_extended = false;
@@ -333,7 +333,7 @@ static void keyboard_callback(registers_t *regs) {
 /**
  * 初始化键盘驱动
  */
-void keyboard_init(void) {
+void drivers::Keyboard::init() {
     LOG_INFO_MSG("Initializing PS/2 keyboard...\n");
     
     /* 初始化锁 */
@@ -363,7 +363,7 @@ void keyboard_init(void) {
 /**
  * 获取修饰键状态
  */
-keyboard_modifiers_t keyboard_get_modifiers(void) {
+keyboard_modifiers_t drivers::Keyboard::get_modifiers() {
     sync::SpinlockIrqGuard guard(keyboard_lock);
     keyboard_modifiers_t result = modifiers;
     return result;
@@ -372,7 +372,7 @@ keyboard_modifiers_t keyboard_get_modifiers(void) {
 /**
  * 检查是否有按键可读
  */
-bool keyboard_has_key(void) {
+bool drivers::Keyboard::has_key() {
     sync::SpinlockIrqGuard guard(keyboard_lock);
     bool has_key = (buffer_read_pos != buffer_write_pos);
     return has_key;
@@ -381,7 +381,7 @@ bool keyboard_has_key(void) {
 /**
  * 读取一个按键（阻塞）
  */
-char keyboard_getchar(void) {
+char drivers::Keyboard::getchar() {
     char c;
     while (!buffer_get(&c)) {
         // 在多任务环境下，使用 kernel::Scheduler::yield() 让出 CPU
@@ -394,18 +394,18 @@ char keyboard_getchar(void) {
 /**
  * 尝试读取一个按键（非阻塞）
  */
-bool keyboard_try_getchar(char *c) {
+bool drivers::Keyboard::try_getchar(char *c) {
     return buffer_get(c);
 }
 
 /**
  * 读取一行文本（阻塞）
  */
-size_t keyboard_getline(char *buffer, size_t size) {
+size_t drivers::Keyboard::getline(char *buffer, size_t size) {
     size_t i = 0;
     
     while (i < size - 1) {
-        char c = keyboard_getchar();
+        char c = drivers::Keyboard::getchar();
         
         if (c == '\n') {
             buffer[i] = '\0';
@@ -427,7 +427,7 @@ size_t keyboard_getline(char *buffer, size_t size) {
 /**
  * 清空键盘缓冲区
  */
-void keyboard_clear_buffer(void) {
+void drivers::Keyboard::clear_buffer() {
     sync::SpinlockIrqGuard guard(keyboard_lock);
     buffer_read_pos = 0;
     buffer_write_pos = 0;
@@ -436,7 +436,7 @@ void keyboard_clear_buffer(void) {
 /**
  * 注册按键事件处理函数
  */
-void keyboard_register_event_handler(key_event_handler_t handler) {
+void drivers::Keyboard::register_event_handler(key_event_handler_t handler) {
     bool irq_state;
     keyboard_lock.lock_irqsave(irq_state);
     event_handler = handler;
@@ -447,7 +447,7 @@ void keyboard_register_event_handler(key_event_handler_t handler) {
 /**
  * 取消注册按键事件处理函数
  */
-void keyboard_unregister_event_handler(void) {
+void drivers::Keyboard::unregister_event_handler() {
     bool irq_state;
     keyboard_lock.lock_irqsave(irq_state);
     event_handler = NULL;
@@ -458,7 +458,7 @@ void keyboard_unregister_event_handler(void) {
 /**
  * 更新键盘 LED 状态
  */
-void keyboard_update_leds(void) {
+void drivers::Keyboard::update_leds() {
     uint8_t led_state = 0;
     
     if (modifiers.scroll_lock) led_state |= 0x01;
@@ -500,7 +500,7 @@ void keyboard_update_leds(void) {
 /**
  * 设置键盘 LED 状态
  */
-void keyboard_set_leds(bool caps_lock, bool num_lock, bool scroll_lock) {
+void drivers::Keyboard::set_leds(bool caps_lock, bool num_lock, bool scroll_lock) {
     bool irq_state;
     keyboard_lock.lock_irqsave(irq_state);
     modifiers.caps_lock = caps_lock;
@@ -509,5 +509,5 @@ void keyboard_set_leds(bool caps_lock, bool num_lock, bool scroll_lock) {
     keyboard_lock.unlock_irqrestore(irq_state);
     
     // LED 更新在解锁后执行，避免持锁时长等待
-    keyboard_update_leds();
+    drivers::Keyboard::update_leds();
 }

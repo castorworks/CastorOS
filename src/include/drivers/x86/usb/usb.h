@@ -328,210 +328,219 @@ typedef struct usb_host_controller {
     struct usb_host_controller *next;
 } usb_host_controller_t;
 
-/* ============================================================================
- * 函数声明
- * ============================================================================ */
+namespace drivers {
 
 /**
- * @brief 初始化 USB 子系统
- * @return 0 成功，-1 失败
+ * @brief USB 核心层
  */
-int usb_init(void);
+class Usb {
+public:
+    /* ============================================================================
+     * 函数声明
+     * ============================================================================ */
 
-/**
- * @brief 注册主机控制器
- * @param hc 主机控制器
- * @return 0 成功，-1 失败
- */
-int usb_register_hc(usb_host_controller_t *hc);
+    /**
+     * @brief 初始化 USB 子系统
+     * @return 0 成功，-1 失败
+     */
+    static int init();
 
-/**
- * @brief 分配 USB 设备结构
- * @return 设备指针，失败返回 NULL
- */
-usb_device_t *usb_alloc_device(void);
+    /**
+     * @brief 注册主机控制器
+     * @param hc 主机控制器
+     * @return 0 成功，-1 失败
+     */
+    static int register_hc(usb_host_controller_t *hc);
 
-/**
- * @brief 释放 USB 设备结构
- * @param dev 设备指针
- */
-void usb_free_device(usb_device_t *dev);
+    /**
+     * @brief 分配 USB 设备结构
+     * @return 设备指针，失败返回 NULL
+     */
+    static usb_device_t *alloc_device();
 
-/**
- * @brief 分配 URB
- * @return URB 指针，失败返回 NULL
- */
-usb_urb_t *usb_alloc_urb(void);
+    /**
+     * @brief 释放 USB 设备结构
+     * @param dev 设备指针
+     */
+    static void free_device(usb_device_t *dev);
 
-/**
- * @brief 释放 URB
- * @param urb URB 指针
- */
-void usb_free_urb(usb_urb_t *urb);
+    /**
+     * @brief 分配 URB
+     * @return URB 指针，失败返回 NULL
+     */
+    static usb_urb_t *alloc_urb();
 
-/**
- * @brief 提交 URB（异步）
- * @param urb URB 指针
- * @return 0 成功，-1 失败
- */
-int usb_submit_urb(usb_urb_t *urb);
+    /**
+     * @brief 释放 URB
+     * @param urb URB 指针
+     */
+    static void free_urb(usb_urb_t *urb);
 
-/**
- * @brief 同步控制传输
- * @param dev 设备
- * @param request_type 请求类型
- * @param request 请求代码
- * @param value 值
- * @param index 索引
- * @param data 数据缓冲区
- * @param length 数据长度
- * @param timeout_ms 超时（毫秒）
- * @return 实际传输长度，<0 错误
- */
-int usb_control_msg(usb_device_t *dev, uint8_t request_type, uint8_t request,
-                    uint16_t value, uint16_t index, void *data, uint16_t length,
-                    uint32_t timeout_ms);
+    /**
+     * @brief 提交 URB（异步）
+     * @param urb URB 指针
+     * @return 0 成功，-1 失败
+     */
+    static int submit_urb(usb_urb_t *urb);
 
-/**
- * @brief 同步批量传输
- * @param dev 设备
- * @param endpoint 端点地址
- * @param data 数据缓冲区
- * @param length 数据长度
- * @param actual_length 实际传输长度（输出）
- * @param timeout_ms 超时（毫秒）
- * @return 0 成功，<0 错误
- */
-int usb_bulk_transfer(usb_device_t *dev, uint8_t endpoint, void *data,
-                      uint32_t length, uint32_t *actual_length, uint32_t timeout_ms);
+    /**
+     * @brief 同步控制传输
+     * @param dev 设备
+     * @param request_type 请求类型
+     * @param request 请求代码
+     * @param value 值
+     * @param index 索引
+     * @param data 数据缓冲区
+     * @param length 数据长度
+     * @param timeout_ms 超时（毫秒）
+     * @return 实际传输长度，<0 错误
+     */
+    static int control_msg(usb_device_t *dev, uint8_t request_type, uint8_t request,
+                        uint16_t value, uint16_t index, void *data, uint16_t length,
+                        uint32_t timeout_ms);
 
-/**
- * @brief 获取描述符
- * @param dev 设备
- * @param type 描述符类型
- * @param index 描述符索引
- * @param buffer 缓冲区
- * @param length 缓冲区长度
- * @return 实际长度，<0 错误
- */
-int usb_get_descriptor(usb_device_t *dev, uint8_t type, uint8_t index,
-                       void *buffer, uint16_t length);
+    /**
+     * @brief 同步批量传输
+     * @param dev 设备
+     * @param endpoint 端点地址
+     * @param data 数据缓冲区
+     * @param length 数据长度
+     * @param actual_length 实际传输长度（输出）
+     * @param timeout_ms 超时（毫秒）
+     * @return 0 成功，<0 错误
+     */
+    static int bulk_transfer(usb_device_t *dev, uint8_t endpoint, void *data,
+                          uint32_t length, uint32_t *actual_length, uint32_t timeout_ms);
 
-/**
- * @brief 设置设备地址
- * @param dev 设备
- * @param address 新地址
- * @return 0 成功，-1 失败
- */
-int usb_set_address(usb_device_t *dev, uint8_t address);
+    /**
+     * @brief 获取描述符
+     * @param dev 设备
+     * @param type 描述符类型
+     * @param index 描述符索引
+     * @param buffer 缓冲区
+     * @param length 缓冲区长度
+     * @return 实际长度，<0 错误
+     */
+    static int get_descriptor(usb_device_t *dev, uint8_t type, uint8_t index,
+                           void *buffer, uint16_t length);
 
-/**
- * @brief 设置配置
- * @param dev 设备
- * @param configuration 配置值
- * @return 0 成功，-1 失败
- */
-int usb_set_configuration(usb_device_t *dev, uint8_t configuration);
+    /**
+     * @brief 设置设备地址
+     * @param dev 设备
+     * @param address 新地址
+     * @return 0 成功，-1 失败
+     */
+    static int set_address(usb_device_t *dev, uint8_t address);
 
-/**
- * @brief 清除端点 HALT
- * @param dev 设备
- * @param endpoint 端点地址
- * @return 0 成功，-1 失败
- */
-int usb_clear_halt(usb_device_t *dev, uint8_t endpoint);
+    /**
+     * @brief 设置配置
+     * @param dev 设备
+     * @param configuration 配置值
+     * @return 0 成功，-1 失败
+     */
+    static int set_configuration(usb_device_t *dev, uint8_t configuration);
 
-/**
- * @brief 设备枚举
- * @param hc 主机控制器
- * @param port 端口号
- * @return 新设备指针，失败返回 NULL
- */
-usb_device_t *usb_enumerate_device(usb_host_controller_t *hc, int port);
+    /**
+     * @brief 清除端点 HALT
+     * @param dev 设备
+     * @param endpoint 端点地址
+     * @return 0 成功，-1 失败
+     */
+    static int clear_halt(usb_device_t *dev, uint8_t endpoint);
 
-/**
- * @brief 注册 USB 驱动
- * @param driver 驱动结构
- * @return 0 成功，-1 失败
- */
-int usb_register_driver(usb_driver_t *driver);
+    /**
+     * @brief 设备枚举
+     * @param hc 主机控制器
+     * @param port 端口号
+     * @return 新设备指针，失败返回 NULL
+     */
+    static usb_device_t *enumerate_device(usb_host_controller_t *hc, int port);
 
-/**
- * @brief 注销 USB 驱动
- * @param driver 驱动结构
- */
-void usb_unregister_driver(usb_driver_t *driver);
+    /**
+     * @brief 注册 USB 驱动
+     * @param driver 驱动结构
+     * @return 0 成功，-1 失败
+     */
+    static int register_driver(usb_driver_t *driver);
 
-/**
- * @brief 查找设备的端点
- * @param dev 设备
- * @param iface_num 接口号
- * @param type 传输类型
- * @param dir 方向
- * @return 端点指针，失败返回 NULL
- */
-usb_endpoint_t *usb_find_endpoint(usb_device_t *dev, uint8_t iface_num,
-                                   uint8_t type, uint8_t dir);
+    /**
+     * @brief 注销 USB 驱动
+     * @param driver 驱动结构
+     */
+    static void unregister_driver(usb_driver_t *driver);
 
-/**
- * @brief 打印 USB 设备信息
- * @param dev 设备
- */
-void usb_print_device_info(usb_device_t *dev);
+    /**
+     * @brief 查找设备的端点
+     * @param dev 设备
+     * @param iface_num 接口号
+     * @param type 传输类型
+     * @param dir 方向
+     * @return 端点指针，失败返回 NULL
+     */
+    static usb_endpoint_t *find_endpoint(usb_device_t *dev, uint8_t iface_num,
+                                       uint8_t type, uint8_t dir);
 
-/**
- * @brief 扫描所有主机控制器的端口
- */
-void usb_scan_devices(void);
+    /**
+     * @brief 打印 USB 设备信息
+     * @param dev 设备
+     */
+    static void print_device_info(usb_device_t *dev);
 
-/**
- * @brief 获取主机控制器链表头
- * @return 主机控制器链表头指针
- */
-usb_host_controller_t *usb_get_hc_list(void);
+    /**
+     * @brief 扫描所有主机控制器的端口
+     */
+    static void scan_devices();
 
-/**
- * @brief 获取 USB 设备数量
- * @return 设备数量
- */
-int usb_get_device_count(void);
+    /**
+     * @brief 获取主机控制器链表头
+     * @return 主机控制器链表头指针
+     */
+    static usb_host_controller_t *get_hc_list();
 
-/**
- * @brief 根据索引获取 USB 设备
- * @param index 设备索引
- * @return 设备指针，失败返回 NULL
- */
-usb_device_t *usb_get_device(int index);
+    /**
+     * @brief 获取 USB 设备数量
+     * @return 设备数量
+     */
+    static int get_device_count();
 
-/**
- * @brief 断开 USB 设备（热插拔移除）
- * @param hc 主机控制器
- * @param dev 设备指针
- */
-void usb_disconnect_device(usb_host_controller_t *hc, usb_device_t *dev);
+    /**
+     * @brief 根据索引获取 USB 设备
+     * @param index 设备索引
+     * @return 设备指针，失败返回 NULL
+     */
+    static usb_device_t *get_device(int index);
 
-/**
- * @brief 在指定端口上查找设备
- * @param hc 主机控制器
- * @param port 端口号
- * @return 设备指针，未找到返回 NULL
- */
-usb_device_t *usb_find_device_by_port(usb_host_controller_t *hc, int port);
+    /**
+     * @brief 断开 USB 设备（热插拔移除）
+     * @param hc 主机控制器
+     * @param dev 设备指针
+     */
+    static void disconnect_device(usb_host_controller_t *hc, usb_device_t *dev);
 
-/**
- * @brief 处理端口连接事件
- * @param hc 主机控制器
- * @param port 端口号
- * @return 新设备指针，失败返回 NULL
- */
-usb_device_t *usb_handle_port_connect(usb_host_controller_t *hc, int port);
+    /**
+     * @brief 在指定端口上查找设备
+     * @param hc 主机控制器
+     * @param port 端口号
+     * @return 设备指针，未找到返回 NULL
+     */
+    static usb_device_t *find_device_by_port(usb_host_controller_t *hc, int port);
 
-/**
- * @brief 处理端口断开事件
- * @param hc 主机控制器
- * @param port 端口号
- */
-void usb_handle_port_disconnect(usb_host_controller_t *hc, int port);
+    /**
+     * @brief 处理端口连接事件
+     * @param hc 主机控制器
+     * @param port 端口号
+     * @return 新设备指针，失败返回 NULL
+     */
+    static usb_device_t *handle_port_connect(usb_host_controller_t *hc, int port);
+
+    /**
+     * @brief 处理端口断开事件
+     * @param hc 主机控制器
+     * @param port 端口号
+     */
+    static void handle_port_disconnect(usb_host_controller_t *hc, int port);
+};
+
+} // namespace drivers
 
 #endif // _DRIVERS_X86_USB_USB_H_
-

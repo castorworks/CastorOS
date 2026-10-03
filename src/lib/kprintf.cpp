@@ -23,14 +23,14 @@ typedef enum {
  */
 static void output_char(char c, output_target_t target) {
     if (target & OUTPUT_SERIAL) {
-        serial_putchar(c);
+        drivers::Serial::putchar(c);
     }
     if (target & OUTPUT_VGA) {
         // 优先使用图形终端，回退到 VGA 文本模式
-        if (fb_is_initialized()) {
-            fb_terminal_putchar(c);
+        if (drivers::Framebuffer::is_initialized()) {
+            drivers::Framebuffer::terminal_putchar(c);
         } else {
-            vga_putchar(c);
+            drivers::Vga::putchar(c);
         }
     }
 }
@@ -41,14 +41,14 @@ static void output_char(char c, output_target_t target) {
  */
 static void output_string(const char *msg, output_target_t target) {
     if (target & OUTPUT_SERIAL) {
-        serial_print(msg);
+        drivers::Serial::print(msg);
     }
     if (target & OUTPUT_VGA) {
         // 优先使用图形终端，回退到 VGA 文本模式
-        if (fb_is_initialized()) {
-            fb_terminal_write(msg);
+        if (drivers::Framebuffer::is_initialized()) {
+            drivers::Framebuffer::terminal_write(msg);
         } else {
-            vga_print(msg);
+            drivers::Vga::print(msg);
         }
     }
 }
@@ -382,8 +382,8 @@ static void vkprintf_internal(const char *fmt, va_list args, output_target_t tar
     }
     
     // 如果输出到 VGA 且使用图形模式，确保刷新
-    if ((target & OUTPUT_VGA) && fb_is_initialized()) {
-        fb_flush();
+    if ((target & OUTPUT_VGA) && drivers::Framebuffer::is_initialized()) {
+        drivers::Framebuffer::flush();
     }
 }
 
@@ -705,10 +705,10 @@ int ksnprintf(char *str, size_t size, const char *fmt, ...) {
  * 自动适配 VGA 文本模式和帧缓冲图形模式
  */
 void kconsole_set_color(kcolor_t fg, kcolor_t bg) {
-    if (fb_is_initialized()) {
-        fb_terminal_set_vga_color((uint8_t)fg, (uint8_t)bg);
+    if (drivers::Framebuffer::is_initialized()) {
+        drivers::Framebuffer::terminal_set_vga_color((uint8_t)fg, (uint8_t)bg);
     } else {
-        vga_set_color((vga_color_t)fg, (vga_color_t)bg);
+        drivers::Vga::set_color((vga_color_t)fg, (vga_color_t)bg);
     }
 }
 
@@ -717,10 +717,10 @@ void kconsole_set_color(kcolor_t fg, kcolor_t bg) {
  * 自动适配 VGA 文本模式和帧缓冲图形模式
  */
 void kconsole_clear(void) {
-    if (fb_is_initialized()) {
-        fb_terminal_clear();
+    if (drivers::Framebuffer::is_initialized()) {
+        drivers::Framebuffer::terminal_clear();
     } else {
-        vga_clear();
+        drivers::Vga::clear();
     }
 }
 

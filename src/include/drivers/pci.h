@@ -16,7 +16,12 @@
 // ARM64 uses ECAM (memory-mapped) for PCI access
 #include <types.h>
 
-static inline void pci_init(void) {}
+namespace drivers {
+class Pci {
+public:
+    static inline void init(void) {}
+};
+} // namespace drivers
 
 #endif
 

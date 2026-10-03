@@ -17,11 +17,16 @@
 
 typedef uint8_t vga_color_t;
 
-static inline void vga_init(void) {}
-static inline void vga_clear(void) {}
-static inline void vga_putchar(char c) { (void)c; }
-static inline void vga_print(const char *str) { (void)str; }
-static inline void vga_set_color(vga_color_t fg, vga_color_t bg) { (void)fg; (void)bg; }
+namespace drivers {
+class Vga {
+public:
+    static inline void init(void) {}
+    static inline void clear(void) {}
+    static inline void putchar(char c) { (void)c; }
+    static inline void print(const char *str) { (void)str; }
+    static inline void set_color(vga_color_t fg, vga_color_t bg) { (void)fg; (void)bg; }
+};
+} // namespace drivers
 
 #endif
 

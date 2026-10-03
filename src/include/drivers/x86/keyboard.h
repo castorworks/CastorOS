@@ -100,73 +100,83 @@ typedef struct {
  */
 typedef void (*key_event_handler_t)(key_event_t *event);
 
-/**
- * 初始化键盘驱动
- */
-void keyboard_init(void);
+namespace drivers {
 
 /**
- * 获取键盘修饰键状态
- * @return 修饰键状态结构
+ * @brief PS/2 键盘驱动
  */
-keyboard_modifiers_t keyboard_get_modifiers(void);
+class Keyboard {
+public:
+    /**
+     * 初始化键盘驱动
+     */
+    static void init();
 
-/**
- * 检查是否有按键可读
- * @return true 如果有按键，false 否则
- */
-bool keyboard_has_key(void);
+    /**
+     * 获取键盘修饰键状态
+     * @return 修饰键状态结构
+     */
+    static keyboard_modifiers_t get_modifiers();
 
-/**
- * 读取一个按键（阻塞）
- * 等待直到有按键可读
- * @return ASCII 字符（如果是可打印字符），否则返回 0
- */
-char keyboard_getchar(void);
+    /**
+     * 检查是否有按键可读
+     * @return true 如果有按键，false 否则
+     */
+    static bool has_key();
 
-/**
- * 尝试读取一个按键（非阻塞）
- * @param c 输出参数，存储读取的字符
- * @return true 如果成功读取，false 如果没有按键
- */
-bool keyboard_try_getchar(char *c);
+    /**
+     * 读取一个按键（阻塞）
+     * 等待直到有按键可读
+     * @return ASCII 字符（如果是可打印字符），否则返回 0
+     */
+    static char getchar();
 
-/**
- * 读取一行文本（阻塞）
- * 读取直到遇到换行符
- * @param buffer 输出缓冲区
- * @param size 缓冲区大小
- * @return 实际读取的字符数
- */
-size_t keyboard_getline(char *buffer, size_t size);
+    /**
+     * 尝试读取一个按键（非阻塞）
+     * @param c 输出参数，存储读取的字符
+     * @return true 如果成功读取，false 如果没有按键
+     */
+    static bool try_getchar(char *c);
 
-/**
- * 清空键盘缓冲区
- */
-void keyboard_clear_buffer(void);
+    /**
+     * 读取一行文本（阻塞）
+     * 读取直到遇到换行符
+     * @param buffer 输出缓冲区
+     * @param size 缓冲区大小
+     * @return 实际读取的字符数
+     */
+    static size_t getline(char *buffer, size_t size);
 
-/**
- * 注册按键事件处理函数
- * @param handler 事件处理函数
- */
-void keyboard_register_event_handler(key_event_handler_t handler);
+    /**
+     * 清空键盘缓冲区
+     */
+    static void clear_buffer();
 
-/**
- * 取消注册按键事件处理函数
- */
-void keyboard_unregister_event_handler(void);
+    /**
+     * 注册按键事件处理函数
+     * @param handler 事件处理函数
+     */
+    static void register_event_handler(key_event_handler_t handler);
 
-/**
- * 更新键盘 LED 状态
- */
-void keyboard_update_leds(void);
+    /**
+     * 取消注册按键事件处理函数
+     */
+    static void unregister_event_handler();
 
-/**
- * 设置键盘 LED 状态
- * @param caps_lock Caps Lock LED 状态
- * @param num_lock Num Lock LED 状态
- * @param scroll_lock Scroll Lock LED 状态
- */
-void keyboard_set_leds(bool caps_lock, bool num_lock, bool scroll_lock);
+    /**
+     * 更新键盘 LED 状态
+     */
+    static void update_leds();
+
+    /**
+     * 设置键盘 LED 状态
+     * @param caps_lock Caps Lock LED 状态
+     * @param num_lock Num Lock LED 状态
+     * @param scroll_lock Scroll Lock LED 状态
+     */
+    static void set_leds(bool caps_lock, bool num_lock, bool scroll_lock);
+};
+
+} // namespace drivers
 
 #endif // _DRIVERS_X86_KEYBOARD_H_

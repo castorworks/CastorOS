@@ -232,10 +232,10 @@ static int32_t ping_ioctl(struct ping_req *req) {
         req->sent++;
         
         // 等待响应（简单实现：轮询等待）
-        uint32_t start_time = (uint32_t)timer_get_uptime_ms();
+        uint32_t start_time = (uint32_t)drivers::Timer::get_uptime_ms();
         uint32_t timeout = req->timeout_ms > 0 ? (uint32_t)req->timeout_ms : 1000;
         
-        while ((uint32_t)timer_get_uptime_ms() - start_time < timeout) {
+        while ((uint32_t)drivers::Timer::get_uptime_ms() - start_time < timeout) {
             int32_t rtt = net::Icmp::get_last_rtt();
             if (rtt >= 0) {
                 req->received++;
@@ -255,8 +255,8 @@ static int32_t ping_ioctl(struct ping_req *req) {
         
         // 间隔 1 秒
         if (i < count - 1) {
-            uint32_t delay_start = (uint32_t)timer_get_uptime_ms();
-            while ((uint32_t)timer_get_uptime_ms() - delay_start < 1000) {
+            uint32_t delay_start = (uint32_t)drivers::Timer::get_uptime_ms();
+            while ((uint32_t)drivers::Timer::get_uptime_ms() - delay_start < 1000) {
                 for (int j = 0; j < 10000; j++) { __asm__ volatile (""); }
             }
         }

@@ -17,7 +17,7 @@
  * @return 系统运行时间（秒）
  */
 uint32_t sys_time(void) {
-    uint32_t uptime_sec = timer_get_uptime_sec();
+    uint32_t uptime_sec = drivers::Timer::get_uptime_sec();
     LOG_DEBUG_MSG("sys_time: returning %u seconds\n", uptime_sec);
     return uptime_sec;
 }

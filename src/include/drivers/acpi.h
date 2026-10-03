@@ -15,9 +15,14 @@
 // ARM64 ACPI support (placeholder)
 #include <types.h>
 
-static inline void acpi_init(void) {}
-static inline void acpi_shutdown(void) {}
-static inline void acpi_reboot(void) {}
+namespace drivers {
+class Acpi {
+public:
+    static inline void init(void) {}
+    static inline void shutdown(void) {}
+    static inline void reboot(void) {}
+};
+} // namespace drivers
 
 #else
 #error "Unknown architecture for ACPI driver"

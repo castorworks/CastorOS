@@ -92,9 +92,9 @@ void system_reboot(void) {
     __asm__ volatile ("cli");
     
     // 方法 1: 尝试 ACPI 重置（如果支持）
-    if (acpi_is_initialized()) {
+    if (drivers::Acpi::is_initialized()) {
         LOG_DEBUG_MSG("System: Trying ACPI reset...\n");
-        acpi_reset();
+        drivers::Acpi::reset();
         // 如果返回说明失败，继续尝试其他方法
     }
     
@@ -129,9 +129,9 @@ void system_poweroff(void) {
     __asm__ volatile ("cli");
     
     // 方法 1: 尝试 ACPI 关机（首选，适用于真实硬件）
-    if (acpi_is_initialized()) {
+    if (drivers::Acpi::is_initialized()) {
         LOG_INFO_MSG("System: Using ACPI for power off...\n");
-        acpi_poweroff();
+        drivers::Acpi::poweroff();
         // 如果返回说明失败，继续尝试其他方法
     } else {
         LOG_WARN_MSG("System: ACPI not available\n");

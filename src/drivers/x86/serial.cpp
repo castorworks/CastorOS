@@ -16,7 +16,7 @@
 /* 串口输出锁 */
 static sync::Spinlock serial_lock;
 
-void serial_init(void) {
+void drivers::Serial::init() {
     serial_lock.init();
     
     outb(COM1 + 1, 0x00);  // 禁用中断
@@ -37,12 +37,12 @@ static void serial_putchar_nolock(char c) {
     outb(COM1, c);
 }
 
-void serial_putchar(char c) {
+void drivers::Serial::putchar(char c) {
     sync::SpinlockIrqGuard guard(serial_lock);
     serial_putchar_nolock(c);
 }
 
-void serial_print(const char *msg) {
+void drivers::Serial::print(const char *msg) {
     sync::SpinlockIrqGuard guard(serial_lock);
     
     while (*msg) {

@@ -60,7 +60,7 @@ static void reset_callback_state(void) {
  * 频率应该是一个合理的正值
  */
 TEST_CASE(test_timer_get_frequency) {
-    uint32_t freq = timer_get_frequency();
+    uint32_t freq = drivers::Timer::get_frequency();
     
     // 频率应该大于 0（timer 已初始化）
     ASSERT_TRUE(freq > 0);
@@ -75,7 +75,7 @@ TEST_CASE(test_timer_get_frequency) {
  * tick 计数应该是有效值
  */
 TEST_CASE(test_timer_get_ticks) {
-    uint64_t ticks = timer_get_ticks();
+    uint64_t ticks = drivers::Timer::get_ticks();
     
     // tick 计数应该是有效值（系统已运行一段时间）
     // 由于系统启动后已经过了一些时间，ticks 应该 > 0
@@ -88,7 +88,7 @@ TEST_CASE(test_timer_get_ticks) {
  * 测试获取系统运行时间（毫秒）
  */
 TEST_CASE(test_timer_get_uptime_ms) {
-    uint64_t uptime_ms = timer_get_uptime_ms();
+    uint64_t uptime_ms = drivers::Timer::get_uptime_ms();
     
     // 运行时间应该是有效值
     // 使用 uptime_ms 变量避免未使用警告
@@ -99,7 +99,7 @@ TEST_CASE(test_timer_get_uptime_ms) {
  * 测试获取系统运行时间（秒）
  */
 TEST_CASE(test_timer_get_uptime_sec) {
-    uint32_t uptime_sec = timer_get_uptime_sec();
+    uint32_t uptime_sec = drivers::Timer::get_uptime_sec();
     
     // 运行时间应该是有效值
     // 使用 uptime_sec 变量避免未使用警告
@@ -111,8 +111,8 @@ TEST_CASE(test_timer_get_uptime_sec) {
  * 毫秒值应该大于等于秒值 * 1000
  */
 TEST_CASE(test_timer_uptime_consistency) {
-    uint64_t uptime_ms = timer_get_uptime_ms();
-    uint32_t uptime_sec = timer_get_uptime_sec();
+    uint64_t uptime_ms = drivers::Timer::get_uptime_ms();
+    uint32_t uptime_sec = drivers::Timer::get_uptime_sec();
     
     // 毫秒值应该大于等于秒值 * 1000（允许一些误差）
     // 由于两次调用之间可能有时间流逝，我们允许 1 秒的误差
@@ -128,7 +128,7 @@ TEST_CASE(test_timer_uptime_consistency) {
  * 应该返回 0（失败）
  */
 TEST_CASE(test_timer_register_null_callback) {
-    uint32_t timer_id = timer_register_callback(NULL, NULL, 100, false);
+    uint32_t timer_id = drivers::Timer::register_callback(NULL, NULL, 100, false);
     
     // 注册 NULL 回调应该失败
     ASSERT_EQ_UINT(0, timer_id);
@@ -139,7 +139,7 @@ TEST_CASE(test_timer_register_null_callback) {
  * 应该返回 0（失败）
  */
 TEST_CASE(test_timer_register_zero_interval) {
-    uint32_t timer_id = timer_register_callback(test_timer_callback, NULL, 0, false);
+    uint32_t timer_id = drivers::Timer::register_callback(test_timer_callback, NULL, 0, false);
     
     // 零间隔应该失败
     ASSERT_EQ_UINT(0, timer_id);
@@ -153,13 +153,13 @@ TEST_CASE(test_timer_register_valid_callback) {
     reset_callback_state();
     
     // 注册一个一次性回调，间隔 1000ms
-    uint32_t timer_id = timer_register_callback(test_timer_callback, NULL, 1000, false);
+    uint32_t timer_id = drivers::Timer::register_callback(test_timer_callback, NULL, 1000, false);
     
     // 应该返回有效的 timer ID
     ASSERT_TRUE(timer_id > 0);
     
     // 清理：取消注册
-    bool result = timer_unregister_callback(timer_id);
+    bool result = drivers::Timer::unregister_callback(timer_id);
     ASSERT_TRUE(result);
 }
 
@@ -169,11 +169,11 @@ TEST_CASE(test_timer_register_valid_callback) {
  */
 TEST_CASE(test_timer_unregister_invalid_id) {
     // 取消 ID 0 应该失败
-    bool result = timer_unregister_callback(0);
+    bool result = drivers::Timer::unregister_callback(0);
     ASSERT_FALSE(result);
     
     // 取消一个很大的无效 ID 应该失败
-    result = timer_unregister_callback(0xFFFFFFFF);
+    result = drivers::Timer::unregister_callback(0xFFFFFFFF);
     ASSERT_FALSE(result);
 }
 
@@ -185,15 +185,15 @@ TEST_CASE(test_timer_unregister_twice) {
     reset_callback_state();
     
     // 注册一个回调
-    uint32_t timer_id = timer_register_callback(test_timer_callback, NULL, 1000, false);
+    uint32_t timer_id = drivers::Timer::register_callback(test_timer_callback, NULL, 1000, false);
     ASSERT_TRUE(timer_id > 0);
     
     // 第一次取消应该成功
-    bool result = timer_unregister_callback(timer_id);
+    bool result = drivers::Timer::unregister_callback(timer_id);
     ASSERT_TRUE(result);
     
     // 第二次取消应该失败
-    result = timer_unregister_callback(timer_id);
+    result = drivers::Timer::unregister_callback(timer_id);
     ASSERT_FALSE(result);
 }
 
@@ -208,21 +208,21 @@ TEST_CASE(test_timer_get_active_count) {
     reset_callback_state();
     
     // 记录初始活动数量
-    uint32_t initial_count = timer_get_active_count();
+    uint32_t initial_count = drivers::Timer::get_active_count();
     
     // 注册一个回调
-    uint32_t timer_id = timer_register_callback(test_timer_callback, NULL, 1000, false);
+    uint32_t timer_id = drivers::Timer::register_callback(test_timer_callback, NULL, 1000, false);
     ASSERT_TRUE(timer_id > 0);
     
     // 活动数量应该增加 1
-    uint32_t new_count = timer_get_active_count();
+    uint32_t new_count = drivers::Timer::get_active_count();
     ASSERT_EQ_UINT(initial_count + 1, new_count);
     
     // 取消注册
-    timer_unregister_callback(timer_id);
+    drivers::Timer::unregister_callback(timer_id);
     
     // 活动数量应该恢复
-    uint32_t final_count = timer_get_active_count();
+    uint32_t final_count = drivers::Timer::get_active_count();
     ASSERT_EQ_UINT(initial_count, final_count);
 }
 
@@ -232,12 +232,12 @@ TEST_CASE(test_timer_get_active_count) {
 TEST_CASE(test_timer_register_multiple_callbacks) {
     reset_callback_state();
     
-    uint32_t initial_count = timer_get_active_count();
+    uint32_t initial_count = drivers::Timer::get_active_count();
     
     // 注册 3 个回调
-    uint32_t id1 = timer_register_callback(test_timer_callback, NULL, 1000, false);
-    uint32_t id2 = timer_register_callback(test_timer_callback, NULL, 2000, false);
-    uint32_t id3 = timer_register_callback(test_timer_callback, NULL, 3000, false);
+    uint32_t id1 = drivers::Timer::register_callback(test_timer_callback, NULL, 1000, false);
+    uint32_t id2 = drivers::Timer::register_callback(test_timer_callback, NULL, 2000, false);
+    uint32_t id3 = drivers::Timer::register_callback(test_timer_callback, NULL, 3000, false);
     
     ASSERT_TRUE(id1 > 0);
     ASSERT_TRUE(id2 > 0);
@@ -249,16 +249,16 @@ TEST_CASE(test_timer_register_multiple_callbacks) {
     ASSERT_NE_UINT(id1, id3);
     
     // 活动数量应该增加 3
-    uint32_t new_count = timer_get_active_count();
+    uint32_t new_count = drivers::Timer::get_active_count();
     ASSERT_EQ_UINT(initial_count + 3, new_count);
     
     // 清理
-    timer_unregister_callback(id1);
-    timer_unregister_callback(id2);
-    timer_unregister_callback(id3);
+    drivers::Timer::unregister_callback(id1);
+    drivers::Timer::unregister_callback(id2);
+    drivers::Timer::unregister_callback(id3);
     
     // 活动数量应该恢复
-    uint32_t final_count = timer_get_active_count();
+    uint32_t final_count = drivers::Timer::get_active_count();
     ASSERT_EQ_UINT(initial_count, final_count);
 }
 
@@ -271,11 +271,11 @@ TEST_CASE(test_timer_register_multiple_callbacks) {
  * 连续读取的 tick 值应该非递减
  */
 TEST_CASE(test_timer_ticks_monotonic) {
-    uint64_t prev_ticks = timer_get_ticks();
+    uint64_t prev_ticks = drivers::Timer::get_ticks();
     
     // 多次读取，验证单调性
     for (int i = 0; i < 10; i++) {
-        uint64_t curr_ticks = timer_get_ticks();
+        uint64_t curr_ticks = drivers::Timer::get_ticks();
         
         // 当前值应该大于等于前一个值
         ASSERT_TRUE(curr_ticks >= prev_ticks);
@@ -288,11 +288,11 @@ TEST_CASE(test_timer_ticks_monotonic) {
  * 测试运行时间单调递增
  */
 TEST_CASE(test_timer_uptime_monotonic) {
-    uint64_t prev_uptime = timer_get_uptime_ms();
+    uint64_t prev_uptime = drivers::Timer::get_uptime_ms();
     
     // 多次读取，验证单调性
     for (int i = 0; i < 10; i++) {
-        uint64_t curr_uptime = timer_get_uptime_ms();
+        uint64_t curr_uptime = drivers::Timer::get_uptime_ms();
         
         // 当前值应该大于等于前一个值
         ASSERT_TRUE(curr_uptime >= prev_uptime);

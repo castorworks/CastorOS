@@ -35,39 +35,39 @@ static inline uint32_t pci_config_address(uint8_t bus, uint8_t slot,
                       (offset & 0xFC));      // 4 字节对齐
 }
 
-uint8_t pci_read_config8(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
+uint8_t drivers::Pci::read_config8(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
     uint32_t address = pci_config_address(bus, slot, func, offset);
     outl(PCI_CONFIG_ADDR, address);
     return inb(PCI_CONFIG_DATA + (offset & 3));
 }
 
-uint16_t pci_read_config16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
+uint16_t drivers::Pci::read_config16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
     uint32_t address = pci_config_address(bus, slot, func, offset);
     outl(PCI_CONFIG_ADDR, address);
     return inw(PCI_CONFIG_DATA + (offset & 2));
 }
 
-uint32_t pci_read_config32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
+uint32_t drivers::Pci::read_config32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
     uint32_t address = pci_config_address(bus, slot, func, offset);
     outl(PCI_CONFIG_ADDR, address);
     return inl(PCI_CONFIG_DATA);
 }
 
-void pci_write_config8(uint8_t bus, uint8_t slot, uint8_t func, 
+void drivers::Pci::write_config8(uint8_t bus, uint8_t slot, uint8_t func, 
                        uint8_t offset, uint8_t value) {
     uint32_t address = pci_config_address(bus, slot, func, offset);
     outl(PCI_CONFIG_ADDR, address);
     outb(PCI_CONFIG_DATA + (offset & 3), value);
 }
 
-void pci_write_config16(uint8_t bus, uint8_t slot, uint8_t func, 
+void drivers::Pci::write_config16(uint8_t bus, uint8_t slot, uint8_t func, 
                         uint8_t offset, uint16_t value) {
     uint32_t address = pci_config_address(bus, slot, func, offset);
     outl(PCI_CONFIG_ADDR, address);
     outw(PCI_CONFIG_DATA + (offset & 2), value);
 }
 
-void pci_write_config32(uint8_t bus, uint8_t slot, uint8_t func, 
+void drivers::Pci::write_config32(uint8_t bus, uint8_t slot, uint8_t func, 
                         uint8_t offset, uint32_t value) {
     uint32_t address = pci_config_address(bus, slot, func, offset);
     outl(PCI_CONFIG_ADDR, address);
@@ -84,16 +84,16 @@ void pci_write_config32(uint8_t bus, uint8_t slot, uint8_t func,
 static uint32_t pci_probe_bar_size(uint8_t bus, uint8_t slot, uint8_t func, 
                                    uint8_t bar_reg) {
     // 保存原始值
-    uint32_t original = pci_read_config32(bus, slot, func, bar_reg);
+    uint32_t original = drivers::Pci::read_config32(bus, slot, func, bar_reg);
     
     // 写入全 1
-    pci_write_config32(bus, slot, func, bar_reg, 0xFFFFFFFF);
+    drivers::Pci::write_config32(bus, slot, func, bar_reg, 0xFFFFFFFF);
     
     // 读回值
-    uint32_t size_mask = pci_read_config32(bus, slot, func, bar_reg);
+    uint32_t size_mask = drivers::Pci::read_config32(bus, slot, func, bar_reg);
     
     // 恢复原始值
-    pci_write_config32(bus, slot, func, bar_reg, original);
+    drivers::Pci::write_config32(bus, slot, func, bar_reg, original);
     
     if (size_mask == 0 || size_mask == 0xFFFFFFFF) {
         return 0;
@@ -111,7 +111,7 @@ static uint32_t pci_probe_bar_size(uint8_t bus, uint8_t slot, uint8_t func,
     return (~size_mask) + 1;
 }
 
-uint32_t pci_get_bar_address(pci_device_t *dev, int bar_index) {
+uint32_t drivers::Pci::get_bar_address(pci_device_t *dev, int bar_index) {
     if (!dev || bar_index < 0 || bar_index >= 6) {
         return 0;
     }
@@ -127,14 +127,14 @@ uint32_t pci_get_bar_address(pci_device_t *dev, int bar_index) {
     }
 }
 
-uint32_t pci_get_bar_size(pci_device_t *dev, int bar_index) {
+uint32_t drivers::Pci::get_bar_size(pci_device_t *dev, int bar_index) {
     if (!dev || bar_index < 0 || bar_index >= 6) {
         return 0;
     }
     return dev->bar_size[bar_index];
 }
 
-bool pci_bar_is_io(pci_device_t *dev, int bar_index) {
+bool drivers::Pci::bar_is_io(pci_device_t *dev, int bar_index) {
     if (!dev || bar_index < 0 || bar_index >= 6) {
         return false;
     }
@@ -145,28 +145,28 @@ bool pci_bar_is_io(pci_device_t *dev, int bar_index) {
  * 设备使能
  * ============================================================================ */
 
-void pci_enable_bus_master(pci_device_t *dev) {
+void drivers::Pci::enable_bus_master(pci_device_t *dev) {
     if (!dev) return;
     
-    uint16_t cmd = pci_read_config16(dev->bus, dev->slot, dev->func, PCI_COMMAND);
+    uint16_t cmd = drivers::Pci::read_config16(dev->bus, dev->slot, dev->func, PCI_COMMAND);
     cmd |= PCI_CMD_BUS_MASTER;
-    pci_write_config16(dev->bus, dev->slot, dev->func, PCI_COMMAND, cmd);
+    drivers::Pci::write_config16(dev->bus, dev->slot, dev->func, PCI_COMMAND, cmd);
 }
 
-void pci_enable_memory_space(pci_device_t *dev) {
+void drivers::Pci::enable_memory_space(pci_device_t *dev) {
     if (!dev) return;
     
-    uint16_t cmd = pci_read_config16(dev->bus, dev->slot, dev->func, PCI_COMMAND);
+    uint16_t cmd = drivers::Pci::read_config16(dev->bus, dev->slot, dev->func, PCI_COMMAND);
     cmd |= PCI_CMD_MEMORY_SPACE;
-    pci_write_config16(dev->bus, dev->slot, dev->func, PCI_COMMAND, cmd);
+    drivers::Pci::write_config16(dev->bus, dev->slot, dev->func, PCI_COMMAND, cmd);
 }
 
-void pci_enable_io_space(pci_device_t *dev) {
+void drivers::Pci::enable_io_space(pci_device_t *dev) {
     if (!dev) return;
     
-    uint16_t cmd = pci_read_config16(dev->bus, dev->slot, dev->func, PCI_COMMAND);
+    uint16_t cmd = drivers::Pci::read_config16(dev->bus, dev->slot, dev->func, PCI_COMMAND);
     cmd |= PCI_CMD_IO_SPACE;
-    pci_write_config16(dev->bus, dev->slot, dev->func, PCI_COMMAND, cmd);
+    drivers::Pci::write_config16(dev->bus, dev->slot, dev->func, PCI_COMMAND, cmd);
 }
 
 /* ============================================================================
@@ -177,7 +177,7 @@ void pci_enable_io_space(pci_device_t *dev) {
  * @brief 检查并添加设备
  */
 static void pci_check_device(uint8_t bus, uint8_t slot, uint8_t func) {
-    uint16_t vendor_id = pci_read_config16(bus, slot, func, PCI_VENDOR_ID);
+    uint16_t vendor_id = drivers::Pci::read_config16(bus, slot, func, PCI_VENDOR_ID);
     
     // 0xFFFF 表示设备不存在
     if (vendor_id == 0xFFFF) {
@@ -197,23 +197,23 @@ static void pci_check_device(uint8_t bus, uint8_t slot, uint8_t func) {
     dev->slot = slot;
     dev->func = func;
     dev->vendor_id = vendor_id;
-    dev->device_id = pci_read_config16(bus, slot, func, PCI_DEVICE_ID);
+    dev->device_id = drivers::Pci::read_config16(bus, slot, func, PCI_DEVICE_ID);
     
     // 类别信息
-    dev->class_code = pci_read_config8(bus, slot, func, PCI_CLASS);
-    dev->subclass = pci_read_config8(bus, slot, func, PCI_SUBCLASS);
-    dev->prog_if = pci_read_config8(bus, slot, func, PCI_PROG_IF);
-    dev->revision = pci_read_config8(bus, slot, func, PCI_REVISION_ID);
+    dev->class_code = drivers::Pci::read_config8(bus, slot, func, PCI_CLASS);
+    dev->subclass = drivers::Pci::read_config8(bus, slot, func, PCI_SUBCLASS);
+    dev->prog_if = drivers::Pci::read_config8(bus, slot, func, PCI_PROG_IF);
+    dev->revision = drivers::Pci::read_config8(bus, slot, func, PCI_REVISION_ID);
     
     // 头类型和中断信息
-    dev->header_type = pci_read_config8(bus, slot, func, PCI_HEADER_TYPE);
-    dev->interrupt_line = pci_read_config8(bus, slot, func, PCI_INTERRUPT_LINE);
-    dev->interrupt_pin = pci_read_config8(bus, slot, func, PCI_INTERRUPT_PIN);
+    dev->header_type = drivers::Pci::read_config8(bus, slot, func, PCI_HEADER_TYPE);
+    dev->interrupt_line = drivers::Pci::read_config8(bus, slot, func, PCI_INTERRUPT_LINE);
+    dev->interrupt_pin = drivers::Pci::read_config8(bus, slot, func, PCI_INTERRUPT_PIN);
     
     // 读取 BAR
     for (int i = 0; i < 6; i++) {
         uint8_t bar_reg = PCI_BAR0 + i * 4;
-        dev->bar[i] = pci_read_config32(bus, slot, func, bar_reg);
+        dev->bar[i] = drivers::Pci::read_config32(bus, slot, func, bar_reg);
         
         if (dev->bar[i] != 0) {
             dev->bar_size[i] = pci_probe_bar_size(bus, slot, func, bar_reg);
@@ -238,7 +238,7 @@ static void pci_check_device(uint8_t bus, uint8_t slot, uint8_t func) {
  * @brief 扫描设备的所有功能
  */
 static void pci_scan_slot(uint8_t bus, uint8_t slot) {
-    uint16_t vendor_id = pci_read_config16(bus, slot, 0, PCI_VENDOR_ID);
+    uint16_t vendor_id = drivers::Pci::read_config16(bus, slot, 0, PCI_VENDOR_ID);
     if (vendor_id == 0xFFFF) {
         return;
     }
@@ -247,7 +247,7 @@ static void pci_scan_slot(uint8_t bus, uint8_t slot) {
     pci_check_device(bus, slot, 0);
     
     // 检查是否是多功能设备
-    uint8_t header_type = pci_read_config8(bus, slot, 0, PCI_HEADER_TYPE);
+    uint8_t header_type = drivers::Pci::read_config8(bus, slot, 0, PCI_HEADER_TYPE);
     if (header_type & 0x80) {  // 多功能设备标志
         // 扫描其他功能
         for (uint8_t func = 1; func < PCI_MAX_FUNC; func++) {
@@ -263,9 +263,9 @@ static void pci_scan_bus(uint8_t bus);
  * @brief 检查并扫描 PCI-to-PCI Bridge 的次级总线
  */
 static void pci_check_bridge(uint8_t bus, uint8_t slot, uint8_t func) {
-    uint8_t class_code = pci_read_config8(bus, slot, func, PCI_CLASS);
-    uint8_t subclass = pci_read_config8(bus, slot, func, PCI_SUBCLASS);
-    uint8_t header_type = pci_read_config8(bus, slot, func, PCI_HEADER_TYPE);
+    uint8_t class_code = drivers::Pci::read_config8(bus, slot, func, PCI_CLASS);
+    uint8_t subclass = drivers::Pci::read_config8(bus, slot, func, PCI_SUBCLASS);
+    uint8_t header_type = drivers::Pci::read_config8(bus, slot, func, PCI_HEADER_TYPE);
     
     /* 检查是否是 PCI-to-PCI Bridge（Header Type 1）*/
     if (class_code == PCI_CLASS_BRIDGE && 
@@ -273,7 +273,7 @@ static void pci_check_bridge(uint8_t bus, uint8_t slot, uint8_t func) {
         (header_type & PCI_HEADER_TYPE_MASK) == PCI_HEADER_TYPE_BRIDGE) {
         
         /* 读取次级总线号 */
-        uint8_t secondary_bus = pci_read_config8(bus, slot, func, PCI_SECONDARY_BUS);
+        uint8_t secondary_bus = drivers::Pci::read_config8(bus, slot, func, PCI_SECONDARY_BUS);
         
         LOG_DEBUG_MSG("pci: Found PCI-to-PCI Bridge at %02x:%02x.%x, secondary bus: %d\n",
                       bus, slot, func, secondary_bus);
@@ -302,11 +302,11 @@ static void pci_scan_bus(uint8_t bus) {
     }
 }
 
-int pci_scan_devices(void) {
+int drivers::Pci::scan_devices() {
     pci_device_count = 0;
     
     // 检查总线 0 设备 0 是否是多功能设备（可能有多个主机桥）
-    uint8_t header_type = pci_read_config8(0, 0, 0, PCI_HEADER_TYPE);
+    uint8_t header_type = drivers::Pci::read_config8(0, 0, 0, PCI_HEADER_TYPE);
     
     if ((header_type & 0x80) == 0) {
         // 单功能设备：只有一条总线
@@ -314,7 +314,7 @@ int pci_scan_devices(void) {
     } else {
         // 多功能设备：可能有多条总线
         for (uint8_t func = 0; func < PCI_MAX_FUNC; func++) {
-            if (pci_read_config16(0, 0, func, PCI_VENDOR_ID) != 0xFFFF) {
+            if (drivers::Pci::read_config16(0, 0, func, PCI_VENDOR_ID) != 0xFFFF) {
                 pci_scan_bus(func);
             }
         }
@@ -328,7 +328,7 @@ int pci_scan_devices(void) {
  * 设备查找
  * ============================================================================ */
 
-pci_device_t *pci_find_device(uint16_t vendor_id, uint16_t device_id) {
+pci_device_t *drivers::Pci::find_device(uint16_t vendor_id, uint16_t device_id) {
     for (int i = 0; i < pci_device_count; i++) {
         if (pci_devices[i].vendor_id == vendor_id &&
             pci_devices[i].device_id == device_id) {
@@ -338,7 +338,7 @@ pci_device_t *pci_find_device(uint16_t vendor_id, uint16_t device_id) {
     return NULL;
 }
 
-pci_device_t *pci_find_class(uint8_t class_code, uint8_t subclass) {
+pci_device_t *drivers::Pci::find_class(uint8_t class_code, uint8_t subclass) {
     for (int i = 0; i < pci_device_count; i++) {
         if (pci_devices[i].class_code == class_code &&
             (subclass == 0xFF || pci_devices[i].subclass == subclass)) {
@@ -348,11 +348,11 @@ pci_device_t *pci_find_class(uint8_t class_code, uint8_t subclass) {
     return NULL;
 }
 
-int pci_get_device_count(void) {
+int drivers::Pci::get_device_count() {
     return pci_device_count;
 }
 
-pci_device_t *pci_get_device(int index) {
+pci_device_t *drivers::Pci::get_device(int index) {
     if (index < 0 || index >= pci_device_count) {
         return NULL;
     }
@@ -363,7 +363,7 @@ pci_device_t *pci_get_device(int index) {
  * 初始化和调试
  * ============================================================================ */
 
-void pci_init(void) {
+void drivers::Pci::init() {
     pci_device_count = 0;
     LOG_INFO_MSG("pci: PCI bus driver initialized\n");
 }
@@ -395,7 +395,7 @@ static const char *pci_class_name(uint8_t class_code) {
     }
 }
 
-void pci_print_device(pci_device_t *dev) {
+void drivers::Pci::print_device(pci_device_t *dev) {
     if (!dev) return;
     
     kprintf("PCI %02x:%02x.%x:\n", dev->bus, dev->slot, dev->func);
@@ -409,19 +409,19 @@ void pci_print_device(pci_device_t *dev) {
     
     for (int i = 0; i < 6; i++) {
         if (dev->bar[i] != 0) {
-            uint32_t addr = pci_get_bar_address(dev, i);
+            uint32_t addr = drivers::Pci::get_bar_address(dev, i);
             kprintf("  BAR%d: 0x%08x (%s, %u KB)\n",
                     i, addr,
-                    pci_bar_is_io(dev, i) ? "I/O" : "MEM",
+                    drivers::Pci::bar_is_io(dev, i) ? "I/O" : "MEM",
                     dev->bar_size[i] / 1024);
         }
     }
 }
 
-void pci_print_all_devices(void) {
+void drivers::Pci::print_all_devices() {
     kprintf("\n===== PCI Devices (%d) =====\n", pci_device_count);
     for (int i = 0; i < pci_device_count; i++) {
-        pci_print_device(&pci_devices[i]);
+        drivers::Pci::print_device(&pci_devices[i]);
         kprintf("\n");
     }
 }

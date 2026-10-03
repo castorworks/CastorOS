@@ -459,7 +459,7 @@ static netdev_ops_t e1000_netdev_ops = {
 /**
  * @brief 处理接收到的数据包
  */
-void e1000_receive(e1000_device_t *dev) {
+void drivers::E1000::receive(e1000_device_t *dev) {
     while (1) {
         uint32_t cur = dev->rx_cur;
         e1000_rx_desc_t *desc = &dev->rx_descs[cur];
@@ -518,7 +518,7 @@ static void e1000_irq_handler(registers_t *regs) {
         
         /* 处理接收中断 */
         if (icr & (E1000_ICR_RXT0 | E1000_ICR_RXDMT0 | E1000_ICR_RXO)) {
-            e1000_receive(dev);
+            drivers::E1000::receive(dev);
         }
         
         /* 处理链路状态变化 */
@@ -562,11 +562,11 @@ static int e1000_init_device(pci_device_t *pci_dev) {
     dev->irq = pci_dev->interrupt_line;
     
     /* 启用 PCI 总线主控和内存空间 */
-    pci_enable_bus_master(pci_dev);
-    pci_enable_memory_space(pci_dev);
+    drivers::Pci::enable_bus_master(pci_dev);
+    drivers::Pci::enable_memory_space(pci_dev);
     
     /* 获取 MMIO 基地址 */
-    uint32_t bar0 = pci_get_bar_address(pci_dev, 0);
+    uint32_t bar0 = drivers::Pci::get_bar_address(pci_dev, 0);
     if (bar0 == 0) {
         LOG_ERROR_MSG("e1000: Invalid BAR0 address\n");
         return -1;
@@ -677,13 +677,13 @@ static const uint16_t e1000_device_ids[] = {
 /**
  * @brief 初始化 E1000 驱动
  */
-int e1000_init(void) {
+int drivers::E1000::init() {
     e1000_mutex.init();
     e1000_device_count = 0;
     
     /* 扫描 PCI 总线查找 E1000 设备 */
     for (int i = 0; e1000_device_ids[i] != 0; i++) {
-        pci_device_t *pci_dev = pci_find_device(E1000_VENDOR_ID, e1000_device_ids[i]);
+        pci_device_t *pci_dev = drivers::Pci::find_device(E1000_VENDOR_ID, e1000_device_ids[i]);
         if (pci_dev) {
             e1000_init_device(pci_dev);
         }
@@ -702,14 +702,14 @@ int e1000_init(void) {
  * 公共 API
  * ============================================================================ */
 
-e1000_device_t *e1000_get_device(int index) {
+e1000_device_t *drivers::E1000::get_device(int index) {
     if (index < 0 || index >= e1000_device_count) {
         return NULL;
     }
     return &e1000_devices[index];
 }
 
-int e1000_send(e1000_device_t *dev, void *data, uint32_t len) {
+int drivers::E1000::send(e1000_device_t *dev, void *data, uint32_t len) {
     net::Netbuf buf;
     buf.data = (uint8_t *)data;
     buf.len = len;
@@ -720,11 +720,11 @@ int e1000_send(e1000_device_t *dev, void *data, uint32_t len) {
     return e1000_netdev_transmit(&dev->netdev, &buf);
 }
 
-void e1000_get_mac(e1000_device_t *dev, uint8_t *mac) {
+void drivers::E1000::get_mac(e1000_device_t *dev, uint8_t *mac) {
     memcpy(mac, dev->mac_addr, 6);
 }
 
-int e1000_set_enable(e1000_device_t *dev, bool enable) {
+int drivers::E1000::set_enable(e1000_device_t *dev, bool enable) {
     if (enable) {
         return e1000_netdev_open(&dev->netdev);
     } else {
@@ -732,12 +732,12 @@ int e1000_set_enable(e1000_device_t *dev, bool enable) {
     }
 }
 
-bool e1000_link_up(e1000_device_t *dev) {
+bool drivers::E1000::link_up(e1000_device_t *dev) {
     e1000_update_link_status(dev);
     return dev->link_up;
 }
 
-void e1000_print_info(e1000_device_t *dev) {
+void drivers::E1000::print_info(e1000_device_t *dev) {
     kprintf("E1000 Device Info:\n");
     kprintf("  Name: %s\n", dev->netdev.name);
     kprintf("  PCI: %02x:%02x.%x\n", dev->bus, dev->slot, dev->func);

@@ -15,7 +15,12 @@
 // ATA is x86-specific, provide empty stubs for other architectures
 #include <types.h>
 
-static inline void ata_init(void) {}
+namespace drivers {
+class Ata {
+public:
+    static inline void init(void) {}
+};
+} // namespace drivers
 
 #endif
 

@@ -16,12 +16,12 @@
  */
 
 #include <types.h>
+#include <drivers/serial.h>
 #include "../include/dtb.h"
 
 /* Forward declarations for serial output */
 extern "C" void serial_puts(const char *str);
 extern "C" void serial_put_hex64(uint64_t value);
-extern void serial_putchar(char c);
 
 /* ============================================================================
  * Helper Functions
@@ -533,7 +533,7 @@ void dtb_print_info(void) {
     
     for (uint32_t i = 0; i < g_dtb_info.num_memory_regions; i++) {
         serial_puts("  [");
-        serial_putchar('0' + i);
+        drivers::Serial::putchar('0' + i);
         serial_puts("] Base: ");
         serial_put_hex64(g_dtb_info.memory[i].base);
         serial_puts(", Size: ");
@@ -553,7 +553,7 @@ void dtb_print_info(void) {
     if (g_dtb_info.gic.found) {
         serial_puts("GIC (Generic Interrupt Controller):\n");
         serial_puts("  Version: ");
-        serial_putchar('0' + g_dtb_info.gic.version);
+        drivers::Serial::putchar('0' + g_dtb_info.gic.version);
         serial_puts("\n");
         serial_puts("  Distributor: ");
         serial_put_hex64(g_dtb_info.gic.distributor_base);

@@ -249,7 +249,7 @@ static int ata_blockdev_write(void *dev_ptr, uint32_t sector, uint32_t count, co
     return result;
 }
 
-void ata_init(void) {
+void drivers::Ata::init() {
     /* 初始化通道 mutex */
     ata_channel_mutex[0].init();  // 主通道
     ata_channel_mutex[1].init();  // 次通道

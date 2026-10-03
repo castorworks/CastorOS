@@ -6,6 +6,7 @@
  */
 
 #include <drivers/framebuffer.h>
+#include <mm/heap.h>
 #include <drivers/font8x16.h>
 #include <mm/vmm.h>
 #include <lib/klog.h>
@@ -170,7 +171,7 @@ static inline void fb_put_pixel_fast(int x, int y, uint32_t pixel) {
  * 初始化函数
  * ============================================================================ */
 
-int fb_init(multiboot_info_t *mbi) {
+int drivers::Framebuffer::init(multiboot_info_t *mbi) {
     if (!mbi) {
         return -1;
     }
@@ -232,7 +233,7 @@ int fb_init(multiboot_info_t *mbi) {
     fb_info.buffer = (uint32_t *)fb_virt;
     
     // 设置默认字体
-    fb_set_font(font8x16_data, 8, 16);
+    drivers::Framebuffer::set_font(font8x16_data, 8, 16);
     
     fb_initialized = true;
     
@@ -240,7 +241,7 @@ int fb_init(multiboot_info_t *mbi) {
     // - 启用：滚屏时在 WB 内存操作更快，但每次输出需要复制到显存
     // - 禁用：直接写入 WC 显存，写入快但滚屏时读取显存慢
     // 根据实际测试选择最佳方案
-    fb_enable_double_buffer();
+    drivers::Framebuffer::enable_double_buffer();
     
     LOG_INFO_MSG("fb: Initialized %ux%u @ %ubpp (format=%d)\n",
                  fb_info.width, fb_info.height, fb_info.bpp, fb_info.format);
@@ -250,11 +251,11 @@ int fb_init(multiboot_info_t *mbi) {
     return 0;
 }
 
-bool fb_is_initialized(void) {
+bool drivers::Framebuffer::is_initialized() {
     return fb_initialized;
 }
 
-framebuffer_info_t *fb_get_info(void) {
+framebuffer_info_t *drivers::Framebuffer::get_info() {
     return fb_initialized ? &fb_info : NULL;
 }
 
@@ -268,7 +269,7 @@ framebuffer_info_t *fb_get_info(void) {
  * 双缓冲在普通内存（WB 模式）中维护后备缓冲区，所有绘制操作在后备缓冲区进行。
  * 这样滚屏等需要读取像素的操作会更快，因为普通内存的读取性能远好于 WC 显存。
  */
-void fb_enable_double_buffer(void) {
+void drivers::Framebuffer::enable_double_buffer() {
     if (double_buffering || !fb_initialized) {
         return;
     }
@@ -276,7 +277,6 @@ void fb_enable_double_buffer(void) {
     uint32_t fb_size = fb_info.pitch * fb_info.height;
     
     // 分配后备缓冲区（使用 kmalloc 在普通内存中分配）
-    extern void *kmalloc(size_t size);
     back_buffer_mem = (uint8_t *)kmalloc(fb_size);
     
     if (!back_buffer_mem) {
@@ -313,7 +313,7 @@ static inline void fb_mark_dirty(int y_start, int y_end) {
  * 
  * 只刷新脏区域以提升性能
  */
-void fb_flush(void) {
+void drivers::Framebuffer::flush() {
     if (!double_buffering || !back_buffer_mem) {
         return;
     }
@@ -341,7 +341,7 @@ void fb_flush(void) {
 /**
  * @brief 强制刷新整个屏幕
  */
-void fb_flush_all(void) {
+void drivers::Framebuffer::flush_all() {
     if (!double_buffering || !back_buffer_mem) {
         return;
     }
@@ -366,7 +366,7 @@ static inline uint8_t *fb_get_draw_buffer(void) {
  * 基础绘图函数
  * ============================================================================ */
 
-void fb_clear(color_t color) {
+void drivers::Framebuffer::clear(color_t color) {
     if (!fb_initialized) return;
     
     uint32_t pixel = color_to_pixel(color);
@@ -392,18 +392,18 @@ void fb_clear(color_t color) {
     // 标记整个屏幕为脏
     if (double_buffering) {
         fb_mark_dirty(0, fb_info.height);
-        fb_flush();  // 清屏后立即刷新
+        drivers::Framebuffer::flush();  // 清屏后立即刷新
     }
 }
 
-void fb_put_pixel(int x, int y, color_t color) {
+void drivers::Framebuffer::put_pixel(int x, int y, color_t color) {
     if (!fb_initialized) return;
     if (x < 0 || x >= (int)fb_info.width || y < 0 || y >= (int)fb_info.height) return;
     
     fb_put_pixel_fast(x, y, color_to_pixel(color));
 }
 
-color_t fb_get_pixel(int x, int y) {
+color_t drivers::Framebuffer::get_pixel(int x, int y) {
     color_t c = {0, 0, 0, 255};
     
     if (!fb_initialized) return c;
@@ -424,7 +424,7 @@ color_t fb_get_pixel(int x, int y) {
     return pixel_to_color(pixel);
 }
 
-void fb_draw_hline(int x, int y, int length, color_t color) {
+void drivers::Framebuffer::draw_hline(int x, int y, int length, color_t color) {
     if (!fb_initialized) return;
     if (y < 0 || y >= (int)fb_info.height) return;
     
@@ -452,7 +452,7 @@ void fb_draw_hline(int x, int y, int length, color_t color) {
     }
 }
 
-void fb_draw_vline(int x, int y, int length, color_t color) {
+void drivers::Framebuffer::draw_vline(int x, int y, int length, color_t color) {
     if (!fb_initialized) return;
     if (x < 0 || x >= (int)fb_info.width) return;
     
@@ -468,7 +468,7 @@ void fb_draw_vline(int x, int y, int length, color_t color) {
     }
 }
 
-void fb_draw_line(int x1, int y1, int x2, int y2, color_t color) {
+void drivers::Framebuffer::draw_line(int x1, int y1, int x2, int y2, color_t color) {
     if (!fb_initialized) return;
     
     // Bresenham 算法
@@ -479,7 +479,7 @@ void fb_draw_line(int x1, int y1, int x2, int y2, color_t color) {
     int err = dx - dy;
     
     while (1) {
-        fb_put_pixel(x1, y1, color);
+        drivers::Framebuffer::put_pixel(x1, y1, color);
         
         if (x1 == x2 && y1 == y2) break;
         
@@ -495,16 +495,16 @@ void fb_draw_line(int x1, int y1, int x2, int y2, color_t color) {
     }
 }
 
-void fb_draw_rect(int x, int y, int width, int height, color_t color) {
+void drivers::Framebuffer::draw_rect(int x, int y, int width, int height, color_t color) {
     if (!fb_initialized) return;
     
-    fb_draw_hline(x, y, width, color);
-    fb_draw_hline(x, y + height - 1, width, color);
-    fb_draw_vline(x, y, height, color);
-    fb_draw_vline(x + width - 1, y, height, color);
+    drivers::Framebuffer::draw_hline(x, y, width, color);
+    drivers::Framebuffer::draw_hline(x, y + height - 1, width, color);
+    drivers::Framebuffer::draw_vline(x, y, height, color);
+    drivers::Framebuffer::draw_vline(x + width - 1, y, height, color);
 }
 
-void fb_fill_rect(int x, int y, int width, int height, color_t color) {
+void drivers::Framebuffer::fill_rect(int x, int y, int width, int height, color_t color) {
     if (!fb_initialized) return;
     
     // 裁剪到屏幕范围
@@ -542,7 +542,7 @@ void fb_fill_rect(int x, int y, int width, int height, color_t color) {
  * 位图操作
  * ============================================================================ */
 
-void fb_blit(int x, int y, int width, int height, const uint32_t *data) {
+void drivers::Framebuffer::blit(int x, int y, int width, int height, const uint32_t *data) {
     if (!fb_initialized || !data) return;
     
     for (int row = 0; row < height; row++) {
@@ -558,13 +558,13 @@ void fb_blit(int x, int y, int width, int height, const uint32_t *data) {
                 c.r = (pixel >> 16) & 0xFF;
                 c.g = (pixel >> 8) & 0xFF;
                 c.b = pixel & 0xFF;
-                fb_put_pixel(px, py, c);
+                drivers::Framebuffer::put_pixel(px, py, c);
             }
         }
     }
 }
 
-void fb_copy_rect(int src_x, int src_y, int dst_x, int dst_y, int width, int height) {
+void drivers::Framebuffer::copy_rect(int src_x, int src_y, int dst_x, int dst_y, int width, int height) {
     if (!fb_initialized) return;
     
     // 简单实现：逐行复制
@@ -573,16 +573,16 @@ void fb_copy_rect(int src_x, int src_y, int dst_x, int dst_y, int width, int hei
         // 从上到下，从左到右
         for (int row = 0; row < height; row++) {
             for (int col = 0; col < width; col++) {
-                color_t c = fb_get_pixel(src_x + col, src_y + row);
-                fb_put_pixel(dst_x + col, dst_y + row, c);
+                color_t c = drivers::Framebuffer::get_pixel(src_x + col, src_y + row);
+                drivers::Framebuffer::put_pixel(dst_x + col, dst_y + row, c);
             }
         }
     } else {
         // 从下到上，从右到左
         for (int row = height - 1; row >= 0; row--) {
             for (int col = width - 1; col >= 0; col--) {
-                color_t c = fb_get_pixel(src_x + col, src_y + row);
-                fb_put_pixel(dst_x + col, dst_y + row, c);
+                color_t c = drivers::Framebuffer::get_pixel(src_x + col, src_y + row);
+                drivers::Framebuffer::put_pixel(dst_x + col, dst_y + row, c);
             }
         }
     }
@@ -592,7 +592,7 @@ void fb_copy_rect(int src_x, int src_y, int dst_x, int dst_y, int width, int hei
  * 文本渲染
  * ============================================================================ */
 
-void fb_set_font(const uint8_t *font_data, int char_width, int char_height) {
+void drivers::Framebuffer::set_font(const uint8_t *font_data, int char_width, int char_height) {
     if (font_data) {
         current_font = font_data;
         font_width = char_width;
@@ -600,7 +600,7 @@ void fb_set_font(const uint8_t *font_data, int char_width, int char_height) {
     }
 }
 
-void fb_draw_char(int x, int y, char c, color_t fg, color_t bg) {
+void drivers::Framebuffer::draw_char(int x, int y, char c, color_t fg, color_t bg) {
     if (!fb_initialized || !current_font) return;
     
     const uint8_t *glyph = current_font + (unsigned char)c * font_height;
@@ -620,7 +620,7 @@ void fb_draw_char(int x, int y, char c, color_t fg, color_t bg) {
     }
 }
 
-void fb_draw_char_transparent(int x, int y, char c, color_t fg) {
+void drivers::Framebuffer::draw_char_transparent(int x, int y, char c, color_t fg) {
     if (!fb_initialized || !current_font) return;
     
     const uint8_t *glyph = current_font + (unsigned char)c * font_height;
@@ -642,7 +642,7 @@ void fb_draw_char_transparent(int x, int y, char c, color_t fg) {
     }
 }
 
-void fb_draw_string(int x, int y, const char *str, color_t fg, color_t bg) {
+void drivers::Framebuffer::draw_string(int x, int y, const char *str, color_t fg, color_t bg) {
     if (!str) return;
     
     int cx = x;
@@ -653,14 +653,14 @@ void fb_draw_string(int x, int y, const char *str, color_t fg, color_t bg) {
         } else if (*str == '\t') {
             cx += font_width * 4;  // Tab = 4 spaces
         } else {
-            fb_draw_char(cx, y, *str, fg, bg);
+            drivers::Framebuffer::draw_char(cx, y, *str, fg, bg);
             cx += font_width;
         }
         str++;
     }
 }
 
-void fb_draw_string_transparent(int x, int y, const char *str, color_t fg) {
+void drivers::Framebuffer::draw_string_transparent(int x, int y, const char *str, color_t fg) {
     if (!str) return;
     
     int cx = x;
@@ -671,27 +671,27 @@ void fb_draw_string_transparent(int x, int y, const char *str, color_t fg) {
         } else if (*str == '\t') {
             cx += font_width * 4;
         } else {
-            fb_draw_char_transparent(cx, y, *str, fg);
+            drivers::Framebuffer::draw_char_transparent(cx, y, *str, fg);
             cx += font_width;
         }
         str++;
     }
 }
 
-int fb_get_font_width(void) {
+int drivers::Framebuffer::get_font_width() {
     return font_width;
 }
 
-int fb_get_font_height(void) {
+int drivers::Framebuffer::get_font_height() {
     return font_height;
 }
 
-int fb_get_cols(void) {
+int drivers::Framebuffer::get_cols() {
     if (!fb_initialized) return 0;
     return fb_info.width / font_width;
 }
 
-int fb_get_rows(void) {
+int drivers::Framebuffer::get_rows() {
     if (!fb_initialized) return 0;
     return fb_info.height / font_height;
 }
@@ -700,7 +700,7 @@ int fb_get_rows(void) {
  * 终端仿真
  * ============================================================================ */
 
-void fb_terminal_init(void) {
+void drivers::Framebuffer::terminal_init() {
     if (!fb_initialized) return;
     
     term_cursor_col = 0;
@@ -713,13 +713,13 @@ void fb_terminal_init(void) {
     ansi_param_count = 0;
     ansi_bold = false;
     
-    fb_clear(term_bg);
+    drivers::Framebuffer::clear(term_bg);
 }
 
-void fb_terminal_clear(void) {
+void drivers::Framebuffer::terminal_clear() {
     if (!fb_initialized) return;
     
-    fb_clear(term_bg);
+    drivers::Framebuffer::clear(term_bg);
     term_cursor_col = 0;
     term_cursor_row = 0;
     
@@ -728,7 +728,7 @@ void fb_terminal_clear(void) {
     ansi_param_count = 0;
 }
 
-void fb_terminal_scroll(int lines) {
+void drivers::Framebuffer::terminal_scroll(int lines) {
     if (!fb_initialized || lines <= 0) return;
     
     int scroll_height = lines * font_height;
@@ -741,7 +741,7 @@ void fb_terminal_scroll(int lines) {
         memmove(draw_buf, draw_buf + scroll_height * fb_info.pitch, 
                 remaining_height * fb_info.pitch);
         
-        // 清空底部区域（需要手动填充，因为 fb_fill_rect 会标记脏区域）
+        // 清空底部区域（需要手动填充，因为 drivers::Framebuffer::fill_rect 会标记脏区域）
         uint32_t pixel = color_to_pixel(term_bg);
         if (fb_info.bpp == 32) {
             uint32_t *p = (uint32_t *)(draw_buf + remaining_height * fb_info.pitch);
@@ -762,15 +762,15 @@ void fb_terminal_scroll(int lines) {
             fb_mark_dirty(0, fb_info.height);
         }
     } else {
-        fb_clear(term_bg);
+        drivers::Framebuffer::clear(term_bg);
     }
 }
 
-void fb_terminal_putchar(char c) {
+void drivers::Framebuffer::terminal_putchar(char c) {
     if (!fb_initialized) return;
     
-    int max_cols = fb_get_cols();
-    int max_rows = fb_get_rows();
+    int max_cols = drivers::Framebuffer::get_cols();
+    int max_rows = drivers::Framebuffer::get_rows();
     
     // ANSI 转义序列解析
     if (ansi_state == ANSI_NORMAL) {
@@ -816,7 +816,7 @@ void fb_terminal_putchar(char c) {
             // 清屏命令
             int param = (ansi_param_count > 0) ? ansi_params[0] : 0;
             if (param == 2 || param == 0) {
-                fb_terminal_clear();
+                drivers::Framebuffer::terminal_clear();
             }
             ansi_state = ANSI_NORMAL;
             ansi_param_count = 0;
@@ -884,7 +884,7 @@ void fb_terminal_putchar(char c) {
             if (term_cursor_col > 0) {
                 term_cursor_col--;
                 // 清除字符
-                fb_fill_rect(term_cursor_col * font_width, 
+                drivers::Framebuffer::fill_rect(term_cursor_col * font_width, 
                             term_cursor_row * font_height,
                             font_width, font_height, term_bg);
             }
@@ -892,7 +892,7 @@ void fb_terminal_putchar(char c) {
             
         default:
             // 绘制字符
-            fb_draw_char(term_cursor_col * font_width, 
+            drivers::Framebuffer::draw_char(term_cursor_col * font_width, 
                         term_cursor_row * font_height,
                         c, term_fg, term_bg);
             term_cursor_col++;
@@ -907,39 +907,39 @@ void fb_terminal_putchar(char c) {
     
     // 处理滚动
     if (term_cursor_row >= max_rows) {
-        fb_terminal_scroll(1);
+        drivers::Framebuffer::terminal_scroll(1);
         term_cursor_row = max_rows - 1;
         // 注意：不在这里刷新，由调用者决定何时刷新
         // 这样连续输出多行时只需刷新一次
     }
     
     // 注意：不在每次换行时刷新，由调用者决定何时刷新
-    // fb_terminal_write, kprintf, devconsole_write 会在结束时刷新
+    // drivers::Framebuffer::terminal_write, kprintf, devconsole_write 会在结束时刷新
 }
 
-void fb_terminal_write(const char *str) {
+void drivers::Framebuffer::terminal_write(const char *str) {
     if (!str) return;
     
     while (*str) {
-        fb_terminal_putchar(*str);
+        drivers::Framebuffer::terminal_putchar(*str);
         str++;
     }
     
     // 写完整个字符串后刷新
-    fb_flush();
+    drivers::Framebuffer::flush();
 }
 
-void fb_terminal_set_color(color_t fg, color_t bg) {
+void drivers::Framebuffer::terminal_set_color(color_t fg, color_t bg) {
     term_fg = fg;
     term_bg = bg;
 }
 
-void fb_terminal_set_cursor(int col, int row) {
+void drivers::Framebuffer::terminal_set_cursor(int col, int row) {
     term_cursor_col = col;
     term_cursor_row = row;
     
-    int max_cols = fb_get_cols();
-    int max_rows = fb_get_rows();
+    int max_cols = drivers::Framebuffer::get_cols();
+    int max_rows = drivers::Framebuffer::get_rows();
     
     if (term_cursor_col < 0) term_cursor_col = 0;
     if (term_cursor_col >= max_cols) term_cursor_col = max_cols - 1;
@@ -947,11 +947,11 @@ void fb_terminal_set_cursor(int col, int row) {
     if (term_cursor_row >= max_rows) term_cursor_row = max_rows - 1;
 }
 
-int fb_terminal_get_cursor_col(void) {
+int drivers::Framebuffer::terminal_get_cursor_col() {
     return term_cursor_col;
 }
 
-int fb_terminal_get_cursor_row(void) {
+int drivers::Framebuffer::terminal_get_cursor_row() {
     return term_cursor_row;
 }
 
@@ -962,7 +962,7 @@ int fb_terminal_get_cursor_row(void) {
 /**
  * 将 VGA 颜色索引转换为 RGB 颜色
  */
-color_t fb_vga_to_color(uint8_t vga_color) {
+color_t drivers::Framebuffer::vga_to_color(uint8_t vga_color) {
     if (vga_color > 15) vga_color = 15;
     return vga_palette[vga_color];
 }
@@ -970,9 +970,9 @@ color_t fb_vga_to_color(uint8_t vga_color) {
 /**
  * 使用 VGA 颜色设置终端颜色
  */
-void fb_terminal_set_vga_color(uint8_t fg, uint8_t bg) {
-    term_fg = fb_vga_to_color(fg);
-    term_bg = fb_vga_to_color(bg);
+void drivers::Framebuffer::terminal_set_vga_color(uint8_t fg, uint8_t bg) {
+    term_fg = drivers::Framebuffer::vga_to_color(fg);
+    term_bg = drivers::Framebuffer::vga_to_color(bg);
 }
 
 /**
@@ -1026,24 +1026,24 @@ static void fb_handle_sgr(void) {
  * 双缓冲兼容接口
  * ============================================================================ */
 
-bool fb_set_double_buffer(bool enable) {
+bool drivers::Framebuffer::set_double_buffer(bool enable) {
     if (enable) {
-        fb_enable_double_buffer();
+        drivers::Framebuffer::enable_double_buffer();
         return double_buffering;
     }
     // 禁用双缓冲暂不支持
     return false;
 }
 
-void fb_swap_buffers(void) {
-    fb_flush_all();
+void drivers::Framebuffer::swap_buffers() {
+    drivers::Framebuffer::flush_all();
 }
 
 /* ============================================================================
  * 调试和工具函数
  * ============================================================================ */
 
-void fb_print_info(void) {
+void drivers::Framebuffer::print_info() {
     if (!fb_initialized) {
         kprintf("Framebuffer: Not initialized\n");
         return;
@@ -1061,7 +1061,7 @@ void fb_print_info(void) {
     kprintf("Physical address: 0x%08x\n", fb_info.address);
     kprintf("Virtual address: 0x%08x\n", (uint32_t)(uintptr_t)fb_info.buffer);
     kprintf("Total size: %u KB\n", (fb_info.pitch * fb_info.height) / 1024);
-    kprintf("Text mode: %u cols x %u rows\n", fb_get_cols(), fb_get_rows());
+    kprintf("Text mode: %u cols x %u rows\n", drivers::Framebuffer::get_cols(), drivers::Framebuffer::get_rows());
     kprintf("Color masks: R(%u@%u) G(%u@%u) B(%u@%u)\n",
             fb_info.red_mask_size, fb_info.red_field_pos,
             fb_info.green_mask_size, fb_info.green_field_pos,
@@ -1069,11 +1069,11 @@ void fb_print_info(void) {
     kprintf("============================\n");
 }
 
-void fb_demo(void) {
+void drivers::Framebuffer::demo() {
     if (!fb_initialized) return;
     
     // 清屏为深蓝色
-    fb_clear((color_t){16, 24, 48, 255});
+    drivers::Framebuffer::clear((color_t){16, 24, 48, 255});
     
     // 绘制彩色矩形
     int rect_width = 80;
@@ -1081,37 +1081,37 @@ void fb_demo(void) {
     int start_x = 50;
     int start_y = 50;
     
-    fb_fill_rect(start_x, start_y, rect_width, rect_height, COLOR_RED);
-    fb_fill_rect(start_x + rect_width + 10, start_y, rect_width, rect_height, COLOR_GREEN);
-    fb_fill_rect(start_x + (rect_width + 10) * 2, start_y, rect_width, rect_height, COLOR_BLUE);
-    fb_fill_rect(start_x + (rect_width + 10) * 3, start_y, rect_width, rect_height, COLOR_YELLOW);
+    drivers::Framebuffer::fill_rect(start_x, start_y, rect_width, rect_height, COLOR_RED);
+    drivers::Framebuffer::fill_rect(start_x + rect_width + 10, start_y, rect_width, rect_height, COLOR_GREEN);
+    drivers::Framebuffer::fill_rect(start_x + (rect_width + 10) * 2, start_y, rect_width, rect_height, COLOR_BLUE);
+    drivers::Framebuffer::fill_rect(start_x + (rect_width + 10) * 3, start_y, rect_width, rect_height, COLOR_YELLOW);
     
     // 绘制线条
     int line_y = start_y + rect_height + 30;
-    fb_draw_line(50, line_y, 350, line_y + 50, COLOR_WHITE);
-    fb_draw_line(50, line_y + 50, 350, line_y, COLOR_CYAN);
+    drivers::Framebuffer::draw_line(50, line_y, 350, line_y + 50, COLOR_WHITE);
+    drivers::Framebuffer::draw_line(50, line_y + 50, 350, line_y, COLOR_CYAN);
     
     // 绘制边框矩形
-    fb_draw_rect(50, line_y + 70, 300, 100, COLOR_MAGENTA);
+    drivers::Framebuffer::draw_rect(50, line_y + 70, 300, 100, COLOR_MAGENTA);
     
     // 绘制渐变
     int gradient_y = line_y + 200;
     for (int i = 0; i < 256; i++) {
         color_t c = {(uint8_t)i, 0, (uint8_t)(255 - i), 255};
-        fb_draw_vline(50 + i, gradient_y, 30, c);
+        drivers::Framebuffer::draw_vline(50 + i, gradient_y, 30, c);
     }
     
     // 显示文本
     int text_y = gradient_y + 50;
-    fb_draw_string(50, text_y, "CastorOS Graphics Mode Demo", COLOR_WHITE, COLOR_BLACK);
+    drivers::Framebuffer::draw_string(50, text_y, "CastorOS Graphics Mode Demo", COLOR_WHITE, COLOR_BLACK);
     
     char res_info[64];
     snprintf(res_info, sizeof(res_info), "Resolution: %ux%u @ %ubpp", 
              fb_info.width, fb_info.height, fb_info.bpp);
-    fb_draw_string(50, text_y + 20, res_info, COLOR_LIGHT_GRAY, COLOR_BLACK);
+    drivers::Framebuffer::draw_string(50, text_y + 20, res_info, COLOR_LIGHT_GRAY, COLOR_BLACK);
     
-    fb_draw_string(50, text_y + 40, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", COLOR_YELLOW, COLOR_BLACK);
-    fb_draw_string(50, text_y + 60, "abcdefghijklmnopqrstuvwxyz", COLOR_CYAN, COLOR_BLACK);
-    fb_draw_string(50, text_y + 80, "0123456789 !@#$%^&*()+-=[]{}|;':\",./<>?", COLOR_GREEN, COLOR_BLACK);
+    drivers::Framebuffer::draw_string(50, text_y + 40, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", COLOR_YELLOW, COLOR_BLACK);
+    drivers::Framebuffer::draw_string(50, text_y + 60, "abcdefghijklmnopqrstuvwxyz", COLOR_CYAN, COLOR_BLACK);
+    drivers::Framebuffer::draw_string(50, text_y + 80, "0123456789 !@#$%^&*()+-=[]{}|;':\",./<>?", COLOR_GREEN, COLOR_BLACK);
 }
 

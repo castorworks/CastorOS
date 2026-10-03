@@ -45,32 +45,48 @@ typedef struct {
     uint8_t blue_mask_size, blue_field_pos;
 } framebuffer_info_t;
 
-/**
- * Check if framebuffer is initialized
- * @return true if initialized
- */
-bool fb_is_initialized(void);
+namespace drivers {
 
 /**
- * Get framebuffer info
- * @return Pointer to framebuffer info, or NULL if not initialized
+ * @brief 帧缓冲与图形终端
  */
-framebuffer_info_t *fb_get_info(void);
+class Framebuffer {
+public:
+    /**
+     * Check if framebuffer is initialized
+     * @return true if initialized
+     */
+    static bool is_initialized();
 
-/**
- * Clear screen with color
- * @param color Fill color
- */
-void fb_clear(color_t color);
+    /**
+     * Get framebuffer info
+     * @return Pointer to framebuffer info, or NULL if not initialized
+     */
+    static framebuffer_info_t *get_info();
 
-/**
- * Terminal functions
- */
-void fb_terminal_init(void);
-void fb_terminal_clear(void);
-void fb_terminal_putchar(char c);
-void fb_terminal_write(const char *str);
-void fb_terminal_set_vga_color(uint8_t fg, uint8_t bg);
-void fb_flush(void);
+    /**
+     * Clear screen with color
+     * @param color Fill color
+     */
+    static void clear(color_t color);
+
+    /**
+     * Terminal functions
+     */
+    static void terminal_init();
+    static void terminal_clear();
+    static void terminal_putchar(char c);
+    static void terminal_write(const char *str);
+    static void terminal_set_vga_color(uint8_t fg, uint8_t bg);
+    static void flush();
+
+    /* 绘图与终端尺寸（与 x86 驱动保持同名接口） */
+    static int get_cols();
+    static int get_rows();
+    static void draw_char(int x, int y, char c, color_t fg, color_t bg);
+    static void fill_rect(int x, int y, int width, int height, color_t color);
+};
+
+} // namespace drivers
 
 #endif /* _DRIVERS_ARM_FRAMEBUFFER_H_ */

@@ -72,7 +72,7 @@ static void timer_callback(registers_t *regs) {
 /**
  * 初始化 PIT
  */
-void timer_init(uint32_t frequency) {
+void drivers::Timer::init(uint32_t frequency) {
     LOG_INFO_MSG("Initializing PIT (Programmable Interval Timer)...\n");
     
     /* 初始化定时器回调数组 */
@@ -120,21 +120,21 @@ void timer_init(uint32_t frequency) {
 /**
  * 获取定时器滴答数
  */
-uint64_t timer_get_ticks(void) {
+uint64_t drivers::Timer::get_ticks() {
     return timer_ticks;
 }
 
 /**
  * 获取定时器频率
  */
-uint32_t timer_get_frequency(void) {
+uint32_t drivers::Timer::get_frequency() {
     return timer_frequency;
 }
 
 /**
  * 获取系统运行时间（毫秒）
  */
-uint64_t timer_get_uptime_ms(void) {
+uint64_t drivers::Timer::get_uptime_ms() {
     if (timer_frequency == 0) {
         return 0;
     }
@@ -144,7 +144,7 @@ uint64_t timer_get_uptime_ms(void) {
 /**
  * 获取系统运行时间（秒）
  */
-uint32_t timer_get_uptime_sec(void) {
+uint32_t drivers::Timer::get_uptime_sec() {
     if (timer_frequency == 0) {
         return 0;
     }
@@ -157,9 +157,9 @@ uint32_t timer_get_uptime_sec(void) {
  * 警告：这是忙等待实现，会占用 CPU
  * 仅用于早期启动阶段或短时间延迟
  */
-void timer_wait(uint32_t ms) {
-    uint64_t target = timer_get_uptime_ms() + ms;
-    while (timer_get_uptime_ms() < target) {
+void drivers::Timer::wait(uint32_t ms) {
+    uint64_t target = drivers::Timer::get_uptime_ms() + ms;
+    while (drivers::Timer::get_uptime_ms() < target) {
         __asm__ volatile("pause");  // 减少功耗
     }
 }
@@ -170,7 +170,7 @@ void timer_wait(uint32_t ms) {
  * 使用 PIT 计数器提供高精度延迟
  * 适用于需要精确短延迟的场景
  */
-void timer_udelay(uint32_t us) {
+void drivers::Timer::udelay(uint32_t us) {
     /* 对于小于 1 毫秒的延迟，使用基于 PIT 计数的方法 */
     if (us == 0) {
         return;
@@ -213,7 +213,7 @@ void timer_udelay(uint32_t us) {
 /**
  * 注册定时器回调
  */
-uint32_t timer_register_callback(timer_callback_t callback, void *data,
+uint32_t drivers::Timer::register_callback(timer_callback_t callback, void *data,
                                   uint32_t interval_ms, bool repeat) {
     if (callback == NULL || interval_ms == 0) {
         LOG_WARN_MSG("Invalid timer callback parameters\n");
@@ -251,7 +251,7 @@ uint32_t timer_register_callback(timer_callback_t callback, void *data,
 /**
  * 取消定时器回调
  */
-bool timer_unregister_callback(uint32_t timer_id) {
+bool drivers::Timer::unregister_callback(uint32_t timer_id) {
     if (timer_id == 0) {
         return false;
     }
@@ -273,6 +273,6 @@ bool timer_unregister_callback(uint32_t timer_id) {
 /**
  * 获取活动定时器数量
  */
-uint32_t timer_get_active_count(void) {
+uint32_t drivers::Timer::get_active_count() {
     return active_timer_count;
 }
