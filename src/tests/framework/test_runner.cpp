@@ -14,7 +14,6 @@
 #include <tests/test_module.h>
 
 // 子系统测试头文件 (x86 only for now)
-#if defined(ARCH_I686) || defined(ARCH_X86_64)
 #include <tests/lib/string_test.h>
 #include <tests/lib/kprintf_test.h>
 #include <tests/lib/klog_test.h>
@@ -49,7 +48,6 @@
 #include <tests/arch/userlib_syscall_test.h>
 #include <tests/pbt/pbt.h>
 #include <tests/examples/ktest_example.h>
-#endif
 
 #ifdef ARCH_X86_64
 #include <tests/arch/x86_64/isr64_test.h>
@@ -279,7 +277,10 @@ typedef struct {
 #define TEST_ENTRY(name, func) { name, func }
 
 static const test_entry_t test_suite[] = {
-#if defined(ARCH_I686) || defined(ARCH_X86_64)
+    // ------------------------------------------------------------------
+    // 通用测试：所有架构都运行
+    // ------------------------------------------------------------------
+
     // 基础库测试 (lib/)
     TEST_ENTRY("String Library Tests", run_string_tests),
     TEST_ENTRY("kprintf Module Tests", run_kprintf_tests),
@@ -288,11 +289,13 @@ static const test_entry_t test_suite[] = {
     
     // 内存管理测试 (mm/)
     TEST_ENTRY("Physical Memory Manager Tests", run_pmm_tests),
-#ifndef ARCH_X86_64
+#ifdef ARCH_I686
+    // 测试用例假设 i686 的地址空间布局，在 64 位架构上不适用
     TEST_ENTRY("Virtual Memory Manager Tests", run_vmm_tests),
 #endif
     TEST_ENTRY("Heap Allocator Tests", run_heap_tests),
-#ifndef ARCH_X86_64
+#ifdef ARCH_I686
+    // 同上：依赖 i686 的上下文/地址布局
     TEST_ENTRY("Task Manager Tests", run_task_tests),
 #endif
     TEST_ENTRY("Memory Management Type Tests", run_mm_types_tests),
@@ -316,6 +319,13 @@ static const test_entry_t test_suite[] = {
     TEST_ENTRY("x86_64 Paging Property Tests", run_paging64_tests),
     TEST_ENTRY("x86_64 User Mode Transition Tests", run_usermode_tests),
 #endif
+
+#ifdef ARCH_ARM64
+    TEST_ENTRY("ARM64 MMU Property Tests", run_arm64_mmu_tests),
+    TEST_ENTRY("ARM64 Exception Register Preservation Tests", run_arm64_exception_tests),
+    TEST_ENTRY("ARM64 Page Fault Interpretation Tests", run_arm64_fault_tests),
+    TEST_ENTRY("ARM64 System Call Integration Tests", run_arm64_syscall_tests),
+#endif
     
     // 内核核心测试 (kernel/)
     TEST_ENTRY("Fork/Exec Verification Tests", run_fork_exec_tests),
@@ -324,28 +334,26 @@ static const test_entry_t test_suite[] = {
     // 文件系统测试 (fs/)
     TEST_ENTRY("VFS Tests", run_vfs_tests),
     TEST_ENTRY("Ramfs Tests", run_ramfs_tests),
-    TEST_ENTRY("FAT32 Tests", run_fat32_tests),
     TEST_ENTRY("Devfs Tests", run_devfs_tests),
-    
+
+    // 驱动测试 (drivers/)
+    TEST_ENTRY("Timer Tests", run_timer_tests),
+    TEST_ENTRY("Serial Tests", run_serial_tests),
+
+    // ------------------------------------------------------------------
+    // 仅 x86：ARM64 内核尚未包含 FAT32、网络协议栈和 PCI
+    // ------------------------------------------------------------------
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
+    TEST_ENTRY("FAT32 Tests", run_fat32_tests),
+
     // 网络测试 (net/)
     TEST_ENTRY("Checksum Tests", run_checksum_tests),
     TEST_ENTRY("Netbuf Tests", run_netbuf_tests),
     TEST_ENTRY("ARP Tests", run_arp_tests),
     TEST_ENTRY("TCP Tests", run_tcp_tests),
-    
-    // 驱动测试 (drivers/)
-    TEST_ENTRY("PCI Tests", run_pci_tests),
-    TEST_ENTRY("Timer Tests", run_timer_tests),
-    TEST_ENTRY("Serial Tests", run_serial_tests),
-#endif /* ARCH_I686 || ARCH_X86_64 */
 
-#ifdef ARCH_ARM64
-    // ARM64-specific tests only
-    TEST_ENTRY("ARM64 MMU Property Tests", run_arm64_mmu_tests),
-    TEST_ENTRY("ARM64 Exception Register Preservation Tests", run_arm64_exception_tests),
-    TEST_ENTRY("ARM64 Page Fault Interpretation Tests", run_arm64_fault_tests),
-    TEST_ENTRY("ARM64 System Call Integration Tests", run_arm64_syscall_tests),
-#endif
+    TEST_ENTRY("PCI Tests", run_pci_tests),
+#endif /* ARCH_I686 || ARCH_X86_64 */
 };
 
 #define TEST_COUNT (sizeof(test_suite) / sizeof(test_suite[0]))

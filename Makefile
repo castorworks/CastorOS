@@ -128,6 +128,16 @@ ifeq ($(ARCH),arm64)
         $(wildcard $(SRC_DIR)/drivers/arm/*.cpp) \
         $(wildcard $(SRC_DIR)/drivers/platform/*.cpp) \
         $(wildcard $(SRC_DIR)/tests/framework/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/lib/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/mm/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/kernel/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/arch/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/pbt/*.cpp) \
+        $(SRC_DIR)/tests/fs/vfs_test.cpp \
+        $(SRC_DIR)/tests/fs/ramfs_test.cpp \
+        $(SRC_DIR)/tests/fs/devfs_test.cpp \
+        $(SRC_DIR)/tests/drivers/timer_test.cpp \
+        $(SRC_DIR)/tests/drivers/serial_test.cpp \
         \
         $(SRC_DIR)/mm/pmm.cpp \
         $(SRC_DIR)/mm/vmm.cpp \

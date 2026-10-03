@@ -48,7 +48,7 @@ TEST_CASE(test_cow_flag_set_query) {
     ASSERT_NE_U(frame, PADDR_INVALID);
     
     // Use a test virtual address in user space
-    vaddr_t test_vaddr = 0x10000000;  // 256MB - safe user space address
+    vaddr_t test_vaddr = KTEST_FREE_VADDR_BASE;  // 空闲的低半区地址
     
     // Map the page with COW flag (read-only + COW)
     uint32_t cow_flags = HAL_PAGE_PRESENT | HAL_PAGE_USER | HAL_PAGE_COW;
@@ -98,7 +98,7 @@ TEST_CASE(test_cow_flag_clear) {
     ASSERT_NE_U(frame, PADDR_INVALID);
     
     // Use a test virtual address
-    vaddr_t test_vaddr = 0x10001000;  // Different from previous test
+    vaddr_t test_vaddr = KTEST_FREE_VADDR_BASE + 0x1000;  // Different from previous test
     
     // Map the page with COW flag
     uint32_t cow_flags = HAL_PAGE_PRESENT | HAL_PAGE_USER | HAL_PAGE_COW;
@@ -150,7 +150,7 @@ TEST_CASE(test_cow_write_mutual_exclusion) {
     ASSERT_NE_U(frame, PADDR_INVALID);
     
     // Use a test virtual address
-    vaddr_t test_vaddr = 0x10002000;
+    vaddr_t test_vaddr = KTEST_FREE_VADDR_BASE + 0x2000;
     
     // Try to map with both COW and WRITE flags
     // The implementation should either:
@@ -246,7 +246,7 @@ TEST_CASE(test_cow_multiple_pages) {
     for (int i = 0; i < NUM_TEST_PAGES; i++) {
         frames[i] = mm::Pmm::alloc_frame();
         ASSERT_NE_U(frames[i], PADDR_INVALID);
-        vaddrs[i] = 0x10010000 + (i * PAGE_SIZE);
+        vaddrs[i] = KTEST_FREE_VADDR_BASE + 0x10000 + (i * PAGE_SIZE);
     }
     
     // Map all pages with COW flag

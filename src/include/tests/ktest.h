@@ -121,7 +121,7 @@ void _assert_ne_str(const char* expected, const char* actual,
 
 // 定义一个测试用例
 #define TEST_CASE(name) \
-    static void test_##name(void)
+    static void __attribute__((unused)) test_##name(void)
 
 // 定义一个测试套件
 #define TEST_SUITE(name) \
@@ -211,6 +211,42 @@ void _assert_ne_str(const char* expected, const char* actual,
 // 手动标记测试通过（可选）
 #define TEST_PASS() \
     return
+
+// ============================================================================
+// 测试用的空闲虚拟地址
+// ============================================================================
+
+/**
+ * @brief 当前（内核）地址空间中未被占用的低半区虚拟地址基址
+ *
+ * 需要临时建立/拆除映射的测试从这里取地址。
+ *   - x86：0x10000000（用户区，内核页目录里没有映射）
+ *   - ARM64：内核引导页表用 1GB block 恒等映射了低 2GB（设备和 RAM），
+ *     4KB 页不能映射到 block 上，所以取 4GB 处
+ */
+#if defined(ARCH_ARM64)
+#define KTEST_FREE_VADDR_BASE   0x100000000ULL
+#else
+#define KTEST_FREE_VADDR_BASE   0x10000000UL
+#endif
+
+/**
+ * @brief 新建用户地址空间中典型的代码页 / 栈页地址，以及一个必定已映射的内核地址
+ *
+ * ARM64 的用户地址空间同样带有低 2GB 的恒等映射（block），x86 上常用的
+ * 0x08048000（落在设备区）和 0x7FFFE000（落在 RAM 恒等映射里）不能再映射 4KB 页，
+ * 因此取用户程序的链接地址和高处的用户栈区域。ARM64 内核镜像位于物理地址
+ * 0x40100000 起，对应的高半区地址是 KERNEL_VIRTUAL_BASE + 0x40100000。
+ */
+#if defined(ARCH_ARM64)
+#define KTEST_USER_CODE_VADDR       0x10000000ULL
+#define KTEST_USER_STACK_VADDR      0x00007FFFFEFFE000ULL
+#define KTEST_KERNEL_MAPPED_VADDR   (KERNEL_VIRTUAL_BASE + 0x40100000ULL)
+#else
+#define KTEST_USER_CODE_VADDR       0x08048000UL
+#define KTEST_USER_STACK_VADDR      0x7FFFE000UL
+#define KTEST_KERNEL_MAPPED_VADDR   (KERNEL_VIRTUAL_BASE + 0x100000)
+#endif
 
 #endif // _TESTS_KTEST_H_
 

@@ -27,7 +27,7 @@
 #endif
 
 // Test virtual addresses in user space
-#define FORK_TEST_VADDR_BASE  0x20000000
+#define FORK_TEST_VADDR_BASE  (KTEST_FREE_VADDR_BASE + 0x10000000)
 #define FORK_TEST_PAGE_COUNT  8
 
 // ============================================================================
@@ -274,7 +274,7 @@ TEST_CASE(test_fork_kernel_space_shared) {
     ASSERT_NE_U(cloned, HAL_ADDR_SPACE_INVALID);
     
     // Test a kernel address
-    vaddr_t kernel_addr = KERNEL_VIRTUAL_BASE + 0x100000;  // 1MB into kernel space
+    vaddr_t kernel_addr = KTEST_KERNEL_MAPPED_VADDR;  // 1MB into kernel space
     
     paddr_t parent_phys = 0, child_phys = 0;
     uint32_t parent_flags = 0, child_flags = 0;
@@ -450,7 +450,7 @@ TEST_CASE(test_exec_page_directory_creation) {
     
     // Property: Kernel space must be mapped
     hal_addr_space_t space = (hal_addr_space_t)new_dir;
-    vaddr_t kernel_addr = KERNEL_VIRTUAL_BASE + 0x100000;
+    vaddr_t kernel_addr = KTEST_KERNEL_MAPPED_VADDR;
     
     paddr_t phys = 0;
     bool mapped = hal::Mmu::query(space, kernel_addr, &phys, NULL);
@@ -477,7 +477,7 @@ TEST_CASE(test_exec_user_stack_setup) {
     ASSERT_NE_U(stack_frame, PADDR_INVALID);
     
     // Map at typical user stack location
-    vaddr_t stack_vaddr = 0x7FFFE000;  // Near top of user space
+    vaddr_t stack_vaddr = KTEST_USER_STACK_VADDR;  // Near top of user space
     
     bool map_ok = mm::Vmm::map_page_in_directory(new_dir, stack_vaddr, (uintptr_t)stack_frame,
                                             PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
@@ -518,7 +518,7 @@ TEST_CASE(test_exec_program_code_mapping) {
     ASSERT_NE_U(code_frame, PADDR_INVALID);
     
     // Map at typical program load address
-    vaddr_t code_vaddr = 0x08048000;  // Typical ELF load address
+    vaddr_t code_vaddr = KTEST_USER_CODE_VADDR;  // Typical program load address
     
     // Code should be readable and executable, but not writable
     bool map_ok = mm::Vmm::map_page_in_directory(new_dir, code_vaddr, (uintptr_t)code_frame,
