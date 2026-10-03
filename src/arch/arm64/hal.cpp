@@ -514,7 +514,14 @@ bool hal::Interrupt::initialized() {
 }
 
 bool hal::Mmu::initialized() {
-    return g_hal_mmu_initialized;
+    if (g_hal_mmu_initialized) {
+        return true;
+    }
+
+    /* Check the actual system state: SCTLR_EL1.M (bit 0) is set once the MMU is on */
+    uint64_t sctlr;
+    __asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
+    return (sctlr & 1) != 0;
 }
 
 void hal_set_mmu_initialized(bool state) {

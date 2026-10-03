@@ -129,6 +129,16 @@ static inline bool desc_is_block(uint64_t desc) {
     return desc_is_valid(desc) && ((desc & DESC_TYPE_MASK) == DESC_TYPE_BLOCK);
 }
 
+/**
+ * @brief 页/块描述符是否允许 EL0（用户态）访问
+ *
+ * AP[1]（bit 6）置位表示 EL0 可访问。只有用户页才参与 COW 和引用计数；
+ * 低半区里仅内核可访问的映射（例如引导阶段的恒等映射）在克隆时原样共享。
+ */
+static inline bool desc_is_user(uint64_t desc) {
+    return (desc & (1ULL << 6)) != 0;
+}
+
 /* ============================================================================
  * ARM64 系统寄存器操作
  * ========================================================================== */
@@ -1140,6 +1150,11 @@ static void free_page_table_recursive(paddr_t table_phys, int level) {
         
         paddr_t frame = desc_get_addr(entry);
         
+        if ((level == 1 || desc_is_block(entry)) && !desc_is_user(entry)) {
+            /* Kernel-only mapping: shared, not reference counted (see clone) */
+            continue;
+        }
+        
         if (level == 1) {
             /* Level 3 (L3): entries point to physical pages */
             /* Decrement reference count for shared pages (COW) */
@@ -1255,6 +1270,13 @@ static bool clone_page_table_recursive(paddr_t src_table_phys, int level,
         
         paddr_t frame = desc_get_addr(entry);
         uint64_t flags = entry & ~DESC_ADDR_MASK;
+        
+        if ((level == 1 || desc_is_block(entry)) && !desc_is_user(entry)) {
+            /* Kernel-only mapping: share it unchanged. Making it read-only + COW
+             * would take write access away from the kernel itself. */
+            dst_table[i] = entry;
+            continue;
+        }
         
         if (level == 1) {
             /* Level 3 (L3): entries point to physical pages */

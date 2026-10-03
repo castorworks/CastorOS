@@ -128,8 +128,8 @@ static inline void unprotect_phys_frame(paddr_t frame) {
     }
 }
 
-#if !defined(ARCH_X86_64)
-/* i686-only helper functions - x86_64 uses boot page tables directly */
+#if defined(ARCH_I686)
+/* i686-only helper functions - 64-bit architectures manage page tables through the HAL */
 static void protect_directory_range(page_directory_t *dir, uint32_t start_idx, uint32_t end_idx) {
     for (uint32_t i = start_idx; i < end_idx; i++) {
         pde_t entry = dir->entries[i];
@@ -203,7 +203,7 @@ static void unregister_page_directory(uintptr_t dir_phys) {
 }
 #endif /* !ARCH_X86_64 */
 
-#if !defined(ARCH_X86_64)
+#if defined(ARCH_I686)
 /**
  * @brief 创建新的页表 (i686 only)
  * @return 成功返回页表虚拟地址，失败返回 NULL
@@ -411,8 +411,9 @@ void mm::Vmm::init() {
  * @return 是否成功处理
  */
 bool mm::Vmm::handle_kernel_page_fault(uintptr_t addr) {
-#if defined(ARCH_X86_64)
-    // x86_64: 引导时已映射所有内核空间，不需要同步
+#if !defined(ARCH_I686)
+    // x86_64 / arm64: 内核空间由所有地址空间共享同一组页表，不需要同步
+    // （下面的同步逻辑按 i686 的两级页目录格式访问 boot_page_directory）
     (void)addr;
     return false;
 #else
@@ -705,7 +706,7 @@ bool mm::Vmm::map_page(uintptr_t virt, uintptr_t phys, uint32_t flags) {
         // 刷新 TLB
         hal::Mmu::flush_tlb((vaddr_t)virt);
         
-#if !defined(ARCH_X86_64)
+#if defined(ARCH_I686)
         // i686: 如果是内核空间的新映射，同步到主内核页目录
         // 这样其他进程可以通过 page fault handler 同步这个新映射
         if (virt >= KERNEL_VIRTUAL_BASE) {
@@ -783,7 +784,7 @@ uintptr_t mm::Vmm::create_page_directory() {
         return 0;
     }
     
-#if !defined(ARCH_X86_64)
+#if defined(ARCH_I686)
     // i686: 注册为活动页目录并保护内核页表
     page_directory_t *new_dir = (page_directory_t*)PHYS_TO_VIRT((uintptr_t)new_space);
     protect_directory_range(new_dir, KERNEL_PDE_START, KERNEL_PDE_END);
@@ -812,7 +813,6 @@ uintptr_t mm::Vmm::clone_page_directory(uintptr_t src_dir_phys) {
     // 
     // **Feature: arm64-kernel-integration**
     // **Validates: Requirements 7.1**
-    bool irq_state;
     hal_addr_space_t new_space;
     {
         sync::SpinlockIrqGuard guard(vmm_lock);
@@ -989,7 +989,7 @@ uintptr_t mm::Vmm::clone_page_directory(uintptr_t src_dir_phys) {
 #endif /* !ARCH_X86_64 */
 }
 
-#if !defined(ARCH_X86_64)
+#if defined(ARCH_I686)
 /**
  * @brief 检查页目录是否被任何任务使用 (i686 only)
  * @param dir_phys 页目录的物理地址
@@ -1024,8 +1024,9 @@ static bool is_page_directory_in_use(uintptr_t dir_phys) {
 void mm::Vmm::free_page_directory(uintptr_t dir_phys) {
     if (!dir_phys) return;
     
-#if defined(ARCH_X86_64)
-    // x86_64: 使用 HAL 接口销毁地址空间
+#if defined(ARCH_X86_64) || defined(ARCH_ARM64)
+    // 64 位架构（4 级页表）：使用 HAL 接口销毁地址空间。
+    // 下面 #else 分支按 i686 的两级页目录格式遍历，不能用于这些架构。
     
     // 【安全检查】防止释放当前正在使用的页目录
     if (dir_phys == current_dir_phys) {
@@ -1034,7 +1035,6 @@ void mm::Vmm::free_page_directory(uintptr_t dir_phys) {
         return;
     }
     
-    bool irq_state;
     {
         sync::SpinlockIrqGuard guard(vmm_lock);
         hal::Mmu::destroy_space((hal_addr_space_t)dir_phys);
@@ -1277,9 +1277,9 @@ void mm::Vmm::cleanup_empty_page_tables(uintptr_t dir_phys, uintptr_t start_virt
     
     page_directory_t *dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
     
-#if defined(ARCH_X86_64)
-    // x86_64: 4-level paging - more complex cleanup needed
-    // For now, skip cleanup on x86_64 as it requires walking multiple levels
+#if !defined(ARCH_I686)
+    // x86_64 / arm64: 4-level paging - more complex cleanup needed
+    // For now, skip cleanup as it requires walking multiple levels
     (void)dir;
     (void)start_virt;
     (void)end_virt;
