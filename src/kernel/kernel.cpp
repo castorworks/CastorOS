@@ -322,14 +322,9 @@ void kernel_main(void *dtb_addr) {
     // ========================================================================
     // 单元测试
     // ========================================================================
-#if 0  // Temporarily disabled for user program testing - tests cause crash
     LOG_INFO_MSG("Running test suite...\n");
     run_all_tests();
     kprintf("\n");
-#else
-    LOG_INFO_MSG("Test suite skipped for user program testing\n");
-    kprintf("\n");
-#endif
 
     // ========================================================================
     // 阶段 6: 调度器启动 (ARM64)

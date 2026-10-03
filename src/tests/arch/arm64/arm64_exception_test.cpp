@@ -251,6 +251,8 @@ TEST_CASE(arm64_exception_source_constants) {
 
 /* Test suite runner */
 void run_arm64_exception_tests(void) {
+    unittest_init();
+
     unittest_begin_suite("ARM64 Exception Register Preservation Tests");
     unittest_run_test("register struct size", test_arm64_register_struct_size);
     unittest_run_test("register struct offsets", test_arm64_register_struct_offsets);
@@ -263,6 +265,8 @@ void run_arm64_exception_tests(void) {
     unittest_run_test("exception type constants", test_arm64_exception_type_constants);
     unittest_run_test("exception source constants", test_arm64_exception_source_constants);
     unittest_end_suite();
+
+    unittest_print_summary();
 }
 
 #else /* !ARCH_ARM64 */
