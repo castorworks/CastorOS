@@ -33,22 +33,22 @@ static fs_node_t *try_init_fat32_on_device(blockdev_t *ata_dev, const char *dev_
     uint32_t partition_count = 0;
 
     // 首先尝试从分区中查找 FAT32
-    if (partition_parse(ata_dev, partitions, &partition_count) == 0 && partition_count > 0) {
+    if (fs::Partition::parse(ata_dev, partitions, &partition_count) == 0 && partition_count > 0) {
         for (uint32_t i = 0; i < partition_count; i++) {
             partition_t *part = &partitions[i];
-            blockdev_t *part_dev = partition_create_blockdev(part);
+            blockdev_t *part_dev = fs::Partition::create_blockdev(part);
             if (!part_dev) {
                 continue;
             }
 
-            if (fat32_probe(part_dev)) {
+            if (fs::Fat32::probe(part_dev)) {
                 LOG_INFO_MSG("fs: FAT32 partition detected on %s (index %u)\n", 
                              dev_name, (unsigned int)part->index);
-                fs_node_t *fat32_root = fat32_init(part_dev);
+                fs_node_t *fat32_root = fs::Fat32::init(part_dev);
                 if (fat32_root) {
                     LOG_INFO_MSG("fs: FAT32 initialized successfully as root filesystem on %s\n", dev_name);
                     // 注意：不销毁 part_dev，因为 FAT32 文件系统需要持续使用它
-                    // fat32_init 内部已经调用了 blockdev_retain 来保留引用
+                    // fs::Fat32::init 内部已经调用了 blockdev_retain 来保留引用
                     return fat32_root;
                 } else {
                     LOG_WARN_MSG("fs: Failed to initialize FAT32 on %s partition %u\n", 
@@ -56,13 +56,13 @@ static fs_node_t *try_init_fat32_on_device(blockdev_t *ata_dev, const char *dev_
                 }
             }
 
-            partition_destroy_blockdev(part_dev);
+            fs::Partition::destroy_blockdev(part_dev);
         }
     } else {
         // 如果没有分区，尝试将整个磁盘作为 FAT32
         LOG_WARN_MSG("fs: No partitions found on %s, attempting whole-disk FAT32\n", dev_name);
-        if (fat32_probe(ata_dev)) {
-            fs_node_t *fat32_root = fat32_init(ata_dev);
+        if (fs::Fat32::probe(ata_dev)) {
+            fs_node_t *fat32_root = fs::Fat32::init(ata_dev);
             if (fat32_root) {
                 LOG_INFO_MSG("fs: FAT32 initialized successfully on whole disk %s\n", dev_name);
                 return fat32_root;
@@ -76,7 +76,7 @@ static fs_node_t *try_init_fat32_on_device(blockdev_t *ata_dev, const char *dev_
 }
 
 void fs_init(void) {
-    vfs_init();
+    fs::Vfs::init();
 
     fs_node_t *root = NULL;
     
@@ -97,7 +97,7 @@ void fs_init(void) {
     // 第二步：如果 FAT32 不可用，回退到 RAMFS
     if (!root) {
         LOG_WARN_MSG("fs: No usable FAT32 filesystem found, falling back to RAMFS\n");
-        root = ramfs_init();
+        root = fs::Ramfs::init();
         if (!root) {
             LOG_ERROR_MSG("Failed to initialize RAMFS\n");
             return;
@@ -105,10 +105,10 @@ void fs_init(void) {
         LOG_INFO_MSG("RAMFS initialized as root filesystem\n");
     }
 
-    vfs_set_root(root);
+    fs::Vfs::set_root(root);
 
     // 第三步：初始化 devfs
-    fs_node_t *devfs_root = devfs_init();
+    fs_node_t *devfs_root = fs::Devfs::init();
     if (!devfs_root) {
         LOG_ERROR_MSG("Failed to initialize devfs\n");
         return;
@@ -118,14 +118,14 @@ void fs_init(void) {
     // 第四步：创建虚拟文件系统挂载点并挂载 devfs
     // 注意：/dev 是虚拟的，不应该持久化到磁盘
     // 如果创建失败，继续尝试挂载（可能已经存在）
-    if (vfs_mkdir("/dev", FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC) != 0) {
+    if (fs::Vfs::mkdir("/dev", FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC) != 0) {
         LOG_WARN_MSG("Failed to create /dev directory (may already exist)\n");
     } else {
         LOG_INFO_MSG("/dev directory created\n");
     }
 
     // 尝试挂载 devfs
-    if (vfs_mount("/dev", devfs_root) != 0) {
+    if (fs::Vfs::mount("/dev", devfs_root) != 0) {
         LOG_ERROR_MSG("Failed to mount devfs to /dev\n");
         // 不返回错误，系统可以继续运行，只是没有 /dev
     } else {
@@ -133,21 +133,21 @@ void fs_init(void) {
     }
 
     // 第五步：初始化 procfs
-    fs_node_t *procfs_root = procfs_init();
+    fs_node_t *procfs_root = fs::Procfs::init();
     if (!procfs_root) {
         LOG_ERROR_MSG("Failed to initialize procfs\n");
         return;
     }
 
     // 创建 /proc 目录并挂载 procfs
-    if (vfs_mkdir("/proc", FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC) != 0) {
+    if (fs::Vfs::mkdir("/proc", FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC) != 0) {
         LOG_WARN_MSG("Failed to create /proc directory (may already exist)\n");
     } else {
         LOG_INFO_MSG("/proc directory created\n");
     }
 
     // 尝试挂载 procfs
-    if (vfs_mount("/proc", procfs_root) != 0) {
+    if (fs::Vfs::mount("/proc", procfs_root) != 0) {
         LOG_ERROR_MSG("Failed to mount procfs to /proc\n");
         // 不返回错误，系统可以继续运行，只是没有 /proc
     } else {
@@ -155,21 +155,21 @@ void fs_init(void) {
     }
 
     // 第六步：初始化 shmfs（共享内存文件系统）
-    fs_node_t *shmfs_root = shmfs_init();
+    fs_node_t *shmfs_root = fs::Shmfs::init();
     if (!shmfs_root) {
         LOG_ERROR_MSG("Failed to initialize shmfs\n");
         return;
     }
 
     // 创建 /shm 目录并挂载 shmfs
-    if (vfs_mkdir("/shm", FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC) != 0) {
+    if (fs::Vfs::mkdir("/shm", FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC) != 0) {
         LOG_WARN_MSG("Failed to create /shm directory (may already exist)\n");
     } else {
         LOG_INFO_MSG("/shm directory created\n");
     }
 
     // 尝试挂载 shmfs
-    if (vfs_mount("/shm", shmfs_root) != 0) {
+    if (fs::Vfs::mount("/shm", shmfs_root) != 0) {
         LOG_ERROR_MSG("Failed to mount shmfs to /shm\n");
         // 不返回错误，系统可以继续运行，只是没有 /shm
     } else {

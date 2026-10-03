@@ -247,35 +247,35 @@ void kernel_main(void *dtb_addr) {
     LOG_INFO_MSG("  [5.1] Task management initialized\n");
     
     // 5.2 Initialize file system (VFS + ramfs + devfs)
-    vfs_init();
+    fs::Vfs::init();
     LOG_INFO_MSG("  [5.2] VFS core initialized\n");
     
-    fs_node_t *ramfs_root = ramfs_init();
+    fs_node_t *ramfs_root = fs::Ramfs::init();
     if (ramfs_root) {
-        vfs_set_root(ramfs_root);
+        fs::Vfs::set_root(ramfs_root);
         LOG_INFO_MSG("  [5.3] RAMFS initialized as root filesystem\n");
         
         // Initialize devfs
-        fs_node_t *devfs_root = devfs_init();
+        fs_node_t *devfs_root = fs::Devfs::init();
         if (devfs_root) {
-            vfs_mkdir("/dev", FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC);
-            vfs_mount("/dev", devfs_root);
+            fs::Vfs::mkdir("/dev", FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC);
+            fs::Vfs::mount("/dev", devfs_root);
             LOG_INFO_MSG("  [5.4] DevFS mounted at /dev\n");
         }
         
         // Create standard directories
-        vfs_mkdir("/bin", FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC);
-        vfs_mkdir("/tmp", FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC);
+        fs::Vfs::mkdir("/bin", FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC);
+        fs::Vfs::mkdir("/tmp", FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC);
         LOG_INFO_MSG("  [5.5] Standard directories created\n");
         
         // Write embedded user programs to ramfs
         if (embedded_shell_size > 0) {
-            if (vfs_create("/bin/shell.elf") == 0) {
-                fs_node_t *shell_node = vfs_path_to_node("/bin/shell.elf");
+            if (fs::Vfs::create("/bin/shell.elf") == 0) {
+                fs_node_t *shell_node = fs::Vfs::path_to_node("/bin/shell.elf");
                 if (shell_node) {
-                    uint32_t written = vfs_write(shell_node, 0, embedded_shell_size, 
+                    uint32_t written = fs::Vfs::write(shell_node, 0, embedded_shell_size, 
                                                 (uint8_t*)embedded_shell_elf);
-                    vfs_release_node(shell_node);
+                    fs::Vfs::release_node(shell_node);
                     if (written == embedded_shell_size) {
                         LOG_INFO_MSG("  [5.6] Embedded shell.elf written (%u bytes)\n", 
                                     embedded_shell_size);
@@ -290,12 +290,12 @@ void kernel_main(void *dtb_addr) {
         }
         
         if (embedded_hello_size > 0) {
-            if (vfs_create("/bin/hello.elf") == 0) {
-                fs_node_t *hello_node = vfs_path_to_node("/bin/hello.elf");
+            if (fs::Vfs::create("/bin/hello.elf") == 0) {
+                fs_node_t *hello_node = fs::Vfs::path_to_node("/bin/hello.elf");
                 if (hello_node) {
-                    uint32_t written = vfs_write(hello_node, 0, embedded_hello_size,
+                    uint32_t written = fs::Vfs::write(hello_node, 0, embedded_hello_size,
                                                 (uint8_t*)embedded_hello_elf);
-                    vfs_release_node(hello_node);
+                    fs::Vfs::release_node(hello_node);
                     if (written == embedded_hello_size) {
                         LOG_INFO_MSG("  [5.7] Embedded hello.elf written (%u bytes)\n",
                                     embedded_hello_size);

@@ -15,7 +15,7 @@
 bool load_user_shell(void) {
     // 查找 shell.elf
     const char *shell_path = "/bin/shell.elf";
-    fs_node_t *shell_file = vfs_path_to_node(shell_path);
+    fs_node_t *shell_file = fs::Vfs::path_to_node(shell_path);
     
     if (!shell_file) {
         LOG_WARN_MSG("Shell not found: %s\n", shell_path);
@@ -30,7 +30,7 @@ bool load_user_shell(void) {
     // 检查文件大小
     if (shell_size == 0 || shell_size > 16 * 1024 * 1024) {
         LOG_ERROR_MSG("Invalid shell file size: %u\n", shell_size);
-        vfs_release_node(shell_file);  // 释放节点
+        fs::Vfs::release_node(shell_file);  // 释放节点
         return false;
     }
     
@@ -38,21 +38,21 @@ bool load_user_shell(void) {
     uint8_t *elf_data = (uint8_t *)kmalloc(shell_size);
     if (!elf_data) {
         LOG_ERROR_MSG("Failed to allocate memory for shell\n");
-        vfs_release_node(shell_file);  // 释放节点
+        fs::Vfs::release_node(shell_file);  // 释放节点
         return false;
     }
     
-    uint32_t read_bytes = vfs_read(shell_file, 0, shell_size, elf_data);
+    uint32_t read_bytes = fs::Vfs::read(shell_file, 0, shell_size, elf_data);
     if (read_bytes != shell_size) {
         LOG_ERROR_MSG("Failed to read shell file (got %u/%u bytes)\n", 
                      read_bytes, shell_size);
         kfree(elf_data);
-        vfs_release_node(shell_file);  // 释放节点
+        fs::Vfs::release_node(shell_file);  // 释放节点
         return false;
     }
     
     // 文件已读取，立即释放节点
-    vfs_release_node(shell_file);
+    fs::Vfs::release_node(shell_file);
     
     LOG_DEBUG_MSG("Shell: ELF data loaded at %p, size=%u\n", elf_data, shell_size);
     

@@ -36,7 +36,7 @@
  * 如果根文件系统未设置，测试将跳过
  */
 static bool ramfs_test_setup(void) {
-    fs_node_t *root = vfs_get_root();
+    fs_node_t *root = fs::Vfs::get_root();
     if (!root) {
         return false;
     }
@@ -63,17 +63,17 @@ TEST_CASE(test_ramfs_create_file) {
     }
     
     // 创建测试文件 (8.3 兼容)
-    int result = vfs_create("/RCREATE.TMP");
+    int result = fs::Vfs::create("/RCREATE.TMP");
     ASSERT_EQ(result, 0);
     
     // 验证文件存在
-    fs_node_t *node = vfs_path_to_node("/RCREATE.TMP");
+    fs_node_t *node = fs::Vfs::path_to_node("/RCREATE.TMP");
     ASSERT_NOT_NULL(node);
     ASSERT_EQ(node->type, FS_FILE);
     
     // 清理
-    vfs_release_node(node);
-    vfs_unlink("/RCREATE.TMP");
+    fs::Vfs::release_node(node);
+    fs::Vfs::unlink("/RCREATE.TMP");
 }
 
 /**
@@ -88,20 +88,20 @@ TEST_CASE(test_ramfs_delete_file) {
     }
     
     // 创建测试文件 (8.3 兼容)
-    int result = vfs_create("/RDELETE.TMP");
+    int result = fs::Vfs::create("/RDELETE.TMP");
     ASSERT_EQ(result, 0);
     
     // 验证文件存在
-    fs_node_t *node = vfs_path_to_node("/RDELETE.TMP");
+    fs_node_t *node = fs::Vfs::path_to_node("/RDELETE.TMP");
     ASSERT_NOT_NULL(node);
-    vfs_release_node(node);
+    fs::Vfs::release_node(node);
     
     // 删除文件
-    result = vfs_unlink("/RDELETE.TMP");
+    result = fs::Vfs::unlink("/RDELETE.TMP");
     ASSERT_EQ(result, 0);
     
     // 验证文件不存在
-    node = vfs_path_to_node("/RDELETE.TMP");
+    node = fs::Vfs::path_to_node("/RDELETE.TMP");
     ASSERT_NULL(node);
 }
 
@@ -118,31 +118,31 @@ TEST_CASE(test_ramfs_content_persistence) {
     }
     
     // 创建测试文件 (8.3 兼容)
-    int result = vfs_create("/RPERSIST.TMP");
+    int result = fs::Vfs::create("/RPERSIST.TMP");
     ASSERT_EQ(result, 0);
     
     // 获取文件节点
-    fs_node_t *node = vfs_path_to_node("/RPERSIST.TMP");
+    fs_node_t *node = fs::Vfs::path_to_node("/RPERSIST.TMP");
     ASSERT_NOT_NULL(node);
     
     // 写入测试数据
     const char *test_data = "Ramfs persistence test data!";
     uint32_t data_len = strlen(test_data);
-    uint32_t written = vfs_write(node, 0, data_len, (uint8_t *)test_data);
+    uint32_t written = fs::Vfs::write(node, 0, data_len, (uint8_t *)test_data);
     ASSERT_EQ_U(written, data_len);
     
     // 读取数据
     char read_buffer[64];
     memset(read_buffer, 0, sizeof(read_buffer));
-    uint32_t read_count = vfs_read(node, 0, data_len, (uint8_t *)read_buffer);
+    uint32_t read_count = fs::Vfs::read(node, 0, data_len, (uint8_t *)read_buffer);
     ASSERT_EQ_U(read_count, data_len);
     
     // 验证数据完整性
     ASSERT_STR_EQ(test_data, read_buffer);
     
     // 清理
-    vfs_release_node(node);
-    vfs_unlink("/RPERSIST.TMP");
+    fs::Vfs::release_node(node);
+    fs::Vfs::unlink("/RPERSIST.TMP");
 }
 
 /**
@@ -157,30 +157,30 @@ TEST_CASE(test_ramfs_multiple_writes) {
     }
     
     // 创建测试文件 (8.3 兼容)
-    int result = vfs_create("/RMULTI.TMP");
+    int result = fs::Vfs::create("/RMULTI.TMP");
     ASSERT_EQ(result, 0);
     
-    fs_node_t *node = vfs_path_to_node("/RMULTI.TMP");
+    fs_node_t *node = fs::Vfs::path_to_node("/RMULTI.TMP");
     ASSERT_NOT_NULL(node);
     
     // 第一次写入
     const char *data1 = "First";
-    vfs_write(node, 0, 5, (uint8_t *)data1);
+    fs::Vfs::write(node, 0, 5, (uint8_t *)data1);
     
     // 第二次写入（追加）
     const char *data2 = "Second";
-    vfs_write(node, 5, 6, (uint8_t *)data2);
+    fs::Vfs::write(node, 5, 6, (uint8_t *)data2);
     
     // 读取全部数据
     char buffer[32];
     memset(buffer, 0, sizeof(buffer));
-    uint32_t read_count = vfs_read(node, 0, 11, (uint8_t *)buffer);
+    uint32_t read_count = fs::Vfs::read(node, 0, 11, (uint8_t *)buffer);
     ASSERT_EQ_U(read_count, 11);
     ASSERT_STR_EQ(buffer, "FirstSecond");
     
     // 清理
-    vfs_release_node(node);
-    vfs_unlink("/RMULTI.TMP");
+    fs::Vfs::release_node(node);
+    fs::Vfs::unlink("/RMULTI.TMP");
 }
 
 /**
@@ -195,29 +195,29 @@ TEST_CASE(test_ramfs_overwrite) {
     }
     
     // 创建测试文件 (8.3 兼容)
-    int result = vfs_create("/ROVER.TMP");
+    int result = fs::Vfs::create("/ROVER.TMP");
     ASSERT_EQ(result, 0);
     
-    fs_node_t *node = vfs_path_to_node("/ROVER.TMP");
+    fs_node_t *node = fs::Vfs::path_to_node("/ROVER.TMP");
     ASSERT_NOT_NULL(node);
     
     // 写入初始数据
     const char *initial = "AAAAAAAAAA";  // 10 个 A
-    vfs_write(node, 0, 10, (uint8_t *)initial);
+    fs::Vfs::write(node, 0, 10, (uint8_t *)initial);
     
     // 覆盖中间部分
     const char *overwrite = "BBB";
-    vfs_write(node, 3, 3, (uint8_t *)overwrite);
+    fs::Vfs::write(node, 3, 3, (uint8_t *)overwrite);
     
     // 读取并验证
     char buffer[16];
     memset(buffer, 0, sizeof(buffer));
-    vfs_read(node, 0, 10, (uint8_t *)buffer);
+    fs::Vfs::read(node, 0, 10, (uint8_t *)buffer);
     ASSERT_STR_EQ(buffer, "AAABBBAAAA");
     
     // 清理
-    vfs_release_node(node);
-    vfs_unlink("/ROVER.TMP");
+    fs::Vfs::release_node(node);
+    fs::Vfs::unlink("/ROVER.TMP");
 }
 
 // ============================================================================
@@ -240,17 +240,17 @@ TEST_CASE(test_ramfs_mkdir) {
     }
     
     // 创建测试目录 (8.3 兼容)
-    int result = vfs_mkdir("/RDIR", FS_PERM_READ | FS_PERM_WRITE);
+    int result = fs::Vfs::mkdir("/RDIR", FS_PERM_READ | FS_PERM_WRITE);
     ASSERT_EQ(result, 0);
     
     // 验证目录存在
-    fs_node_t *node = vfs_path_to_node("/RDIR");
+    fs_node_t *node = fs::Vfs::path_to_node("/RDIR");
     ASSERT_NOT_NULL(node);
     ASSERT_EQ(node->type, FS_DIRECTORY);
     
     // 清理
-    vfs_release_node(node);
-    vfs_unlink("/RDIR");
+    fs::Vfs::release_node(node);
+    fs::Vfs::unlink("/RDIR");
 }
 
 /**
@@ -265,15 +265,15 @@ TEST_CASE(test_ramfs_rmdir_empty) {
     }
     
     // 创建测试目录 (8.3 兼容)
-    int result = vfs_mkdir("/RRMDIR", FS_PERM_READ | FS_PERM_WRITE);
+    int result = fs::Vfs::mkdir("/RRMDIR", FS_PERM_READ | FS_PERM_WRITE);
     ASSERT_EQ(result, 0);
     
     // 删除空目录
-    result = vfs_unlink("/RRMDIR");
+    result = fs::Vfs::unlink("/RRMDIR");
     ASSERT_EQ(result, 0);
     
     // 验证目录不存在
-    fs_node_t *node = vfs_path_to_node("/RRMDIR");
+    fs_node_t *node = fs::Vfs::path_to_node("/RRMDIR");
     ASSERT_NULL(node);
 }
 
@@ -289,33 +289,33 @@ TEST_CASE(test_ramfs_file_in_subdir) {
     }
     
     // 创建子目录 (8.3 兼容)
-    int result = vfs_mkdir("/RSUBDIR", FS_PERM_READ | FS_PERM_WRITE);
+    int result = fs::Vfs::mkdir("/RSUBDIR", FS_PERM_READ | FS_PERM_WRITE);
     ASSERT_EQ(result, 0);
     
     // 在子目录中创建文件
-    result = vfs_create("/RSUBDIR/TFILE.TMP");
+    result = fs::Vfs::create("/RSUBDIR/TFILE.TMP");
     ASSERT_EQ(result, 0);
     
     // 验证文件存在
-    fs_node_t *node = vfs_path_to_node("/RSUBDIR/TFILE.TMP");
+    fs_node_t *node = fs::Vfs::path_to_node("/RSUBDIR/TFILE.TMP");
     ASSERT_NOT_NULL(node);
     ASSERT_EQ(node->type, FS_FILE);
-    vfs_release_node(node);
+    fs::Vfs::release_node(node);
     
     // 写入数据并验证
-    node = vfs_path_to_node("/RSUBDIR/TFILE.TMP");
+    node = fs::Vfs::path_to_node("/RSUBDIR/TFILE.TMP");
     const char *data = "subdir file data";
-    vfs_write(node, 0, strlen(data), (uint8_t *)data);
+    fs::Vfs::write(node, 0, strlen(data), (uint8_t *)data);
     
     char buffer[32];
     memset(buffer, 0, sizeof(buffer));
-    vfs_read(node, 0, strlen(data), (uint8_t *)buffer);
+    fs::Vfs::read(node, 0, strlen(data), (uint8_t *)buffer);
     ASSERT_STR_EQ(buffer, data);
     
     // 清理
-    vfs_release_node(node);
-    vfs_unlink("/RSUBDIR/TFILE.TMP");
-    vfs_unlink("/RSUBDIR");
+    fs::Vfs::release_node(node);
+    fs::Vfs::unlink("/RSUBDIR/TFILE.TMP");
+    fs::Vfs::unlink("/RSUBDIR");
 }
 
 /**
@@ -330,19 +330,19 @@ TEST_CASE(test_ramfs_readdir) {
     }
     
     // 创建测试目录和文件 (8.3 兼容)
-    vfs_mkdir("/RRDDIR", FS_PERM_READ | FS_PERM_WRITE);
-    vfs_create("/RRDDIR/FILE1.TMP");
-    vfs_create("/RRDDIR/FILE2.TMP");
-    vfs_create("/RRDDIR/FILE3.TMP");
+    fs::Vfs::mkdir("/RRDDIR", FS_PERM_READ | FS_PERM_WRITE);
+    fs::Vfs::create("/RRDDIR/FILE1.TMP");
+    fs::Vfs::create("/RRDDIR/FILE2.TMP");
+    fs::Vfs::create("/RRDDIR/FILE3.TMP");
     
     // 获取目录节点
-    fs_node_t *dir = vfs_path_to_node("/RRDDIR");
+    fs_node_t *dir = fs::Vfs::path_to_node("/RRDDIR");
     ASSERT_NOT_NULL(dir);
     
     // 遍历目录
     uint32_t count = 0;
     struct dirent *entry;
-    while ((entry = vfs_readdir(dir, count)) != NULL) {
+    while ((entry = fs::Vfs::readdir(dir, count)) != NULL) {
         count++;
         // 验证目录项有名称
         ASSERT_TRUE(entry->d_name[0] != '\0');
@@ -352,11 +352,11 @@ TEST_CASE(test_ramfs_readdir) {
     ASSERT_TRUE(count >= 3);
     
     // 清理
-    vfs_release_node(dir);
-    vfs_unlink("/RRDDIR/FILE1.TMP");
-    vfs_unlink("/RRDDIR/FILE2.TMP");
-    vfs_unlink("/RRDDIR/FILE3.TMP");
-    vfs_unlink("/RRDDIR");
+    fs::Vfs::release_node(dir);
+    fs::Vfs::unlink("/RRDDIR/FILE1.TMP");
+    fs::Vfs::unlink("/RRDDIR/FILE2.TMP");
+    fs::Vfs::unlink("/RRDDIR/FILE3.TMP");
+    fs::Vfs::unlink("/RRDDIR");
 }
 
 // ============================================================================
@@ -379,15 +379,15 @@ TEST_CASE(test_ramfs_create_duplicate) {
     }
     
     // 创建文件 (8.3 兼容)
-    int result = vfs_create("/RDUP.TMP");
+    int result = fs::Vfs::create("/RDUP.TMP");
     ASSERT_EQ(result, 0);
     
     // 尝试再次创建同名文件
-    result = vfs_create("/RDUP.TMP");
+    result = fs::Vfs::create("/RDUP.TMP");
     ASSERT_EQ(result, -1);  // 应该失败
     
     // 清理
-    vfs_unlink("/RDUP.TMP");
+    fs::Vfs::unlink("/RDUP.TMP");
 }
 
 /**
@@ -397,7 +397,7 @@ TEST_CASE(test_ramfs_create_duplicate) {
  * _Requirements: 4.4_
  */
 TEST_CASE(test_ramfs_delete_nonexistent) {
-    int result = vfs_unlink("/ramfs_nonexistent_file_xyz");
+    int result = fs::Vfs::unlink("/ramfs_nonexistent_file_xyz");
     ASSERT_EQ(result, -1);
 }
 
@@ -413,16 +413,16 @@ TEST_CASE(test_ramfs_rmdir_nonempty) {
     }
     
     // 创建目录和文件 (8.3 兼容)
-    vfs_mkdir("/RNEMPTY", FS_PERM_READ | FS_PERM_WRITE);
-    vfs_create("/RNEMPTY/FILE.TMP");
+    fs::Vfs::mkdir("/RNEMPTY", FS_PERM_READ | FS_PERM_WRITE);
+    fs::Vfs::create("/RNEMPTY/FILE.TMP");
     
     // 尝试删除非空目录
-    int result = vfs_unlink("/RNEMPTY");
+    int result = fs::Vfs::unlink("/RNEMPTY");
     ASSERT_EQ(result, -1);  // 应该失败
     
     // 清理
-    vfs_unlink("/RNEMPTY/FILE.TMP");
-    vfs_unlink("/RNEMPTY");
+    fs::Vfs::unlink("/RNEMPTY/FILE.TMP");
+    fs::Vfs::unlink("/RNEMPTY");
 }
 
 /**
@@ -437,20 +437,20 @@ TEST_CASE(test_ramfs_read_empty) {
     }
     
     // 创建空文件 (8.3 兼容)
-    int result = vfs_create("/REMPTY.TMP");
+    int result = fs::Vfs::create("/REMPTY.TMP");
     ASSERT_EQ(result, 0);
     
-    fs_node_t *node = vfs_path_to_node("/REMPTY.TMP");
+    fs_node_t *node = fs::Vfs::path_to_node("/REMPTY.TMP");
     ASSERT_NOT_NULL(node);
     
     // 读取空文件
     char buffer[16];
-    uint32_t read_count = vfs_read(node, 0, 16, (uint8_t *)buffer);
+    uint32_t read_count = fs::Vfs::read(node, 0, 16, (uint8_t *)buffer);
     ASSERT_EQ_U(read_count, 0);
     
     // 清理
-    vfs_release_node(node);
-    vfs_unlink("/REMPTY.TMP");
+    fs::Vfs::release_node(node);
+    fs::Vfs::unlink("/REMPTY.TMP");
 }
 
 /**
@@ -465,23 +465,23 @@ TEST_CASE(test_ramfs_read_past_eof) {
     }
     
     // 创建文件并写入数据 (8.3 兼容)
-    int result = vfs_create("/REOF.TMP");
+    int result = fs::Vfs::create("/REOF.TMP");
     ASSERT_EQ(result, 0);
     
-    fs_node_t *node = vfs_path_to_node("/REOF.TMP");
+    fs_node_t *node = fs::Vfs::path_to_node("/REOF.TMP");
     ASSERT_NOT_NULL(node);
     
     const char *data = "short";
-    vfs_write(node, 0, 5, (uint8_t *)data);
+    fs::Vfs::write(node, 0, 5, (uint8_t *)data);
     
     // 从超出文件末尾的位置读取
     char buffer[16];
-    uint32_t read_count = vfs_read(node, 100, 16, (uint8_t *)buffer);
+    uint32_t read_count = fs::Vfs::read(node, 100, 16, (uint8_t *)buffer);
     ASSERT_EQ_U(read_count, 0);
     
     // 清理
-    vfs_release_node(node);
-    vfs_unlink("/REOF.TMP");
+    fs::Vfs::release_node(node);
+    fs::Vfs::unlink("/REOF.TMP");
 }
 
 /**
@@ -496,24 +496,24 @@ TEST_CASE(test_ramfs_finddir) {
     }
     
     // 创建测试文件 (8.3 兼容)
-    int result = vfs_create("/RFIND.TMP");
+    int result = fs::Vfs::create("/RFIND.TMP");
     ASSERT_EQ(result, 0);
     
     // 使用 finddir 查找
-    fs_node_t *root = vfs_get_root();
+    fs_node_t *root = fs::Vfs::get_root();
     ASSERT_NOT_NULL(root);
     
-    fs_node_t *found = vfs_finddir(root, "RFIND.TMP");
+    fs_node_t *found = fs::Vfs::finddir(root, "RFIND.TMP");
     ASSERT_NOT_NULL(found);
     ASSERT_EQ(found->type, FS_FILE);
-    vfs_release_node(found);
+    fs::Vfs::release_node(found);
     
     // 查找不存在的文件
-    found = vfs_finddir(root, "RNOEXIST.TMP");
+    found = fs::Vfs::finddir(root, "RNOEXIST.TMP");
     ASSERT_NULL(found);
     
     // 清理
-    vfs_unlink("/RFIND.TMP");
+    fs::Vfs::unlink("/RFIND.TMP");
 }
 
 // ============================================================================

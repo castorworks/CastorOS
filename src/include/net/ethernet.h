@@ -44,28 +44,6 @@ typedef struct eth_header {
 } __attribute__((packed)) eth_header_t;
 
 /**
- * @brief 初始化以太网层
- */
-void ethernet_init(void);
-
-/**
- * @brief 处理接收到的以太网帧
- * @param dev 网络设备
- * @param buf 接收缓冲区
- */
-void ethernet_input(netdev_t *dev, netbuf_t *buf);
-
-/**
- * @brief 发送以太网帧
- * @param dev 网络设备
- * @param buf 发送缓冲区（应包含上层协议数据）
- * @param dst_mac 目的 MAC 地址
- * @param type EtherType
- * @return 0 成功，-1 失败
- */
-int ethernet_output(netdev_t *dev, netbuf_t *buf, const uint8_t *dst_mac, uint16_t type);
-
-/**
  * @brief 比较两个 MAC 地址
  * @param a 第一个 MAC 地址
  * @param b 第二个 MAC 地址
@@ -109,5 +87,36 @@ bool mac_addr_is_zero(const uint8_t *addr);
  */
 char *mac_to_str(const uint8_t *mac, char *buf);
 
-#endif // _NET_ETHERNET_H_
+namespace net {
 
+/**
+ * @brief 以太网链路层
+ */
+class Ethernet {
+public:
+    /**
+     * @brief 初始化以太网层
+     */
+    static void init();
+
+    /**
+     * @brief 处理接收到的以太网帧
+     * @param dev 网络设备
+     * @param buf 接收缓冲区
+     */
+    static void input(netdev_t *dev, netbuf_t *buf);
+
+    /**
+     * @brief 发送以太网帧
+     * @param dev 网络设备
+     * @param buf 发送缓冲区（应包含上层协议数据）
+     * @param dst_mac 目的 MAC 地址
+     * @param type EtherType
+     * @return 0 成功，-1 失败
+     */
+    static int output(netdev_t *dev, netbuf_t *buf, const uint8_t *dst_mac, uint16_t type);
+};
+
+} // namespace net
+
+#endif // _NET_ETHERNET_H_

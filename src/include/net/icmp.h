@@ -72,65 +72,74 @@ typedef struct icmp_echo {
 // Ping 回调函数类型
 typedef void (*ping_callback_t)(uint32_t src_ip, uint16_t seq, uint32_t rtt_ms, bool success);
 
-/**
- * @brief 初始化 ICMP 协议
- */
-void icmp_init(void);
+namespace net {
 
 /**
- * @brief 处理接收到的 ICMP 报文
- * @param dev 网络设备
- * @param buf 接收缓冲区
- * @param src_ip 源 IP 地址（网络字节序）
+ * @brief ICMP 协议
  */
-void icmp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip);
+class Icmp {
+public:
+    /**
+     * @brief 初始化 ICMP 协议
+     */
+    static void init();
 
-/**
- * @brief 发送 ICMP Echo 请求（ping）
- * @param dst_ip 目的 IP 地址（网络字节序）
- * @param id 标识符
- * @param seq 序列号
- * @param data 数据
- * @param len 数据长度
- * @return 0 成功，-1 失败
- */
-int icmp_send_echo_request(uint32_t dst_ip, uint16_t id, uint16_t seq,
-                           uint8_t *data, uint32_t len);
+    /**
+     * @brief 处理接收到的 ICMP 报文
+     * @param dev 网络设备
+     * @param buf 接收缓冲区
+     * @param src_ip 源 IP 地址（网络字节序）
+     */
+    static void input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip);
 
-/**
- * @brief 发送 ICMP Echo 应答
- * @param dst_ip 目的 IP 地址（网络字节序）
- * @param id 标识符
- * @param seq 序列号
- * @param data 数据
- * @param len 数据长度
- * @return 0 成功，-1 失败
- */
-int icmp_send_echo_reply(uint32_t dst_ip, uint16_t id, uint16_t seq,
-                         uint8_t *data, uint32_t len);
+    /**
+     * @brief 发送 ICMP Echo 请求（ping）
+     * @param dst_ip 目的 IP 地址（网络字节序）
+     * @param id 标识符
+     * @param seq 序列号
+     * @param data 数据
+     * @param len 数据长度
+     * @return 0 成功，-1 失败
+     */
+    static int send_echo_request(uint32_t dst_ip, uint16_t id, uint16_t seq,
+                               uint8_t *data, uint32_t len);
 
-/**
- * @brief 发送 ICMP 目的不可达消息
- * @param dst_ip 目的 IP 地址（网络字节序）
- * @param code 代码
- * @param orig_header 原始 IP 头部
- * @param orig_data 原始数据（至少 8 字节）
- * @return 0 成功，-1 失败
- */
-int icmp_send_dest_unreachable(uint32_t dst_ip, uint8_t code,
-                               void *orig_header, void *orig_data);
+    /**
+     * @brief 发送 ICMP Echo 应答
+     * @param dst_ip 目的 IP 地址（网络字节序）
+     * @param id 标识符
+     * @param seq 序列号
+     * @param data 数据
+     * @param len 数据长度
+     * @return 0 成功，-1 失败
+     */
+    static int send_echo_reply(uint32_t dst_ip, uint16_t id, uint16_t seq,
+                             uint8_t *data, uint32_t len);
 
-/**
- * @brief 注册 ping 回调函数
- * @param callback 回调函数
- */
-void icmp_register_ping_callback(ping_callback_t callback);
+    /**
+     * @brief 发送 ICMP 目的不可达消息
+     * @param dst_ip 目的 IP 地址（网络字节序）
+     * @param code 代码
+     * @param orig_header 原始 IP 头部
+     * @param orig_data 原始数据（至少 8 字节）
+     * @return 0 成功，-1 失败
+     */
+    static int send_dest_unreachable(uint32_t dst_ip, uint8_t code,
+                                   void *orig_header, void *orig_data);
 
-/**
- * @brief 获取最后一次 ping 的 RTT
- * @return RTT（毫秒），-1 表示无数据
- */
-int32_t icmp_get_last_rtt(void);
+    /**
+     * @brief 注册 ping 回调函数
+     * @param callback 回调函数
+     */
+    static void register_ping_callback(ping_callback_t callback);
+
+    /**
+     * @brief 获取最后一次 ping 的 RTT
+     * @return RTT（毫秒），-1 表示无数据
+     */
+    static int32_t get_last_rtt();
+};
+
+} // namespace net
 
 #endif // _NET_ICMP_H_
-

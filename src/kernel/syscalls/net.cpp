@@ -122,7 +122,7 @@ static int32_t arp_ioctl(uint32_t request, struct arpreq *arpreq) {
         case SIOCGARP: {
             // 获取 ARP 条目
             uint8_t mac[6];
-            if (arp_cache_lookup(ip, mac) == 0) {
+            if (net::Arp::cache_lookup(ip, mac) == 0) {
                 memcpy(arpreq->arp_ha.sa_data, mac, 6);
                 arpreq->arp_flags = ATF_COM;
                 return 0;
@@ -132,12 +132,12 @@ static int32_t arp_ioctl(uint32_t request, struct arpreq *arpreq) {
         
         case SIOCSARP:
             // 添加 ARP 条目
-            arp_cache_update(ip, (uint8_t *)arpreq->arp_ha.sa_data);
+            net::Arp::cache_update(ip, (uint8_t *)arpreq->arp_ha.sa_data);
             return 0;
             
         case SIOCDARP:
             // 删除 ARP 条目
-            return arp_cache_delete(ip);
+            return net::Arp::cache_delete(ip);
             
         default:
             return -1;
@@ -217,7 +217,7 @@ static int32_t ping_ioctl(struct ping_req *req) {
     
     // 打印 ping 开始信息
     char ip_str[16];
-    ip_to_str(dst_ip, ip_str);
+    net::Ip::to_str(dst_ip, ip_str);
     kprintf("PING %s: %d data bytes\n", ip_str, 56);
     
     for (int i = 0; i < count; i++) {
@@ -225,7 +225,7 @@ static int32_t ping_ioctl(struct ping_req *req) {
         uint16_t seq = (uint16_t)i;
         
         // 发送 ping
-        if (icmp_send_echo_request(dst_ip, id, seq, NULL, 56) < 0) {
+        if (net::Icmp::send_echo_request(dst_ip, id, seq, NULL, 56) < 0) {
             kprintf("ping: send failed\n");
             continue;
         }
@@ -236,7 +236,7 @@ static int32_t ping_ioctl(struct ping_req *req) {
         uint32_t timeout = req->timeout_ms > 0 ? (uint32_t)req->timeout_ms : 1000;
         
         while ((uint32_t)timer_get_uptime_ms() - start_time < timeout) {
-            int32_t rtt = icmp_get_last_rtt();
+            int32_t rtt = net::Icmp::get_last_rtt();
             if (rtt >= 0) {
                 req->received++;
                 uint32_t rtt_u = (uint32_t)rtt;
@@ -432,7 +432,7 @@ int32_t netif_arp_get(arp_entry_info_t *entries, int32_t max_entries) {
         uint8_t mac[6];
         uint8_t state;
         
-        if (arp_cache_get_entry(i, &ip, mac, &state) == 0) {
+        if (net::Arp::cache_get_entry(i, &ip, mac, &state) == 0) {
             entries[count].ip_addr = ip;
             memcpy(entries[count].mac, mac, 6);
             entries[count].state = state;
@@ -456,5 +456,5 @@ int32_t netif_arp_delete(const char *ip_str) {
         return -1;
     }
     
-    return arp_cache_delete(ip);
+    return net::Arp::cache_delete(ip);
 }

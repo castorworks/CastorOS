@@ -75,7 +75,7 @@ static udp_pcb_t *udp_find_pcb(uint32_t local_ip, uint16_t local_port,
     return best_match;
 }
 
-void udp_init(void) {
+void net::Udp::init() {
     udp_lock.init();
     udp_pcbs = NULL;
     next_ephemeral_port = UDP_EPHEMERAL_PORT_MIN;
@@ -83,7 +83,7 @@ void udp_init(void) {
     LOG_INFO_MSG("udp: UDP protocol initialized\n");
 }
 
-void udp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
+void net::Udp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
     if (!dev || !buf) {
         return;
     }
@@ -113,7 +113,7 @@ void udp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
     if (udp->checksum != 0) {
         uint16_t orig_checksum = udp->checksum;
         udp->checksum = 0;
-        uint16_t calc_checksum = udp_checksum(src_ip, dst_ip, udp, udp_len);
+        uint16_t calc_checksum = net::Udp::checksum(src_ip, dst_ip, udp, udp_len);
         
         if (calc_checksum != orig_checksum) {
             LOG_WARN_MSG("udp: Invalid checksum\n");
@@ -168,12 +168,12 @@ void udp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
     
     // 获取原始 IP 头部（在 buf->network_header 之前）
     ip_header_t *orig_ip = (ip_header_t *)buf->network_header;
-    icmp_send_dest_unreachable(src_ip, ICMP_PORT_UNREACHABLE, orig_ip, udp);
+    net::Icmp::send_dest_unreachable(src_ip, ICMP_PORT_UNREACHABLE, orig_ip, udp);
     
     netbuf_free(buf);
 }
 
-int udp_output(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
+int net::Udp::output(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
                uint8_t *data, uint32_t len) {
     netdev_t *dev = netdev_get_default();
     if (!dev) {
@@ -206,10 +206,10 @@ int udp_output(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
     }
     
     // 计算校验和
-    udp->checksum = udp_checksum(dev->ip_addr, dst_ip, udp, udp_len);
+    udp->checksum = net::Udp::checksum(dev->ip_addr, dst_ip, udp, udp_len);
     
     // 发送
-    int ret = ip_output(dev, buf, dst_ip, IP_PROTO_UDP);
+    int ret = net::Ip::output(dev, buf, dst_ip, IP_PROTO_UDP);
     if (ret < 0) {
         netbuf_free(buf);
     }
@@ -217,7 +217,7 @@ int udp_output(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
     return ret;
 }
 
-udp_pcb_t *udp_pcb_new(void) {
+udp_pcb_t *net::Udp::pcb_new() {
     udp_pcb_t *pcb = (udp_pcb_t *)kmalloc(sizeof(udp_pcb_t));
     if (!pcb) {
         return NULL;
@@ -233,7 +233,7 @@ udp_pcb_t *udp_pcb_new(void) {
     return pcb;
 }
 
-void udp_pcb_free(udp_pcb_t *pcb) {
+void net::Udp::pcb_free(udp_pcb_t *pcb) {
     if (!pcb) {
         return;
     }
@@ -267,7 +267,7 @@ void udp_pcb_free(udp_pcb_t *pcb) {
     kfree(pcb);
 }
 
-int udp_bind(udp_pcb_t *pcb, uint32_t local_ip, uint16_t local_port) {
+int net::Udp::bind(udp_pcb_t *pcb, uint32_t local_ip, uint16_t local_port) {
     if (!pcb) {
         return -1;
     }
@@ -292,7 +292,7 @@ int udp_bind(udp_pcb_t *pcb, uint32_t local_ip, uint16_t local_port) {
     return 0;
 }
 
-int udp_connect(udp_pcb_t *pcb, uint32_t remote_ip, uint16_t remote_port) {
+int net::Udp::connect(udp_pcb_t *pcb, uint32_t remote_ip, uint16_t remote_port) {
     if (!pcb) {
         return -1;
     }
@@ -302,7 +302,7 @@ int udp_connect(udp_pcb_t *pcb, uint32_t remote_ip, uint16_t remote_port) {
     
     // 如果未绑定本地端口，分配一个临时端口
     if (pcb->local_port == 0) {
-        pcb->local_port = udp_alloc_port();
+        pcb->local_port = net::Udp::alloc_port();
         if (pcb->local_port == 0) {
             return -1;
         }
@@ -311,14 +311,14 @@ int udp_connect(udp_pcb_t *pcb, uint32_t remote_ip, uint16_t remote_port) {
     return 0;
 }
 
-void udp_disconnect(udp_pcb_t *pcb) {
+void net::Udp::disconnect(udp_pcb_t *pcb) {
     if (pcb) {
         pcb->remote_ip = 0;
         pcb->remote_port = 0;
     }
 }
 
-int udp_send(udp_pcb_t *pcb, netbuf_t *buf) {
+int net::Udp::send(udp_pcb_t *pcb, netbuf_t *buf) {
     if (!pcb || !buf) {
         return -1;
     }
@@ -327,10 +327,10 @@ int udp_send(udp_pcb_t *pcb, netbuf_t *buf) {
         return -1;  // 未连接
     }
     
-    return udp_sendto(pcb, buf, pcb->remote_ip, pcb->remote_port);
+    return net::Udp::sendto(pcb, buf, pcb->remote_ip, pcb->remote_port);
 }
 
-int udp_sendto(udp_pcb_t *pcb, netbuf_t *buf, uint32_t dst_ip, uint16_t dst_port) {
+int net::Udp::sendto(udp_pcb_t *pcb, netbuf_t *buf, uint32_t dst_ip, uint16_t dst_port) {
     if (!pcb || !buf) {
         return -1;
     }
@@ -342,7 +342,7 @@ int udp_sendto(udp_pcb_t *pcb, netbuf_t *buf, uint32_t dst_ip, uint16_t dst_port
     
     // 如果未绑定本地端口，分配一个临时端口
     if (pcb->local_port == 0) {
-        pcb->local_port = udp_alloc_port();
+        pcb->local_port = net::Udp::alloc_port();
         if (pcb->local_port == 0) {
             return -1;
         }
@@ -364,13 +364,13 @@ int udp_sendto(udp_pcb_t *pcb, netbuf_t *buf, uint32_t dst_ip, uint16_t dst_port
     
     // 计算校验和
     uint32_t src_ip = (pcb->local_ip != 0) ? pcb->local_ip : dev->ip_addr;
-    udp->checksum = udp_checksum(src_ip, dst_ip, udp, udp_len);
+    udp->checksum = net::Udp::checksum(src_ip, dst_ip, udp, udp_len);
     
     // 发送
-    return ip_output(dev, buf, dst_ip, IP_PROTO_UDP);
+    return net::Ip::output(dev, buf, dst_ip, IP_PROTO_UDP);
 }
 
-void udp_recv(udp_pcb_t *pcb,
+void net::Udp::recv(udp_pcb_t *pcb,
               void (*callback)(udp_pcb_t *pcb, netbuf_t *buf,
                               uint32_t src_ip, uint16_t src_port),
               void *arg) {
@@ -380,7 +380,7 @@ void udp_recv(udp_pcb_t *pcb,
     }
 }
 
-netbuf_t *udp_recv_poll(udp_pcb_t *pcb) {
+netbuf_t *net::Udp::recv_poll(udp_pcb_t *pcb) {
     if (!pcb) return NULL;
     
     sync::SpinlockIrqGuard guard(udp_lock);
@@ -396,7 +396,7 @@ netbuf_t *udp_recv_poll(udp_pcb_t *pcb) {
     return buf;
 }
 
-bool udp_has_data(udp_pcb_t *pcb) {
+bool net::Udp::has_data(udp_pcb_t *pcb) {
     if (!pcb) return false;
     
     sync::SpinlockIrqGuard guard(udp_lock);
@@ -405,7 +405,7 @@ bool udp_has_data(udp_pcb_t *pcb) {
     return has_data;
 }
 
-uint16_t udp_checksum(uint32_t src_ip, uint32_t dst_ip, udp_header_t *udp, uint16_t len) {
+uint16_t net::Udp::checksum(uint32_t src_ip, uint32_t dst_ip, udp_header_t *udp, uint16_t len) {
     uint32_t sum = 0;
     
     // 计算伪首部校验和
@@ -416,15 +416,15 @@ uint16_t udp_checksum(uint32_t src_ip, uint32_t dst_ip, udp_header_t *udp, uint1
     pseudo.protocol = IP_PROTO_UDP;
     pseudo.udp_length = htons(len);
     
-    sum = checksum_partial(sum, &pseudo, sizeof(pseudo));
+    sum = net::Checksum::partial(sum, &pseudo, sizeof(pseudo));
     
     // 计算 UDP 头部和数据校验和
-    sum = checksum_partial(sum, udp, len);
+    sum = net::Checksum::partial(sum, udp, len);
     
-    return checksum_finish(sum);
+    return net::Checksum::finish(sum);
 }
 
-uint16_t udp_alloc_port(void) {
+uint16_t net::Udp::alloc_port() {
     bool irq_state;
     udp_lock.lock_irqsave(irq_state);
     
@@ -456,7 +456,7 @@ uint16_t udp_alloc_port(void) {
     return 0;  // 没有可用端口
 }
 
-int udp_pcb_list_dump(char *buf, size_t size) {
+int net::Udp::pcb_list_dump(char *buf, size_t size) {
     int len = 0;
     bool to_buf = (buf != NULL && size > 0);
     
@@ -483,7 +483,7 @@ int udp_pcb_list_dump(char *buf, size_t size) {
         if (pcb->local_ip == 0) {
             strcpy(local_ip_str, "0.0.0.0");
         } else {
-            ip_to_str(pcb->local_ip, local_ip_str);
+            net::Ip::to_str(pcb->local_ip, local_ip_str);
         }
         
         if (pcb->remote_ip == 0 && pcb->remote_port == 0) {
@@ -493,7 +493,7 @@ int udp_pcb_list_dump(char *buf, size_t size) {
             if (pcb->remote_ip == 0) {
                 strcpy(remote_ip_str, "0.0.0.0");
             } else {
-                ip_to_str(pcb->remote_ip, remote_ip_str);
+                net::Ip::to_str(pcb->remote_ip, remote_ip_str);
             }
             OUTPUT("udp    %s:%-5u  %s:%-5u\n",
                    local_ip_str, pcb->local_port,

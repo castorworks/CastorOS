@@ -6,6 +6,8 @@
 #include <net/ethernet.h>
 #include <net/netdev.h>
 #include <net/netbuf.h>
+#include <net/arp.h>
+#include <net/ip.h>
 #include <lib/string.h>
 #include <lib/klog.h>
 #include <lib/kprintf.h>
@@ -16,9 +18,6 @@ const uint8_t ETH_BROADCAST_ADDR[ETH_ADDR_LEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 
 // 零 MAC 地址
 const uint8_t ETH_ZERO_ADDR[ETH_ADDR_LEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
-// 前向声明上层协议处理函数
-extern void arp_input(netdev_t *dev, netbuf_t *buf);
-extern void ip_input(netdev_t *dev, netbuf_t *buf);
 
 // 字节序转换（小端到大端）
 static inline uint16_t eth_ntohs(uint16_t n) {
@@ -29,11 +28,11 @@ static inline uint16_t eth_htons(uint16_t h) {
     return eth_ntohs(h);
 }
 
-void ethernet_init(void) {
+void net::Ethernet::init() {
     LOG_INFO_MSG("ethernet: Ethernet layer initialized\n");
 }
 
-void ethernet_input(netdev_t *dev, netbuf_t *buf) {
+void net::Ethernet::input(netdev_t *dev, netbuf_t *buf) {
     if (!dev || !buf) {
         return;
     }
@@ -69,11 +68,11 @@ void ethernet_input(netdev_t *dev, netbuf_t *buf) {
     // 根据 EtherType 分发到对应的协议处理函数
     switch (type) {
         case ETH_TYPE_ARP:
-            arp_input(dev, buf);
+            net::Arp::input(dev, buf);
             break;
             
         case ETH_TYPE_IP:
-            ip_input(dev, buf);
+            net::Ip::input(dev, buf);
             break;
             
         case ETH_TYPE_IPV6:
@@ -89,7 +88,7 @@ void ethernet_input(netdev_t *dev, netbuf_t *buf) {
     }
 }
 
-int ethernet_output(netdev_t *dev, netbuf_t *buf, const uint8_t *dst_mac, uint16_t type) {
+int net::Ethernet::output(netdev_t *dev, netbuf_t *buf, const uint8_t *dst_mac, uint16_t type) {
     if (!dev || !buf || !dst_mac) {
         return -1;
     }

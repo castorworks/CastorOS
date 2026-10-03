@@ -311,7 +311,7 @@ static fs_node_t *ramfs_finddir(fs_node_t *node, const char *name) {
     
     // 增加引用计数
     if (result) {
-        vfs_ref_node(result);
+        fs::Vfs::ref_node(result);
     }
     
     return result;
@@ -586,7 +586,7 @@ static int ramfs_unlink(fs_node_t *node, const char *name) {
 /**
  * 创建 ramfs 根目录
  */
-fs_node_t *ramfs_create(const char *name) {
+fs_node_t *fs::Ramfs::create(const char *name) {
     // 创建根目录节点
     fs_node_t *root = (fs_node_t *)kmalloc(sizeof(fs_node_t));
     if (!root) {
@@ -638,13 +638,13 @@ fs_node_t *ramfs_create(const char *name) {
 /**
  * 初始化 ramfs（创建默认根文件系统）
  */
-fs_node_t *ramfs_init(void) {
+fs_node_t *fs::Ramfs::init() {
     LOG_INFO_MSG("RAMFS: Initializing RAM filesystem...\n");
     
     // 初始化 inode 分配锁
     inode_alloc_lock.init();
     
-    fs_node_t *root = ramfs_create("/");
+    fs_node_t *root = fs::Ramfs::create("/");
     if (!root) {
         LOG_ERROR_MSG("RAMFS: Failed to create root directory\n");
         return NULL;

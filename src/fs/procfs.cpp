@@ -418,7 +418,7 @@ static uint32_t procfs_net_tcp_read(fs_node_t *node, uint32_t offset, uint32_t s
     int len = 0;
     
     // 调用 TCP 模块的 dump 函数获取连接状态
-    len = tcp_pcb_list_dump(tcp_buf, sizeof(tcp_buf));
+    len = net::Tcp::pcb_list_dump(tcp_buf, sizeof(tcp_buf));
     
     if (len < 0 || len >= (int)sizeof(tcp_buf)) {
         len = (int)sizeof(tcp_buf) - 1;
@@ -452,7 +452,7 @@ static uint32_t procfs_net_udp_read(fs_node_t *node, uint32_t offset, uint32_t s
     int len = 0;
     
     // 调用 UDP 模块的 dump 函数获取绑定状态
-    len = udp_pcb_list_dump(udp_buf, sizeof(udp_buf));
+    len = net::Udp::pcb_list_dump(udp_buf, sizeof(udp_buf));
     
     if (len < 0 || len >= (int)sizeof(udp_buf)) {
         len = (int)sizeof(udp_buf) - 1;
@@ -486,7 +486,7 @@ static uint32_t procfs_net_route_read(fs_node_t *node, uint32_t offset, uint32_t
     int len = 0;
     
     // 调用 IP 模块的路由表显示函数
-    len = ip_route_dump(route_buf, sizeof(route_buf));
+    len = net::Ip::route_dump(route_buf, sizeof(route_buf));
     
     if (len < 0 || len >= (int)sizeof(route_buf)) {
         len = (int)sizeof(route_buf) - 1;
@@ -566,27 +566,27 @@ static fs_node_t *procfs_net_finddir(fs_node_t *node, const char *name) {
     }
     
     if (strcmp(name, ".") == 0) {
-        vfs_ref_node(node);
+        fs::Vfs::ref_node(node);
         return node;
     }
     
     if (strcmp(name, "..") == 0) {
-        vfs_ref_node(procfs_root);
+        fs::Vfs::ref_node(procfs_root);
         return procfs_root;
     }
     
     if (strcmp(name, "tcp") == 0) {
-        vfs_ref_node(procfs_net_tcp_file);
+        fs::Vfs::ref_node(procfs_net_tcp_file);
         return procfs_net_tcp_file;
     }
     
     if (strcmp(name, "udp") == 0) {
-        vfs_ref_node(procfs_net_udp_file);
+        fs::Vfs::ref_node(procfs_net_udp_file);
         return procfs_net_udp_file;
     }
     
     if (strcmp(name, "route") == 0) {
-        vfs_ref_node(procfs_net_route_file);
+        fs::Vfs::ref_node(procfs_net_route_file);
         return procfs_net_route_file;
     }
     
@@ -724,7 +724,7 @@ static fs_node_t *procfs_pid_finddir(fs_node_t *node, const char *name) {
     /* 处理 . 和 .. */
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
         // 增加引用计数
-        vfs_ref_node(node);
+        fs::Vfs::ref_node(node);
         return node;  // 返回当前目录节点
     }
     
@@ -880,32 +880,32 @@ static fs_node_t *procfs_root_finddir(fs_node_t *node, const char *name) {
     /* 处理 . 和 .. */
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
         // 增加引用计数（根节点是静态的，不会被释放，但需要计数管理）
-        vfs_ref_node(node);
+        fs::Vfs::ref_node(node);
         return node;  // 返回当前目录节点（procfs_root）
     }
     
     /* meminfo 文件 */
     if (strcmp(name, "meminfo") == 0) {
         // 增加引用计数（静态节点也需要引用计数管理）
-        vfs_ref_node(procfs_meminfo_file);
+        fs::Vfs::ref_node(procfs_meminfo_file);
         return procfs_meminfo_file;
     }
     
     /* pci 文件 */
     if (strcmp(name, "pci") == 0) {
-        vfs_ref_node(procfs_pci_file);
+        fs::Vfs::ref_node(procfs_pci_file);
         return procfs_pci_file;
     }
     
     /* usb 文件 */
     if (strcmp(name, "usb") == 0) {
-        vfs_ref_node(procfs_usb_file);
+        fs::Vfs::ref_node(procfs_usb_file);
         return procfs_usb_file;
     }
     
     /* net 目录 */
     if (strcmp(name, "net") == 0) {
-        vfs_ref_node(procfs_net_dir);
+        fs::Vfs::ref_node(procfs_net_dir);
         return procfs_net_dir;
     }
     
@@ -966,7 +966,7 @@ static fs_node_t *procfs_root_finddir(fs_node_t *node, const char *name) {
 /**
  * 初始化 procfs
  */
-fs_node_t *procfs_init(void) {
+fs_node_t *fs::Procfs::init() {
     LOG_INFO_MSG("procfs: Initializing process filesystem...\n");
     
     // 创建 /proc 根目录节点

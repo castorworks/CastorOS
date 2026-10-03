@@ -726,13 +726,13 @@ uint32_t task_create_user_process(const char *name, uintptr_t entry_point,
     fd_table_init(task->fd_table);
     
     // 打开标准输入/输出/错误（指向 /dev/console）
-    fs_node_t *console = vfs_path_to_node("/dev/console");
+    fs_node_t *console = fs::Vfs::path_to_node("/dev/console");
     if (console) {
         fd_table_alloc(task->fd_table, console, 0); // stdin (fd 0)
         fd_table_alloc(task->fd_table, console, 0); // stdout (fd 1)
         fd_table_alloc(task->fd_table, console, 0); // stderr (fd 2)
         // 关键修复：释放初始引用（fd_table_alloc 已经增加了 3 次引用计数）
-        vfs_release_node(console);
+        fs::Vfs::release_node(console);
         LOG_DEBUG_MSG("  Opened stdin/stdout/stderr for process\n");
     } else {
         LOG_WARN_MSG("  Failed to open /dev/console for stdio\n");

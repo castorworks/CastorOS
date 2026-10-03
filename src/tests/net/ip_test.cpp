@@ -11,9 +11,9 @@
 // 测试覆盖:
 //   - IP 头部构造和字段设置
 //   - IP 头部校验和计算和验证
-//   - IP 地址转换函数 (ip_to_str, str_to_ip)
-//   - IP 子网检查 (ip_same_subnet)
-//   - IP 下一跳计算 (ip_get_next_hop)
+//   - IP 地址转换函数 (net::Ip::to_str, str_to_ip)
+//   - IP 子网检查 (net::Ip::same_subnet)
+//   - IP 下一跳计算 (net::Ip::get_next_hop)
 //   - IP 版本和头部长度提取
 // ============================================================================
 
@@ -52,11 +52,11 @@ TEST_CASE(test_ip_header_version_ihl) {
     ip.version_ihl = (IP_VERSION_4 << 4) | (IP_HEADER_MIN_LEN / 4);
     
     // 验证版本
-    uint8_t version = ip_version(&ip);
+    uint8_t version = net::Ip::version(&ip);
     ASSERT_EQ(IP_VERSION_4, version);
     
     // 验证头部长度
-    uint8_t hdr_len = ip_header_len(&ip);
+    uint8_t hdr_len = net::Ip::header_len(&ip);
     ASSERT_EQ(IP_HEADER_MIN_LEN, hdr_len);
 }
 
@@ -134,7 +134,7 @@ TEST_CASE(test_ip_checksum_calculation) {
     ip.dst_addr = IP_ADDR(172, 16, 10, 12);
     
     // 计算校验和
-    uint16_t cs = ip_checksum(&ip, IP_HEADER_MIN_LEN);
+    uint16_t cs = net::Ip::checksum(&ip, IP_HEADER_MIN_LEN);
     
     // 校验和应非零
     ASSERT_NE(0, cs);
@@ -143,7 +143,7 @@ TEST_CASE(test_ip_checksum_calculation) {
     ip.checksum = cs;
     
     // 验证：包含校验和的头部再次计算应得到 0
-    uint16_t verify_cs = ip_checksum(&ip, IP_HEADER_MIN_LEN);
+    uint16_t verify_cs = net::Ip::checksum(&ip, IP_HEADER_MIN_LEN);
     ASSERT_EQ(0, verify_cs);
 }
 
@@ -167,10 +167,10 @@ TEST_CASE(test_ip_checksum_verify) {
     ip.dst_addr = IP_ADDR(172, 16, 10, 12);
     
     // 计算并填入校验和
-    ip.checksum = ip_checksum(&ip, IP_HEADER_MIN_LEN);
+    ip.checksum = net::Ip::checksum(&ip, IP_HEADER_MIN_LEN);
     
     // 验证应通过
-    uint16_t verify_result = ip_checksum(&ip, IP_HEADER_MIN_LEN);
+    uint16_t verify_result = net::Ip::checksum(&ip, IP_HEADER_MIN_LEN);
     ASSERT_EQ(0, verify_result);
 }
 
@@ -197,11 +197,11 @@ TEST_CASE(test_ip_checksum_sensitivity) {
     memcpy(&ip2, &ip1, sizeof(ip1));
     
     // 计算第一个头部的校验和
-    uint16_t cs1 = ip_checksum(&ip1, IP_HEADER_MIN_LEN);
+    uint16_t cs1 = net::Ip::checksum(&ip1, IP_HEADER_MIN_LEN);
     
     // 修改第二个头部的 TTL
     ip2.ttl = 63;
-    uint16_t cs2 = ip_checksum(&ip2, IP_HEADER_MIN_LEN);
+    uint16_t cs2 = net::Ip::checksum(&ip2, IP_HEADER_MIN_LEN);
     
     // 校验和应不同
     ASSERT_NE(cs1, cs2);
@@ -225,11 +225,11 @@ TEST_CASE(test_ip_checksum_ttl_change) {
     ip.dst_addr = TEST_DST_IP;
     
     // 计算初始校验和
-    uint16_t cs_initial = ip_checksum(&ip, IP_HEADER_MIN_LEN);
+    uint16_t cs_initial = net::Ip::checksum(&ip, IP_HEADER_MIN_LEN);
     
     // 减少 TTL（模拟转发）
     ip.ttl = 63;
-    uint16_t cs_after_ttl = ip_checksum(&ip, IP_HEADER_MIN_LEN);
+    uint16_t cs_after_ttl = net::Ip::checksum(&ip, IP_HEADER_MIN_LEN);
     
     // 校验和应改变
     ASSERT_NE(cs_initial, cs_after_ttl);
@@ -240,7 +240,7 @@ TEST_CASE(test_ip_checksum_ttl_change) {
 // ============================================================================
 
 /**
- * 测试 ip_to_str 函数
+ * 测试 net::Ip::to_str 函数
  * IP 地址应正确转换为字符串
  */
 TEST_CASE(test_ip_to_str_basic) {
@@ -248,7 +248,7 @@ TEST_CASE(test_ip_to_str_basic) {
     
     // 测试 192.168.1.1
     uint32_t ip = IP_ADDR(192, 168, 1, 1);
-    ip_to_str(ip, buf);
+    net::Ip::to_str(ip, buf);
     
     // 验证字符串格式
     ASSERT_EQ('1', buf[0]);  // 第一个字符应是 '1'（192 的最后一位）
@@ -265,7 +265,7 @@ TEST_CASE(test_ip_to_str_basic) {
 }
 
 /**
- * 测试 ip_to_str 多个地址
+ * 测试 net::Ip::to_str 多个地址
  */
 TEST_CASE(test_ip_to_str_multiple) {
     char buf1[16], buf2[16], buf3[16];
@@ -274,9 +274,9 @@ TEST_CASE(test_ip_to_str_multiple) {
     uint32_t ip2 = IP_ADDR(255, 255, 255, 255);
     uint32_t ip3 = IP_ADDR(0, 0, 0, 0);
     
-    ip_to_str(ip1, buf1);
-    ip_to_str(ip2, buf2);
-    ip_to_str(ip3, buf3);
+    net::Ip::to_str(ip1, buf1);
+    net::Ip::to_str(ip2, buf2);
+    net::Ip::to_str(ip3, buf3);
     
     // 验证字符串非空
     ASSERT_NE(0, buf1[0]);
@@ -357,7 +357,7 @@ TEST_CASE(test_str_to_ip_null) {
 }
 
 /**
- * 测试 ip_to_str 和 str_to_ip 往返一致性
+ * 测试 net::Ip::to_str 和 str_to_ip 往返一致性
  * 转换后再转换回来应得到相同的 IP 地址
  */
 TEST_CASE(test_ip_addr_roundtrip) {
@@ -366,7 +366,7 @@ TEST_CASE(test_ip_addr_roundtrip) {
     uint32_t converted;
     
     // 转换为字符串
-    ip_to_str(original, buf);
+    net::Ip::to_str(original, buf);
     
     // 转换回 IP 地址
     int ret = str_to_ip(buf, &converted);
@@ -381,31 +381,31 @@ TEST_CASE(test_ip_addr_roundtrip) {
 // ============================================================================
 
 /**
- * 测试 ip_same_subnet 同一子网
+ * 测试 net::Ip::same_subnet 同一子网
  */
 TEST_CASE(test_ip_same_subnet_true) {
     uint32_t ip1 = IP_ADDR(192, 168, 1, 100);
     uint32_t ip2 = IP_ADDR(192, 168, 1, 200);
     uint32_t netmask = IP_ADDR(255, 255, 255, 0);
     
-    bool result = ip_same_subnet(ip1, ip2, netmask);
+    bool result = net::Ip::same_subnet(ip1, ip2, netmask);
     ASSERT_TRUE(result);
 }
 
 /**
- * 测试 ip_same_subnet 不同子网
+ * 测试 net::Ip::same_subnet 不同子网
  */
 TEST_CASE(test_ip_same_subnet_false) {
     uint32_t ip1 = IP_ADDR(192, 168, 1, 100);
     uint32_t ip2 = IP_ADDR(192, 168, 2, 100);
     uint32_t netmask = IP_ADDR(255, 255, 255, 0);
     
-    bool result = ip_same_subnet(ip1, ip2, netmask);
+    bool result = net::Ip::same_subnet(ip1, ip2, netmask);
     ASSERT_FALSE(result);
 }
 
 /**
- * 测试 ip_same_subnet 不同子网掩码
+ * 测试 net::Ip::same_subnet 不同子网掩码
  */
 TEST_CASE(test_ip_same_subnet_different_mask) {
     uint32_t ip1 = IP_ADDR(192, 168, 1, 100);
@@ -413,15 +413,15 @@ TEST_CASE(test_ip_same_subnet_different_mask) {
     
     // /24 掩码：不同子网
     uint32_t mask24 = IP_ADDR(255, 255, 255, 0);
-    ASSERT_FALSE(ip_same_subnet(ip1, ip2, mask24));
+    ASSERT_FALSE(net::Ip::same_subnet(ip1, ip2, mask24));
     
     // /16 掩码：同一子网
     uint32_t mask16 = IP_ADDR(255, 255, 0, 0);
-    ASSERT_TRUE(ip_same_subnet(ip1, ip2, mask16));
+    ASSERT_TRUE(net::Ip::same_subnet(ip1, ip2, mask16));
 }
 
 /**
- * 测试 ip_same_subnet 全 0 和全 1 掩码
+ * 测试 net::Ip::same_subnet 全 0 和全 1 掩码
  */
 TEST_CASE(test_ip_same_subnet_edge_masks) {
     uint32_t ip1 = IP_ADDR(192, 168, 1, 100);
@@ -429,12 +429,12 @@ TEST_CASE(test_ip_same_subnet_edge_masks) {
     
     // 全 0 掩码：所有地址都在同一子网
     uint32_t mask_zero = IP_ADDR(0, 0, 0, 0);
-    ASSERT_TRUE(ip_same_subnet(ip1, ip2, mask_zero));
+    ASSERT_TRUE(net::Ip::same_subnet(ip1, ip2, mask_zero));
     
     // 全 1 掩码：只有相同地址才在同一子网
     uint32_t mask_all = IP_ADDR(255, 255, 255, 255);
-    ASSERT_FALSE(ip_same_subnet(ip1, ip2, mask_all));
-    ASSERT_TRUE(ip_same_subnet(ip1, ip1, mask_all));
+    ASSERT_FALSE(net::Ip::same_subnet(ip1, ip2, mask_all));
+    ASSERT_TRUE(net::Ip::same_subnet(ip1, ip1, mask_all));
 }
 
 // ============================================================================
@@ -442,7 +442,7 @@ TEST_CASE(test_ip_same_subnet_edge_masks) {
 // ============================================================================
 
 /**
- * 测试 ip_get_next_hop 同一子网
+ * 测试 net::Ip::get_next_hop 同一子网
  * 同一子网的目的地址应直接作为下一跳
  */
 TEST_CASE(test_ip_get_next_hop_same_subnet) {
@@ -454,14 +454,14 @@ TEST_CASE(test_ip_get_next_hop_same_subnet) {
     dev.gateway = 0;
     
     uint32_t dst_ip = IP_ADDR(192, 168, 1, 200);
-    uint32_t next_hop = ip_get_next_hop(&dev, dst_ip);
+    uint32_t next_hop = net::Ip::get_next_hop(&dev, dst_ip);
     
     // 下一跳应是目的地址本身
     ASSERT_EQ(dst_ip, next_hop);
 }
 
 /**
- * 测试 ip_get_next_hop 不同子网有网关
+ * 测试 net::Ip::get_next_hop 不同子网有网关
  * 不同子网且有网关时应返回网关地址
  */
 TEST_CASE(test_ip_get_next_hop_different_subnet_with_gw) {
@@ -472,14 +472,14 @@ TEST_CASE(test_ip_get_next_hop_different_subnet_with_gw) {
     dev.gateway = IP_ADDR(192, 168, 1, 254);
     
     uint32_t dst_ip = IP_ADDR(8, 8, 8, 8);
-    uint32_t next_hop = ip_get_next_hop(&dev, dst_ip);
+    uint32_t next_hop = net::Ip::get_next_hop(&dev, dst_ip);
     
     // 下一跳应是网关地址
     ASSERT_EQ(dev.gateway, next_hop);
 }
 
 /**
- * 测试 ip_get_next_hop 不同子网无网关
+ * 测试 net::Ip::get_next_hop 不同子网无网关
  * 不同子网且无网关时应返回目的地址
  */
 TEST_CASE(test_ip_get_next_hop_different_subnet_no_gw) {
@@ -490,18 +490,18 @@ TEST_CASE(test_ip_get_next_hop_different_subnet_no_gw) {
     dev.gateway = 0;
     
     uint32_t dst_ip = IP_ADDR(8, 8, 8, 8);
-    uint32_t next_hop = ip_get_next_hop(&dev, dst_ip);
+    uint32_t next_hop = net::Ip::get_next_hop(&dev, dst_ip);
     
     // 下一跳应是目的地址本身
     ASSERT_EQ(dst_ip, next_hop);
 }
 
 /**
- * 测试 ip_get_next_hop NULL 设备
+ * 测试 net::Ip::get_next_hop NULL 设备
  */
 TEST_CASE(test_ip_get_next_hop_null_dev) {
     uint32_t dst_ip = IP_ADDR(192, 168, 1, 1);
-    uint32_t next_hop = ip_get_next_hop(NULL, dst_ip);
+    uint32_t next_hop = net::Ip::get_next_hop(NULL, dst_ip);
     
     // 应返回目的地址
     ASSERT_EQ(dst_ip, next_hop);

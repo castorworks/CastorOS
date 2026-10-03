@@ -80,36 +80,45 @@ typedef struct partition {
     blockdev_t *parent_dev;        // 父块设备
 } partition_t;
 
-/**
- * 从块设备读取 MBR 并解析分区表
- * @param dev 块设备
- * @param partitions 输出分区数组（至少 MAX_PARTITIONS 个元素）
- * @param count 输出实际找到的分区数
- * @return 0 成功，-1 失败
- */
-int partition_parse_mbr(blockdev_t *dev, partition_t *partitions, uint32_t *count);
+namespace fs {
 
 /**
- * 根据块设备上真实分区表（MBR 或 GPT）解析分区
- * @param dev 块设备
- * @param partitions 输出分区数组
- * @param count 输出分区数量
- * @return 0 成功，-1 失败
+ * @brief 分区表解析
  */
-int partition_parse(blockdev_t *dev, partition_t *partitions, uint32_t *count);
+class Partition {
+public:
+    /**
+     * 从块设备读取 MBR 并解析分区表
+     * @param dev 块设备
+     * @param partitions 输出分区数组（至少 MAX_PARTITIONS 个元素）
+     * @param count 输出实际找到的分区数
+     * @return 0 成功，-1 失败
+     */
+    static int parse_mbr(blockdev_t *dev, partition_t *partitions, uint32_t *count);
 
-/**
- * 创建分区块设备（将分区作为块设备访问）
- * @param part 分区信息
- * @return 块设备指针，失败返回 NULL
- */
-blockdev_t *partition_create_blockdev(partition_t *part);
+    /**
+     * 根据块设备上真实分区表（MBR 或 GPT）解析分区
+     * @param dev 块设备
+     * @param partitions 输出分区数组
+     * @param count 输出分区数量
+     * @return 0 成功，-1 失败
+     */
+    static int parse(blockdev_t *dev, partition_t *partitions, uint32_t *count);
 
-/**
- * 释放分区块设备
- * @param dev 分区块设备
- */
-void partition_destroy_blockdev(blockdev_t *dev);
+    /**
+     * 创建分区块设备（将分区作为块设备访问）
+     * @param part 分区信息
+     * @return 块设备指针，失败返回 NULL
+     */
+    static blockdev_t *create_blockdev(partition_t *part);
+
+    /**
+     * 释放分区块设备
+     * @param dev 分区块设备
+     */
+    static void destroy_blockdev(blockdev_t *dev);
+};
+
+} // namespace fs
 
 #endif // _FS_PARTITION_H_
-

@@ -365,7 +365,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     LOG_DEBUG_MSG("sys_execve: loading '%s' for PID %u\n", path, current->pid);
     
     // 打开 ELF 文件
-    fs_node_t *file = vfs_path_to_node(path);
+    fs_node_t *file = fs::Vfs::path_to_node(path);
     if (!file) {
         LOG_ERROR_MSG("sys_execve: file '%s' not found\n", path);
         return (uint32_t)-1;
@@ -376,19 +376,19 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     void *elf_data = kmalloc(file_size);
     if (!elf_data) {
         LOG_ERROR_MSG("sys_execve: failed to allocate memory for ELF file\n");
-        vfs_release_node(file);  // 释放节点
+        fs::Vfs::release_node(file);  // 释放节点
         return (uint32_t)-1;
     }
     
-    vfs_open(file, 0);
-    uint32_t bytes_read = vfs_read(file, 0, file_size, (uint8_t *)elf_data);
-    vfs_close(file);
+    fs::Vfs::open(file, 0);
+    uint32_t bytes_read = fs::Vfs::read(file, 0, file_size, (uint8_t *)elf_data);
+    fs::Vfs::close(file);
     
     if (bytes_read != file_size) {
         LOG_ERROR_MSG("sys_execve: failed to read ELF file (read %u, expected %u)\n", 
                       bytes_read, file_size);
         kfree(elf_data);
-        vfs_release_node(file);  // 释放节点
+        fs::Vfs::release_node(file);  // 释放节点
         return (uint32_t)-1;
     }
     
@@ -396,7 +396,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     if (!elf_validate_header(elf_data)) {
         LOG_ERROR_MSG("sys_execve: invalid ELF file '%s'\n", path);
         kfree(elf_data);
-        vfs_release_node(file);  // 释放节点
+        fs::Vfs::release_node(file);  // 释放节点
         return (uint32_t)-1;
     }
     
@@ -405,12 +405,12 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     if (entry_point == 0) {
         LOG_ERROR_MSG("sys_execve: failed to get entry point from '%s'\n", path);
         kfree(elf_data);
-        vfs_release_node(file);  // 释放节点
+        fs::Vfs::release_node(file);  // 释放节点
         return (uint32_t)-1;
     }
     
     // 文件已读取完毕，释放节点
-    vfs_release_node(file);
+    fs::Vfs::release_node(file);
     
     // ============================================================================
     // 创建新的地址空间
@@ -508,7 +508,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
         fd_entry_t *fd0 = fd_table_get(current->fd_table, 0);
         if (!fd0 || !fd0->node) {
             // 初始化标准文件描述符
-            fs_node_t *console = vfs_path_to_node("/dev/console");
+            fs_node_t *console = fs::Vfs::path_to_node("/dev/console");
             if (console) {
                 // 注意：fd_table_alloc 会自动增加引用计数
                 // 所以我们可以安全地为多个 fd 使用同一个节点
@@ -531,10 +531,10 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
                     LOG_WARN_MSG("sys_execve: failed to assign STDERR (fd=%d)\n", fd);
                 }
                 
-                // 关键修复：释放 vfs_path_to_node 的初始引用
+                // 关键修复：释放 fs::Vfs::path_to_node 的初始引用
                 // 三个 fd_table_alloc 调用已经增加了引用计数（每个 fd 一次）
                 // 现在释放初始引用，console 的 ref_count = 3（每个 fd 一个）
-                vfs_release_node(console);
+                fs::Vfs::release_node(console);
                 
                 // 当所有 fd 关闭时，引用计数会降到 0，节点才会被释放
             } else {

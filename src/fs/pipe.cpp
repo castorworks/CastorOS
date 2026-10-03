@@ -24,7 +24,7 @@ static uint32_t pipe_inode_counter = 0x10000;  // 从高位开始，避免与其
 /**
  * 初始化管道子系统
  */
-void pipe_init(void) {
+void fs::Pipe::init() {
     LOG_INFO_MSG("Pipe subsystem initialized\n");
 }
 
@@ -32,7 +32,7 @@ void pipe_init(void) {
  * 当管道文件描述符被复制时调用（fork, dup, dup2）
  * 增加相应端的引用计数
  */
-void pipe_on_dup(fs_node_t *node) {
+void fs::Pipe::on_dup(fs_node_t *node) {
     if (!node || node->type != FS_PIPE || !node->impl) {
         return;
     }
@@ -44,10 +44,10 @@ void pipe_on_dup(fs_node_t *node) {
     
     if (is_write_end) {
         pipe->writers++;
-        LOG_DEBUG_MSG("pipe_on_dup: writers=%u\n", pipe->writers);
+        LOG_DEBUG_MSG("fs::Pipe::on_dup: writers=%u\n", pipe->writers);
     } else {
         pipe->readers++;
-        LOG_DEBUG_MSG("pipe_on_dup: readers=%u\n", pipe->readers);
+        LOG_DEBUG_MSG("fs::Pipe::on_dup: readers=%u\n", pipe->readers);
     }
 }
 
@@ -57,16 +57,16 @@ void pipe_on_dup(fs_node_t *node) {
  * @param write_node 输出写端节点
  * @return 0 成功，-1 失败
  */
-int pipe_create(fs_node_t **read_node, fs_node_t **write_node) {
+int fs::Pipe::create(fs_node_t **read_node, fs_node_t **write_node) {
     if (!read_node || !write_node) {
-        LOG_ERROR_MSG("pipe_create: invalid arguments\n");
+        LOG_ERROR_MSG("fs::Pipe::create: invalid arguments\n");
         return -1;
     }
     
     // 分配管道结构
     pipe_t *pipe = (pipe_t *)kmalloc(sizeof(pipe_t));
     if (!pipe) {
-        LOG_ERROR_MSG("pipe_create: failed to allocate pipe structure\n");
+        LOG_ERROR_MSG("fs::Pipe::create: failed to allocate pipe structure\n");
         return -1;
     }
     
@@ -91,7 +91,7 @@ int pipe_create(fs_node_t **read_node, fs_node_t **write_node) {
     // 创建读端节点
     fs_node_t *rnode = (fs_node_t *)kmalloc(sizeof(fs_node_t));
     if (!rnode) {
-        LOG_ERROR_MSG("pipe_create: failed to allocate read node\n");
+        LOG_ERROR_MSG("fs::Pipe::create: failed to allocate read node\n");
         kfree(pipe);
         return -1;
     }
@@ -125,7 +125,7 @@ int pipe_create(fs_node_t **read_node, fs_node_t **write_node) {
     // 创建写端节点
     fs_node_t *wnode = (fs_node_t *)kmalloc(sizeof(fs_node_t));
     if (!wnode) {
-        LOG_ERROR_MSG("pipe_create: failed to allocate write node\n");
+        LOG_ERROR_MSG("fs::Pipe::create: failed to allocate write node\n");
         kfree(rnode);
         kfree(pipe);
         return -1;
@@ -160,7 +160,7 @@ int pipe_create(fs_node_t **read_node, fs_node_t **write_node) {
     *read_node = rnode;
     *write_node = wnode;
     
-    LOG_DEBUG_MSG("pipe_create: created pipe with inode %u\n", inode);
+    LOG_DEBUG_MSG("fs::Pipe::create: created pipe with inode %u\n", inode);
     
     return 0;
 }

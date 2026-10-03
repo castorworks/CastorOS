@@ -45,48 +45,57 @@ typedef struct shmfs_dir {
     sync::Mutex lock;                 // 目录锁
 } shmfs_dir_t;
 
-/**
- * 初始化 shmfs
- * @return 根目录节点
- */
-fs_node_t *shmfs_init(void);
+namespace fs {
 
 /**
- * 创建一个新的 shmfs 挂载点
- * @param name 挂载点名称
- * @return 根目录节点
+ * @brief 共享内存文件系统
  */
-fs_node_t *shmfs_create(const char *name);
+class Shmfs {
+public:
+    /**
+     * 初始化 shmfs
+     * @return 根目录节点
+     */
+    static fs_node_t *init();
 
-/**
- * 获取共享内存文件的物理页列表（供 mmap 使用）
- * @param node 文件节点
- * @param offset 起始偏移（页对齐）
- * @param num_pages 请求的页数
- * @param phys_pages 输出物理页地址数组
- * @return 实际获取的页数，失败返回 0
- */
-uint32_t shmfs_get_phys_pages(fs_node_t *node, uint32_t offset, 
-                               uint32_t num_pages, uint32_t *phys_pages);
+    /**
+     * 创建一个新的 shmfs 挂载点
+     * @param name 挂载点名称
+     * @return 根目录节点
+     */
+    static fs_node_t *create(const char *name);
 
-/**
- * 增加映射计数
- * @param node 文件节点
- */
-void shmfs_map_ref(fs_node_t *node);
+    /**
+     * 获取共享内存文件的物理页列表（供 mmap 使用）
+     * @param node 文件节点
+     * @param offset 起始偏移（页对齐）
+     * @param num_pages 请求的页数
+     * @param phys_pages 输出物理页地址数组
+     * @return 实际获取的页数，失败返回 0
+     */
+    static uint32_t get_phys_pages(fs_node_t *node, uint32_t offset, 
+                                   uint32_t num_pages, uint32_t *phys_pages);
 
-/**
- * 减少映射计数
- * @param node 文件节点
- */
-void shmfs_map_unref(fs_node_t *node);
+    /**
+     * 增加映射计数
+     * @param node 文件节点
+     */
+    static void map_ref(fs_node_t *node);
 
-/**
- * 检查节点是否为 shmfs 文件
- * @param node 文件节点
- * @return true 如果是 shmfs 文件
- */
-bool shmfs_is_shmfs_node(fs_node_t *node);
+    /**
+     * 减少映射计数
+     * @param node 文件节点
+     */
+    static void map_unref(fs_node_t *node);
+
+    /**
+     * 检查节点是否为 shmfs 文件
+     * @param node 文件节点
+     * @return true 如果是 shmfs 文件
+     */
+    static bool is_shmfs_node(fs_node_t *node);
+};
+
+} // namespace fs
 
 #endif // _FS_SHMFS_H_
-

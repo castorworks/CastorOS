@@ -16,7 +16,7 @@ static uint32_t tcp_timer_id = 0;
  */
 static void net_tcp_timer_callback(void *data) {
     (void)data;
-    tcp_timer();
+    net::Tcp::timer();
 }
 
 void net_init(void) {
@@ -26,22 +26,22 @@ void net_init(void) {
     netdev_init();
     
     // 2. 初始化以太网层
-    ethernet_init();
+    net::Ethernet::init();
     
     // 3. 初始化 ARP 协议
-    arp_init();
+    net::Arp::init();
     
     // 4. 初始化 IP 协议
-    ip_init();
+    net::Ip::init();
     
     // 5. 初始化 ICMP 协议
-    icmp_init();
+    net::Icmp::init();
     
     // 6. 初始化 UDP 协议
-    udp_init();
+    net::Udp::init();
     
     // 7. 初始化 TCP 协议
-    tcp_init();
+    net::Tcp::init();
     
     // 8. 初始化 Socket 子系统
     socket_init();
@@ -84,9 +84,9 @@ int net_configure(const char *ip, const char *netmask, const char *gateway) {
     netdev_set_gateway(dev, gw_addr);
     
     char ip_str[16], mask_str[16], gw_str[16];
-    ip_to_str(ip_addr, ip_str);
-    ip_to_str(mask_addr, mask_str);
-    ip_to_str(gw_addr, gw_str);
+    net::Ip::to_str(ip_addr, ip_str);
+    net::Ip::to_str(mask_addr, mask_str);
+    net::Ip::to_str(gw_addr, gw_str);
     
     LOG_INFO_MSG("net: Configured %s: ip=%s netmask=%s gateway=%s\n",
                  dev->name, ip_str, mask_str, gw_str);
@@ -118,7 +118,7 @@ int net_ping(const char *ip_str, int count) {
     }
     
     // 注册回调
-    icmp_register_ping_callback(ping_callback);
+    net::Icmp::register_ping_callback(ping_callback);
     
     kprintf("PING %s: 56 data bytes\n", ip_str);
     
@@ -129,7 +129,7 @@ int net_ping(const char *ip_str, int count) {
         ping_result.received = false;
         
         // 发送 ping
-        if (icmp_send_echo_request(dst_ip, 1, i + 1, NULL, 56) < 0) {
+        if (net::Icmp::send_echo_request(dst_ip, 1, i + 1, NULL, 56) < 0) {
             kprintf("ping: send failed\n");
             continue;
         }
@@ -152,7 +152,7 @@ int net_ping(const char *ip_str, int count) {
             total_rtt += rtt;
             
             char src_str[16];
-            ip_to_str(ping_result.src_ip, src_str);
+            net::Ip::to_str(ping_result.src_ip, src_str);
             kprintf("64 bytes from %s: icmp_seq=%d time=%u ms\n",
                     src_str, i + 1, rtt);
         } else {
@@ -175,7 +175,7 @@ int net_ping(const char *ip_str, int count) {
                 min_rtt, total_rtt / received, max_rtt);
     }
     
-    icmp_register_ping_callback(NULL);
+    net::Icmp::register_ping_callback(NULL);
     
     return received > 0 ? 0 : -1;
 }

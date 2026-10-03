@@ -8,7 +8,7 @@
 
 #include <net/checksum.h>
 
-uint32_t checksum_partial(uint32_t sum, void *data, int len) {
+uint32_t net::Checksum::partial(uint32_t sum, void *data, int len) {
     uint16_t *ptr = (uint16_t *)data;
     
     // 按16位累加
@@ -33,7 +33,7 @@ uint32_t checksum_partial(uint32_t sum, void *data, int len) {
     return sum;
 }
 
-uint16_t checksum_finish(uint32_t sum) {
+uint16_t net::Checksum::finish(uint32_t sum) {
     // 将高16位折叠到低16位
     while (sum >> 16) {
         sum = (sum & 0xFFFF) + (sum >> 16);
@@ -44,12 +44,12 @@ uint16_t checksum_finish(uint32_t sum) {
 }
 
 uint16_t checksum(void *data, int len) {
-    uint32_t sum = checksum_partial(0, data, len);
-    return checksum_finish(sum);
+    uint32_t sum = net::Checksum::partial(0, data, len);
+    return net::Checksum::finish(sum);
 }
 
-bool checksum_verify(void *data, int len) {
-    uint32_t sum = checksum_partial(0, data, len);
+bool net::Checksum::verify(void *data, int len) {
+    uint32_t sum = net::Checksum::partial(0, data, len);
     
     // 折叠高位
     while (sum >> 16) {

@@ -283,7 +283,7 @@ static uint32_t do_mmap_file(task_t *current, uint32_t vaddr, uint32_t length,
             }
             
             // 使用 VFS 读取文件内容
-            uint32_t bytes_read = vfs_read(node, file_offset, read_size, kernel_ptr);
+            uint32_t bytes_read = fs::Vfs::read(node, file_offset, read_size, kernel_ptr);
             if (bytes_read == 0 && read_size > 0) {
                 LOG_WARN_MSG("sys_mmap: failed to read file at offset 0x%x\n", file_offset);
             }

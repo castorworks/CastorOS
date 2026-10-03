@@ -10,9 +10,9 @@
 //
 // 测试覆盖:
 //   - checksum(): 完整校验和计算
-//   - checksum_partial(): 增量校验和累加
-//   - checksum_finish(): 校验和折叠和取反
-//   - checksum_verify(): 校验和验证
+//   - net::Checksum::partial(): 增量校验和累加
+//   - net::Checksum::finish(): 校验和折叠和取反
+//   - net::Checksum::verify(): 校验和验证
 // ============================================================================
 
 #include <tests/ktest.h>
@@ -105,7 +105,7 @@ TEST_CASE(test_checksum_rfc1071_vector) {
     memcpy(data_with_cs, rfc1071_test_data, 8);
     data_with_cs[8] = result & 0xFF;
     data_with_cs[9] = (result >> 8) & 0xFF;
-    ASSERT_TRUE(checksum_verify(data_with_cs, 10));
+    ASSERT_TRUE(net::Checksum::verify(data_with_cs, 10));
 }
 
 /**
@@ -119,8 +119,8 @@ TEST_CASE(test_checksum_single_byte) {
     ASSERT_NE(0xFFFF, result);
     
     // 验证分段计算一致性
-    uint32_t sum = checksum_partial(0, (void *)single_byte_data, 1);
-    uint16_t partial_result = checksum_finish(sum);
+    uint32_t sum = net::Checksum::partial(0, (void *)single_byte_data, 1);
+    uint16_t partial_result = net::Checksum::finish(sum);
     ASSERT_EQ_UINT(result, partial_result);
 }
 
@@ -135,14 +135,14 @@ TEST_CASE(test_checksum_odd_length) {
     
     // 验证分段计算一致性
     uint32_t sum = 0;
-    sum = checksum_partial(sum, (void *)odd_length_data, 4);
-    sum = checksum_partial(sum, (void *)(odd_length_data + 4), 1);
-    uint16_t partial_result = checksum_finish(sum);
+    sum = net::Checksum::partial(sum, (void *)odd_length_data, 4);
+    sum = net::Checksum::partial(sum, (void *)(odd_length_data + 4), 1);
+    uint16_t partial_result = net::Checksum::finish(sum);
     ASSERT_EQ_UINT(result, partial_result);
 }
 
 // ============================================================================
-// 测试用例：checksum_partial() 增量计算
+// 测试用例：net::Checksum::partial() 增量计算
 // ============================================================================
 
 /**
@@ -155,9 +155,9 @@ TEST_CASE(test_checksum_partial_split) {
     
     // 分段计算
     uint32_t sum = 0;
-    sum = checksum_partial(sum, (void *)rfc1071_test_data, 4);
-    sum = checksum_partial(sum, (void *)(rfc1071_test_data + 4), 4);
-    uint16_t partial_result = checksum_finish(sum);
+    sum = net::Checksum::partial(sum, (void *)rfc1071_test_data, 4);
+    sum = net::Checksum::partial(sum, (void *)(rfc1071_test_data + 4), 4);
+    uint16_t partial_result = net::Checksum::finish(sum);
     
     ASSERT_EQ_UINT(full_result, partial_result);
 }
@@ -172,11 +172,11 @@ TEST_CASE(test_checksum_partial_multiple) {
     uint8_t data4[] = {0xf6, 0xf7};
     
     uint32_t sum = 0;
-    sum = checksum_partial(sum, data1, 2);
-    sum = checksum_partial(sum, data2, 2);
-    sum = checksum_partial(sum, data3, 2);
-    sum = checksum_partial(sum, data4, 2);
-    uint16_t result = checksum_finish(sum);
+    sum = net::Checksum::partial(sum, data1, 2);
+    sum = net::Checksum::partial(sum, data2, 2);
+    sum = net::Checksum::partial(sum, data3, 2);
+    sum = net::Checksum::partial(sum, data4, 2);
+    uint16_t result = net::Checksum::finish(sum);
     
     // 应与 RFC 1071 测试向量结果相同
     uint16_t expected = checksum((void *)rfc1071_test_data, sizeof(rfc1071_test_data));
@@ -188,15 +188,15 @@ TEST_CASE(test_checksum_partial_multiple) {
  */
 TEST_CASE(test_checksum_partial_empty) {
     uint32_t sum = 0;
-    sum = checksum_partial(sum, (void *)rfc1071_test_data, 0);
+    sum = net::Checksum::partial(sum, (void *)rfc1071_test_data, 0);
     ASSERT_EQ_UINT(0, sum);
     
-    uint16_t result = checksum_finish(sum);
+    uint16_t result = net::Checksum::finish(sum);
     ASSERT_EQ_UINT(0xFFFF, result);
 }
 
 // ============================================================================
-// 测试用例：checksum_finish() 折叠和取反
+// 测试用例：net::Checksum::finish() 折叠和取反
 // ============================================================================
 
 /**
@@ -204,7 +204,7 @@ TEST_CASE(test_checksum_partial_empty) {
  */
 TEST_CASE(test_checksum_finish_no_fold) {
     uint32_t sum = 0x1234;
-    uint16_t result = checksum_finish(sum);
+    uint16_t result = net::Checksum::finish(sum);
     ASSERT_EQ_UINT(~0x1234 & 0xFFFF, result);
 }
 
@@ -214,7 +214,7 @@ TEST_CASE(test_checksum_finish_no_fold) {
 TEST_CASE(test_checksum_finish_single_fold) {
     // 0x12345 -> 0x2345 + 0x1 = 0x2346 -> 取反
     uint32_t sum = 0x12345;
-    uint16_t result = checksum_finish(sum);
+    uint16_t result = net::Checksum::finish(sum);
     ASSERT_EQ_UINT(~0x2346 & 0xFFFF, result);
 }
 
@@ -227,12 +227,12 @@ TEST_CASE(test_checksum_finish_multiple_fold) {
     // 第二次折叠: 0xFFFE + 0x1 = 0xFFFF
     // 取反: ~0xFFFF = 0x0000
     uint32_t sum = 0xFFFFFFFF;
-    uint16_t result = checksum_finish(sum);
+    uint16_t result = net::Checksum::finish(sum);
     ASSERT_EQ_UINT(0x0000, result);
 }
 
 // ============================================================================
-// 测试用例：checksum_verify() 验证功能
+// 测试用例：net::Checksum::verify() 验证功能
 // ============================================================================
 
 /**
@@ -251,7 +251,7 @@ TEST_CASE(test_checksum_verify_correct) {
     data_with_checksum[9] = (cs >> 8) & 0xFF;
     
     // 验证应返回 true
-    bool result = checksum_verify(data_with_checksum, 10);
+    bool result = net::Checksum::verify(data_with_checksum, 10);
     ASSERT_TRUE(result);
 }
 
@@ -272,7 +272,7 @@ TEST_CASE(test_checksum_verify_incorrect) {
     data_with_checksum[0] ^= 0x01;
     
     // 验证应返回 false
-    bool result = checksum_verify(data_with_checksum, 10);
+    bool result = net::Checksum::verify(data_with_checksum, 10);
     ASSERT_FALSE(result);
 }
 
@@ -283,7 +283,7 @@ TEST_CASE(test_checksum_verify_zero_data) {
     // 全零数据的校验和是 0xFFFF
     // 全零 + 0xFFFF 的验证应通过
     uint8_t data[6] = {0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF};
-    bool result = checksum_verify(data, 6);
+    bool result = net::Checksum::verify(data, 6);
     ASSERT_TRUE(result);
 }
 
@@ -311,9 +311,9 @@ TEST_CASE(test_checksum_large_data) {
     
     // 验证分段计算一致性
     uint32_t sum = 0;
-    sum = checksum_partial(sum, large_data, 128);
-    sum = checksum_partial(sum, large_data + 128, 128);
-    uint16_t partial_result = checksum_finish(sum);
+    sum = net::Checksum::partial(sum, large_data, 128);
+    sum = net::Checksum::partial(sum, large_data + 128, 128);
+    uint16_t partial_result = net::Checksum::finish(sum);
     
     ASSERT_EQ_UINT(result, partial_result);
 }
@@ -328,11 +328,11 @@ TEST_CASE(test_checksum_alignment) {
     
     // 分段计算应得到相同结果
     uint32_t sum = 0;
-    sum = checksum_partial(sum, aligned_data, 2);
-    sum = checksum_partial(sum, aligned_data + 2, 2);
-    sum = checksum_partial(sum, aligned_data + 4, 2);
-    sum = checksum_partial(sum, aligned_data + 6, 2);
-    uint16_t result2 = checksum_finish(sum);
+    sum = net::Checksum::partial(sum, aligned_data, 2);
+    sum = net::Checksum::partial(sum, aligned_data + 2, 2);
+    sum = net::Checksum::partial(sum, aligned_data + 4, 2);
+    sum = net::Checksum::partial(sum, aligned_data + 6, 2);
+    uint16_t result2 = net::Checksum::finish(sum);
     
     ASSERT_EQ_UINT(result1, result2);
 }
@@ -362,7 +362,7 @@ TEST_CASE(test_checksum_ip_header_simulation) {
     ip_header[11] = (cs >> 8) & 0xFF;
     
     // 验证应通过
-    bool result = checksum_verify(ip_header, 20);
+    bool result = net::Checksum::verify(ip_header, 20);
     ASSERT_TRUE(result);
 }
 

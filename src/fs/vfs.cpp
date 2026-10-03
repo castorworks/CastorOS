@@ -28,7 +28,7 @@ static sync::Mutex vfs_mount_mutex;
 /* VFS 引用计数互斥锁 - 保护所有节点的引用计数操作 */
 static sync::Mutex vfs_refcount_mutex;
 
-void vfs_init(void) {
+void fs::Vfs::init() {
     LOG_INFO_MSG("VFS: Initializing virtual file system...\n");
     fs_root = NULL;
     mount_count = 0;
@@ -55,30 +55,30 @@ static fs_node_t *vfs_get_mounted_root_by_path(const char *path) {
     return NULL;
 }
 
-fs_node_t *vfs_get_root(void) {
+fs_node_t *fs::Vfs::get_root() {
     return fs_root;
 }
 
-void vfs_set_root(fs_node_t *root) {
+void fs::Vfs::set_root(fs_node_t *root) {
     fs_root = root;
     LOG_INFO_MSG("VFS: Root filesystem set\n");
 }
 
-uint32_t vfs_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
+uint32_t fs::Vfs::read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
     if (!node || !node->read) {
         return 0;
     }
     return node->read(node, offset, size, buffer);
 }
 
-uint32_t vfs_write(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
+uint32_t fs::Vfs::write(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
     if (!node || !node->write) {
         return 0;
     }
     return node->write(node, offset, size, buffer);
 }
 
-void vfs_open(fs_node_t *node, uint32_t flags) {
+void fs::Vfs::open(fs_node_t *node, uint32_t flags) {
     if (!node) {
         return;
     }
@@ -87,7 +87,7 @@ void vfs_open(fs_node_t *node, uint32_t flags) {
     }
 }
 
-void vfs_close(fs_node_t *node) {
+void fs::Vfs::close(fs_node_t *node) {
     if (!node) {
         return;
     }
@@ -96,7 +96,7 @@ void vfs_close(fs_node_t *node) {
     }
 }
 
-void vfs_ref_node(fs_node_t *node) {
+void fs::Vfs::ref_node(fs_node_t *node) {
     if (!node) {
         return;
     }
@@ -111,7 +111,7 @@ void vfs_ref_node(fs_node_t *node) {
     node->ref_count++;
 }
 
-void vfs_release_node(fs_node_t *node) {
+void fs::Vfs::release_node(fs_node_t *node) {
     if (!node) {
         return;
     }
@@ -130,14 +130,14 @@ void vfs_release_node(fs_node_t *node) {
         node->ref_count--;
     } else {
         // 动态分配的节点引用计数为 0，打印警告（可能是双重释放）
-        LOG_WARN_MSG("vfs_release_node: %s already has ref_count=0, skipping free\n", node->name);
+        LOG_WARN_MSG("fs::Vfs::release_node: %s already has ref_count=0, skipping free\n", node->name);
         vfs_refcount_mutex.unlock();
         return;  // 立即返回，防止双重释放
     }
     
     // 当引用计数为 0 时释放动态分配的节点
     if (node->ref_count == 0) {
-        LOG_DEBUG_MSG("vfs_release_node: freeing node %s\n", node->name);
+        LOG_DEBUG_MSG("fs::Vfs::release_node: freeing node %s\n", node->name);
         // 释放之前先解锁，因为释放操作可能需要较长时间
         vfs_refcount_mutex.unlock();
         
@@ -154,19 +154,19 @@ void vfs_release_node(fs_node_t *node) {
     vfs_refcount_mutex.unlock();
 }
 
-struct dirent *vfs_readdir(fs_node_t *node, uint32_t index) {
+struct dirent *fs::Vfs::readdir(fs_node_t *node, uint32_t index) {
     if (!node || node->type != FS_DIRECTORY) {
         return NULL;
     }
     
-    /* 正常读取（挂载点切换在 vfs_path_to_node 中处理） */
+    /* 正常读取（挂载点切换在 fs::Vfs::path_to_node 中处理） */
     if (!node->readdir) {
         return NULL;
     }
     return node->readdir(node, index);
 }
 
-fs_node_t *vfs_finddir(fs_node_t *node, const char *name) {
+fs_node_t *fs::Vfs::finddir(fs_node_t *node, const char *name) {
     if (!node || node->type != FS_DIRECTORY) {
         return NULL;
     }
@@ -194,7 +194,7 @@ fs_node_t *vfs_finddir(fs_node_t *node, const char *name) {
         return NULL;
     }
     
-    /* 正常查找（挂载点切换在 vfs_path_to_node 中处理） */
+    /* 正常查找（挂载点切换在 fs::Vfs::path_to_node 中处理） */
     if (!node->finddir) {
         return NULL;
     }
@@ -202,7 +202,7 @@ fs_node_t *vfs_finddir(fs_node_t *node, const char *name) {
 }
 
 // 路径解析：将路径字符串转换为文件节点
-fs_node_t *vfs_path_to_node(const char *path) {
+fs_node_t *fs::Vfs::path_to_node(const char *path) {
     if (!path || !fs_root) {
         return NULL;
     }
@@ -250,7 +250,7 @@ fs_node_t *vfs_path_to_node(const char *path) {
                 
                 if (*remaining && *remaining != '/') {
                     LOG_ERROR_MSG("VFS: Path component too long\n");
-                    vfs_release_node(current);  // 释放中间节点
+                    fs::Vfs::release_node(current);  // 释放中间节点
                     vfs_mount_mutex.unlock();
                     return NULL;
                 }
@@ -273,26 +273,26 @@ fs_node_t *vfs_path_to_node(const char *path) {
                 
                 /* 处理 '..' - 转到父目录 */
                 if (strcmp(token, "..") == 0) {
-                    fs_node_t *parent = vfs_finddir(current, "..");
+                    fs_node_t *parent = fs::Vfs::finddir(current, "..");
                     if (!parent) {
-                        vfs_release_node(current);  // 释放中间节点
+                        fs::Vfs::release_node(current);  // 释放中间节点
                         vfs_mount_mutex.unlock();
                         return NULL;
                     }
                     // 释放旧的 current（如果它是动态分配的且不是根）
                     if (current != mount_table[i].root) {
-                        vfs_release_node(current);
+                        fs::Vfs::release_node(current);
                     }
                     current = parent;
                     continue;
                 }
                 
                 /* 查找下一个节点 */
-                fs_node_t *next = vfs_finddir(current, token);
+                fs_node_t *next = fs::Vfs::finddir(current, token);
                 if (!next) {
                     // 释放中间节点
                     if (current != mount_table[i].root) {
-                        vfs_release_node(current);
+                        fs::Vfs::release_node(current);
                     }
                     vfs_mount_mutex.unlock();
                     return NULL;
@@ -300,7 +300,7 @@ fs_node_t *vfs_path_to_node(const char *path) {
                 
                 // 释放旧的 current（如果它是动态分配的且不是根）
                 if (current != mount_table[i].root) {
-                    vfs_release_node(current);
+                    fs::Vfs::release_node(current);
                 }
                 current = next;
             }
@@ -334,7 +334,7 @@ fs_node_t *vfs_path_to_node(const char *path) {
             LOG_ERROR_MSG("VFS: Path component too long\n");
             // 释放中间节点
             if (current != fs_root) {
-                vfs_release_node(current);
+                fs::Vfs::release_node(current);
             }
             return NULL;
         }
@@ -358,35 +358,35 @@ fs_node_t *vfs_path_to_node(const char *path) {
         
         /* 处理 '..' - 转到父目录 */
         if (strcmp(token, "..") == 0) {
-            fs_node_t *parent = vfs_finddir(current, "..");
+            fs_node_t *parent = fs::Vfs::finddir(current, "..");
             if (!parent) {
                 // 释放中间节点
                 if (current != fs_root) {
-                    vfs_release_node(current);
+                    fs::Vfs::release_node(current);
                 }
                 return NULL;
             }
             // 释放旧的 current（如果它是动态分配的且不是根）
             if (current != fs_root) {
-                vfs_release_node(current);
+                fs::Vfs::release_node(current);
             }
             current = parent;
             continue;
         }
         
         /* 查找下一个节点 */
-        fs_node_t *next = vfs_finddir(current, token);
+        fs_node_t *next = fs::Vfs::finddir(current, token);
         if (!next) {
             // 释放中间节点
             if (current != fs_root) {
-                vfs_release_node(current);
+                fs::Vfs::release_node(current);
             }
             return NULL;  /* 路径不存在 */
         }
         
         // 释放旧的 current（如果它是动态分配的且不是根）
         if (current != fs_root) {
-            vfs_release_node(current);
+            fs::Vfs::release_node(current);
         }
         current = next;
     }
@@ -396,7 +396,7 @@ fs_node_t *vfs_path_to_node(const char *path) {
 }
 
 // 创建文件
-int vfs_create(const char *path) {
+int fs::Vfs::create(const char *path) {
     if (!path || !fs_root) {
         return -1;
     }
@@ -432,25 +432,25 @@ int vfs_create(const char *path) {
     }
     
     // 查找父目录
-    fs_node_t *parent = vfs_path_to_node(parent_path);
+    fs_node_t *parent = fs::Vfs::path_to_node(parent_path);
     if (!parent || parent->type != FS_DIRECTORY) {
-        vfs_release_node(parent);  // 释放节点（即使为NULL也安全）
+        fs::Vfs::release_node(parent);  // 释放节点（即使为NULL也安全）
         return -1;
     }
     
     // 调用父目录的 create 操作
     if (!parent->create) {
-        vfs_release_node(parent);  // 释放节点
+        fs::Vfs::release_node(parent);  // 释放节点
         return -1;
     }
     
     int result = parent->create(parent, file_name);
-    vfs_release_node(parent);  // 释放节点
+    fs::Vfs::release_node(parent);  // 释放节点
     return result;
 }
 
 // 创建目录
-int vfs_mkdir(const char *path, uint32_t permissions) {
+int fs::Vfs::mkdir(const char *path, uint32_t permissions) {
     if (!path || !fs_root) {
         return -1;
     }
@@ -486,25 +486,25 @@ int vfs_mkdir(const char *path, uint32_t permissions) {
     }
     
     // 查找父目录
-    fs_node_t *parent = vfs_path_to_node(parent_path);
+    fs_node_t *parent = fs::Vfs::path_to_node(parent_path);
     if (!parent || parent->type != FS_DIRECTORY) {
-        vfs_release_node(parent);  // 释放节点
+        fs::Vfs::release_node(parent);  // 释放节点
         return -1;
     }
     
     // 调用父目录的 mkdir 操作
     if (!parent->mkdir) {
-        vfs_release_node(parent);  // 释放节点
+        fs::Vfs::release_node(parent);  // 释放节点
         return -1;
     }
     
     int result = parent->mkdir(parent, dir_name, permissions);
-    vfs_release_node(parent);  // 释放节点
+    fs::Vfs::release_node(parent);  // 释放节点
     return result;
 }
 
 // 删除文件或目录
-int vfs_unlink(const char *path) {
+int fs::Vfs::unlink(const char *path) {
     if (!path || !fs_root) {
         return -1;
     }
@@ -545,32 +545,32 @@ int vfs_unlink(const char *path) {
     }
     
     // 查找父目录
-    fs_node_t *parent = vfs_path_to_node(parent_path);
+    fs_node_t *parent = fs::Vfs::path_to_node(parent_path);
     if (!parent || parent->type != FS_DIRECTORY) {
-        vfs_release_node(parent);  // 释放节点
+        fs::Vfs::release_node(parent);  // 释放节点
         return -1;
     }
     
     // 调用父目录的 unlink 操作
     if (!parent->unlink) {
-        vfs_release_node(parent);  // 释放节点
+        fs::Vfs::release_node(parent);  // 释放节点
         return -1;
     }
     
     int result = parent->unlink(parent, file_name);
-    vfs_release_node(parent);  // 释放节点
+    fs::Vfs::release_node(parent);  // 释放节点
     return result;
 }
 
 // 截断文件到指定大小
-int vfs_truncate(fs_node_t *node, uint32_t new_size) {
+int fs::Vfs::truncate(fs_node_t *node, uint32_t new_size) {
     if (!node) {
         return -1;
     }
     
     // 检查是否为文件
     if (node->type != FS_FILE) {
-        LOG_ERROR_MSG("vfs_truncate: not a regular file\n");
+        LOG_ERROR_MSG("fs::Vfs::truncate: not a regular file\n");
         return -1;
     }
     
@@ -585,15 +585,15 @@ int vfs_truncate(fs_node_t *node, uint32_t new_size) {
 }
 
 // 重命名文件或目录
-int vfs_rename(const char *oldpath, const char *newpath) {
+int fs::Vfs::rename(const char *oldpath, const char *newpath) {
     if (!oldpath || !newpath || !fs_root) {
-        LOG_ERROR_MSG("vfs_rename: invalid arguments\n");
+        LOG_ERROR_MSG("fs::Vfs::rename: invalid arguments\n");
         return -1;
     }
     
     // 不能重命名根目录
     if (strcmp(oldpath, "/") == 0 || strcmp(newpath, "/") == 0) {
-        LOG_ERROR_MSG("vfs_rename: cannot rename root directory\n");
+        LOG_ERROR_MSG("fs::Vfs::rename: cannot rename root directory\n");
         return -1;
     }
     
@@ -629,7 +629,7 @@ int vfs_rename(const char *oldpath, const char *newpath) {
     } else {
         uint32_t len = old_last_slash - oldpath;
         if (len >= 256) {
-            LOG_ERROR_MSG("vfs_rename: old path too long\n");
+            LOG_ERROR_MSG("fs::Vfs::rename: old path too long\n");
             return -1;
         }
         strncpy(old_parent_path, oldpath, len);
@@ -649,7 +649,7 @@ int vfs_rename(const char *oldpath, const char *newpath) {
     } else {
         uint32_t len = new_last_slash - newpath;
         if (len >= 256) {
-            LOG_ERROR_MSG("vfs_rename: new path too long\n");
+            LOG_ERROR_MSG("fs::Vfs::rename: new path too long\n");
             return -1;
         }
         strncpy(new_parent_path, newpath, len);
@@ -659,49 +659,49 @@ int vfs_rename(const char *oldpath, const char *newpath) {
     
     // 检查是否在同一目录下（当前仅支持同一目录下的重命名）
     if (strcmp(old_parent_path, new_parent_path) != 0) {
-        LOG_ERROR_MSG("vfs_rename: cross-directory rename not supported yet\n");
+        LOG_ERROR_MSG("fs::Vfs::rename: cross-directory rename not supported yet\n");
         LOG_ERROR_MSG("  old_parent='%s', new_parent='%s'\n", old_parent_path, new_parent_path);
         return -1;
     }
     
     // 查找父目录
-    fs_node_t *parent = vfs_path_to_node(old_parent_path);
+    fs_node_t *parent = fs::Vfs::path_to_node(old_parent_path);
     if (!parent || parent->type != FS_DIRECTORY) {
-        LOG_ERROR_MSG("vfs_rename: parent directory not found or not a directory\n");
-        vfs_release_node(parent);
+        LOG_ERROR_MSG("fs::Vfs::rename: parent directory not found or not a directory\n");
+        fs::Vfs::release_node(parent);
         return -1;
     }
     
     // 检查文件系统是否支持重命名操作
     if (!parent->rename) {
-        LOG_ERROR_MSG("vfs_rename: filesystem does not support rename operation\n");
-        vfs_release_node(parent);
+        LOG_ERROR_MSG("fs::Vfs::rename: filesystem does not support rename operation\n");
+        fs::Vfs::release_node(parent);
         return -1;
     }
     
     // 调用文件系统的重命名操作
     int result = parent->rename(parent, old_name, new_name);
     
-    vfs_release_node(parent);
+    fs::Vfs::release_node(parent);
     
     if (result == 0) {
-        LOG_DEBUG_MSG("vfs_rename: '%s' -> '%s' success\n", oldpath, newpath);
+        LOG_DEBUG_MSG("fs::Vfs::rename: '%s' -> '%s' success\n", oldpath, newpath);
     } else {
-        LOG_ERROR_MSG("vfs_rename: '%s' -> '%s' failed\n", oldpath, newpath);
+        LOG_ERROR_MSG("fs::Vfs::rename: '%s' -> '%s' failed\n", oldpath, newpath);
     }
     
     return result;
 }
 
 // 挂载文件系统到指定路径
-int vfs_mount(const char *path, fs_node_t *root) {
+int fs::Vfs::mount(const char *path, fs_node_t *root) {
     if (!path || !root || !fs_root) {
         LOG_ERROR_MSG("VFS: mount: invalid arguments (path=%p, root=%p, fs_root=%p)\n", path, root, fs_root);
         return -1;
     }
     
     /* 查找挂载点 */
-    fs_node_t *mount_point = vfs_path_to_node(path);
+    fs_node_t *mount_point = fs::Vfs::path_to_node(path);
     if (!mount_point) {
         LOG_ERROR_MSG("VFS: Mount point '%s' not found\n", path);
         return -1;
@@ -709,12 +709,12 @@ int vfs_mount(const char *path, fs_node_t *root) {
     
     if (mount_point->type != FS_DIRECTORY) {
         LOG_ERROR_MSG("VFS: Mount point '%s' is not a directory\n", path);
-        vfs_release_node(mount_point);  // 释放节点
+        fs::Vfs::release_node(mount_point);  // 释放节点
         return -1;
     }
     
     // 验证完成，释放挂载点节点（我们只需要验证路径，不需要保留节点）
-    vfs_release_node(mount_point);
+    fs::Vfs::release_node(mount_point);
     
     /* 获取挂载表锁，保护后续的检查和修改操作 */
     vfs_mount_mutex.lock();

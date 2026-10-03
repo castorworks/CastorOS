@@ -1756,7 +1756,7 @@ static fs_node_t *fat32_dir_finddir(fs_node_t *node, const char *name) {
 // 公共接口
 // ============================================================================
 
-bool fat32_probe(blockdev_t *dev) {
+bool fs::Fat32::probe(blockdev_t *dev) {
     if (!dev) {
         return false;
     }
@@ -1785,14 +1785,14 @@ bool fat32_probe(blockdev_t *dev) {
     return true;
 }
 
-fs_node_t *fat32_init(blockdev_t *dev) {
+fs_node_t *fs::Fat32::init(blockdev_t *dev) {
     if (!dev) {
         LOG_ERROR_MSG("fat32: Invalid block device\n");
         return NULL;
     }
     
     // 探测文件系统
-    if (!fat32_probe(dev)) {
+    if (!fs::Fat32::probe(dev)) {
         LOG_ERROR_MSG("fat32: Not a valid FAT32 filesystem\n");
         return NULL;
     }
@@ -1928,15 +1928,15 @@ fs_node_t *fat32_init(blockdev_t *dev) {
  * 卸载 FAT32 文件系统并释放所有资源
  * @param root 根目录节点
  */
-void fat32_deinit(fs_node_t *root) {
+void fs::Fat32::deinit(fs_node_t *root) {
     if (!root || !root->impl) {
-        LOG_WARN_MSG("fat32_deinit: Invalid root node\n");
+        LOG_WARN_MSG("fs::Fat32::deinit: Invalid root node\n");
         return;
     }
     
     fat32_file_t *root_file = (fat32_file_t *)root->impl;
     if (!root_file || !root_file->fs) {
-        LOG_WARN_MSG("fat32_deinit: Invalid root_file or fs\n");
+        LOG_WARN_MSG("fs::Fat32::deinit: Invalid root_file or fs\n");
         return;
     }
     

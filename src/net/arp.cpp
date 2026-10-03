@@ -72,9 +72,9 @@ static void arp_send_pending(arp_entry_t *entry, netdev_t *dev) {
         buf->next = NULL;
         
         // 发送数据包（通过以太网层）
-        // 注意：ethernet_output 成功后，buf 由网卡驱动负责释放
+        // 注意：net::Ethernet::output 成功后，buf 由网卡驱动负责释放
         // 如果失败，需要我们释放
-        int ret = ethernet_output(dev, buf, entry->mac_addr, ETH_TYPE_IP);
+        int ret = net::Ethernet::output(dev, buf, entry->mac_addr, ETH_TYPE_IP);
         if (ret < 0) {
             netbuf_free(buf);
         }
@@ -97,14 +97,14 @@ static void arp_free_pending(arp_entry_t *entry) {
     entry->pending_queue = NULL;
 }
 
-void arp_init(void) {
+void net::Arp::init() {
     arp_cache_lock.init();
     memset(arp_cache, 0, sizeof(arp_cache));
     
     LOG_INFO_MSG("arp: ARP protocol initialized\n");
 }
 
-void arp_input(netdev_t *dev, netbuf_t *buf) {
+void net::Arp::input(netdev_t *dev, netbuf_t *buf) {
     if (!dev || !buf) {
         return;
     }
@@ -131,7 +131,7 @@ void arp_input(netdev_t *dev, netbuf_t *buf) {
     uint16_t op = arp_ntohs(arp->operation);
     
     // 更新 ARP 缓存（只要收到 ARP 报文，就更新发送方的地址映射）
-    arp_cache_update(arp->sender_ip, arp->sender_mac);
+    net::Arp::cache_update(arp->sender_ip, arp->sender_mac);
     
     // 检查目标 IP 是否是我们的 IP
     if (arp->target_ip != dev->ip_addr) {
@@ -147,7 +147,7 @@ void arp_input(netdev_t *dev, netbuf_t *buf) {
                          (arp->sender_ip >> 8) & 0xFF,
                          (arp->sender_ip >> 16) & 0xFF,
                          (arp->sender_ip >> 24) & 0xFF);
-            arp_reply(dev, arp->sender_ip, arp->sender_mac);
+            net::Arp::reply(dev, arp->sender_ip, arp->sender_mac);
             break;
             
         case ARP_OP_REPLY:
@@ -167,7 +167,7 @@ void arp_input(netdev_t *dev, netbuf_t *buf) {
     netbuf_free(buf);
 }
 
-int arp_resolve(netdev_t *dev, uint32_t ip, uint8_t *mac) {
+int net::Arp::resolve(netdev_t *dev, uint32_t ip, uint8_t *mac) {
     if (!dev || !mac) {
         return -2;
     }
@@ -211,12 +211,12 @@ int arp_resolve(netdev_t *dev, uint32_t ip, uint8_t *mac) {
     arp_cache_lock.unlock_irqrestore(irq_state);
     
     // 发送 ARP 请求
-    arp_request(dev, ip);
+    net::Arp::request(dev, ip);
     
     return -1;  // 正在解析
 }
 
-int arp_request(netdev_t *dev, uint32_t target_ip) {
+int net::Arp::request(netdev_t *dev, uint32_t target_ip) {
     if (!dev) {
         return -1;
     }
@@ -244,7 +244,7 @@ int arp_request(netdev_t *dev, uint32_t target_ip) {
     arp->target_ip = target_ip;
     
     // 发送 ARP 请求（广播）
-    int ret = ethernet_output(dev, buf, ETH_BROADCAST_ADDR, ETH_TYPE_ARP);
+    int ret = net::Ethernet::output(dev, buf, ETH_BROADCAST_ADDR, ETH_TYPE_ARP);
     if (ret < 0) {
         netbuf_free(buf);
     }
@@ -252,7 +252,7 @@ int arp_request(netdev_t *dev, uint32_t target_ip) {
     return ret;
 }
 
-int arp_reply(netdev_t *dev, uint32_t target_ip, const uint8_t *target_mac) {
+int net::Arp::reply(netdev_t *dev, uint32_t target_ip, const uint8_t *target_mac) {
     if (!dev || !target_mac) {
         return -1;
     }
@@ -280,7 +280,7 @@ int arp_reply(netdev_t *dev, uint32_t target_ip, const uint8_t *target_mac) {
     arp->target_ip = target_ip;
     
     // 发送 ARP 应答（单播）
-    int ret = ethernet_output(dev, buf, target_mac, ETH_TYPE_ARP);
+    int ret = net::Ethernet::output(dev, buf, target_mac, ETH_TYPE_ARP);
     if (ret < 0) {
         netbuf_free(buf);
     }
@@ -288,7 +288,7 @@ int arp_reply(netdev_t *dev, uint32_t target_ip, const uint8_t *target_mac) {
     return ret;
 }
 
-void arp_cache_update(uint32_t ip, const uint8_t *mac) {
+void net::Arp::cache_update(uint32_t ip, const uint8_t *mac) {
     if (!mac || mac_addr_is_zero(mac)) {
         return;
     }
@@ -324,7 +324,7 @@ void arp_cache_update(uint32_t ip, const uint8_t *mac) {
     }
 }
 
-int arp_cache_lookup(uint32_t ip, uint8_t *mac) {
+int net::Arp::cache_lookup(uint32_t ip, uint8_t *mac) {
     if (!mac) {
         return -1;
     }
@@ -341,17 +341,17 @@ int arp_cache_lookup(uint32_t ip, uint8_t *mac) {
     return -1;
 }
 
-int arp_cache_add_static(uint32_t ip, const uint8_t *mac) {
+int net::Arp::cache_add_static(uint32_t ip, const uint8_t *mac) {
     if (!mac) {
         return -1;
     }
     
     // 静态条目使用相同的更新函数
-    arp_cache_update(ip, mac);
+    net::Arp::cache_update(ip, mac);
     return 0;
 }
 
-int arp_cache_delete(uint32_t ip) {
+int net::Arp::cache_delete(uint32_t ip) {
     sync::SpinlockIrqGuard guard(arp_cache_lock);
     
     arp_entry_t *entry = arp_cache_find(ip);
@@ -366,7 +366,7 @@ int arp_cache_delete(uint32_t ip) {
     return -1;
 }
 
-void arp_cache_cleanup(void) {
+void net::Arp::cache_cleanup() {
     uint32_t now = (uint32_t)timer_get_uptime_ms();
     
     sync::SpinlockIrqGuard guard(arp_cache_lock);
@@ -387,7 +387,7 @@ void arp_cache_cleanup(void) {
     }
 }
 
-void arp_cache_clear(void) {
+void net::Arp::cache_clear() {
     sync::SpinlockIrqGuard guard(arp_cache_lock);
     
     for (int i = 0; i < ARP_CACHE_SIZE; i++) {
@@ -396,7 +396,7 @@ void arp_cache_clear(void) {
     }
 }
 
-void arp_cache_dump(void) {
+void net::Arp::cache_dump() {
     kprintf("ARP Cache:\n");
     kprintf("%-16s %-18s %-10s\n", "IP Address", "MAC Address", "State");
     kprintf("------------------------------------------------\n");
@@ -432,7 +432,7 @@ void arp_cache_dump(void) {
     }
 }
 
-int arp_cache_count(void) {
+int net::Arp::cache_count() {
     int count = 0;
     
     sync::SpinlockIrqGuard guard(arp_cache_lock);
@@ -446,7 +446,7 @@ int arp_cache_count(void) {
     return count;
 }
 
-int arp_cache_get_entry(int index, uint32_t *ip, uint8_t *mac, uint8_t *state) {
+int net::Arp::cache_get_entry(int index, uint32_t *ip, uint8_t *mac, uint8_t *state) {
     if (index < 0 || index >= ARP_CACHE_SIZE || !ip || !mac || !state) {
         return -1;
     }
@@ -464,7 +464,7 @@ int arp_cache_get_entry(int index, uint32_t *ip, uint8_t *mac, uint8_t *state) {
     return 0;
 }
 
-int arp_queue_packet(uint32_t ip, netbuf_t *buf) {
+int net::Arp::queue_packet(uint32_t ip, netbuf_t *buf) {
     if (!buf) {
         return -1;
     }

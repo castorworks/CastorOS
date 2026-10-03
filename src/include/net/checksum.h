@@ -18,29 +18,38 @@
  */
 uint16_t checksum(void *data, int len);
 
-/**
- * @brief 增量计算校验和（累加部分）
- * @param sum 当前累加值
- * @param data 数据指针
- * @param len 数据长度
- * @return 更新后的累加值
- */
-uint32_t checksum_partial(uint32_t sum, void *data, int len);
+namespace net {
 
 /**
- * @brief 完成校验和计算（折叠并取反）
- * @param sum 累加值
- * @return 最终校验和
+ * @brief 网络校验和计算
  */
-uint16_t checksum_finish(uint32_t sum);
+class Checksum {
+public:
+    /**
+     * @brief 增量计算校验和（累加部分）
+     * @param sum 当前累加值
+     * @param data 数据指针
+     * @param len 数据长度
+     * @return 更新后的累加值
+     */
+    static uint32_t partial(uint32_t sum, void *data, int len);
 
-/**
- * @brief 验证校验和是否正确
- * @param data 数据指针
- * @param len 数据长度
- * @return true 校验和正确，false 校验和错误
- */
-bool checksum_verify(void *data, int len);
+    /**
+     * @brief 完成校验和计算（折叠并取反）
+     * @param sum 累加值
+     * @return 最终校验和
+     */
+    static uint16_t finish(uint32_t sum);
+
+    /**
+     * @brief 验证校验和是否正确
+     * @param data 数据指针
+     * @param len 数据长度
+     * @return true 校验和正确，false 校验和错误
+     */
+    static bool verify(void *data, int len);
+};
+
+} // namespace net
 
 #endif // _NET_CHECKSUM_H_
-

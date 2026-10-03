@@ -96,78 +96,87 @@ typedef struct {
     bool valid;                      // 是否有效
 } dns_cache_entry_t;
 
-// ============================================================================
-// DNS 函数接口
-// ============================================================================
+namespace net {
 
 /**
- * @brief 初始化 DNS 解析器
+ * @brief DNS 解析器
  */
-void dns_init(void);
+class Dns {
+public:
+    // ============================================================================
+    // DNS 函数接口
+    // ============================================================================
 
-/**
- * @brief 设置 DNS 服务器
- * @param primary 主 DNS 服务器 IP
- * @param secondary 备用 DNS 服务器 IP（0 表示不使用）
- */
-void dns_set_server(uint32_t primary, uint32_t secondary);
+    /**
+     * @brief 初始化 DNS 解析器
+     */
+    static void init();
 
-/**
- * @brief 获取当前 DNS 服务器
- * @param primary 输出主 DNS 服务器 IP
- * @param secondary 输出备用 DNS 服务器 IP
- */
-void dns_get_server(uint32_t *primary, uint32_t *secondary);
+    /**
+     * @brief 设置 DNS 服务器
+     * @param primary 主 DNS 服务器 IP
+     * @param secondary 备用 DNS 服务器 IP（0 表示不使用）
+     */
+    static void set_server(uint32_t primary, uint32_t secondary);
 
-/**
- * @brief 解析域名（同步）
- * @param hostname 域名字符串
- * @param ip 输出 IP 地址
- * @return 0 成功，-1 失败
- * 
- * 注意：这是一个阻塞调用，会等待 DNS 响应或超时
- */
-int dns_resolve(const char *hostname, uint32_t *ip);
+    /**
+     * @brief 获取当前 DNS 服务器
+     * @param primary 输出主 DNS 服务器 IP
+     * @param secondary 输出备用 DNS 服务器 IP
+     */
+    static void get_server(uint32_t *primary, uint32_t *secondary);
 
-/**
- * @brief 解析域名（从缓存）
- * @param hostname 域名字符串
- * @param ip 输出 IP 地址
- * @return 0 成功（缓存命中），-1 失败（需要查询）
- */
-int dns_cache_lookup(const char *hostname, uint32_t *ip);
+    /**
+     * @brief 解析域名（同步）
+     * @param hostname 域名字符串
+     * @param ip 输出 IP 地址
+     * @return 0 成功，-1 失败
+     * 
+     * 注意：这是一个阻塞调用，会等待 DNS 响应或超时
+     */
+    static int resolve(const char *hostname, uint32_t *ip);
 
-/**
- * @brief 添加 DNS 缓存条目
- * @param hostname 域名
- * @param ip IP 地址
- * @param ttl 生存时间（秒）
- */
-void dns_cache_add(const char *hostname, uint32_t ip, uint32_t ttl);
+    /**
+     * @brief 解析域名（从缓存）
+     * @param hostname 域名字符串
+     * @param ip 输出 IP 地址
+     * @return 0 成功（缓存命中），-1 失败（需要查询）
+     */
+    static int cache_lookup(const char *hostname, uint32_t *ip);
 
-/**
- * @brief 清除 DNS 缓存
- */
-void dns_cache_clear(void);
+    /**
+     * @brief 添加 DNS 缓存条目
+     * @param hostname 域名
+     * @param ip IP 地址
+     * @param ttl 生存时间（秒）
+     */
+    static void cache_add(const char *hostname, uint32_t ip, uint32_t ttl);
 
-/**
- * @brief 打印 DNS 缓存内容
- * @param buf 输出缓冲区，NULL 则打印到控制台
- * @param size 缓冲区大小
- * @return 输出的字节数
- */
-int dns_cache_dump(char *buf, size_t size);
+    /**
+     * @brief 清除 DNS 缓存
+     */
+    static void cache_clear();
 
-/**
- * @brief 将 IP 地址解析为域名（反向解析）
- * @param ip IP 地址
- * @param hostname 输出域名
- * @param hostname_len 域名缓冲区长度
- * @return 0 成功，-1 失败
- * 
- * 注意：当前未实现
- */
-int dns_reverse_resolve(uint32_t ip, char *hostname, size_t hostname_len);
+    /**
+     * @brief 打印 DNS 缓存内容
+     * @param buf 输出缓冲区，NULL 则打印到控制台
+     * @param size 缓冲区大小
+     * @return 输出的字节数
+     */
+    static int cache_dump(char *buf, size_t size);
+
+    /**
+     * @brief 将 IP 地址解析为域名（反向解析）
+     * @param ip IP 地址
+     * @param hostname 输出域名
+     * @param hostname_len 域名缓冲区长度
+     * @return 0 成功，-1 失败
+     * 
+     * 注意：当前未实现
+     */
+    static int reverse_resolve(uint32_t ip, char *hostname, size_t hostname_len);
+};
+
+} // namespace net
 
 #endif // _NET_DNS_H_
-

@@ -82,7 +82,7 @@ uint32_t sys_stat(const char *path, struct stat *buf) {
     LOG_DEBUG_MSG("sys_stat: path='%s'\n", path);
     
     // 查找文件节点
-    fs_node_t *node = vfs_path_to_node(path);
+    fs_node_t *node = fs::Vfs::path_to_node(path);
     if (!node) {
         LOG_ERROR_MSG("sys_stat: file '%s' not found\n", path);
         return (uint32_t)-1;
@@ -92,7 +92,7 @@ uint32_t sys_stat(const char *path, struct stat *buf) {
     fill_stat_from_node(node, buf);
     
     // 释放节点引用
-    vfs_release_node(node);
+    fs::Vfs::release_node(node);
     
     return 0;
 }
@@ -144,15 +144,15 @@ uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
     }
     
     // 查找文件
-    fs_node_t *node = vfs_path_to_node(path);
+    fs_node_t *node = fs::Vfs::path_to_node(path);
     
     // 如果文件不存在且指定了 O_CREAT，创建文件
     if (!node && (flags & O_CREAT)) {
-        if (vfs_create(path) != 0) {
+        if (fs::Vfs::create(path) != 0) {
             LOG_ERROR_MSG("sys_open: failed to create file '%s'\n", path);
             return (uint32_t)-1;
         }
-        node = vfs_path_to_node(path);
+        node = fs::Vfs::path_to_node(path);
     }
     
     if (!node) {
@@ -163,14 +163,14 @@ uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
     // 检查 O_EXCL 标志
     if ((flags & O_CREAT) && (flags & O_EXCL)) {
         LOG_ERROR_MSG("sys_open: file '%s' exists but O_EXCL specified\n", path);
-        vfs_release_node(node);  // 释放节点，修复内存泄漏
+        fs::Vfs::release_node(node);  // 释放节点，修复内存泄漏
         return (uint32_t)-1;
     }
     
     // 截断文件（如果指定了 O_TRUNC 且是写模式）
     if ((flags & O_TRUNC) && (flags & (O_WRONLY | O_RDWR))) {
         if (node->type == FS_FILE) {
-            if (vfs_truncate(node, 0) != 0) {
+            if (fs::Vfs::truncate(node, 0) != 0) {
                 LOG_WARN_MSG("sys_open: failed to truncate file '%s'\n", path);
                 // 继续，不视为致命错误
             }
@@ -178,20 +178,20 @@ uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
     }
     
     // 打开文件
-    vfs_open(node, flags);
+    fs::Vfs::open(node, flags);
     
     // 分配文件描述符
     int32_t fd = fd_table_alloc(current->fd_table, node, flags);
     if (fd < 0) {
         LOG_ERROR_MSG("sys_open: failed to allocate fd for '%s'\n", path);
-        vfs_close(node);
-        vfs_release_node(node);  // 释放节点
+        fs::Vfs::close(node);
+        fs::Vfs::release_node(node);  // 释放节点
         return (uint32_t)-1;
     }
     
-    // 关键修复：释放 vfs_path_to_node 的初始引用
+    // 关键修复：释放 fs::Vfs::path_to_node 的初始引用
     // fd_table_alloc 已经增加了引用计数，现在 fd 持有唯一引用
-    vfs_release_node(node);
+    fs::Vfs::release_node(node);
     
     // 如果是追加模式，设置偏移量到文件末尾
     if (flags & O_APPEND) {
@@ -207,7 +207,7 @@ uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
 /**
  * sys_close - 关闭文件描述符
  * 
- * 注意：vfs_close() 和 vfs_release_node() 由 fd_table_free() 统一处理
+ * 注意：fs::Vfs::close() 和 fs::Vfs::release_node() 由 fd_table_free() 统一处理
  * 避免双重 close 问题
  */
 uint32_t sys_close(int32_t fd) {
@@ -217,7 +217,7 @@ uint32_t sys_close(int32_t fd) {
         return (uint32_t)-1;
     }
     
-    // 释放文件描述符（fd_table_free 会处理 vfs_close 和 vfs_release_node）
+    // 释放文件描述符（fd_table_free 会处理 fs::Vfs::close 和 fs::Vfs::release_node）
     if (fd_table_free(current->fd_table, fd) != 0) {
         LOG_ERROR_MSG("sys_close: failed to free fd %d\n", fd);
         return (uint32_t)-1;
@@ -255,7 +255,7 @@ uint32_t sys_read(int32_t fd, void *buf, uint32_t count) {
     }
     
     // 读取数据
-    uint32_t bytes_read = vfs_read(entry->node, entry->offset, count, (uint8_t *)buf);
+    uint32_t bytes_read = fs::Vfs::read(entry->node, entry->offset, count, (uint8_t *)buf);
     
     // 更新文件偏移量
     entry->offset += bytes_read;
@@ -318,10 +318,10 @@ uint32_t sys_write(int32_t fd, const void *buf, uint32_t count) {
         }
 
         // 写入数据（使用内核缓冲区）
-        uint32_t bytes_written = vfs_write(entry->node, entry->offset, chunk_size, kernel_buf);
+        uint32_t bytes_written = fs::Vfs::write(entry->node, entry->offset, chunk_size, kernel_buf);
         
         if (bytes_written == 0) {
-            LOG_WARN_MSG("sys_write: vfs_write returned 0, breaking\n");
+            LOG_WARN_MSG("sys_write: fs::Vfs::write returned 0, breaking\n");
             break;  // 写入失败或已满
         }
         
@@ -393,7 +393,7 @@ uint32_t sys_mkdir(const char *path, uint32_t mode) {
     }
     
     // 创建目录
-    if (vfs_mkdir(path, mode) != 0) {
+    if (fs::Vfs::mkdir(path, mode) != 0) {
         LOG_ERROR_MSG("sys_mkdir: failed to create directory '%s'\n", path);
         return (uint32_t)-1;
     }
@@ -411,7 +411,7 @@ uint32_t sys_unlink(const char *path) {
     }
     
     // 删除文件或目录
-    if (vfs_unlink(path) != 0) {
+    if (fs::Vfs::unlink(path) != 0) {
         LOG_ERROR_MSG("sys_unlink: failed to unlink '%s'\n", path);
         return (uint32_t)-1;
     }
@@ -572,7 +572,7 @@ uint32_t sys_chdir(const char *path) {
     LOG_DEBUG_MSG("sys_chdir: resolved path='%s'\n", abs_path);
     
     // 验证目标路径存在且为目录
-    fs_node_t *node = vfs_path_to_node(abs_path);
+    fs_node_t *node = fs::Vfs::path_to_node(abs_path);
     if (!node) {
         LOG_ERROR_MSG("sys_chdir: path '%s' not found\n", abs_path);
         return (uint32_t)-1;
@@ -580,12 +580,12 @@ uint32_t sys_chdir(const char *path) {
     
     if (node->type != FS_DIRECTORY) {
         LOG_ERROR_MSG("sys_chdir: '%s' is not a directory\n", abs_path);
-        vfs_release_node(node);  // 释放节点
+        fs::Vfs::release_node(node);  // 释放节点
         return (uint32_t)-1;
     }
     
     // 节点已验证，释放它（我们只需要验证路径，不需要保留节点）
-    vfs_release_node(node);
+    fs::Vfs::release_node(node);
     
     // 规范化路径，移除 . 和 .. 组件
     char normalized_path[512];
@@ -670,7 +670,7 @@ uint32_t sys_ftruncate(int32_t fd, uint32_t length) {
     }
     
     // 调用 VFS truncate
-    if (vfs_truncate(entry->node, length) != 0) {
+    if (fs::Vfs::truncate(entry->node, length) != 0) {
         LOG_ERROR_MSG("sys_ftruncate: failed to truncate fd %d to %u bytes\n", fd, length);
         return (uint32_t)-1;
     }
@@ -711,7 +711,7 @@ uint32_t sys_getdents(int32_t fd, uint32_t index, void *dirent) {
     }
     
     // 读取目录项
-    struct dirent *dir_entry = vfs_readdir(entry->node, index);
+    struct dirent *dir_entry = fs::Vfs::readdir(entry->node, index);
     if (!dir_entry) {
         return (uint32_t)-1;
     }
@@ -747,7 +747,7 @@ uint32_t sys_pipe(int32_t *fds) {
     fs_node_t *read_node = NULL;
     fs_node_t *write_node = NULL;
     
-    if (pipe_create(&read_node, &write_node) != 0) {
+    if (fs::Pipe::create(&read_node, &write_node) != 0) {
         LOG_ERROR_MSG("sys_pipe: failed to create pipe\n");
         return (uint32_t)-1;
     }
@@ -756,25 +756,25 @@ uint32_t sys_pipe(int32_t *fds) {
     int32_t read_fd = fd_table_alloc(current->fd_table, read_node, O_RDONLY);
     if (read_fd < 0) {
         LOG_ERROR_MSG("sys_pipe: failed to allocate read fd\n");
-        vfs_release_node(read_node);
-        vfs_release_node(write_node);
+        fs::Vfs::release_node(read_node);
+        fs::Vfs::release_node(write_node);
         return (uint32_t)-1;
     }
     
-    // 释放 pipe_create 的初始引用（fd_table_alloc 已增加引用）
-    vfs_release_node(read_node);
+    // 释放 fs::Pipe::create 的初始引用（fd_table_alloc 已增加引用）
+    fs::Vfs::release_node(read_node);
     
     // 分配写端文件描述符
     int32_t write_fd = fd_table_alloc(current->fd_table, write_node, O_WRONLY);
     if (write_fd < 0) {
         LOG_ERROR_MSG("sys_pipe: failed to allocate write fd\n");
         fd_table_free(current->fd_table, read_fd);
-        vfs_release_node(write_node);
+        fs::Vfs::release_node(write_node);
         return (uint32_t)-1;
     }
     
-    // 释放 pipe_create 的初始引用
-    vfs_release_node(write_node);
+    // 释放 fs::Pipe::create 的初始引用
+    fs::Vfs::release_node(write_node);
     
     // 设置返回值
     fds[0] = read_fd;
@@ -816,7 +816,7 @@ uint32_t sys_dup(int32_t oldfd) {
     
     // 如果是管道，增加 readers/writers 计数
     if (old_entry->node->type == FS_PIPE) {
-        pipe_on_dup(old_entry->node);
+        fs::Pipe::on_dup(old_entry->node);
     }
     
     // 复制偏移量
@@ -884,11 +884,11 @@ uint32_t sys_dup2(int32_t oldfd, int32_t newfd) {
     current->fd_table->entries[newfd].in_use = true;
     
     // 增加引用计数
-    vfs_ref_node(old_entry->node);
+    fs::Vfs::ref_node(old_entry->node);
     
     // 如果是管道，增加 readers/writers 计数
     if (old_entry->node->type == FS_PIPE) {
-        pipe_on_dup(old_entry->node);
+        fs::Pipe::on_dup(old_entry->node);
     }
     
     current->fd_table->lock.unlock();
@@ -917,7 +917,7 @@ uint32_t sys_rename(const char *oldpath, const char *newpath) {
     LOG_DEBUG_MSG("sys_rename: '%s' -> '%s'\n", oldpath, newpath);
     
     // 调用 VFS 层的重命名函数
-    if (vfs_rename(oldpath, newpath) != 0) {
+    if (fs::Vfs::rename(oldpath, newpath) != 0) {
         LOG_ERROR_MSG("sys_rename: failed to rename '%s' to '%s'\n", oldpath, newpath);
         return (uint32_t)-1;
     }

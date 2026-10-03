@@ -432,7 +432,7 @@ static int tcp_send_segment(tcp_pcb_t *pcb, uint8_t flags, uint8_t *data, uint32
     
     // 计算校验和
     uint32_t src_ip = (pcb->local_ip != 0) ? pcb->local_ip : dev->ip_addr;
-    tcp->checksum = tcp_checksum(src_ip, pcb->remote_ip, tcp, tcp_len);
+    tcp->checksum = net::Tcp::checksum(src_ip, pcb->remote_ip, tcp, tcp_len);
     
     // 更新发送序列号
     if (flags & TCP_FLAG_SYN) {
@@ -447,7 +447,7 @@ static int tcp_send_segment(tcp_pcb_t *pcb, uint8_t flags, uint8_t *data, uint32
     pcb->last_send_time = (uint32_t)timer_get_uptime_ms();
     
     // 发送
-    int ret = ip_output(dev, buf, pcb->remote_ip, IP_PROTO_TCP);
+    int ret = net::Ip::output(dev, buf, pcb->remote_ip, IP_PROTO_TCP);
     if (ret < 0) {
         netbuf_free(buf);
         return ret;
@@ -494,16 +494,16 @@ static void tcp_send_rst(uint32_t src_ip, uint32_t dst_ip,
     tcp->urgent_ptr = 0;
     
     // 计算校验和
-    tcp->checksum = tcp_checksum(src_ip, dst_ip, tcp, TCP_HEADER_MIN_LEN);
+    tcp->checksum = net::Tcp::checksum(src_ip, dst_ip, tcp, TCP_HEADER_MIN_LEN);
     
     // 发送
-    int ret = ip_output(dev, buf, dst_ip, IP_PROTO_TCP);
+    int ret = net::Ip::output(dev, buf, dst_ip, IP_PROTO_TCP);
     if (ret < 0) {
         netbuf_free(buf);
     }
 }
 
-void tcp_init(void) {
+void net::Tcp::init() {
     tcp_lock.init();
     tcp_pcbs = NULL;
     tcp_listen_pcbs = NULL;
@@ -513,7 +513,7 @@ void tcp_init(void) {
     LOG_INFO_MSG("tcp: TCP protocol initialized\n");
 }
 
-void tcp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
+void net::Tcp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
     if (!dev || !buf) {
         return;
     }
@@ -529,7 +529,7 @@ void tcp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
     buf->transport_header = tcp;
     
     // 获取头部长度
-    uint8_t hdr_len = tcp_header_len(tcp);
+    uint8_t hdr_len = net::Tcp::header_len(tcp);
     if (hdr_len < TCP_HEADER_MIN_LEN || hdr_len > buf->len) {
         LOG_WARN_MSG("tcp: Invalid header length %u\n", hdr_len);
         netbuf_free(buf);
@@ -539,7 +539,7 @@ void tcp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
     // 验证校验和
     uint16_t orig_checksum = tcp->checksum;
     tcp->checksum = 0;
-    uint16_t calc_checksum = tcp_checksum(src_ip, dst_ip, tcp, buf->len);
+    uint16_t calc_checksum = net::Tcp::checksum(src_ip, dst_ip, tcp, buf->len);
     
     if (calc_checksum != orig_checksum) {
         LOG_WARN_MSG("tcp: Invalid checksum\n");
@@ -603,7 +603,7 @@ void tcp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
                 }
                 
                 // 创建新的 PCB 用于这个连接
-                tcp_pcb_t *new_pcb = tcp_pcb_new();
+                tcp_pcb_t *new_pcb = net::Tcp::pcb_new();
                 if (!new_pcb) {
                     break;
                 }
@@ -853,7 +853,7 @@ void tcp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
     netbuf_free(buf);
 }
 
-tcp_pcb_t *tcp_pcb_new(void) {
+tcp_pcb_t *net::Tcp::pcb_new() {
     tcp_pcb_t *pcb = (tcp_pcb_t *)kmalloc(sizeof(tcp_pcb_t));
     if (!pcb) {
         return NULL;
@@ -894,7 +894,7 @@ tcp_pcb_t *tcp_pcb_new(void) {
     return pcb;
 }
 
-void tcp_pcb_free(tcp_pcb_t *pcb) {
+void net::Tcp::pcb_free(tcp_pcb_t *pcb) {
     if (!pcb) {
         return;
     }
@@ -935,7 +935,7 @@ void tcp_pcb_free(tcp_pcb_t *pcb) {
     kfree(pcb);
 }
 
-int tcp_bind(tcp_pcb_t *pcb, uint32_t local_ip, uint16_t local_port) {
+int net::Tcp::bind(tcp_pcb_t *pcb, uint32_t local_ip, uint16_t local_port) {
     if (!pcb || pcb->state != TCP_CLOSED) {
         return -1;
     }
@@ -964,7 +964,7 @@ int tcp_bind(tcp_pcb_t *pcb, uint32_t local_ip, uint16_t local_port) {
     return 0;
 }
 
-int tcp_listen(tcp_pcb_t *pcb, int backlog) {
+int net::Tcp::listen(tcp_pcb_t *pcb, int backlog) {
     if (!pcb || pcb->state != TCP_CLOSED) {
         return -1;
     }
@@ -993,14 +993,14 @@ int tcp_listen(tcp_pcb_t *pcb, int backlog) {
     return 0;
 }
 
-int tcp_connect(tcp_pcb_t *pcb, uint32_t remote_ip, uint16_t remote_port) {
+int net::Tcp::connect(tcp_pcb_t *pcb, uint32_t remote_ip, uint16_t remote_port) {
     if (!pcb || pcb->state != TCP_CLOSED) {
         return -1;
     }
     
     // 如果未绑定，分配临时端口
     if (pcb->local_port == 0) {
-        pcb->local_port = tcp_alloc_port();
+        pcb->local_port = net::Tcp::alloc_port();
         if (pcb->local_port == 0) {
             return -1;
         }
@@ -1020,7 +1020,7 @@ int tcp_connect(tcp_pcb_t *pcb, uint32_t remote_ip, uint16_t remote_port) {
     return tcp_send_segment(pcb, TCP_FLAG_SYN, NULL, 0);
 }
 
-tcp_pcb_t *tcp_accept(tcp_pcb_t *pcb) {
+tcp_pcb_t *net::Tcp::accept(tcp_pcb_t *pcb) {
     if (!pcb || pcb->state != TCP_LISTEN) {
         return NULL;
     }
@@ -1036,7 +1036,7 @@ tcp_pcb_t *tcp_accept(tcp_pcb_t *pcb) {
     return new_pcb;
 }
 
-int tcp_write(tcp_pcb_t *pcb, const void *data, uint32_t len) {
+int net::Tcp::write(tcp_pcb_t *pcb, const void *data, uint32_t len) {
     if (!pcb || !data || len == 0) {
         return -1;
     }
@@ -1077,7 +1077,7 @@ int tcp_write(tcp_pcb_t *pcb, const void *data, uint32_t len) {
     return copy_len;
 }
 
-int tcp_read(tcp_pcb_t *pcb, void *buf, uint32_t len) {
+int net::Tcp::read(tcp_pcb_t *pcb, void *buf, uint32_t len) {
     if (!pcb || !buf || len == 0) {
         return -1;
     }
@@ -1107,7 +1107,7 @@ int tcp_read(tcp_pcb_t *pcb, void *buf, uint32_t len) {
     return copy_len;
 }
 
-int tcp_close(tcp_pcb_t *pcb) {
+int net::Tcp::close(tcp_pcb_t *pcb) {
     if (!pcb) {
         return -1;
     }
@@ -1137,7 +1137,7 @@ int tcp_close(tcp_pcb_t *pcb) {
     return 0;
 }
 
-void tcp_abort(tcp_pcb_t *pcb) {
+void net::Tcp::abort(tcp_pcb_t *pcb) {
     if (!pcb) {
         return;
     }
@@ -1154,7 +1154,7 @@ void tcp_abort(tcp_pcb_t *pcb) {
     pcb->state = TCP_CLOSED;
 }
 
-void tcp_accept_callback(tcp_pcb_t *pcb,
+void net::Tcp::accept_callback(tcp_pcb_t *pcb,
                          void (*callback)(tcp_pcb_t *new_pcb, void *arg),
                          void *arg) {
     if (pcb) {
@@ -1163,7 +1163,7 @@ void tcp_accept_callback(tcp_pcb_t *pcb,
     }
 }
 
-void tcp_recv_callback(tcp_pcb_t *pcb,
+void net::Tcp::recv_callback(tcp_pcb_t *pcb,
                        void (*callback)(tcp_pcb_t *pcb, void *arg),
                        void *arg) {
     if (pcb) {
@@ -1172,7 +1172,7 @@ void tcp_recv_callback(tcp_pcb_t *pcb,
     }
 }
 
-uint16_t tcp_checksum(uint32_t src_ip, uint32_t dst_ip, tcp_header_t *tcp, uint16_t len) {
+uint16_t net::Tcp::checksum(uint32_t src_ip, uint32_t dst_ip, tcp_header_t *tcp, uint16_t len) {
     uint32_t sum = 0;
     
     // 计算伪首部校验和
@@ -1183,15 +1183,15 @@ uint16_t tcp_checksum(uint32_t src_ip, uint32_t dst_ip, tcp_header_t *tcp, uint1
     pseudo.protocol = IP_PROTO_TCP;
     pseudo.tcp_length = htons(len);
     
-    sum = checksum_partial(sum, &pseudo, sizeof(pseudo));
+    sum = net::Checksum::partial(sum, &pseudo, sizeof(pseudo));
     
     // 计算 TCP 头部和数据校验和
-    sum = checksum_partial(sum, tcp, len);
+    sum = net::Checksum::partial(sum, tcp, len);
     
-    return checksum_finish(sum);
+    return net::Checksum::finish(sum);
 }
 
-const char *tcp_state_name(tcp_state_t state) {
+const char *net::Tcp::state_name(tcp_state_t state) {
     static const char *names[] = {
         "CLOSED", "LISTEN", "SYN_SENT", "SYN_RECEIVED",
         "ESTABLISHED", "FIN_WAIT_1", "FIN_WAIT_2", "CLOSE_WAIT",
@@ -1204,7 +1204,7 @@ const char *tcp_state_name(tcp_state_t state) {
     return "UNKNOWN";
 }
 
-uint16_t tcp_alloc_port(void) {
+uint16_t net::Tcp::alloc_port() {
     sync::SpinlockIrqGuard guard(tcp_lock);
     
     uint16_t start_port = next_ephemeral_port;
@@ -1241,7 +1241,7 @@ uint16_t tcp_alloc_port(void) {
     return 0;
 }
 
-int tcp_pcb_list_dump(char *buf, size_t size) {
+int net::Tcp::pcb_list_dump(char *buf, size_t size) {
     int len = 0;
     bool to_buf = (buf != NULL && size > 0);
     
@@ -1270,11 +1270,11 @@ int tcp_pcb_list_dump(char *buf, size_t size) {
         if (pcb->local_ip == 0) {
             strcpy(local_ip_str, "0.0.0.0");
         } else {
-            ip_to_str(pcb->local_ip, local_ip_str);
+            net::Ip::to_str(pcb->local_ip, local_ip_str);
         }
         
         OUTPUT("tcp    %s:%-5u          0.0.0.0:*              %s\n",
-               local_ip_str, pcb->local_port, tcp_state_name(pcb->state));
+               local_ip_str, pcb->local_port, net::Tcp::state_name(pcb->state));
     }
     
     // 打印活动连接
@@ -1288,18 +1288,18 @@ int tcp_pcb_list_dump(char *buf, size_t size) {
         if (pcb->local_ip == 0) {
             strcpy(local_ip_str, "0.0.0.0");
         } else {
-            ip_to_str(pcb->local_ip, local_ip_str);
+            net::Ip::to_str(pcb->local_ip, local_ip_str);
         }
         if (pcb->remote_ip == 0) {
             strcpy(remote_ip_str, "0.0.0.0");
         } else {
-            ip_to_str(pcb->remote_ip, remote_ip_str);
+            net::Ip::to_str(pcb->remote_ip, remote_ip_str);
         }
         
         OUTPUT("tcp    %s:%-5u  %s:%-5u  %s\n",
                local_ip_str, pcb->local_port,
                remote_ip_str, pcb->remote_port,
-               tcp_state_name(pcb->state));
+               net::Tcp::state_name(pcb->state));
     }
     
     tcp_lock.unlock_irqrestore(irq_state);
@@ -1315,7 +1315,7 @@ int tcp_pcb_list_dump(char *buf, size_t size) {
  * - 重传定时器：超时重传未确认的段
  * - TIME_WAIT 定时器：等待 2MSL 后关闭连接
  */
-void tcp_timer(void) {
+void net::Tcp::timer() {
     uint32_t now = (uint32_t)timer_get_uptime_ms();
     
     bool irq_state;
@@ -1375,9 +1375,9 @@ void tcp_timer(void) {
                             }
                             
                             uint32_t src_ip = (pcb->local_ip != 0) ? pcb->local_ip : dev->ip_addr;
-                            tcp->checksum = tcp_checksum(src_ip, pcb->remote_ip, tcp, tcp_len);
+                            tcp->checksum = net::Tcp::checksum(src_ip, pcb->remote_ip, tcp, tcp_len);
                             
-                            int ret = ip_output(dev, buf, pcb->remote_ip, IP_PROTO_TCP);
+                            int ret = net::Ip::output(dev, buf, pcb->remote_ip, IP_PROTO_TCP);
                             if (ret < 0) {
                                 netbuf_free(buf);
                             }

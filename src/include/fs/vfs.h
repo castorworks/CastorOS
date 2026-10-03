@@ -59,7 +59,7 @@ typedef struct fs_node {
     void *impl;                  // 文件系统私有数据指针（如 fat32_file_t*），释放节点时会 kfree
     uint32_t impl_data;          // 文件系统私有整数值（如 procfs 的 PID），不会被 kfree
     uint32_t ref_count;          // 引用计数（用于资源管理）
-    
+
     // 文件操作函数
     read_type_t read;
     write_type_t write;
@@ -72,142 +72,152 @@ typedef struct fs_node {
     unlink_type_t unlink;
     truncate_type_t truncate;
     rename_type_t rename;        // 重命名操作
-    
+
     struct fs_node *ptr;         // 用于符号链接和挂载点
 } fs_node_t;
 
-/**
- * 初始化 VFS
- */
-void vfs_init(void);
+namespace fs {
 
 /**
- * 获取根文件系统
- * @return 根文件系统节点
+ * @brief 虚拟文件系统（路径解析、挂载与统一的文件操作入口）
  */
-fs_node_t *vfs_get_root(void);
+class Vfs {
+public:
+    /**
+     * 初始化 VFS
+     */
+    static void init();
 
-/**
- * 设置根文件系统
- * @param root 根文件系统节点
- */
-void vfs_set_root(fs_node_t *root);
+    /**
+     * 获取根文件系统
+     * @return 根文件系统节点
+     */
+    static fs_node_t *get_root();
 
-/**
- * 读取文件
- * @param node 文件节点
- * @param offset 偏移量
- * @param size 读取大小
- * @param buffer 缓冲区
- * @return 实际读取的字节数
- */
-uint32_t vfs_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
+    /**
+     * 设置根文件系统
+     * @param root 根文件系统节点
+     */
+    static void set_root(fs_node_t *root);
 
-/**
- * 写入文件
- * @param node 文件节点
- * @param offset 偏移量
- * @param size 写入大小
- * @param buffer 数据缓冲区
- * @return 实际写入的字节数
- */
-uint32_t vfs_write(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
+    /**
+     * 读取文件
+     * @param node 文件节点
+     * @param offset 偏移量
+     * @param size 读取大小
+     * @param buffer 缓冲区
+     * @return 实际读取的字节数
+     */
+    static uint32_t read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 
-/**
- * 打开文件
- * @param node 文件节点
- * @param flags 打开标志
- */
-void vfs_open(fs_node_t *node, uint32_t flags);
+    /**
+     * 写入文件
+     * @param node 文件节点
+     * @param offset 偏移量
+     * @param size 写入大小
+     * @param buffer 数据缓冲区
+     * @return 实际写入的字节数
+     */
+    static uint32_t write(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 
-/**
- * 关闭文件
- * @param node 文件节点
- */
-void vfs_close(fs_node_t *node);
+    /**
+     * 打开文件
+     * @param node 文件节点
+     * @param flags 打开标志
+     */
+    static void open(fs_node_t *node, uint32_t flags);
 
-/**
- * 增加文件节点引用计数
- * @param node 文件节点
- */
-void vfs_ref_node(fs_node_t *node);
+    /**
+     * 关闭文件
+     * @param node 文件节点
+     */
+    static void close(fs_node_t *node);
 
-/**
- * 减少文件节点引用计数并在计数为0时释放
- * 如果节点是动态分配的（flags & FS_NODE_FLAG_ALLOCATED）且引用计数为0，则释放它
- * @param node 文件节点
- */
-void vfs_release_node(fs_node_t *node);
+    /**
+     * 增加文件节点引用计数
+     * @param node 文件节点
+     */
+    static void ref_node(fs_node_t *node);
 
-/**
- * 读取目录项
- * @param node 目录节点
- * @param index 索引
- * @return 目录项，没有更多时返回 NULL
- */
-struct dirent *vfs_readdir(fs_node_t *node, uint32_t index);
+    /**
+     * 减少文件节点引用计数并在计数为0时释放
+     * 如果节点是动态分配的（flags & FS_NODE_FLAG_ALLOCATED）且引用计数为0，则释放它
+     * @param node 文件节点
+     */
+    static void release_node(fs_node_t *node);
 
-/**
- * 在目录中查找文件
- * @param node 目录节点
- * @param name 文件名
- * @return 文件节点（ref_count=1，调用者需要调用 vfs_release_node），未找到返回 NULL
- */
-fs_node_t *vfs_finddir(fs_node_t *node, const char *name);
+    /**
+     * 读取目录项
+     * @param node 目录节点
+     * @param index 索引
+     * @return 目录项，没有更多时返回 NULL
+     */
+    static struct dirent *readdir(fs_node_t *node, uint32_t index);
 
-/**
- * 路径解析
- * @param path 路径字符串
- * @return 文件节点（对于动态分配的节点 ref_count=1，调用者需要调用 vfs_release_node），未找到返回 NULL
- */
-fs_node_t *vfs_path_to_node(const char *path);
+    /**
+     * 在目录中查找文件
+     * @param node 目录节点
+     * @param name 文件名
+     * @return 文件节点（ref_count=1，调用者需要调用 vfs_release_node），未找到返回 NULL
+     */
+    static fs_node_t *finddir(fs_node_t *node, const char *name);
 
-/**
- * 创建文件
- * @param path 文件路径
- * @return 0 成功，-1 失败
- */
-int vfs_create(const char *path);
+    /**
+     * 路径解析
+     * @param path 路径字符串
+     * @return 文件节点（对于动态分配的节点 ref_count=1，调用者需要调用 vfs_release_node），未找到返回 NULL
+     */
+    static fs_node_t *path_to_node(const char *path);
 
-/**
- * 创建目录
- * @param path 目录路径
- * @param permissions 权限
- * @return 0 成功，-1 失败
- */
-int vfs_mkdir(const char *path, uint32_t permissions);
+    /**
+     * 创建文件
+     * @param path 文件路径
+     * @return 0 成功，-1 失败
+     */
+    static int create(const char *path);
 
-/**
- * 删除文件或目录
- * @param path 文件路径
- * @return 0 成功，-1 失败
- */
-int vfs_unlink(const char *path);
+    /**
+     * 创建目录
+     * @param path 目录路径
+     * @param permissions 权限
+     * @return 0 成功，-1 失败
+     */
+    static int mkdir(const char *path, uint32_t permissions);
 
-/**
- * 截断文件到指定大小
- * @param node 文件节点
- * @param new_size 新的文件大小
- * @return 0 成功，-1 失败
- */
-int vfs_truncate(fs_node_t *node, uint32_t new_size);
+    /**
+     * 删除文件或目录
+     * @param path 文件路径
+     * @return 0 成功，-1 失败
+     */
+    static int unlink(const char *path);
 
-/**
- * 挂载文件系统到指定路径
- * @param path 挂载点路径（必须是已存在的目录）
- * @param root 要挂载的文件系统根节点
- * @return 0 成功，-1 失败
- */
-int vfs_mount(const char *path, fs_node_t *root);
+    /**
+     * 截断文件到指定大小
+     * @param node 文件节点
+     * @param new_size 新的文件大小
+     * @return 0 成功，-1 失败
+     */
+    static int truncate(fs_node_t *node, uint32_t new_size);
 
-/**
- * 重命名文件或目录
- * @param oldpath 原路径
- * @param newpath 新路径
- * @return 0 成功，-1 失败
- * 
- * 注意：当前仅支持同一目录下的重命名
- */
-int vfs_rename(const char *oldpath, const char *newpath);
+    /**
+     * 挂载文件系统到指定路径
+     * @param path 挂载点路径（必须是已存在的目录）
+     * @param root 要挂载的文件系统根节点
+     * @return 0 成功，-1 失败
+     */
+    static int mount(const char *path, fs_node_t *root);
+
+    /**
+     * 重命名文件或目录
+     * @param oldpath 原路径
+     * @param newpath 新路径
+     * @return 0 成功，-1 失败
+     * 
+     * 注意：当前仅支持同一目录下的重命名
+     */
+    static int rename(const char *oldpath, const char *newpath);
+};
+
+} // namespace fs
 
 #endif // _FS_VFS_H_

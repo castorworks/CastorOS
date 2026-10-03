@@ -820,7 +820,7 @@ static int cmd_ls(int argc, char **argv) {
     }
     
     // 查找目录节点
-    fs_node_t *dir = vfs_path_to_node(path);
+    fs_node_t *dir = fs::Vfs::path_to_node(path);
     if (!dir) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Directory '%s' not found\n", path);
@@ -832,7 +832,7 @@ static int cmd_ls(int argc, char **argv) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: '%s' is not a directory\n", path);
         shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-        vfs_release_node(dir);  // 释放节点
+        fs::Vfs::release_node(dir);  // 释放节点
         return -1;
     }
     
@@ -846,18 +846,18 @@ static int cmd_ls(int argc, char **argv) {
     struct dirent *entry;
     int count = 0;
     
-    while ((entry = vfs_readdir(dir, index++)) != NULL) {
+    while ((entry = fs::Vfs::readdir(dir, index++)) != NULL) {
         // 使用 d_type 字段判断文件类型（如果可用）
         if (entry->d_type == DT_DIR) {
             shell_set_color(VGA_COLOR_LIGHT_BLUE, VGA_COLOR_BLACK);
             kprintf("%-20s <DIR>\n", entry->d_name);
         } else if (entry->d_type == DT_REG) {
             // 对于常规文件，查找节点以获取大小
-            fs_node_t *node = vfs_finddir(dir, entry->d_name);
+            fs_node_t *node = fs::Vfs::finddir(dir, entry->d_name);
             if (node) {
                 shell_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
                 kprintf("%-20s %u bytes\n", entry->d_name, node->size);
-                vfs_release_node(node);  // 释放节点
+                fs::Vfs::release_node(node);  // 释放节点
             } else {
                 shell_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
                 kprintf("%-20s\n", entry->d_name);
@@ -873,7 +873,7 @@ static int cmd_ls(int argc, char **argv) {
             kprintf("%-20s <LNK>\n", entry->d_name);
         } else {
             // 未知类型或 d_type 未设置，回退到旧方法
-            fs_node_t *node = vfs_finddir(dir, entry->d_name);
+            fs_node_t *node = fs::Vfs::finddir(dir, entry->d_name);
             if (node) {
                 if (node->type == FS_DIRECTORY) {
                     shell_set_color(VGA_COLOR_LIGHT_BLUE, VGA_COLOR_BLACK);
@@ -882,7 +882,7 @@ static int cmd_ls(int argc, char **argv) {
                     shell_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
                     kprintf("%-20s %u bytes\n", entry->d_name, node->size);
                 }
-                vfs_release_node(node);  // 释放节点
+                fs::Vfs::release_node(node);  // 释放节点
             } else {
                 shell_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
                 kprintf("%-20s\n", entry->d_name);
@@ -896,7 +896,7 @@ static int cmd_ls(int argc, char **argv) {
     }
     
     shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-    vfs_release_node(dir);  // 释放目录节点
+    fs::Vfs::release_node(dir);  // 释放目录节点
     return 0;
 }
 
@@ -920,7 +920,7 @@ static int cmd_cat(int argc, char **argv) {
     }
     
     // 查找文件节点
-    fs_node_t *file = vfs_path_to_node(abs_path);
+    fs_node_t *file = fs::Vfs::path_to_node(abs_path);
     if (!file) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: File '%s' not found\n", abs_path);
@@ -933,12 +933,12 @@ static int cmd_cat(int argc, char **argv) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: '%s' is not a readable file or device\n", abs_path);
         shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-        vfs_release_node(file);  // 释放节点
+        fs::Vfs::release_node(file);  // 释放节点
         return -1;
     }
     
     // 打开文件
-    vfs_open(file, 0);
+    fs::Vfs::open(file, 0);
     
     // 读取并显示文件内容
     uint8_t buffer[512];
@@ -972,7 +972,7 @@ static int cmd_cat(int argc, char **argv) {
                       ? sizeof(buffer) : (file->size - offset);
         }
         
-        uint32_t read = vfs_read(file, offset, to_read, buffer);
+        uint32_t read = fs::Vfs::read(file, offset, to_read, buffer);
         
         if (read == 0) {
             break;  // 没有更多数据
@@ -1000,8 +1000,8 @@ static int cmd_cat(int argc, char **argv) {
     kprintf("\n");
     
     // 关闭文件
-    vfs_close(file);
-    vfs_release_node(file);  // 释放节点
+    fs::Vfs::close(file);
+    fs::Vfs::release_node(file);  // 释放节点
     
     return 0;
 }
@@ -1026,7 +1026,7 @@ static int cmd_touch(int argc, char **argv) {
     }
     
     // 创建文件
-    if (vfs_create(abs_path) != 0) {
+    if (fs::Vfs::create(abs_path) != 0) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Failed to create file '%s'\n", abs_path);
         shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
@@ -1057,7 +1057,7 @@ static int cmd_rm(int argc, char **argv) {
     }
     
     // 检查文件是否存在且是文件
-    fs_node_t *file = vfs_path_to_node(abs_path);
+    fs_node_t *file = fs::Vfs::path_to_node(abs_path);
     if (!file) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: File '%s' not found\n", abs_path);
@@ -1069,14 +1069,14 @@ static int cmd_rm(int argc, char **argv) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: '%s' is not a file (use rmdir for directories)\n", abs_path);
         shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-        vfs_release_node(file);  // 释放节点
+        fs::Vfs::release_node(file);  // 释放节点
         return -1;
     }
     
-    vfs_release_node(file);  // 验证完成，释放节点
+    fs::Vfs::release_node(file);  // 验证完成，释放节点
     
     // 删除文件
-    if (vfs_unlink(abs_path) != 0) {
+    if (fs::Vfs::unlink(abs_path) != 0) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Failed to remove file '%s'\n", abs_path);
         shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
@@ -1107,7 +1107,7 @@ static int cmd_mkdir(int argc, char **argv) {
     }
     
     // 创建目录（权限：读写执行）
-    if (vfs_mkdir(abs_path, FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC) != 0) {
+    if (fs::Vfs::mkdir(abs_path, FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC) != 0) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Failed to create directory '%s'\n", abs_path);
         shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
@@ -1146,7 +1146,7 @@ static int cmd_rmdir(int argc, char **argv) {
     }
     
     // 检查目录是否存在且是目录
-    fs_node_t *dir = vfs_path_to_node(abs_path);
+    fs_node_t *dir = fs::Vfs::path_to_node(abs_path);
     if (!dir) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Directory '%s' not found\n", abs_path);
@@ -1158,24 +1158,24 @@ static int cmd_rmdir(int argc, char **argv) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: '%s' is not a directory\n", abs_path);
         shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-        vfs_release_node(dir);  // 释放节点
+        fs::Vfs::release_node(dir);  // 释放节点
         return -1;
     }
     
     // 检查目录是否为空
-    struct dirent *entry = vfs_readdir(dir, 0);
+    struct dirent *entry = fs::Vfs::readdir(dir, 0);
     if (entry != NULL) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Directory '%s' is not empty\n", abs_path);
         shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-        vfs_release_node(dir);  // 释放节点
+        fs::Vfs::release_node(dir);  // 释放节点
         return -1;
     }
     
-    vfs_release_node(dir);  // 验证完成，释放节点
+    fs::Vfs::release_node(dir);  // 验证完成，释放节点
     
     // 删除目录
-    if (vfs_unlink(abs_path) != 0) {
+    if (fs::Vfs::unlink(abs_path) != 0) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Failed to remove directory '%s'\n", abs_path);
         shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
@@ -1219,7 +1219,7 @@ static int cmd_cd(int argc, char **argv) {
     }
     
     // 查找目录节点
-    fs_node_t *dir = vfs_path_to_node(abs_path);
+    fs_node_t *dir = fs::Vfs::path_to_node(abs_path);
     if (!dir) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Directory '%s' not found\n", abs_path);
@@ -1231,11 +1231,11 @@ static int cmd_cd(int argc, char **argv) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: '%s' is not a directory\n", abs_path);
         shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-        vfs_release_node(dir);  // 释放节点
+        fs::Vfs::release_node(dir);  // 释放节点
         return -1;
     }
     
-    vfs_release_node(dir);  // 验证完成，释放节点
+    fs::Vfs::release_node(dir);  // 验证完成，释放节点
     
     // 更新当前工作目录
     strncpy(shell_state.cwd, abs_path, SHELL_MAX_PATH_LENGTH - 1);
@@ -1264,19 +1264,19 @@ static int cmd_write(int argc, char **argv) {
     }
     
     // 检查文件是否存在
-    fs_node_t *file = vfs_path_to_node(abs_path);
+    fs_node_t *file = fs::Vfs::path_to_node(abs_path);
     
     // 如果是设备文件，必须已存在
     if (!file) {
         // 文件不存在，尝试创建（仅对常规文件）
-        if (vfs_create(abs_path) != 0) {
+        if (fs::Vfs::create(abs_path) != 0) {
             shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             kprintf("Error: File or device '%s' not found\n", abs_path);
             shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
             return -1;
         }
         // 重新获取文件节点
-        file = vfs_path_to_node(abs_path);
+        file = fs::Vfs::path_to_node(abs_path);
         if (!file) {
             shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             kprintf("Error: Failed to open file '%s'\n", abs_path);
@@ -1290,7 +1290,7 @@ static int cmd_write(int argc, char **argv) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: '%s' is not a writable file or device\n", abs_path);
         shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-        vfs_release_node(file);  // 释放节点
+        fs::Vfs::release_node(file);  // 释放节点
         return -1;
     }
     
@@ -1311,7 +1311,7 @@ static int cmd_write(int argc, char **argv) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Out of memory\n");
         shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-        vfs_release_node(file);  // 释放节点
+        fs::Vfs::release_node(file);  // 释放节点
         return -1;
     }
     
@@ -1329,13 +1329,13 @@ static int cmd_write(int argc, char **argv) {
     buffer[pos] = '\0';
     
     // 打开文件（写入模式）
-    vfs_open(file, 0);
+    fs::Vfs::open(file, 0);
     
     // 写入文件（覆盖模式：从偏移 0 开始写入）
-    uint32_t written = vfs_write(file, 0, pos, (uint8_t *)buffer);
+    uint32_t written = fs::Vfs::write(file, 0, pos, (uint8_t *)buffer);
     
     // 关闭文件
-    vfs_close(file);
+    fs::Vfs::close(file);
     
     // 释放缓冲区
     kfree(buffer);
@@ -1345,12 +1345,12 @@ static int cmd_write(int argc, char **argv) {
         kprintf("Error: Failed to write all data to file '%s'\n", abs_path);
         kprintf("Written: %u bytes, Expected: %u bytes\n", written, (uint32_t)pos);
         shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-        vfs_release_node(file);  // 释放节点
+        fs::Vfs::release_node(file);  // 释放节点
         return -1;
     }
     
     kprintf("Written %u bytes to '%s'\n", written, abs_path);
-    vfs_release_node(file);  // 释放节点
+    fs::Vfs::release_node(file);  // 释放节点
     return 0;
 }
 
@@ -1505,7 +1505,7 @@ static int cmd_arp(int argc, char **argv) {
             return -1;
         }
         
-        if (arp_cache_delete(ip) == 0) {
+        if (net::Arp::cache_delete(ip) == 0) {
             kprintf("ARP entry for %s deleted\n", delete_ip);
         } else {
             shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
@@ -1518,7 +1518,7 @@ static int cmd_arp(int argc, char **argv) {
     
     // 默认显示所有条目
     if (argc == 1 || show_all) {
-        arp_cache_dump();
+        net::Arp::cache_dump();
         return 0;
     }
     
@@ -1551,11 +1551,11 @@ static int cmd_netstat(int argc, char **argv) {
     
     // 使用统一的 dump 函数（buf=NULL 表示直接打印到控制台）
     if (show_tcp) {
-        tcp_pcb_list_dump(NULL, 0);
+        net::Tcp::pcb_list_dump(NULL, 0);
     }
     
     if (show_udp) {
-        udp_pcb_list_dump(NULL, 0);
+        net::Udp::pcb_list_dump(NULL, 0);
     }
     
     return 0;
@@ -1565,18 +1565,13 @@ static int cmd_netstat(int argc, char **argv) {
  * route 命令 - 路由表管理
  */
 static int cmd_route(int argc, char **argv) {
-    // 使用 ip.h 中声明的函数
-    extern int ip_route_add(uint32_t dest, uint32_t netmask, uint32_t gateway, 
-                            netdev_t *dev, uint32_t metric);
-    extern int ip_route_del(uint32_t dest, uint32_t netmask);
-    
     if (argc == 1) {
         // 显示路由表
         shell_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
         kprintf("Routing Table\n");
         kprintf("================================================================================\n");
         shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-        ip_route_dump(NULL, 0);
+        net::Ip::route_dump(NULL, 0);
         return 0;
     }
     
@@ -1613,7 +1608,7 @@ static int cmd_route(int argc, char **argv) {
             return -1;
         }
         
-        if (ip_route_add(dest, netmask, gateway, dev, 1) < 0) {
+        if (net::Ip::route_add(dest, netmask, gateway, dev, 1) < 0) {
             shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             kprintf("Error: Failed to add route (table full?)\n");
             shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
@@ -1642,7 +1637,7 @@ static int cmd_route(int argc, char **argv) {
             return -1;
         }
         
-        if (ip_route_del(dest, netmask) < 0) {
+        if (net::Ip::route_del(dest, netmask) < 0) {
             shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             kprintf("Error: Route not found\n");
             shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
@@ -1676,7 +1671,7 @@ static int cmd_dhcp(int argc, char **argv) {
     if (argc < 2 || strcmp(argv[1], "status") == 0) {
         // 显示 DHCP 状态
         dhcp_info_t info;
-        dhcp_state_t state = dhcp_get_status(dev, &info);
+        dhcp_state_t state = net::Dhcp::get_status(dev, &info);
         
         shell_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         kprintf("DHCP Status\n");
@@ -1700,10 +1695,10 @@ static int cmd_dhcp(int argc, char **argv) {
             state == DHCP_STATE_REBINDING) {
             char ip_str[16], mask_str[16], gw_str[16], dns_str[16];
             
-            ip_to_str(info.ip_addr, ip_str);
-            ip_to_str(info.netmask, mask_str);
-            ip_to_str(info.gateway, gw_str);
-            ip_to_str(info.dns_primary, dns_str);
+            net::Ip::to_str(info.ip_addr, ip_str);
+            net::Ip::to_str(info.netmask, mask_str);
+            net::Ip::to_str(info.gateway, gw_str);
+            net::Ip::to_str(info.dns_primary, dns_str);
             
             kprintf("IP Address:  %s\n", ip_str);
             kprintf("Netmask:     %s\n", mask_str);
@@ -1716,7 +1711,7 @@ static int cmd_dhcp(int argc, char **argv) {
     
     if (strcmp(argv[1], "start") == 0) {
         kprintf("Starting DHCP client...\n");
-        int ret = dhcp_start(dev);
+        int ret = net::Dhcp::start(dev);
         if (ret < 0) {
             shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             kprintf("Error: Failed to start DHCP client\n");
@@ -1728,13 +1723,13 @@ static int cmd_dhcp(int argc, char **argv) {
     }
     
     if (strcmp(argv[1], "stop") == 0) {
-        dhcp_stop(dev);
+        net::Dhcp::stop(dev);
         kprintf("DHCP client stopped\n");
         return 0;
     }
     
     if (strcmp(argv[1], "release") == 0) {
-        int ret = dhcp_release(dev);
+        int ret = net::Dhcp::release(dev);
         if (ret < 0) {
             shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             kprintf("Error: Failed to release lease\n");
@@ -1768,11 +1763,11 @@ static int cmd_nslookup(int argc, char **argv) {
     if (strcmp(argv[1], "server") == 0) {
         if (argc < 3) {
             uint32_t primary, secondary;
-            dns_get_server(&primary, &secondary);
+            net::Dns::get_server(&primary, &secondary);
             
             if (primary) {
                 char ip_str[16];
-                ip_to_str(primary, ip_str);
+                net::Ip::to_str(primary, ip_str);
                 kprintf("DNS Server: %s\n", ip_str);
             } else {
                 kprintf("No DNS server configured\n");
@@ -1788,20 +1783,20 @@ static int cmd_nslookup(int argc, char **argv) {
             return -1;
         }
         
-        dns_set_server(server_ip, 0);
+        net::Dns::set_server(server_ip, 0);
         kprintf("DNS server set to %s\n", argv[2]);
         return 0;
     }
     
     // 显示 DNS 缓存
     if (strcmp(argv[1], "cache") == 0) {
-        dns_cache_dump(NULL, 0);
+        net::Dns::cache_dump(NULL, 0);
         return 0;
     }
     
     // 清除缓存
     if (strcmp(argv[1], "flush") == 0) {
-        dns_cache_clear();
+        net::Dns::cache_clear();
         kprintf("DNS cache flushed\n");
         return 0;
     }
@@ -1812,7 +1807,7 @@ static int cmd_nslookup(int argc, char **argv) {
     
     kprintf("Looking up %s...\n", hostname);
     
-    int ret = dns_resolve(hostname, &ip);
+    int ret = net::Dns::resolve(hostname, &ip);
     if (ret < 0) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Failed to resolve '%s'\n", hostname);
@@ -1821,7 +1816,7 @@ static int cmd_nslookup(int argc, char **argv) {
     }
     
     char ip_str[16];
-    ip_to_str(ip, ip_str);
+    net::Ip::to_str(ip, ip_str);
     
     shell_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     kprintf("Name:    %s\n", hostname);

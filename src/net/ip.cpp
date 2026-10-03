@@ -6,6 +6,9 @@
 #include <net/ip.h>
 #include <net/ethernet.h>
 #include <net/arp.h>
+#include <net/icmp.h>
+#include <net/udp.h>
+#include <net/tcp.h>
 #include <net/netdev.h>
 #include <net/netbuf.h>
 #include <net/checksum.h>
@@ -26,10 +29,6 @@ static ip_reassembly_t reass_table[IP_REASS_MAX_ENTRIES];
 static ip_route_t route_table[IP_ROUTE_MAX];
 static sync::Spinlock route_lock;  // 静态变量自动初始化为 0（未锁定状态）
 
-// 前向声明上层协议处理函数
-extern void icmp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip);
-extern void udp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip);
-extern void tcp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip);
 
 // ============================================================================
 // IP 分片重组
@@ -213,7 +212,7 @@ static netbuf_t *ip_reassemble(netdev_t *dev, netbuf_t *buf, ip_header_t *ip) {
     }
     
     // 添加分片
-    uint8_t hdr_len = ip_header_len(ip);
+    uint8_t hdr_len = net::Ip::header_len(ip);
     uint8_t *data = (uint8_t *)ip + hdr_len;
     uint16_t data_len = ntohs(ip->total_length) - hdr_len;
     
@@ -231,7 +230,7 @@ static netbuf_t *ip_reassemble(netdev_t *dev, netbuf_t *buf, ip_header_t *ip) {
 /**
  * @brief IP 分片重组定时器
  */
-void ip_reass_timer(void) {
+void net::Ip::reass_timer() {
     uint32_t now = (uint32_t)timer_get_uptime_ms();
     
     for (int i = 0; i < IP_REASS_MAX_ENTRIES; i++) {
@@ -243,7 +242,7 @@ void ip_reass_timer(void) {
     }
 }
 
-void ip_init(void) {
+void net::Ip::init() {
     ip_id_counter = 0;
     
     // 初始化重组表
@@ -259,7 +258,7 @@ void ip_init(void) {
 // 路由表
 // ============================================================================
 
-netdev_t *ip_route_lookup(uint32_t dst_ip, uint32_t *next_hop) {
+netdev_t *net::Ip::route_lookup(uint32_t dst_ip, uint32_t *next_hop) {
     netdev_t *best_dev = NULL;
     uint32_t best_mask = 0;
     uint32_t best_gateway = 0;
@@ -322,7 +321,7 @@ netdev_t *ip_route_lookup(uint32_t dst_ip, uint32_t *next_hop) {
         best_dev = netdev_get_default();
         if (best_dev && next_hop) {
             // 使用设备的网关作为下一跳
-            if (ip_same_subnet(best_dev->ip_addr, dst_ip, best_dev->netmask)) {
+            if (net::Ip::same_subnet(best_dev->ip_addr, dst_ip, best_dev->netmask)) {
                 *next_hop = dst_ip;
             } else if (best_dev->gateway != 0) {
                 *next_hop = best_dev->gateway;
@@ -335,7 +334,7 @@ netdev_t *ip_route_lookup(uint32_t dst_ip, uint32_t *next_hop) {
     return best_dev;
 }
 
-int ip_route_add(uint32_t dest, uint32_t netmask, uint32_t gateway, 
+int net::Ip::route_add(uint32_t dest, uint32_t netmask, uint32_t gateway, 
                  netdev_t *dev, uint32_t metric) {
     // 查找空闲条目或相同路由
     for (int i = 0; i < IP_ROUTE_MAX; i++) {
@@ -368,7 +367,7 @@ int ip_route_add(uint32_t dest, uint32_t netmask, uint32_t gateway,
     return -1;  // 路由表满
 }
 
-int ip_route_del(uint32_t dest, uint32_t netmask) {
+int net::Ip::route_del(uint32_t dest, uint32_t netmask) {
     for (int i = 0; i < IP_ROUTE_MAX; i++) {
         ip_route_t *r = &route_table[i];
         if (r->valid && r->dest == dest && r->netmask == netmask) {
@@ -379,7 +378,7 @@ int ip_route_del(uint32_t dest, uint32_t netmask) {
     return -1;  // 路由不存在
 }
 
-int ip_route_dump(char *buf, size_t size) {
+int net::Ip::route_dump(char *buf, size_t size) {
     int len = 0;
     bool to_buf = (buf != NULL && size > 0);
     
@@ -406,13 +405,13 @@ int ip_route_dump(char *buf, size_t size) {
         if (!r->valid) continue;
         
         char dest_str[16], gw_str[16], mask_str[16];
-        ip_to_str(r->dest, dest_str);
+        net::Ip::to_str(r->dest, dest_str);
         if (r->gateway == 0) {
             strcpy(gw_str, "*");
         } else {
-            ip_to_str(r->gateway, gw_str);
+            net::Ip::to_str(r->gateway, gw_str);
         }
-        ip_to_str(r->netmask, mask_str);
+        net::Ip::to_str(r->netmask, mask_str);
         
         OUTPUT("%-15s %-15s %-15s %-8s %u\n",
                dest_str, gw_str, mask_str,
@@ -425,7 +424,7 @@ int ip_route_dump(char *buf, size_t size) {
     return len;
 }
 
-void ip_input(netdev_t *dev, netbuf_t *buf) {
+void net::Ip::input(netdev_t *dev, netbuf_t *buf) {
     if (!dev || !buf) {
         return;
     }
@@ -441,14 +440,14 @@ void ip_input(netdev_t *dev, netbuf_t *buf) {
     buf->network_header = ip;
     
     // 验证 IP 版本
-    if (ip_version(ip) != IP_VERSION_4) {
-        LOG_WARN_MSG("ip: Invalid version %u\n", ip_version(ip));
+    if (net::Ip::version(ip) != IP_VERSION_4) {
+        LOG_WARN_MSG("ip: Invalid version %u\n", net::Ip::version(ip));
         netbuf_free(buf);
         return;
     }
     
     // 获取头部长度
-    uint8_t hdr_len = ip_header_len(ip);
+    uint8_t hdr_len = net::Ip::header_len(ip);
     if (hdr_len < IP_HEADER_MIN_LEN || hdr_len > buf->len) {
         LOG_WARN_MSG("ip: Invalid header length %u\n", hdr_len);
         netbuf_free(buf);
@@ -456,7 +455,7 @@ void ip_input(netdev_t *dev, netbuf_t *buf) {
     }
     
     // 验证校验和
-    if (ip_checksum(ip, hdr_len) != 0) {
+    if (net::Ip::checksum(ip, hdr_len) != 0) {
         LOG_WARN_MSG("ip: Invalid checksum\n");
         netbuf_free(buf);
         return;
@@ -507,15 +506,15 @@ void ip_input(netdev_t *dev, netbuf_t *buf) {
     // 根据协议分发到上层处理
     switch (protocol) {
         case IP_PROTO_ICMP:
-            icmp_input(dev, buf, src_ip);
+            net::Icmp::input(dev, buf, src_ip);
             break;
             
         case IP_PROTO_UDP:
-            udp_input(dev, buf, src_ip, dst_ip);
+            net::Udp::input(dev, buf, src_ip, dst_ip);
             break;
             
         case IP_PROTO_TCP:
-            tcp_input(dev, buf, src_ip, dst_ip);
+            net::Tcp::input(dev, buf, src_ip, dst_ip);
             break;
             
         default:
@@ -525,7 +524,7 @@ void ip_input(netdev_t *dev, netbuf_t *buf) {
     }
 }
 
-int ip_output(netdev_t *dev, netbuf_t *buf, uint32_t dst_ip, uint8_t protocol) {
+int net::Ip::output(netdev_t *dev, netbuf_t *buf, uint32_t dst_ip, uint8_t protocol) {
     if (!buf) {
         return -1;
     }
@@ -534,14 +533,14 @@ int ip_output(netdev_t *dev, netbuf_t *buf, uint32_t dst_ip, uint8_t protocol) {
     
     // 如果未指定设备，使用路由表查找
     if (!dev) {
-        dev = ip_route_lookup(dst_ip, &next_hop);
+        dev = net::Ip::route_lookup(dst_ip, &next_hop);
         if (!dev) {
             LOG_ERROR_MSG("ip: No route to host\n");
             return -1;
         }
     } else {
         // 使用指定设备，但仍需确定下一跳
-        next_hop = ip_get_next_hop(dev, dst_ip);
+        next_hop = net::Ip::get_next_hop(dev, dst_ip);
     }
     
     // 检查设备是否有 IP 地址
@@ -574,25 +573,25 @@ int ip_output(netdev_t *dev, netbuf_t *buf, uint32_t dst_ip, uint8_t protocol) {
     ip->dst_addr = dst_ip;
     
     // 计算校验和
-    ip->checksum = ip_checksum(ip, IP_HEADER_MIN_LEN);
+    ip->checksum = net::Ip::checksum(ip, IP_HEADER_MIN_LEN);
     
     // 解析下一跳的 MAC 地址
     uint8_t dst_mac[6];
-    int ret = arp_resolve(dev, next_hop, dst_mac);
+    int ret = net::Arp::resolve(dev, next_hop, dst_mac);
     
     if (ret == 0) {
         // ARP 解析成功，发送
-        return ethernet_output(dev, buf, dst_mac, ETH_TYPE_IP);
+        return net::Ethernet::output(dev, buf, dst_mac, ETH_TYPE_IP);
     } else if (ret == -1) {
         // 正在 ARP 解析中，将数据包加入等待队列
-        if (arp_queue_packet(next_hop, buf) == 0) {
+        if (net::Arp::queue_packet(next_hop, buf) == 0) {
             return 0;  // 返回成功，数据包会在 ARP 解析完成后发送
         } else {
             // 队列失败，可能 ARP 已经解析完成（竞态条件），重试一次
-            ret = arp_cache_lookup(next_hop, dst_mac);
+            ret = net::Arp::cache_lookup(next_hop, dst_mac);
             if (ret == 0) {
                 // ARP 已解析，直接发送
-                return ethernet_output(dev, buf, dst_mac, ETH_TYPE_IP);
+                return net::Ethernet::output(dev, buf, dst_mac, ETH_TYPE_IP);
             }
             LOG_WARN_MSG("ip: Failed to queue packet for ARP resolution\n");
             return -1;  // 调用者需要释放 buf
@@ -608,11 +607,11 @@ int ip_output(netdev_t *dev, netbuf_t *buf, uint32_t dst_ip, uint8_t protocol) {
     }
 }
 
-uint16_t ip_checksum(void *header, int len) {
+uint16_t net::Ip::checksum(void *header, int len) {
     return checksum(header, len);
 }
 
-char *ip_to_str(uint32_t ip, char *buf) {
+char *net::Ip::to_str(uint32_t ip, char *buf) {
     uint8_t *bytes = (uint8_t *)&ip;
     snprintf(buf, 16, "%u.%u.%u.%u", bytes[0], bytes[1], bytes[2], bytes[3]);
     return buf;
@@ -678,17 +677,17 @@ int str_to_ip(const char *str, uint32_t *ip) {
     return 0;
 }
 
-bool ip_same_subnet(uint32_t ip1, uint32_t ip2, uint32_t netmask) {
+bool net::Ip::same_subnet(uint32_t ip1, uint32_t ip2, uint32_t netmask) {
     return (ip1 & netmask) == (ip2 & netmask);
 }
 
-uint32_t ip_get_next_hop(netdev_t *dev, uint32_t dst_ip) {
+uint32_t net::Ip::get_next_hop(netdev_t *dev, uint32_t dst_ip) {
     if (!dev) {
         return dst_ip;
     }
     
     // 如果目的 IP 在同一子网，直接发送
-    if (ip_same_subnet(dev->ip_addr, dst_ip, dev->netmask)) {
+    if (net::Ip::same_subnet(dev->ip_addr, dst_ip, dev->netmask)) {
         return dst_ip;
     }
     

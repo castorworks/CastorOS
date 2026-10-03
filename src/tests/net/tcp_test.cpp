@@ -53,7 +53,7 @@ TEST_CASE(test_tcp_header_data_offset) {
     tcp.data_offset = (5 << 4);
     
     // 验证数据偏移
-    uint8_t offset = tcp_header_len(&tcp) / 4;
+    uint8_t offset = net::Tcp::header_len(&tcp) / 4;
     ASSERT_EQ(5, offset);
 }
 
@@ -351,7 +351,7 @@ TEST_CASE(test_tcp_header_len_min) {
     tcp.data_offset = (5 << 4);
     
     // 验证头部长度
-    uint8_t len = tcp_header_len(&tcp);
+    uint8_t len = net::Tcp::header_len(&tcp);
     ASSERT_EQ(20, len);
 }
 
@@ -366,7 +366,7 @@ TEST_CASE(test_tcp_header_len_with_options) {
     tcp.data_offset = (8 << 4);
     
     // 验证头部长度
-    uint8_t len = tcp_header_len(&tcp);
+    uint8_t len = net::Tcp::header_len(&tcp);
     ASSERT_EQ(32, len);
 }
 
@@ -381,7 +381,7 @@ TEST_CASE(test_tcp_header_len_max) {
     tcp.data_offset = (15 << 4);
     
     // 验证头部长度
-    uint8_t len = tcp_header_len(&tcp);
+    uint8_t len = net::Tcp::header_len(&tcp);
     ASSERT_EQ(60, len);
 }
 
@@ -492,7 +492,7 @@ TEST_CASE(test_tcp_checksum_basic) {
     tcp.urgent_ptr = 0;
     
     // 计算校验和
-    uint16_t cs = tcp_checksum(TEST_SRC_IP, TEST_DST_IP, &tcp, TCP_HEADER_MIN_LEN);
+    uint16_t cs = net::Tcp::checksum(TEST_SRC_IP, TEST_DST_IP, &tcp, TCP_HEADER_MIN_LEN);
     
     // 校验和应非零
     ASSERT_NE(0, cs);
@@ -519,8 +519,8 @@ TEST_CASE(test_tcp_checksum_src_ip_sensitivity) {
     uint32_t src_ip1 = TEST_SRC_IP;
     uint32_t src_ip2 = IP_ADDR(192, 168, 1, 101);
     
-    uint16_t cs1 = tcp_checksum(src_ip1, TEST_DST_IP, &tcp, TCP_HEADER_MIN_LEN);
-    uint16_t cs2 = tcp_checksum(src_ip2, TEST_DST_IP, &tcp, TCP_HEADER_MIN_LEN);
+    uint16_t cs1 = net::Tcp::checksum(src_ip1, TEST_DST_IP, &tcp, TCP_HEADER_MIN_LEN);
+    uint16_t cs2 = net::Tcp::checksum(src_ip2, TEST_DST_IP, &tcp, TCP_HEADER_MIN_LEN);
     
     // 校验和应不同
     ASSERT_NE(cs1, cs2);
@@ -547,8 +547,8 @@ TEST_CASE(test_tcp_checksum_dst_ip_sensitivity) {
     uint32_t dst_ip1 = TEST_DST_IP;
     uint32_t dst_ip2 = IP_ADDR(192, 168, 1, 2);
     
-    uint16_t cs1 = tcp_checksum(TEST_SRC_IP, dst_ip1, &tcp, TCP_HEADER_MIN_LEN);
-    uint16_t cs2 = tcp_checksum(TEST_SRC_IP, dst_ip2, &tcp, TCP_HEADER_MIN_LEN);
+    uint16_t cs1 = net::Tcp::checksum(TEST_SRC_IP, dst_ip1, &tcp, TCP_HEADER_MIN_LEN);
+    uint16_t cs2 = net::Tcp::checksum(TEST_SRC_IP, dst_ip2, &tcp, TCP_HEADER_MIN_LEN);
     
     // 校验和应不同
     ASSERT_NE(cs1, cs2);
@@ -578,8 +578,8 @@ TEST_CASE(test_tcp_checksum_seq_sensitivity) {
     tcp2.seq_num = htonl(1001);
     
     // 计算校验和
-    uint16_t cs1 = tcp_checksum(TEST_SRC_IP, TEST_DST_IP, &tcp1, TCP_HEADER_MIN_LEN);
-    uint16_t cs2 = tcp_checksum(TEST_SRC_IP, TEST_DST_IP, &tcp2, TCP_HEADER_MIN_LEN);
+    uint16_t cs1 = net::Tcp::checksum(TEST_SRC_IP, TEST_DST_IP, &tcp1, TCP_HEADER_MIN_LEN);
+    uint16_t cs2 = net::Tcp::checksum(TEST_SRC_IP, TEST_DST_IP, &tcp2, TCP_HEADER_MIN_LEN);
     
     // 校验和应不同
     ASSERT_NE(cs1, cs2);
@@ -609,8 +609,8 @@ TEST_CASE(test_tcp_checksum_flags_sensitivity) {
     tcp2.flags = TCP_FLAG_SYN | TCP_FLAG_ACK;
     
     // 计算校验和
-    uint16_t cs1 = tcp_checksum(TEST_SRC_IP, TEST_DST_IP, &tcp1, TCP_HEADER_MIN_LEN);
-    uint16_t cs2 = tcp_checksum(TEST_SRC_IP, TEST_DST_IP, &tcp2, TCP_HEADER_MIN_LEN);
+    uint16_t cs1 = net::Tcp::checksum(TEST_SRC_IP, TEST_DST_IP, &tcp1, TCP_HEADER_MIN_LEN);
+    uint16_t cs2 = net::Tcp::checksum(TEST_SRC_IP, TEST_DST_IP, &tcp2, TCP_HEADER_MIN_LEN);
     
     // 校验和应不同
     ASSERT_NE(cs1, cs2);

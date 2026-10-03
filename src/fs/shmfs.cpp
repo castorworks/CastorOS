@@ -384,7 +384,7 @@ static fs_node_t *shmfs_finddir(fs_node_t *node, const char *name) {
     
     // 增加引用计数
     if (result) {
-        vfs_ref_node(result);
+        fs::Vfs::ref_node(result);
     }
     
     return result;
@@ -543,7 +543,7 @@ static int shmfs_unlink(fs_node_t *node, const char *name) {
 /**
  * 获取共享内存文件的物理页列表（供 mmap 使用）
  */
-uint32_t shmfs_get_phys_pages(fs_node_t *node, uint32_t offset, 
+uint32_t fs::Shmfs::get_phys_pages(fs_node_t *node, uint32_t offset, 
                                uint32_t num_pages, uint32_t *phys_pages) {
     if (!node || node->type != FS_FILE || !phys_pages) {
         return 0;
@@ -573,7 +573,7 @@ uint32_t shmfs_get_phys_pages(fs_node_t *node, uint32_t offset,
 /**
  * 增加映射计数
  */
-void shmfs_map_ref(fs_node_t *node) {
+void fs::Shmfs::map_ref(fs_node_t *node) {
     if (!node || node->type != FS_FILE) {
         return;
     }
@@ -590,7 +590,7 @@ void shmfs_map_ref(fs_node_t *node) {
 /**
  * 减少映射计数
  */
-void shmfs_map_unref(fs_node_t *node) {
+void fs::Shmfs::map_unref(fs_node_t *node) {
     if (!node || node->type != FS_FILE) {
         return;
     }
@@ -609,7 +609,7 @@ void shmfs_map_unref(fs_node_t *node) {
 /**
  * 检查节点是否为 shmfs 文件
  */
-bool shmfs_is_shmfs_node(fs_node_t *node) {
+bool fs::Shmfs::is_shmfs_node(fs_node_t *node) {
     if (!node || node->type != FS_FILE) {
         return false;
     }
@@ -619,7 +619,7 @@ bool shmfs_is_shmfs_node(fs_node_t *node) {
 /**
  * 创建 shmfs 根目录
  */
-fs_node_t *shmfs_create(const char *name) {
+fs_node_t *fs::Shmfs::create(const char *name) {
     // 创建根目录节点
     fs_node_t *root = (fs_node_t *)kmalloc(sizeof(fs_node_t));
     if (!root) {
@@ -669,13 +669,13 @@ fs_node_t *shmfs_create(const char *name) {
 /**
  * 初始化 shmfs
  */
-fs_node_t *shmfs_init(void) {
+fs_node_t *fs::Shmfs::init() {
     LOG_INFO_MSG("SHMFS: Initializing shared memory filesystem...\n");
     
     // 初始化 inode 分配锁
     shmfs_inode_lock.init();
     
-    fs_node_t *root = shmfs_create("shm");
+    fs_node_t *root = fs::Shmfs::create("shm");
     if (!root) {
         LOG_ERROR_MSG("SHMFS: Failed to create root directory\n");
         return NULL;

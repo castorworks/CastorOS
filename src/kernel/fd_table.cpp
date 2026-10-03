@@ -45,7 +45,7 @@ int32_t fd_table_alloc(fd_table_t *table, fs_node_t *node, int32_t flags) {
             table->entries[i].in_use = true;
             
             // 增加节点引用计数
-            vfs_ref_node(node);
+            fs::Vfs::ref_node(node);
             
             result = i;
             break;
@@ -100,10 +100,10 @@ int32_t fd_table_free(fd_table_t *table, int32_t fd) {
     // 避免在持有锁的情况下调用可能阻塞的 VFS 操作
     if (node) {
         if (node->close) {
-            vfs_close(node);
+            fs::Vfs::close(node);
         }
         // 释放动态分配的节点
-        vfs_release_node(node);
+        fs::Vfs::release_node(node);
     }
     
     return 0;
@@ -139,11 +139,11 @@ int32_t fd_table_copy(fd_table_t *src, fd_table_t *dst) {
             
             // 关键修复：增加引用计数，因为现在有两个fd指向同一个节点
             if (dst->entries[i].node) {
-                vfs_ref_node(dst->entries[i].node);
+                fs::Vfs::ref_node(dst->entries[i].node);
                 
                 // 如果是管道，还需要增加 readers/writers 计数
                 if (dst->entries[i].node->type == FS_PIPE) {
-                    pipe_on_dup(dst->entries[i].node);
+                    fs::Pipe::on_dup(dst->entries[i].node);
                 }
             }
         } else {

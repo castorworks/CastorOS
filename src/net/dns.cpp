@@ -207,7 +207,7 @@ static int dns_parse_ip(const char *str, uint32_t *ip) {
 /**
  * @brief 从缓存查找
  */
-int dns_cache_lookup(const char *hostname, uint32_t *ip) {
+int net::Dns::cache_lookup(const char *hostname, uint32_t *ip) {
     if (!hostname || !ip) return -1;
     
     uint32_t now = (uint32_t)timer_get_uptime_ms();
@@ -234,7 +234,7 @@ int dns_cache_lookup(const char *hostname, uint32_t *ip) {
 /**
  * @brief 添加缓存条目
  */
-void dns_cache_add(const char *hostname, uint32_t ip, uint32_t ttl) {
+void net::Dns::cache_add(const char *hostname, uint32_t ip, uint32_t ttl) {
     if (!hostname || ip == 0) return;
     
     uint32_t now = (uint32_t)timer_get_uptime_ms();
@@ -286,7 +286,7 @@ void dns_cache_add(const char *hostname, uint32_t ip, uint32_t ttl) {
 /**
  * @brief 清除缓存
  */
-void dns_cache_clear(void) {
+void net::Dns::cache_clear() {
     sync::SpinlockIrqGuard guard(dns_lock);
     
     for (int i = 0; i < DNS_CACHE_SIZE; i++) {
@@ -297,7 +297,7 @@ void dns_cache_clear(void) {
 /**
  * @brief 打印缓存内容
  */
-int dns_cache_dump(char *buf, size_t size) {
+int net::Dns::cache_dump(char *buf, size_t size) {
     int len = 0;
     bool to_buf = (buf != NULL && size > 0);
     
@@ -326,7 +326,7 @@ int dns_cache_dump(char *buf, size_t size) {
         if (!entry->valid) continue;
         
         char ip_str[16];
-        ip_to_str(entry->ip, ip_str);
+        net::Ip::to_str(entry->ip, ip_str);
         
         uint32_t remaining = 0;
         if (entry->expire_time > now) {
@@ -358,14 +358,14 @@ static int dns_do_query(uint32_t server_ip, const char *hostname, uint32_t *ip) 
     if (!server_ip || !hostname || !ip) return -1;
     
     // 创建 UDP PCB
-    udp_pcb_t *pcb = udp_pcb_new();
+    udp_pcb_t *pcb = net::Udp::pcb_new();
     if (!pcb) {
         LOG_ERROR_MSG("dns: Failed to create UDP PCB\n");
         return -1;
     }
     
     // 绑定到临时端口
-    udp_bind(pcb, 0, 0);
+    net::Udp::bind(pcb, 0, 0);
     
     // 构建 DNS 查询包
     uint8_t packet[DNS_MAX_PACKET_SIZE];
@@ -381,7 +381,7 @@ static int dns_do_query(uint32_t server_ip, const char *hostname, uint32_t *ip) 
     uint8_t *qname = packet + sizeof(dns_header_t);
     int name_len = dns_encode_name(hostname, qname, sizeof(packet) - sizeof(dns_header_t));
     if (name_len < 0) {
-        udp_pcb_free(pcb);
+        net::Udp::pcb_free(pcb);
         LOG_ERROR_MSG("dns: Failed to encode hostname\n");
         return -1;
     }
@@ -396,18 +396,18 @@ static int dns_do_query(uint32_t server_ip, const char *hostname, uint32_t *ip) 
     // 发送查询
     netbuf_t *buf = netbuf_alloc(pkt_len);
     if (!buf) {
-        udp_pcb_free(pcb);
+        net::Udp::pcb_free(pcb);
         return -1;
     }
     
     uint8_t *data = netbuf_put(buf, pkt_len);
     memcpy(data, packet, pkt_len);
     
-    int ret = udp_sendto(pcb, buf, server_ip, DNS_PORT);
+    int ret = net::Udp::sendto(pcb, buf, server_ip, DNS_PORT);
     netbuf_free(buf);
     
     if (ret < 0) {
-        udp_pcb_free(pcb);
+        net::Udp::pcb_free(pcb);
         LOG_ERROR_MSG("dns: Failed to send query\n");
         return -1;
     }
@@ -418,7 +418,7 @@ static int dns_do_query(uint32_t server_ip, const char *hostname, uint32_t *ip) 
     
     while ((uint32_t)timer_get_uptime_ms() - start < DNS_QUERY_TIMEOUT) {
         // 检查是否收到响应
-        netbuf_t *resp = udp_recv_poll(pcb);
+        netbuf_t *resp = net::Udp::recv_poll(pcb);
         if (!resp) {
             // 短暂延迟
             for (int i = 0; i < 10000; i++) { __asm__ volatile (""); }
@@ -501,10 +501,10 @@ static int dns_do_query(uint32_t server_ip, const char *hostname, uint32_t *ip) 
                 memcpy(ip, ptr, 4);
                 
                 // 添加到缓存
-                dns_cache_add(hostname, *ip, ttl);
+                net::Dns::cache_add(hostname, *ip, ttl);
                 
                 char ip_str[16];
-                ip_to_str(*ip, ip_str);
+                net::Ip::to_str(*ip, ip_str);
                 LOG_DEBUG_MSG("dns: Resolved %s -> %s (ttl=%u)\n", hostname, ip_str, ttl);
                 
                 result = 0;
@@ -518,7 +518,7 @@ static int dns_do_query(uint32_t server_ip, const char *hostname, uint32_t *ip) 
         break;
     }
     
-    udp_pcb_free(pcb);
+    net::Udp::pcb_free(pcb);
     return result;
 }
 
@@ -529,7 +529,7 @@ static int dns_do_query(uint32_t server_ip, const char *hostname, uint32_t *ip) 
 /**
  * @brief 初始化 DNS 解析器
  */
-void dns_init(void) {
+void net::Dns::init() {
     memset(dns_cache, 0, sizeof(dns_cache));
     dns_server_primary = 0;
     dns_server_secondary = 0;
@@ -539,13 +539,13 @@ void dns_init(void) {
 /**
  * @brief 设置 DNS 服务器
  */
-void dns_set_server(uint32_t primary, uint32_t secondary) {
+void net::Dns::set_server(uint32_t primary, uint32_t secondary) {
     dns_server_primary = primary;
     dns_server_secondary = secondary;
     
     if (primary) {
         char ip_str[16];
-        ip_to_str(primary, ip_str);
+        net::Ip::to_str(primary, ip_str);
         LOG_INFO_MSG("dns: Primary server set to %s\n", ip_str);
     }
 }
@@ -553,7 +553,7 @@ void dns_set_server(uint32_t primary, uint32_t secondary) {
 /**
  * @brief 获取 DNS 服务器
  */
-void dns_get_server(uint32_t *primary, uint32_t *secondary) {
+void net::Dns::get_server(uint32_t *primary, uint32_t *secondary) {
     if (primary) *primary = dns_server_primary;
     if (secondary) *secondary = dns_server_secondary;
 }
@@ -561,7 +561,7 @@ void dns_get_server(uint32_t *primary, uint32_t *secondary) {
 /**
  * @brief 解析域名
  */
-int dns_resolve(const char *hostname, uint32_t *ip) {
+int net::Dns::resolve(const char *hostname, uint32_t *ip) {
     if (!hostname || !ip) return -1;
     
     // 检查是否已经是 IP 地址
@@ -575,7 +575,7 @@ int dns_resolve(const char *hostname, uint32_t *ip) {
     }
     
     // 先检查缓存
-    if (dns_cache_lookup(hostname, ip) == 0) {
+    if (net::Dns::cache_lookup(hostname, ip) == 0) {
         return 0;
     }
     
@@ -600,7 +600,7 @@ int dns_resolve(const char *hostname, uint32_t *ip) {
 /**
  * @brief 反向解析（未实现）
  */
-int dns_reverse_resolve(uint32_t ip, char *hostname, size_t hostname_len) {
+int net::Dns::reverse_resolve(uint32_t ip, char *hostname, size_t hostname_len) {
     (void)ip;
     (void)hostname;
     (void)hostname_len;

@@ -128,52 +128,61 @@ typedef struct {
     uint8_t retries;        // 重试次数
 } dhcp_client_t;
 
-// ============================================================================
-// DHCP 函数接口
-// ============================================================================
+namespace net {
 
 /**
- * @brief 启动 DHCP 客户端
- * @param dev 网络设备
- * @return 0 成功，-1 失败
+ * @brief DHCP 客户端
  */
-int dhcp_start(netdev_t *dev);
+class Dhcp {
+public:
+    // ============================================================================
+    // DHCP 函数接口
+    // ============================================================================
 
-/**
- * @brief 停止 DHCP 客户端
- * @param dev 网络设备
- */
-void dhcp_stop(netdev_t *dev);
+    /**
+     * @brief 启动 DHCP 客户端
+     * @param dev 网络设备
+     * @return 0 成功，-1 失败
+     */
+    static int start(netdev_t *dev);
 
-/**
- * @brief 释放 DHCP 租约
- * @param dev 网络设备
- * @return 0 成功，-1 失败
- */
-int dhcp_release(netdev_t *dev);
+    /**
+     * @brief 停止 DHCP 客户端
+     * @param dev 网络设备
+     */
+    static void stop(netdev_t *dev);
 
-/**
- * @brief 获取 DHCP 状态
- * @param dev 网络设备
- * @param info 输出配置信息
- * @return 当前状态
- */
-dhcp_state_t dhcp_get_status(netdev_t *dev, dhcp_info_t *info);
+    /**
+     * @brief 释放 DHCP 租约
+     * @param dev 网络设备
+     * @return 0 成功，-1 失败
+     */
+    static int release(netdev_t *dev);
 
-/**
- * @brief DHCP 定时器处理（需要定期调用）
- * 
- * 处理租约续期和重绑定
- */
-void dhcp_timer(void);
+    /**
+     * @brief 获取 DHCP 状态
+     * @param dev 网络设备
+     * @param info 输出配置信息
+     * @return 当前状态
+     */
+    static dhcp_state_t get_status(netdev_t *dev, dhcp_info_t *info);
 
-/**
- * @brief 处理收到的 DHCP 数据包
- * @param dev 网络设备
- * @param data 数据包内容
- * @param len 数据包长度
- */
-void dhcp_input(netdev_t *dev, uint8_t *data, uint32_t len);
+    /**
+     * @brief DHCP 定时器处理（需要定期调用）
+     * 
+     * 处理租约续期和重绑定
+     */
+    static void timer();
+
+    /**
+     * @brief 处理收到的 DHCP 数据包
+     * @param dev 网络设备
+     * @param data 数据包内容
+     * @param len 数据包长度
+     */
+    static void input(netdev_t *dev, uint8_t *data, uint32_t len);
+};
+
+} // namespace net
 
 #endif // _NET_DHCP_H_
-

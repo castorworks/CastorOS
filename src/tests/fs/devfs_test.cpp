@@ -7,7 +7,7 @@
 // 描述: 测试 Devfs (Device File System) 的功能
 //
 // 功能覆盖:
-//   - 设备注册 (devfs_init 创建的设备节点)
+//   - 设备注册 (fs::Devfs::init 创建的设备节点)
 //   - 设备节点访问 (/dev/null, /dev/zero, /dev/serial, /dev/rtc)
 //   - 目录遍历 (devfs_readdir, devfs_finddir)
 //
@@ -34,11 +34,11 @@
  * 如果 /dev 目录不存在，测试将跳过
  */
 static bool devfs_test_setup(void) {
-    fs_node_t *dev = vfs_path_to_node("/dev");
+    fs_node_t *dev = fs::Vfs::path_to_node("/dev");
     if (!dev) {
         return false;
     }
-    vfs_release_node(dev);
+    fs::Vfs::release_node(dev);
     return true;
 }
 
@@ -57,10 +57,10 @@ static bool devfs_test_setup(void) {
  * _Requirements: 4.5_
  */
 TEST_CASE(test_devfs_root_exists) {
-    fs_node_t *dev = vfs_path_to_node("/dev");
+    fs_node_t *dev = fs::Vfs::path_to_node("/dev");
     ASSERT_NOT_NULL(dev);
     ASSERT_EQ(dev->type, FS_DIRECTORY);
-    vfs_release_node(dev);
+    fs::Vfs::release_node(dev);
 }
 
 /**
@@ -74,10 +74,10 @@ TEST_CASE(test_devfs_null_exists) {
         return;
     }
     
-    fs_node_t *node = vfs_path_to_node("/dev/null");
+    fs_node_t *node = fs::Vfs::path_to_node("/dev/null");
     ASSERT_NOT_NULL(node);
     ASSERT_EQ(node->type, FS_CHARDEVICE);
-    vfs_release_node(node);
+    fs::Vfs::release_node(node);
 }
 
 /**
@@ -91,10 +91,10 @@ TEST_CASE(test_devfs_zero_exists) {
         return;
     }
     
-    fs_node_t *node = vfs_path_to_node("/dev/zero");
+    fs_node_t *node = fs::Vfs::path_to_node("/dev/zero");
     ASSERT_NOT_NULL(node);
     ASSERT_EQ(node->type, FS_CHARDEVICE);
-    vfs_release_node(node);
+    fs::Vfs::release_node(node);
 }
 
 /**
@@ -108,10 +108,10 @@ TEST_CASE(test_devfs_serial_exists) {
         return;
     }
     
-    fs_node_t *node = vfs_path_to_node("/dev/serial");
+    fs_node_t *node = fs::Vfs::path_to_node("/dev/serial");
     ASSERT_NOT_NULL(node);
     ASSERT_EQ(node->type, FS_CHARDEVICE);
-    vfs_release_node(node);
+    fs::Vfs::release_node(node);
 }
 
 /**
@@ -125,10 +125,10 @@ TEST_CASE(test_devfs_rtc_exists) {
         return;
     }
     
-    fs_node_t *node = vfs_path_to_node("/dev/rtc");
+    fs_node_t *node = fs::Vfs::path_to_node("/dev/rtc");
     ASSERT_NOT_NULL(node);
     ASSERT_EQ(node->type, FS_CHARDEVICE);
-    vfs_release_node(node);
+    fs::Vfs::release_node(node);
 }
 
 /**
@@ -142,10 +142,10 @@ TEST_CASE(test_devfs_console_exists) {
         return;
     }
     
-    fs_node_t *node = vfs_path_to_node("/dev/console");
+    fs_node_t *node = fs::Vfs::path_to_node("/dev/console");
     ASSERT_NOT_NULL(node);
     ASSERT_EQ(node->type, FS_CHARDEVICE);
-    vfs_release_node(node);
+    fs::Vfs::release_node(node);
 }
 
 /**
@@ -159,7 +159,7 @@ TEST_CASE(test_devfs_nonexistent_device) {
         return;
     }
     
-    fs_node_t *node = vfs_path_to_node("/dev/nonexistent_device_xyz");
+    fs_node_t *node = fs::Vfs::path_to_node("/dev/nonexistent_device_xyz");
     ASSERT_NULL(node);
 }
 
@@ -182,15 +182,15 @@ TEST_CASE(test_devfs_null_read) {
         return;
     }
     
-    fs_node_t *node = vfs_path_to_node("/dev/null");
+    fs_node_t *node = fs::Vfs::path_to_node("/dev/null");
     ASSERT_NOT_NULL(node);
     
     // 读取应该返回 0 字节
     char buffer[64];
-    uint32_t read_count = vfs_read(node, 0, sizeof(buffer), (uint8_t *)buffer);
+    uint32_t read_count = fs::Vfs::read(node, 0, sizeof(buffer), (uint8_t *)buffer);
     ASSERT_EQ_U(read_count, 0);
     
-    vfs_release_node(node);
+    fs::Vfs::release_node(node);
 }
 
 /**
@@ -204,21 +204,21 @@ TEST_CASE(test_devfs_null_write) {
         return;
     }
     
-    fs_node_t *node = vfs_path_to_node("/dev/null");
+    fs_node_t *node = fs::Vfs::path_to_node("/dev/null");
     ASSERT_NOT_NULL(node);
     
     // 写入应该返回写入的字节数（但数据被丢弃）
     const char *data = "This data will be discarded";
     uint32_t data_len = strlen(data);
-    uint32_t written = vfs_write(node, 0, data_len, (uint8_t *)data);
+    uint32_t written = fs::Vfs::write(node, 0, data_len, (uint8_t *)data);
     ASSERT_EQ_U(written, data_len);
     
     // 再次读取应该仍然返回 0
     char buffer[64];
-    uint32_t read_count = vfs_read(node, 0, sizeof(buffer), (uint8_t *)buffer);
+    uint32_t read_count = fs::Vfs::read(node, 0, sizeof(buffer), (uint8_t *)buffer);
     ASSERT_EQ_U(read_count, 0);
     
-    vfs_release_node(node);
+    fs::Vfs::release_node(node);
 }
 
 /**
@@ -232,17 +232,17 @@ TEST_CASE(test_devfs_null_multiple_writes) {
         return;
     }
     
-    fs_node_t *node = vfs_path_to_node("/dev/null");
+    fs_node_t *node = fs::Vfs::path_to_node("/dev/null");
     ASSERT_NOT_NULL(node);
     
     // 多次写入
     for (int i = 0; i < 5; i++) {
         const char *data = "test";
-        uint32_t written = vfs_write(node, 0, 4, (uint8_t *)data);
+        uint32_t written = fs::Vfs::write(node, 0, 4, (uint8_t *)data);
         ASSERT_EQ_U(written, 4);
     }
     
-    vfs_release_node(node);
+    fs::Vfs::release_node(node);
 }
 
 // ============================================================================
@@ -264,7 +264,7 @@ TEST_CASE(test_devfs_zero_read) {
         return;
     }
     
-    fs_node_t *node = vfs_path_to_node("/dev/zero");
+    fs_node_t *node = fs::Vfs::path_to_node("/dev/zero");
     ASSERT_NOT_NULL(node);
     
     // 先填充非零数据
@@ -272,7 +272,7 @@ TEST_CASE(test_devfs_zero_read) {
     memset(buffer, 0xFF, sizeof(buffer));
     
     // 读取应该返回请求的字节数，且全为零
-    uint32_t read_count = vfs_read(node, 0, sizeof(buffer), (uint8_t *)buffer);
+    uint32_t read_count = fs::Vfs::read(node, 0, sizeof(buffer), (uint8_t *)buffer);
     ASSERT_EQ_U(read_count, sizeof(buffer));
     
     // 验证所有字节都是零
@@ -280,7 +280,7 @@ TEST_CASE(test_devfs_zero_read) {
         ASSERT_EQ(buffer[i], 0);
     }
     
-    vfs_release_node(node);
+    fs::Vfs::release_node(node);
 }
 
 /**
@@ -294,16 +294,16 @@ TEST_CASE(test_devfs_zero_write) {
         return;
     }
     
-    fs_node_t *node = vfs_path_to_node("/dev/zero");
+    fs_node_t *node = fs::Vfs::path_to_node("/dev/zero");
     ASSERT_NOT_NULL(node);
     
     // 写入应该返回写入的字节数
     const char *data = "This data will be discarded";
     uint32_t data_len = strlen(data);
-    uint32_t written = vfs_write(node, 0, data_len, (uint8_t *)data);
+    uint32_t written = fs::Vfs::write(node, 0, data_len, (uint8_t *)data);
     ASSERT_EQ_U(written, data_len);
     
-    vfs_release_node(node);
+    fs::Vfs::release_node(node);
 }
 
 /**
@@ -317,7 +317,7 @@ TEST_CASE(test_devfs_zero_read_sizes) {
         return;
     }
     
-    fs_node_t *node = vfs_path_to_node("/dev/zero");
+    fs_node_t *node = fs::Vfs::path_to_node("/dev/zero");
     ASSERT_NOT_NULL(node);
     
     // 测试不同大小的读取
@@ -326,7 +326,7 @@ TEST_CASE(test_devfs_zero_read_sizes) {
     
     for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
         memset(buffer, 0xFF, sizeof(buffer));
-        uint32_t read_count = vfs_read(node, 0, sizes[i], (uint8_t *)buffer);
+        uint32_t read_count = fs::Vfs::read(node, 0, sizes[i], (uint8_t *)buffer);
         ASSERT_EQ_U(read_count, sizes[i]);
         
         // 验证读取的字节都是零
@@ -335,7 +335,7 @@ TEST_CASE(test_devfs_zero_read_sizes) {
         }
     }
     
-    vfs_release_node(node);
+    fs::Vfs::release_node(node);
 }
 
 // ============================================================================
@@ -357,13 +357,13 @@ TEST_CASE(test_devfs_readdir) {
         return;
     }
     
-    fs_node_t *dev = vfs_path_to_node("/dev");
+    fs_node_t *dev = fs::Vfs::path_to_node("/dev");
     ASSERT_NOT_NULL(dev);
     
     // 遍历目录
     uint32_t count = 0;
     struct dirent *entry;
-    while ((entry = vfs_readdir(dev, count)) != NULL) {
+    while ((entry = fs::Vfs::readdir(dev, count)) != NULL) {
         count++;
         // 验证目录项有名称
         ASSERT_TRUE(entry->d_name[0] != '\0');
@@ -372,7 +372,7 @@ TEST_CASE(test_devfs_readdir) {
     // 应该至少有 5 个设备 + . 和 .. = 7 个条目
     ASSERT_TRUE(count >= 5);
     
-    vfs_release_node(dev);
+    fs::Vfs::release_node(dev);
 }
 
 /**
@@ -386,26 +386,26 @@ TEST_CASE(test_devfs_finddir) {
         return;
     }
     
-    fs_node_t *dev = vfs_path_to_node("/dev");
+    fs_node_t *dev = fs::Vfs::path_to_node("/dev");
     ASSERT_NOT_NULL(dev);
     
     // 查找 null 设备
-    fs_node_t *null_dev = vfs_finddir(dev, "null");
+    fs_node_t *null_dev = fs::Vfs::finddir(dev, "null");
     ASSERT_NOT_NULL(null_dev);
     ASSERT_EQ(null_dev->type, FS_CHARDEVICE);
-    vfs_release_node(null_dev);
+    fs::Vfs::release_node(null_dev);
     
     // 查找 zero 设备
-    fs_node_t *zero_dev = vfs_finddir(dev, "zero");
+    fs_node_t *zero_dev = fs::Vfs::finddir(dev, "zero");
     ASSERT_NOT_NULL(zero_dev);
     ASSERT_EQ(zero_dev->type, FS_CHARDEVICE);
-    vfs_release_node(zero_dev);
+    fs::Vfs::release_node(zero_dev);
     
     // 查找不存在的设备
-    fs_node_t *nonexistent = vfs_finddir(dev, "nonexistent_xyz");
+    fs_node_t *nonexistent = fs::Vfs::finddir(dev, "nonexistent_xyz");
     ASSERT_NULL(nonexistent);
     
-    vfs_release_node(dev);
+    fs::Vfs::release_node(dev);
 }
 
 /**
@@ -419,15 +419,15 @@ TEST_CASE(test_devfs_dot_entry) {
         return;
     }
     
-    fs_node_t *dev = vfs_path_to_node("/dev");
+    fs_node_t *dev = fs::Vfs::path_to_node("/dev");
     ASSERT_NOT_NULL(dev);
     
     // . 应该返回当前目录
-    fs_node_t *dot = vfs_finddir(dev, ".");
+    fs_node_t *dot = fs::Vfs::finddir(dev, ".");
     ASSERT_NOT_NULL(dot);
     ASSERT_EQ_PTR(dot, dev);
     
-    vfs_release_node(dev);
+    fs::Vfs::release_node(dev);
 }
 
 /**
@@ -441,14 +441,14 @@ TEST_CASE(test_devfs_dotdot_entry) {
         return;
     }
     
-    fs_node_t *dev = vfs_path_to_node("/dev");
+    fs_node_t *dev = fs::Vfs::path_to_node("/dev");
     ASSERT_NOT_NULL(dev);
     
     // .. 在 devfs 中返回自身（因为 devfs 是挂载点）
-    fs_node_t *dotdot = vfs_finddir(dev, "..");
+    fs_node_t *dotdot = fs::Vfs::finddir(dev, "..");
     ASSERT_NOT_NULL(dotdot);
     
-    vfs_release_node(dev);
+    fs::Vfs::release_node(dev);
 }
 
 // ============================================================================
@@ -470,13 +470,13 @@ TEST_CASE(test_devfs_rtc_read) {
         return;
     }
     
-    fs_node_t *node = vfs_path_to_node("/dev/rtc");
+    fs_node_t *node = fs::Vfs::path_to_node("/dev/rtc");
     ASSERT_NOT_NULL(node);
     
     // 读取时间字符串
     char buffer[128];
     memset(buffer, 0, sizeof(buffer));
-    uint32_t read_count = vfs_read(node, 0, sizeof(buffer) - 1, (uint8_t *)buffer);
+    uint32_t read_count = fs::Vfs::read(node, 0, sizeof(buffer) - 1, (uint8_t *)buffer);
     
     // 应该读取到一些数据
     ASSERT_TRUE(read_count > 0);
@@ -491,7 +491,7 @@ TEST_CASE(test_devfs_rtc_read) {
     }
     ASSERT_TRUE(has_digit);
     
-    vfs_release_node(node);
+    fs::Vfs::release_node(node);
 }
 
 // ============================================================================

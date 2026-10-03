@@ -28,7 +28,7 @@ static struct {
 // 最后的 RTT
 static int32_t last_rtt = -1;
 
-void icmp_init(void) {
+void net::Icmp::init() {
     ping_callback = NULL;
     last_ping.waiting = false;
     last_rtt = -1;
@@ -36,7 +36,7 @@ void icmp_init(void) {
     LOG_INFO_MSG("icmp: ICMP protocol initialized\n");
 }
 
-void icmp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip) {
+void net::Icmp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip) {
     if (!dev || !buf) {
         return;
     }
@@ -72,7 +72,7 @@ void icmp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip) {
             uint32_t data_len = buf->len - sizeof(icmp_header_t);
             uint8_t *data = (data_len > 0) ? (uint8_t *)(icmp + 1) : NULL;
             
-            icmp_send_echo_reply(src_ip, id, seq, data, data_len);
+            net::Icmp::send_echo_reply(src_ip, id, seq, data, data_len);
             break;
         }
         
@@ -129,7 +129,7 @@ void icmp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip) {
     netbuf_free(buf);
 }
 
-int icmp_send_echo_request(uint32_t dst_ip, uint16_t id, uint16_t seq,
+int net::Icmp::send_echo_request(uint32_t dst_ip, uint16_t id, uint16_t seq,
                            uint8_t *data, uint32_t len) {
     // 计算总长度
     uint32_t icmp_len = sizeof(icmp_header_t) + len;
@@ -167,7 +167,7 @@ int icmp_send_echo_request(uint32_t dst_ip, uint16_t id, uint16_t seq,
     last_rtt = -1;  // 重置 RTT，等待新的回复
     
     // 发送
-    int ret = ip_output(NULL, buf, dst_ip, IP_PROTO_ICMP);
+    int ret = net::Ip::output(NULL, buf, dst_ip, IP_PROTO_ICMP);
     if (ret < 0) {
         netbuf_free(buf);
         last_ping.waiting = false;
@@ -176,7 +176,7 @@ int icmp_send_echo_request(uint32_t dst_ip, uint16_t id, uint16_t seq,
     return ret;
 }
 
-int icmp_send_echo_reply(uint32_t dst_ip, uint16_t id, uint16_t seq,
+int net::Icmp::send_echo_reply(uint32_t dst_ip, uint16_t id, uint16_t seq,
                          uint8_t *data, uint32_t len) {
     // 计算总长度
     uint32_t icmp_len = sizeof(icmp_header_t) + len;
@@ -207,7 +207,7 @@ int icmp_send_echo_reply(uint32_t dst_ip, uint16_t id, uint16_t seq,
     icmp->checksum = checksum(icmp, icmp_len);
     
     // 发送
-    int ret = ip_output(NULL, buf, dst_ip, IP_PROTO_ICMP);
+    int ret = net::Ip::output(NULL, buf, dst_ip, IP_PROTO_ICMP);
     if (ret < 0) {
         netbuf_free(buf);
     }
@@ -215,7 +215,7 @@ int icmp_send_echo_reply(uint32_t dst_ip, uint16_t id, uint16_t seq,
     return ret;
 }
 
-int icmp_send_dest_unreachable(uint32_t dst_ip, uint8_t code,
+int net::Icmp::send_dest_unreachable(uint32_t dst_ip, uint8_t code,
                                void *orig_header, void *orig_data) {
     // ICMP 目的不可达消息包含原始 IP 头部 + 8 字节原始数据
     uint32_t orig_len = IP_HEADER_MIN_LEN + 8;
@@ -250,7 +250,7 @@ int icmp_send_dest_unreachable(uint32_t dst_ip, uint8_t code,
     icmp->checksum = checksum(icmp, icmp_len);
     
     // 发送
-    int ret = ip_output(NULL, buf, dst_ip, IP_PROTO_ICMP);
+    int ret = net::Ip::output(NULL, buf, dst_ip, IP_PROTO_ICMP);
     if (ret < 0) {
         netbuf_free(buf);
     }
@@ -258,11 +258,11 @@ int icmp_send_dest_unreachable(uint32_t dst_ip, uint8_t code,
     return ret;
 }
 
-void icmp_register_ping_callback(ping_callback_t callback) {
+void net::Icmp::register_ping_callback(ping_callback_t callback) {
     ping_callback = callback;
 }
 
-int32_t icmp_get_last_rtt(void) {
+int32_t net::Icmp::get_last_rtt() {
     return last_rtt;
 }
 

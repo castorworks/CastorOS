@@ -149,14 +149,14 @@ int sys_socket(int domain, int type, int protocol) {
     
     // 创建协议控制块
     if (type == SOCK_STREAM) {
-        sock->pcb.tcp = tcp_pcb_new();
+        sock->pcb.tcp = net::Tcp::pcb_new();
         if (!sock->pcb.tcp) {
             kfree(sock);
             socket_free_fd(fd);  // 释放预留的 fd
             return -1;
         }
     } else if (type == SOCK_DGRAM) {
-        sock->pcb.udp = udp_pcb_new();
+        sock->pcb.udp = net::Udp::pcb_new();
         if (!sock->pcb.udp) {
             kfree(sock);
             socket_free_fd(fd);  // 释放预留的 fd
@@ -190,9 +190,9 @@ int sys_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     
     int ret;
     if (sock->type == SOCK_STREAM) {
-        ret = tcp_bind(sock->pcb.tcp, ip, port);
+        ret = net::Tcp::bind(sock->pcb.tcp, ip, port);
     } else {
-        ret = udp_bind(sock->pcb.udp, ip, port);
+        ret = net::Udp::bind(sock->pcb.udp, ip, port);
     }
     
     if (ret == 0) {
@@ -217,7 +217,7 @@ int sys_listen(int sockfd, int backlog) {
         return -1;  // 必须先绑定
     }
     
-    int ret = tcp_listen(sock->pcb.tcp, backlog);
+    int ret = net::Tcp::listen(sock->pcb.tcp, backlog);
     if (ret == 0) {
         sock->listening = true;
     }
@@ -236,7 +236,7 @@ int sys_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
     }
     
     // 等待新连接
-    tcp_pcb_t *new_pcb = tcp_accept(sock->pcb.tcp);
+    tcp_pcb_t *new_pcb = net::Tcp::accept(sock->pcb.tcp);
     if (!new_pcb) {
         return -1;  // 暂无连接
     }
@@ -244,14 +244,14 @@ int sys_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
     // 分配新的 socket 描述符
     int new_fd = socket_alloc_fd();
     if (new_fd < 0) {
-        tcp_pcb_free(new_pcb);
+        net::Tcp::pcb_free(new_pcb);
         return -1;
     }
     
     // 创建新的 socket 结构
     socket_t *new_sock = (socket_t *)kmalloc(sizeof(socket_t));
     if (!new_sock) {
-        tcp_pcb_free(new_pcb);
+        net::Tcp::pcb_free(new_pcb);
         return -1;
     }
     
@@ -306,9 +306,9 @@ int sys_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     
     int ret;
     if (sock->type == SOCK_STREAM) {
-        ret = tcp_connect(sock->pcb.tcp, ip, port);
+        ret = net::Tcp::connect(sock->pcb.tcp, ip, port);
     } else {
-        ret = udp_connect(sock->pcb.udp, ip, port);
+        ret = net::Udp::connect(sock->pcb.udp, ip, port);
     }
     
     if (ret == 0) {
@@ -332,7 +332,7 @@ ssize_t sys_send(int sockfd, const void *buf, size_t len, int flags) {
     }
     
     if (sock->type == SOCK_STREAM) {
-        return tcp_write(sock->pcb.tcp, buf, len);
+        return net::Tcp::write(sock->pcb.tcp, buf, len);
     } else {
         // UDP: 使用已连接的地址
         netbuf_t *nbuf = netbuf_alloc(len);
@@ -343,7 +343,7 @@ ssize_t sys_send(int sockfd, const void *buf, size_t len, int flags) {
         uint8_t *data = netbuf_put(nbuf, len);
         memcpy(data, buf, len);
         
-        int ret = udp_send(sock->pcb.udp, nbuf);
+        int ret = net::Udp::send(sock->pcb.udp, nbuf);
         if (ret < 0) {
             netbuf_free(nbuf);
             return -1;
@@ -388,7 +388,7 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
     uint8_t *data = netbuf_put(nbuf, len);
     memcpy(data, buf, len);
     
-    int ret = udp_sendto(sock->pcb.udp, nbuf, sin->sin_addr, ntohs(sin->sin_port));
+    int ret = net::Udp::sendto(sock->pcb.udp, nbuf, sin->sin_addr, ntohs(sin->sin_port));
     if (ret < 0) {
         netbuf_free(nbuf);
         return -1;
@@ -420,11 +420,11 @@ ssize_t sys_recv(int sockfd, void *buf, size_t len, int flags) {
             return -1;  // 暂无数据
         }
         
-        return tcp_read(pcb, buf, len);
+        return net::Tcp::read(pcb, buf, len);
     } else {
         // UDP: 从接收队列获取
         udp_pcb_t *pcb = sock->pcb.udp;
-        netbuf_t *nbuf = udp_recv_poll(pcb);
+        netbuf_t *nbuf = net::Udp::recv_poll(pcb);
         if (!nbuf) {
             if (nonblock) {
                 return -EAGAIN;  // 非阻塞模式，无数据
@@ -456,7 +456,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
     
     // UDP
     udp_pcb_t *pcb = sock->pcb.udp;
-    netbuf_t *nbuf = udp_recv_poll(pcb);
+    netbuf_t *nbuf = net::Udp::recv_poll(pcb);
     if (!nbuf) {
         if (nonblock) {
             return -EAGAIN;  // 非阻塞模式，无数据
@@ -489,10 +489,10 @@ int sys_closesocket(int sockfd) {
     
     // 关闭协议控制块
     if (sock->type == SOCK_STREAM && sock->pcb.tcp) {
-        tcp_close(sock->pcb.tcp);
-        tcp_pcb_free(sock->pcb.tcp);
+        net::Tcp::close(sock->pcb.tcp);
+        net::Tcp::pcb_free(sock->pcb.tcp);
     } else if (sock->type == SOCK_DGRAM && sock->pcb.udp) {
-        udp_pcb_free(sock->pcb.udp);
+        net::Udp::pcb_free(sock->pcb.udp);
     }
     
     // 从表中移除
@@ -513,7 +513,7 @@ int sys_shutdown(int sockfd, int how) {
     
     if (sock->type == SOCK_STREAM) {
         if (how == SHUT_WR || how == SHUT_RDWR) {
-            tcp_close(sock->pcb.tcp);
+            net::Tcp::close(sock->pcb.tcp);
         }
     }
     
@@ -687,7 +687,7 @@ int sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                     }
                 } else {
                     // UDP socket：有数据
-                    readable = udp_has_data(sock->pcb.udp);
+                    readable = net::Udp::has_data(sock->pcb.udp);
                 }
                 
                 if (readable) {

@@ -79,112 +79,121 @@ typedef struct arp_entry {
     netbuf_t    *pending_queue; ///< 等待发送的数据包队列
 } arp_entry_t;
 
-/**
- * @brief 初始化 ARP 协议
- */
-void arp_init(void);
+namespace net {
 
 /**
- * @brief 处理接收到的 ARP 报文
- * @param dev 网络设备
- * @param buf 接收缓冲区
+ * @brief ARP 协议（地址解析与缓存）
  */
-void arp_input(netdev_t *dev, netbuf_t *buf);
+class Arp {
+public:
+    /**
+     * @brief 初始化 ARP 协议
+     */
+    static void init();
 
-/**
- * @brief 解析 IP 地址对应的 MAC 地址
- * @param dev 网络设备
- * @param ip 目标 IP 地址（网络字节序）
- * @param mac 输出 MAC 地址（6字节）
- * @return 0 成功（mac 已填充），-1 正在解析中，-2 失败
- */
-int arp_resolve(netdev_t *dev, uint32_t ip, uint8_t *mac);
+    /**
+     * @brief 处理接收到的 ARP 报文
+     * @param dev 网络设备
+     * @param buf 接收缓冲区
+     */
+    static void input(netdev_t *dev, netbuf_t *buf);
 
-/**
- * @brief 发送 ARP 请求
- * @param dev 网络设备
- * @param target_ip 目标 IP 地址（网络字节序）
- * @return 0 成功，-1 失败
- */
-int arp_request(netdev_t *dev, uint32_t target_ip);
+    /**
+     * @brief 解析 IP 地址对应的 MAC 地址
+     * @param dev 网络设备
+     * @param ip 目标 IP 地址（网络字节序）
+     * @param mac 输出 MAC 地址（6字节）
+     * @return 0 成功（mac 已填充），-1 正在解析中，-2 失败
+     */
+    static int resolve(netdev_t *dev, uint32_t ip, uint8_t *mac);
 
-/**
- * @brief 发送 ARP 应答
- * @param dev 网络设备
- * @param target_ip 目标 IP 地址（网络字节序）
- * @param target_mac 目标 MAC 地址
- * @return 0 成功，-1 失败
- */
-int arp_reply(netdev_t *dev, uint32_t target_ip, const uint8_t *target_mac);
+    /**
+     * @brief 发送 ARP 请求
+     * @param dev 网络设备
+     * @param target_ip 目标 IP 地址（网络字节序）
+     * @return 0 成功，-1 失败
+     */
+    static int request(netdev_t *dev, uint32_t target_ip);
 
-/**
- * @brief 添加或更新 ARP 缓存条目
- * @param ip IP 地址（网络字节序）
- * @param mac MAC 地址
- */
-void arp_cache_update(uint32_t ip, const uint8_t *mac);
+    /**
+     * @brief 发送 ARP 应答
+     * @param dev 网络设备
+     * @param target_ip 目标 IP 地址（网络字节序）
+     * @param target_mac 目标 MAC 地址
+     * @return 0 成功，-1 失败
+     */
+    static int reply(netdev_t *dev, uint32_t target_ip, const uint8_t *target_mac);
 
-/**
- * @brief 查找 ARP 缓存
- * @param ip IP 地址（网络字节序）
- * @param mac 输出 MAC 地址（6字节）
- * @return 0 找到，-1 未找到
- */
-int arp_cache_lookup(uint32_t ip, uint8_t *mac);
+    /**
+     * @brief 添加或更新 ARP 缓存条目
+     * @param ip IP 地址（网络字节序）
+     * @param mac MAC 地址
+     */
+    static void cache_update(uint32_t ip, const uint8_t *mac);
 
-/**
- * @brief 添加静态 ARP 条目
- * @param ip IP 地址（网络字节序）
- * @param mac MAC 地址
- * @return 0 成功，-1 失败
- */
-int arp_cache_add_static(uint32_t ip, const uint8_t *mac);
+    /**
+     * @brief 查找 ARP 缓存
+     * @param ip IP 地址（网络字节序）
+     * @param mac 输出 MAC 地址（6字节）
+     * @return 0 找到，-1 未找到
+     */
+    static int cache_lookup(uint32_t ip, uint8_t *mac);
 
-/**
- * @brief 删除 ARP 缓存条目
- * @param ip IP 地址（网络字节序）
- * @return 0 成功，-1 未找到
- */
-int arp_cache_delete(uint32_t ip);
+    /**
+     * @brief 添加静态 ARP 条目
+     * @param ip IP 地址（网络字节序）
+     * @param mac MAC 地址
+     * @return 0 成功，-1 失败
+     */
+    static int cache_add_static(uint32_t ip, const uint8_t *mac);
 
-/**
- * @brief 清理过期的 ARP 缓存条目
- */
-void arp_cache_cleanup(void);
+    /**
+     * @brief 删除 ARP 缓存条目
+     * @param ip IP 地址（网络字节序）
+     * @return 0 成功，-1 未找到
+     */
+    static int cache_delete(uint32_t ip);
 
-/**
- * @brief 清空所有 ARP 缓存
- */
-void arp_cache_clear(void);
+    /**
+     * @brief 清理过期的 ARP 缓存条目
+     */
+    static void cache_cleanup();
 
-/**
- * @brief 打印 ARP 缓存表
- */
-void arp_cache_dump(void);
+    /**
+     * @brief 清空所有 ARP 缓存
+     */
+    static void cache_clear();
 
-/**
- * @brief 获取 ARP 缓存条目数量
- * @return 当前缓存条目数
- */
-int arp_cache_count(void);
+    /**
+     * @brief 打印 ARP 缓存表
+     */
+    static void cache_dump();
 
-/**
- * @brief 获取 ARP 缓存条目
- * @param index 条目索引（0 到 ARP_CACHE_SIZE-1）
- * @param ip 输出 IP 地址
- * @param mac 输出 MAC 地址（6 字节）
- * @param state 输出状态
- * @return 0 成功（条目有效），-1 条目无效或索引越界
- */
-int arp_cache_get_entry(int index, uint32_t *ip, uint8_t *mac, uint8_t *state);
+    /**
+     * @brief 获取 ARP 缓存条目数量
+     * @return 当前缓存条目数
+     */
+    static int cache_count();
 
-/**
- * @brief 将数据包加入 ARP 等待队列
- * @param ip 目标 IP 地址
- * @param buf 数据包
- * @return 0 成功，-1 失败
- */
-int arp_queue_packet(uint32_t ip, netbuf_t *buf);
+    /**
+     * @brief 获取 ARP 缓存条目
+     * @param index 条目索引（0 到 ARP_CACHE_SIZE-1）
+     * @param ip 输出 IP 地址
+     * @param mac 输出 MAC 地址（6 字节）
+     * @param state 输出状态
+     * @return 0 成功（条目有效），-1 条目无效或索引越界
+     */
+    static int cache_get_entry(int index, uint32_t *ip, uint8_t *mac, uint8_t *state);
+
+    /**
+     * @brief 将数据包加入 ARP 等待队列
+     * @param ip 目标 IP 地址
+     * @param buf 数据包
+     * @return 0 成功，-1 失败
+     */
+    static int queue_packet(uint32_t ip, netbuf_t *buf);
+};
+
+} // namespace net
 
 #endif // _NET_ARP_H_
-

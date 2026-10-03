@@ -80,7 +80,7 @@ static uint32_t partition_blockdev_get_block_size(void *dev) {
     return blockdev_get_block_size(data->partition->parent_dev);
 }
 
-int partition_parse_mbr(blockdev_t *dev, partition_t *partitions, uint32_t *count) {
+int fs::Partition::parse_mbr(blockdev_t *dev, partition_t *partitions, uint32_t *count) {
     if (!dev || !partitions || !count) {
         return -1;
     }
@@ -139,8 +139,8 @@ int partition_parse_mbr(blockdev_t *dev, partition_t *partitions, uint32_t *coun
     return 0;
 }
 
-int partition_parse(blockdev_t *dev, partition_t *partitions, uint32_t *count) {
-    return partition_parse_mbr(dev, partitions, count);
+int fs::Partition::parse(blockdev_t *dev, partition_t *partitions, uint32_t *count) {
+    return fs::Partition::parse_mbr(dev, partitions, count);
 }
 
 static int partition_parse_gpt(blockdev_t *dev, partition_t *partitions, uint32_t *count) {
@@ -276,7 +276,7 @@ static int partition_parse_gpt(blockdev_t *dev, partition_t *partitions, uint32_
     return 0;
 }
 
-blockdev_t *partition_create_blockdev(partition_t *part) {
+blockdev_t *fs::Partition::create_blockdev(partition_t *part) {
     if (!part || !part->parent_dev) {
         return NULL;
     }
@@ -341,7 +341,7 @@ blockdev_t *partition_create_blockdev(partition_t *part) {
     return dev;
 }
 
-void partition_destroy_blockdev(blockdev_t *dev) {
+void fs::Partition::destroy_blockdev(blockdev_t *dev) {
     if (!dev) {
         return;
     }

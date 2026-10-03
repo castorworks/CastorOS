@@ -141,219 +141,228 @@ typedef struct tcp_pcb {
     uint16_t local_port;        ///< 本地端口
     uint32_t remote_ip;         ///< 远程 IP 地址
     uint16_t remote_port;       ///< 远程端口
-    
+
     tcp_state_t state;          ///< 连接状态
-    
+
     // 发送序列号变量
     uint32_t snd_una;           ///< 已发送未确认的最小序列号
     uint32_t snd_nxt;           ///< 下一个要发送的序列号
     uint32_t snd_wnd;           ///< 发送窗口大小
     uint32_t iss;               ///< 初始发送序列号
-    
+
     // 接收序列号变量
     uint32_t rcv_nxt;           ///< 期望接收的下一个序列号
     uint32_t rcv_wnd;           ///< 接收窗口大小
     uint32_t irs;               ///< 初始接收序列号
-    
+
     // MSS
     uint16_t mss;               ///< 最大段大小
-    
+
     // 重传相关
     uint32_t rto;               ///< 重传超时时间（毫秒）
     uint32_t retransmit_count;  ///< 重传次数
     uint32_t last_send_time;    ///< 最后发送时间
-    
+
     // 重传队列
     tcp_segment_t *unacked;     ///< 未确认段队列
-    
+
     // RTT 估算（Jacobson 算法）
     uint32_t srtt;              ///< 平滑 RTT（毫秒，定点数 × 8）
     uint32_t rttvar;            ///< RTT 方差（毫秒，定点数 × 4）
     bool rtt_measuring;         ///< 是否正在测量 RTT
     uint32_t rtt_seq;           ///< 测量 RTT 的段序列号
-    
+
     // 定时器
     uint32_t timer_retransmit;  ///< 重传定时器到期时间（0 表示未激活）
     uint32_t timer_time_wait;   ///< TIME_WAIT 定时器到期时间
-    
+
     // 乱序队列
     tcp_ooseq_t *ooseq;         ///< 乱序段链表（按序列号排序）
     uint32_t ooseq_count;       ///< 乱序段数量
-    
+
     // 拥塞控制
     uint32_t cwnd;              ///< 拥塞窗口
     uint32_t ssthresh;          ///< 慢启动阈值
     uint32_t dup_ack_count;     ///< 重复 ACK 计数（用于快速重传）
-    
+
     // 缓冲区
     uint8_t *send_buf;          ///< 发送缓冲区
     uint32_t send_buf_size;     ///< 发送缓冲区大小
     uint32_t send_len;          ///< 待发送数据长度
-    
+
     uint8_t *recv_buf;          ///< 接收缓冲区
     uint32_t recv_buf_size;     ///< 接收缓冲区大小
     uint32_t recv_len;          ///< 已接收数据长度
     uint32_t recv_read_pos;     ///< 读取位置
-    
+
     // 监听队列（仅用于 LISTEN 状态）
     struct tcp_pcb *accept_queue;   ///< 等待 accept 的连接队列
     struct tcp_pcb *pending_queue;  ///< 正在握手的连接队列
     int backlog;                    ///< 最大等待连接数
     int pending_count;              ///< 当前等待连接数
     struct tcp_pcb *listen_pcb;     ///< 对应的监听 PCB
-    
+
     // 回调函数
     void (*accept_callback)(struct tcp_pcb *new_pcb, void *arg);
     void (*recv_callback)(struct tcp_pcb *pcb, void *arg);
     void (*sent_callback)(struct tcp_pcb *pcb, uint16_t len, void *arg);
     void (*error_callback)(struct tcp_pcb *pcb, int err, void *arg);
     void *callback_arg;
-    
+
     // 同步
     sync::Mutex lock;
-    
+
     // 链表指针
     struct tcp_pcb *next;
 } tcp_pcb_t;
 
-/**
- * @brief 初始化 TCP 协议
- */
-void tcp_init(void);
+namespace net {
 
 /**
- * @brief 处理接收到的 TCP 段
- * @param dev 网络设备
- * @param buf 接收缓冲区
- * @param src_ip 源 IP 地址（网络字节序）
- * @param dst_ip 目的 IP 地址（网络字节序）
+ * @brief TCP 协议
  */
-void tcp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip);
+class Tcp {
+public:
+    /**
+     * @brief 初始化 TCP 协议
+     */
+    static void init();
 
-/**
- * @brief 创建新的 TCP PCB
- * @return TCP PCB，失败返回 NULL
- */
-tcp_pcb_t *tcp_pcb_new(void);
+    /**
+     * @brief 处理接收到的 TCP 段
+     * @param dev 网络设备
+     * @param buf 接收缓冲区
+     * @param src_ip 源 IP 地址（网络字节序）
+     * @param dst_ip 目的 IP 地址（网络字节序）
+     */
+    static void input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip);
 
-/**
- * @brief 释放 TCP PCB
- * @param pcb TCP PCB
- */
-void tcp_pcb_free(tcp_pcb_t *pcb);
+    /**
+     * @brief 创建新的 TCP PCB
+     * @return TCP PCB，失败返回 NULL
+     */
+    static tcp_pcb_t *pcb_new();
 
-/**
- * @brief 绑定本地地址和端口
- * @param pcb TCP PCB
- * @param local_ip 本地 IP（0 表示任意）
- * @param local_port 本地端口（主机字节序）
- * @return 0 成功，-1 失败
- */
-int tcp_bind(tcp_pcb_t *pcb, uint32_t local_ip, uint16_t local_port);
+    /**
+     * @brief 释放 TCP PCB
+     * @param pcb TCP PCB
+     */
+    static void pcb_free(tcp_pcb_t *pcb);
 
-/**
- * @brief 开始监听连接
- * @param pcb TCP PCB
- * @param backlog 等待连接队列长度
- * @return 0 成功，-1 失败
- */
-int tcp_listen(tcp_pcb_t *pcb, int backlog);
+    /**
+     * @brief 绑定本地地址和端口
+     * @param pcb TCP PCB
+     * @param local_ip 本地 IP（0 表示任意）
+     * @param local_port 本地端口（主机字节序）
+     * @return 0 成功，-1 失败
+     */
+    static int bind(tcp_pcb_t *pcb, uint32_t local_ip, uint16_t local_port);
 
-/**
- * @brief 发起连接
- * @param pcb TCP PCB
- * @param remote_ip 远程 IP（网络字节序）
- * @param remote_port 远程端口（主机字节序）
- * @return 0 成功，-1 失败
- */
-int tcp_connect(tcp_pcb_t *pcb, uint32_t remote_ip, uint16_t remote_port);
+    /**
+     * @brief 开始监听连接
+     * @param pcb TCP PCB
+     * @param backlog 等待连接队列长度
+     * @return 0 成功，-1 失败
+     */
+    static int listen(tcp_pcb_t *pcb, int backlog);
 
-/**
- * @brief 接受连接
- * @param pcb 监听 TCP PCB
- * @return 新连接的 TCP PCB，无连接返回 NULL
- */
-tcp_pcb_t *tcp_accept(tcp_pcb_t *pcb);
+    /**
+     * @brief 发起连接
+     * @param pcb TCP PCB
+     * @param remote_ip 远程 IP（网络字节序）
+     * @param remote_port 远程端口（主机字节序）
+     * @return 0 成功，-1 失败
+     */
+    static int connect(tcp_pcb_t *pcb, uint32_t remote_ip, uint16_t remote_port);
 
-/**
- * @brief 发送数据
- * @param pcb TCP PCB
- * @param data 数据
- * @param len 长度
- * @return 实际发送的字节数，-1 失败
- */
-int tcp_write(tcp_pcb_t *pcb, const void *data, uint32_t len);
+    /**
+     * @brief 接受连接
+     * @param pcb 监听 TCP PCB
+     * @return 新连接的 TCP PCB，无连接返回 NULL
+     */
+    static tcp_pcb_t *accept(tcp_pcb_t *pcb);
 
-/**
- * @brief 接收数据
- * @param pcb TCP PCB
- * @param buf 缓冲区
- * @param len 缓冲区大小
- * @return 实际接收的字节数，0 连接关闭，-1 失败
- */
-int tcp_read(tcp_pcb_t *pcb, void *buf, uint32_t len);
+    /**
+     * @brief 发送数据
+     * @param pcb TCP PCB
+     * @param data 数据
+     * @param len 长度
+     * @return 实际发送的字节数，-1 失败
+     */
+    static int write(tcp_pcb_t *pcb, const void *data, uint32_t len);
 
-/**
- * @brief 关闭连接
- * @param pcb TCP PCB
- * @return 0 成功，-1 失败
- */
-int tcp_close(tcp_pcb_t *pcb);
+    /**
+     * @brief 接收数据
+     * @param pcb TCP PCB
+     * @param buf 缓冲区
+     * @param len 缓冲区大小
+     * @return 实际接收的字节数，0 连接关闭，-1 失败
+     */
+    static int read(tcp_pcb_t *pcb, void *buf, uint32_t len);
 
-/**
- * @brief 中止连接（发送 RST）
- * @param pcb TCP PCB
- */
-void tcp_abort(tcp_pcb_t *pcb);
+    /**
+     * @brief 关闭连接
+     * @param pcb TCP PCB
+     * @return 0 成功，-1 失败
+     */
+    static int close(tcp_pcb_t *pcb);
 
-/**
- * @brief 设置接受连接回调
- */
-void tcp_accept_callback(tcp_pcb_t *pcb,
-                         void (*callback)(tcp_pcb_t *new_pcb, void *arg),
-                         void *arg);
+    /**
+     * @brief 中止连接（发送 RST）
+     * @param pcb TCP PCB
+     */
+    static void abort(tcp_pcb_t *pcb);
 
-/**
- * @brief 设置接收数据回调
- */
-void tcp_recv_callback(tcp_pcb_t *pcb,
-                       void (*callback)(tcp_pcb_t *pcb, void *arg),
-                       void *arg);
+    /**
+     * @brief 设置接受连接回调
+     */
+    static void accept_callback(tcp_pcb_t *pcb,
+                             void (*callback)(tcp_pcb_t *new_pcb, void *arg),
+                             void *arg);
 
-/**
- * @brief 计算 TCP 校验和
- */
-uint16_t tcp_checksum(uint32_t src_ip, uint32_t dst_ip, tcp_header_t *tcp, uint16_t len);
+    /**
+     * @brief 设置接收数据回调
+     */
+    static void recv_callback(tcp_pcb_t *pcb,
+                           void (*callback)(tcp_pcb_t *pcb, void *arg),
+                           void *arg);
 
-/**
- * @brief 获取 TCP 状态名称（调试用）
- */
-const char *tcp_state_name(tcp_state_t state);
+    /**
+     * @brief 计算 TCP 校验和
+     */
+    static uint16_t checksum(uint32_t src_ip, uint32_t dst_ip, tcp_header_t *tcp, uint16_t len);
 
-/**
- * @brief 获取 TCP 头部长度
- */
-static inline uint8_t tcp_header_len(tcp_header_t *tcp) {
-    return ((tcp->data_offset >> 4) & 0x0F) * 4;
-}
+    /**
+     * @brief 获取 TCP 状态名称（调试用）
+     */
+    static const char *state_name(tcp_state_t state);
 
-/**
- * @brief 分配临时端口
- */
-uint16_t tcp_alloc_port(void);
+    /**
+     * @brief 获取 TCP 头部长度
+     */
+    static inline uint8_t header_len(tcp_header_t *tcp) {
+        return ((tcp->data_offset >> 4) & 0x0F) * 4;
+    }
 
-/**
- * @brief TCP 定时器处理（需要定期调用）
- */
-void tcp_timer(void);
+    /**
+     * @brief 分配临时端口
+     */
+    static uint16_t alloc_port();
 
-/**
- * @brief 打印/输出所有 TCP 连接状态（用于 netstat 命令）
- * @param buf 输出缓冲区，NULL 则直接打印到控制台
- * @param size 缓冲区大小（buf 非 NULL 时有效）
- * @return 写入/打印的字节数
- */
-int tcp_pcb_list_dump(char *buf, size_t size);
+    /**
+     * @brief TCP 定时器处理（需要定期调用）
+     */
+    static void timer();
+
+    /**
+     * @brief 打印/输出所有 TCP 连接状态（用于 netstat 命令）
+     * @param buf 输出缓冲区，NULL 则直接打印到控制台
+     * @param size 缓冲区大小（buf 非 NULL 时有效）
+     * @return 写入/打印的字节数
+     */
+    static int pcb_list_dump(char *buf, size_t size);
+};
+
+} // namespace net
 
 #endif // _NET_TCP_H_
-

@@ -4,6 +4,7 @@
  */
 
 #include <net/netdev.h>
+#include <net/ethernet.h>
 #include <mm/heap.h>
 #include <lib/string.h>
 #include <lib/klog.h>
@@ -245,9 +246,6 @@ int netdev_transmit(netdev_t *dev, netbuf_t *buf) {
     return ret;
 }
 
-// 前向声明以太网输入处理函数
-extern void ethernet_input(netdev_t *dev, netbuf_t *buf);
-
 void netdev_receive(netdev_t *dev, netbuf_t *buf) {
     if (!dev || !buf) {
         return;
@@ -267,7 +265,7 @@ void netdev_receive(netdev_t *dev, netbuf_t *buf) {
     buf->dev = dev;
     
     // 传递给以太网层处理
-    ethernet_input(dev, buf);
+    net::Ethernet::input(dev, buf);
 }
 
 void netdev_set_ipaddr(netdev_t *dev, uint32_t ip) {
