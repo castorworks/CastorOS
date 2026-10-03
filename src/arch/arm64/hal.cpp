@@ -11,6 +11,7 @@
  */
 
 #include <hal/hal.h>
+#include <drivers/timer.h>
 #include <types.h>
 #include "include/exception.h"
 #include "include/gic.h"
@@ -260,12 +261,10 @@ static void hal_timer_irq_handler(void *data) {
     /* Increment software tick counter */
     g_timer_ticks = g_timer_ticks + 1;
     
-    /* Reload timer for next tick FIRST - this clears the interrupt condition */
-    if (g_timer_frequency > 0) {
-        uint64_t cntfrq = read_cntfrq_el0();
-        uint64_t tval = cntfrq / g_timer_frequency;
-        write_cntp_tval_el0(tval);
-    }
+    /* Let the timer driver handle the hardware FIRST: it reloads the timer for the
+     * next tick (which clears the interrupt condition), advances its own tick
+     * counter and runs the callbacks registered through drivers::Timer. */
+    drivers::Timer::irq_handler();
     
     /* Debug: Print tick count periodically */
     if (g_timer_ticks <= 10 || (g_timer_ticks % 100) == 0) {
@@ -322,9 +321,10 @@ void hal::Timer::init(uint32_t freq_hz, hal_timer_callback_t callback) {
     serial_puts("\n");
     hal::Interrupt::register_handler(ARM_TIMER_IRQ, hal_timer_irq_handler, NULL);
     
-    /* Set timer value and enable timer */
-    write_cntp_tval_el0(tval);
-    write_cntp_ctl_el0(CNTP_CTL_ENABLE);  /* Enable, unmask interrupt */
+    /* Program and enable the timer through the driver, so that the driver-level
+     * API (uptime, frequency, callbacks) is initialised as well. The HAL only
+     * owns the IRQ registration and the scheduler callback. */
+    drivers::Timer::init(freq_hz);
     
     /* Verify timer is enabled */
     uint64_t ctl = read_cntp_ctl_el0();

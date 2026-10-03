@@ -307,11 +307,7 @@ TEST_CASE(test_timer_uptime_monotonic) {
 // ============================================================================
 
 TEST_SUITE(timer_basic_tests) {
-#if !defined(ARCH_ARM64)
-    // ARM64：Generic Timer 目前由 HAL (hal::Timer) 直接管理，drivers::Timer 没有被初始化，
-    // 它的频率和回调接口在 ARM64 上还不可用
     RUN_TEST(test_timer_get_frequency);
-#endif
     RUN_TEST(test_timer_get_ticks);
     RUN_TEST(test_timer_get_uptime_ms);
     RUN_TEST(test_timer_get_uptime_sec);
@@ -321,26 +317,14 @@ TEST_SUITE(timer_basic_tests) {
 TEST_SUITE(timer_callback_tests) {
     RUN_TEST(test_timer_register_null_callback);
     RUN_TEST(test_timer_register_zero_interval);
-#if !defined(ARCH_ARM64)
-    // ARM64：Generic Timer 目前由 HAL (hal::Timer) 直接管理，drivers::Timer 没有被初始化，
-    // 它的频率和回调接口在 ARM64 上还不可用
     RUN_TEST(test_timer_register_valid_callback);
-#endif
     RUN_TEST(test_timer_unregister_invalid_id);
-#if !defined(ARCH_ARM64)
-    // ARM64：Generic Timer 目前由 HAL (hal::Timer) 直接管理，drivers::Timer 没有被初始化，
-    // 它的频率和回调接口在 ARM64 上还不可用
     RUN_TEST(test_timer_unregister_twice);
-#endif
 }
 
 TEST_SUITE(timer_active_count_tests) {
-#if !defined(ARCH_ARM64)
-    // ARM64：Generic Timer 目前由 HAL (hal::Timer) 直接管理，drivers::Timer 没有被初始化，
-    // 它的频率和回调接口在 ARM64 上还不可用
     RUN_TEST(test_timer_get_active_count);
     RUN_TEST(test_timer_register_multiple_callbacks);
-#endif
 }
 
 TEST_SUITE(timer_monotonic_tests) {
