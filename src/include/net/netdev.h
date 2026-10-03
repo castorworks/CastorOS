@@ -29,14 +29,29 @@ typedef enum {
  */
 namespace net { struct Netdev; }
 
-typedef struct netdev_ops {
-    int (*open)(net::Netdev *dev);                        ///< 打开设备
-    int (*close)(net::Netdev *dev);                       ///< 关闭设备
-    int (*transmit)(net::Netdev *dev, net::Netbuf *buf);     ///< 发送数据包
-    int (*set_mac)(net::Netdev *dev, uint8_t *mac);       ///< 设置 MAC 地址
-} netdev_ops_t;
 
 namespace net {
+
+/**
+ * @brief 网络设备操作接口
+ *
+ * 每个网卡驱动提供一个无状态的实现对象，Netdev::ops 指向它。
+ */
+class NetdevOps {
+public:
+    /** @brief 打开设备；默认无需额外操作 */
+    virtual int open(Netdev *) const { return 0; }
+    /** @brief 关闭设备；默认无需额外操作 */
+    virtual int close(Netdev *) const { return 0; }
+    /** @brief 发送数据包 */
+    virtual int transmit(Netdev *dev, Netbuf *buf) const = 0;
+    /** @brief 设置 MAC 地址；默认不支持 */
+    virtual int set_mac(Netdev *, uint8_t *) const { return -1; }
+
+protected:
+    /* 实现对象都是静态存储期的单例，不会通过基类指针销毁 */
+    ~NetdevOps() = default;
+};
 
 /**
  * @brief 网络设备结构
@@ -61,7 +76,7 @@ struct Netdev {
     uint64_t rx_dropped;            ///< 接收丢弃数
     uint64_t tx_dropped;            ///< 发送丢弃数
     
-    netdev_ops_t *ops;              ///< 设备操作函数
+    const NetdevOps *ops;              ///< 设备操作函数
     void *priv;                     ///< 驱动私有数据
     
     sync::Mutex lock;                   ///< 设备锁

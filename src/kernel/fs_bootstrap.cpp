@@ -22,7 +22,7 @@
  * @param dev_name 设备名称（用于日志）
  * @return 成功返回根节点，失败返回 NULL
  */
-static fs_node_t *try_init_fat32_on_device(blockdev_t *ata_dev, const char *dev_name) {
+static fs_node_t *try_init_fat32_on_device(fs::Blockdev *ata_dev, const char *dev_name) {
     if (!ata_dev) {
         return NULL;
     }
@@ -36,7 +36,7 @@ static fs_node_t *try_init_fat32_on_device(blockdev_t *ata_dev, const char *dev_
     if (fs::Partition::parse(ata_dev, partitions, &partition_count) == 0 && partition_count > 0) {
         for (uint32_t i = 0; i < partition_count; i++) {
             partition_t *part = &partitions[i];
-            blockdev_t *part_dev = fs::Partition::create_blockdev(part);
+            fs::Blockdev *part_dev = fs::Partition::create_blockdev(part);
             if (!part_dev) {
                 continue;
             }
@@ -48,7 +48,7 @@ static fs_node_t *try_init_fat32_on_device(blockdev_t *ata_dev, const char *dev_
                 if (fat32_root) {
                     LOG_INFO_MSG("fs: FAT32 initialized successfully as root filesystem on %s\n", dev_name);
                     // 注意：不销毁 part_dev，因为 FAT32 文件系统需要持续使用它
-                    // fs::Fat32::init 内部已经调用了 blockdev_retain 来保留引用
+                    // fs::Fat32::init 内部已经调用了 fs::Blockdev::retain 来保留引用
                     return fat32_root;
                 } else {
                     LOG_WARN_MSG("fs: Failed to initialize FAT32 on %s partition %u\n", 
@@ -85,13 +85,13 @@ void fs_init(void) {
     const char *ata_devices[] = {"ata0", "ata1", "ata2", "ata3"};
     
     for (uint32_t dev_idx = 0; dev_idx < 4 && !root; dev_idx++) {
-        blockdev_t *ata_dev = blockdev_get_by_name(ata_devices[dev_idx]);
+        fs::Blockdev *ata_dev = fs::Blockdev::get_by_name(ata_devices[dev_idx]);
         if (!ata_dev) {
             continue;
         }
 
         root = try_init_fat32_on_device(ata_dev, ata_devices[dev_idx]);
-        blockdev_release(ata_dev);
+        fs::Blockdev::release(ata_dev);
     }
 
     // 第二步：如果 FAT32 不可用，回退到 RAMFS

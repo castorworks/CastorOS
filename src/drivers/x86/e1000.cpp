@@ -445,12 +445,14 @@ static int e1000_netdev_set_mac(net::Netdev *netdev, uint8_t *mac) {
 }
 
 /* netdev 操作函数表 */
-static netdev_ops_t e1000_netdev_ops = {
-    .open = e1000_netdev_open,
-    .close = e1000_netdev_close,
-    .transmit = e1000_netdev_transmit,
-    .set_mac = e1000_netdev_set_mac,
+class E1000NetdevOps final : public net::NetdevOps {
+public:
+    int open(net::Netdev *dev) const override { return e1000_netdev_open(dev); }
+    int close(net::Netdev *dev) const override { return e1000_netdev_close(dev); }
+    int transmit(net::Netdev *dev, net::Netbuf *buf) const override { return e1000_netdev_transmit(dev, buf); }
+    int set_mac(net::Netdev *dev, uint8_t *mac) const override { return e1000_netdev_set_mac(dev, mac); }
 };
+static const E1000NetdevOps e1000_netdev_ops{};
 
 /* ============================================================================
  * 中断处理

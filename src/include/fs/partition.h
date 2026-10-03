@@ -77,7 +77,7 @@ typedef struct partition {
     bool active;                   // 是否为活动分区
     bool is_gpt;                   // 是否来自 GPT
     gpt_guid_t type_guid;          // GPT 分区类型
-    blockdev_t *parent_dev;        // 父块设备
+    fs::Blockdev *parent_dev;        // 父块设备
 } partition_t;
 
 namespace fs {
@@ -94,7 +94,7 @@ public:
      * @param count 输出实际找到的分区数
      * @return 0 成功，-1 失败
      */
-    static int parse_mbr(blockdev_t *dev, partition_t *partitions, uint32_t *count);
+    static int parse_mbr(fs::Blockdev *dev, partition_t *partitions, uint32_t *count);
 
     /**
      * 根据块设备上真实分区表（MBR 或 GPT）解析分区
@@ -103,20 +103,20 @@ public:
      * @param count 输出分区数量
      * @return 0 成功，-1 失败
      */
-    static int parse(blockdev_t *dev, partition_t *partitions, uint32_t *count);
+    static int parse(fs::Blockdev *dev, partition_t *partitions, uint32_t *count);
 
     /**
      * 创建分区块设备（将分区作为块设备访问）
      * @param part 分区信息
      * @return 块设备指针，失败返回 NULL
      */
-    static blockdev_t *create_blockdev(partition_t *part);
+    static fs::Blockdev *create_blockdev(partition_t *part);
 
     /**
      * 释放分区块设备
      * @param dev 分区块设备
      */
-    static void destroy_blockdev(blockdev_t *dev);
+    static void destroy_blockdev(fs::Blockdev *dev);
 };
 
 } // namespace fs

@@ -132,7 +132,7 @@ typedef struct usb_msc_device {
     uint32_t tag;                   // 命令标签计数
     
     /* 块设备 */
-    blockdev_t blockdev;            // 块设备接口
+    fs::Blockdev blockdev;            // 块设备接口
     
     /* Inquiry 数据 */
     char vendor[9];                 // 厂商 ID
@@ -215,7 +215,7 @@ public:
      * @param name 设备名称（如 "usb0"）
      * @return 块设备指针，未找到返回 NULL
      */
-    static blockdev_t *get_blockdev(const char *name);
+    static fs::Blockdev *get_blockdev(const char *name);
 
     /**
      * @brief 打印 MSC 设备信息

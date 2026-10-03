@@ -63,7 +63,7 @@ static ata_device_t ata_devices[ATA_MAX_DEVICES] = {
     {.io_base = ATA_SECONDARY_IO_BASE,  .ctrl_base = ATA_SECONDARY_CTRL_BASE,  .drive = 1, .present = false, .total_sectors = 0, .channel = 1}, // ata3: secondary slave
 };
 
-static blockdev_t ata_blockdevs[ATA_MAX_DEVICES];
+static fs::Blockdev ata_blockdevs[ATA_MAX_DEVICES];
 
 static void ata_io_wait(ata_device_t *dev) {
     inb(dev->ctrl_base);
@@ -249,6 +249,17 @@ static int ata_blockdev_write(void *dev_ptr, uint32_t sector, uint32_t count, co
     return result;
 }
 
+class AtaBlockdevOps final : public fs::BlockdevOps {
+public:
+    int read(void *dev, uint32_t sector, uint32_t count, uint8_t *buffer) const override {
+        return ata_blockdev_read(dev, sector, count, buffer);
+    }
+    int write(void *dev, uint32_t sector, uint32_t count, const uint8_t *buffer) const override {
+        return ata_blockdev_write(dev, sector, count, buffer);
+    }
+};
+static const AtaBlockdevOps ata_blockdev_ops{};
+
 void drivers::Ata::init() {
     /* 初始化通道 mutex */
     ata_channel_mutex[0].init();  // 主通道
@@ -266,17 +277,14 @@ void drivers::Ata::init() {
     
     for (uint32_t i = 0; i < ATA_MAX_DEVICES; i++) {
         if (ata_identify(&ata_devices[i]) == 0) {
-            memset(&ata_blockdevs[i], 0, sizeof(blockdev_t));
+            memset(&ata_blockdevs[i], 0, sizeof(fs::Blockdev));
             strcpy(ata_blockdevs[i].name, device_names[i]);
             ata_blockdevs[i].private_data = &ata_devices[i];
             ata_blockdevs[i].block_size = ATA_SECTOR_SIZE;
             ata_blockdevs[i].total_sectors = ata_devices[i].total_sectors;
-            ata_blockdevs[i].read = ata_blockdev_read;
-            ata_blockdevs[i].write = ata_blockdev_write;
-            ata_blockdevs[i].get_size = NULL;
-            ata_blockdevs[i].get_block_size = NULL;
+            ata_blockdevs[i].ops = &ata_blockdev_ops;
 
-            if (blockdev_register(&ata_blockdevs[i]) == 0) {
+            if (fs::Blockdev::register_device(&ata_blockdevs[i]) == 0) {
                 LOG_INFO_MSG("ata: %s detected, %u sectors (approx %u MB)\n",
                              device_desc[i],
                              ata_devices[i].total_sectors,

@@ -61,13 +61,20 @@ CastorOS/
 ### Naming Conventions
 
 - Kernel subsystems: namespace + class, e.g. `mm::Pmm::alloc_frame()`, `fs::Vfs::open()`,
-  `net::Tcp::input()`, `kernel::Scheduler::yield()`. Singleton modules use static member functions;
-  object-like types use real members (e.g. `sync::Spinlock::lock()`).
+  `net::Tcp::input()`, `kernel::Scheduler::yield()`, `drivers::Timer::get_uptime_ms()`.
+  Singleton modules use static member functions; `sync::Spinlock`/`Mutex`/`Semaphore` use real members.
+- Data types with operations keep their functions as static members of the struct
+  (`net::Netbuf::alloc()`, `net::Netdev::transmit(dev, buf)`, `fs::Blockdev::read(dev, ...)`,
+  `kernel::FdTable::alloc(table, ...)`); pointer parameters stay NULL-tolerant.
+- Polymorphism uses virtual interfaces with stateless singleton implementations:
+  `fs::NodeOps` (VFS nodes), `fs::BlockdevOps` (block devices), `net::NetdevOps` (NICs).
 - Prefer RAII guards (`sync::SpinlockIrqGuard`, `sync::MutexGuard`) over manual lock/unlock pairs.
-- Not yet converted (still `subsystem_action()` free functions): drivers, syscalls, netbuf/netdev/socket,
-  blockdev, fd_table, HAL/arch code, user space.
-- `kmalloc()`/`kfree()` and the C string functions stay global.
-- HAL functions: `hal_category_action()` (e.g., `hal_cpu_init()`, `hal_mmu_map()`)
+- Still C-style free functions: syscall handlers (`sys_*`), `socket_*`, `interrupts_*`, kernel shell,
+  `kprintf`/`klog`/string library, `kmalloc()`/`kfree()`, and all of user space (POSIX-style API).
+- Inside a member function, call a same-named global function with `::name()` (unqualified names
+  bind to the class member first).
+- Do not declare functions with block-scope `extern` inside member functions; include the header.
+- HAL: `hal::Category::action()` (e.g., `hal::Cpu::init()`, `hal::Mmu::map()`), selected per architecture at compile time
 - Test cases: `test_<name>` with `TEST_CASE()` macro
 - Assembly files: `.asm` (NASM) or `.S` (GNU as for ARM64)
 

@@ -220,7 +220,7 @@ typedef struct task {
     uintptr_t heap_max;              ///< 堆最大地址（防止与栈冲突）
 
     /* 文件系统 */
-    fd_table_t *fd_table;            ///< 文件描述符表
+    kernel::FdTable *fd_table;            ///< 文件描述符表
     char cwd[MAX_CWD_LENGTH];        ///< 当前工作目录
 
     /* 进程关系 */

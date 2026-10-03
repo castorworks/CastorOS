@@ -26,14 +26,14 @@ public:
      * @param dev 块设备（可以是分区）
      * @return 根目录节点，失败返回 NULL
      */
-    static fs_node_t *init(blockdev_t *dev);
+    static fs_node_t *init(fs::Blockdev *dev);
 
     /**
      * 检查块设备是否为 FAT32 文件系统
      * @param dev 块设备
      * @return true 如果是 FAT32，false 否则
      */
-    static bool probe(blockdev_t *dev);
+    static bool probe(fs::Blockdev *dev);
 
     /**
      * 卸载 FAT32 文件系统并释放所有资源

@@ -300,7 +300,7 @@ uint32_t sys_fork(uintptr_t *frame) {
     
     // 分配并复制文件描述符表
     if (parent->fd_table) {
-        child->fd_table = (fd_table_t*)kmalloc(sizeof(fd_table_t));
+        child->fd_table = (kernel::FdTable*)kmalloc(sizeof(kernel::FdTable));
         if (!child->fd_table) {
             LOG_ERROR_MSG("sys_fork: Failed to allocate fd_table\n");
             kfree((void*)child->kernel_stack_base);
@@ -311,9 +311,9 @@ uint32_t sys_fork(uintptr_t *frame) {
         }
         
         // 必须先初始化 fd_table（包括其中的锁），再复制内容
-        fd_table_init(child->fd_table);
+        kernel::FdTable::init(child->fd_table);
         
-        if (fd_table_copy(parent->fd_table, child->fd_table) != 0) {
+        if (kernel::FdTable::copy(parent->fd_table, child->fd_table) != 0) {
             LOG_ERROR_MSG("sys_fork: failed to copy fd_table\n");
             kfree(child->fd_table);
             kfree((void*)child->kernel_stack_base);
@@ -505,34 +505,34 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     // - exec 时需要为新程序初始化 stdin/stdout/stderr
     if (current->fd_table) {
         // 检查是否已经有 fd 0（stdin）
-        fd_entry_t *fd0 = fd_table_get(current->fd_table, 0);
+        kernel::FdEntry *fd0 = kernel::FdTable::get(current->fd_table, 0);
         if (!fd0 || !fd0->node) {
             // 初始化标准文件描述符
             fs_node_t *console = fs::Vfs::path_to_node("/dev/console");
             if (console) {
-                // 注意：fd_table_alloc 会自动增加引用计数
+                // 注意：kernel::FdTable::alloc 会自动增加引用计数
                 // 所以我们可以安全地为多个 fd 使用同一个节点
                 
                 // 分配 fd 0 (stdin)
-                int32_t fd = fd_table_alloc(current->fd_table, console, O_RDONLY);
+                int32_t fd = kernel::FdTable::alloc(current->fd_table, console, O_RDONLY);
                 if (fd != 0) {
                     LOG_WARN_MSG("sys_execve: failed to assign STDIN (fd=%d)\n", fd);
                 }
                 
-                // 分配 fd 1 (stdout) - fd_table_alloc 会增加引用计数
-                fd = fd_table_alloc(current->fd_table, console, O_WRONLY);
+                // 分配 fd 1 (stdout) - kernel::FdTable::alloc 会增加引用计数
+                fd = kernel::FdTable::alloc(current->fd_table, console, O_WRONLY);
                 if (fd != 1) {
                     LOG_WARN_MSG("sys_execve: failed to assign STDOUT (fd=%d)\n", fd);
                 }
                 
-                // 分配 fd 2 (stderr) - fd_table_alloc 会增加引用计数
-                fd = fd_table_alloc(current->fd_table, console, O_WRONLY);
+                // 分配 fd 2 (stderr) - kernel::FdTable::alloc 会增加引用计数
+                fd = kernel::FdTable::alloc(current->fd_table, console, O_WRONLY);
                 if (fd != 2) {
                     LOG_WARN_MSG("sys_execve: failed to assign STDERR (fd=%d)\n", fd);
                 }
                 
                 // 关键修复：释放 fs::Vfs::path_to_node 的初始引用
-                // 三个 fd_table_alloc 调用已经增加了引用计数（每个 fd 一次）
+                // 三个 kernel::FdTable::alloc 调用已经增加了引用计数（每个 fd 一次）
                 // 现在释放初始引用，console 的 ref_count = 3（每个 fd 一个）
                 fs::Vfs::release_node(console);
                 

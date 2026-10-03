@@ -206,7 +206,7 @@ void kernel::Scheduler::free(task_t *task) {
         // 先关闭所有打开的文件描述符
         for (int i = 0; i < MAX_FDS; i++) {
             if (task->fd_table->entries[i].in_use) {
-                fd_table_free(task->fd_table, i);
+                kernel::FdTable::free(task->fd_table, i);
             }
         }
         // 再释放文件描述符表本身
@@ -720,7 +720,7 @@ uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entr
 #endif
     
     // 分配文件描述符表
-    task->fd_table = (fd_table_t*)kmalloc(sizeof(fd_table_t));
+    task->fd_table = (kernel::FdTable*)kmalloc(sizeof(kernel::FdTable));
     if (!task->fd_table) {
         LOG_ERROR_MSG("kernel::Scheduler::create_user_process: Failed to allocate fd_table\n");
         kfree((void*)task->kernel_stack_base);
@@ -728,15 +728,15 @@ uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entr
         return 0;
     }
     
-    fd_table_init(task->fd_table);
+    kernel::FdTable::init(task->fd_table);
     
     // 打开标准输入/输出/错误（指向 /dev/console）
     fs_node_t *console = fs::Vfs::path_to_node("/dev/console");
     if (console) {
-        fd_table_alloc(task->fd_table, console, 0); // stdin (fd 0)
-        fd_table_alloc(task->fd_table, console, 0); // stdout (fd 1)
-        fd_table_alloc(task->fd_table, console, 0); // stderr (fd 2)
-        // 关键修复：释放初始引用（fd_table_alloc 已经增加了 3 次引用计数）
+        kernel::FdTable::alloc(task->fd_table, console, 0); // stdin (fd 0)
+        kernel::FdTable::alloc(task->fd_table, console, 0); // stdout (fd 1)
+        kernel::FdTable::alloc(task->fd_table, console, 0); // stderr (fd 2)
+        // 关键修复：释放初始引用（kernel::FdTable::alloc 已经增加了 3 次引用计数）
         fs::Vfs::release_node(console);
         LOG_DEBUG_MSG("  Opened stdin/stdout/stderr for process\n");
     } else {
@@ -937,7 +937,7 @@ void kernel::Scheduler::schedule() {
         uintptr_t kernel_stack_base = task_to_cleanup->kernel_stack_base;
         bool is_user = task_to_cleanup->is_user_process;
         uintptr_t page_dir_phys = task_to_cleanup->page_dir_phys;
-        fd_table_t *fd_table = task_to_cleanup->fd_table;
+        kernel::FdTable *fd_table = task_to_cleanup->fd_table;
         
         // 先在锁内清空 PCB
         bool irq_state_cleanup;
@@ -956,7 +956,7 @@ void kernel::Scheduler::schedule() {
             // 关闭所有打开的文件描述符
             for (int i = 0; i < MAX_FDS; i++) {
                 if (fd_table->entries[i].in_use) {
-                    fd_table_free(fd_table, i);
+                    kernel::FdTable::free(fd_table, i);
                 }
             }
             kfree(fd_table);

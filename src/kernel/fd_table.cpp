@@ -12,7 +12,7 @@
 #include <lib/string.h>
 #include <lib/klog.h>
 
-void fd_table_init(fd_table_t *table) {
+void kernel::FdTable::init(kernel::FdTable *table) {
     if (!table) {
         return;
     }
@@ -28,7 +28,7 @@ void fd_table_init(fd_table_t *table) {
     }
 }
 
-int32_t fd_table_alloc(fd_table_t *table, fs_node_t *node, int32_t flags) {
+int32_t kernel::FdTable::alloc(kernel::FdTable *table, fs_node_t *node, int32_t flags) {
     if (!table || !node) {
         return -1;
     }
@@ -58,14 +58,14 @@ int32_t fd_table_alloc(fd_table_t *table, fs_node_t *node, int32_t flags) {
     return result;
 }
 
-fd_entry_t *fd_table_get(fd_table_t *table, int32_t fd) {
+kernel::FdEntry *kernel::FdTable::get(kernel::FdTable *table, int32_t fd) {
     if (!table || fd < 0 || fd >= MAX_FDS) {
         return NULL;
     }
     
     sync::SpinlockGuard guard(table->lock);
     
-    fd_entry_t *result = NULL;
+    kernel::FdEntry *result = NULL;
     if (table->entries[fd].in_use) {
         result = &table->entries[fd];
     }
@@ -73,7 +73,7 @@ fd_entry_t *fd_table_get(fd_table_t *table, int32_t fd) {
     return result;
 }
 
-int32_t fd_table_free(fd_table_t *table, int32_t fd) {
+int32_t kernel::FdTable::free(kernel::FdTable *table, int32_t fd) {
     if (!table || fd < 0 || fd >= MAX_FDS) {
         return -1;
     }
@@ -109,7 +109,7 @@ int32_t fd_table_free(fd_table_t *table, int32_t fd) {
     return 0;
 }
 
-int32_t fd_table_copy(fd_table_t *src, fd_table_t *dst) {
+int32_t kernel::FdTable::copy(kernel::FdTable *src, kernel::FdTable *dst) {
     if (!src || !dst) {
         return -1;
     }

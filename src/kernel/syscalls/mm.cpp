@@ -375,7 +375,7 @@ uint32_t sys_mmap(uint32_t addr, uint32_t length, uint32_t prot,
         }
         
         // 获取文件节点
-        fd_entry_t *entry = fd_table_get(current->fd_table, fd);
+        kernel::FdEntry *entry = kernel::FdTable::get(current->fd_table, fd);
         if (!entry || !entry->node) {
             LOG_ERROR_MSG("sys_mmap: invalid fd %d\n", fd);
             return (uint32_t)-1;

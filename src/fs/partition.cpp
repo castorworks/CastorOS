@@ -13,7 +13,7 @@ typedef struct partition_blockdev_data {
     partition_t *partition;
 } partition_blockdev_data_t;
 
-static int partition_parse_gpt(blockdev_t *dev, partition_t *partitions, uint32_t *count);
+static int partition_parse_gpt(fs::Blockdev *dev, partition_t *partitions, uint32_t *count);
 
 // 分区块设备的读取函数
 static int partition_blockdev_read(void *dev, uint32_t sector, uint32_t count, uint8_t *buffer) {
@@ -37,7 +37,7 @@ static int partition_blockdev_read(void *dev, uint32_t sector, uint32_t count, u
     }
     
     // 从父设备读取
-    return blockdev_read(part->parent_dev, (uint32_t)parent_sector, count, buffer);
+    return fs::Blockdev::read(part->parent_dev, (uint32_t)parent_sector, count, buffer);
 }
 
 // 分区块设备的写入函数
@@ -62,7 +62,7 @@ static int partition_blockdev_write(void *dev, uint32_t sector, uint32_t count, 
     }
     
     // 写入到父设备
-    return blockdev_write(part->parent_dev, (uint32_t)parent_sector, count, buffer);
+    return fs::Blockdev::write(part->parent_dev, (uint32_t)parent_sector, count, buffer);
 }
 
 // 分区块设备的大小查询函数
@@ -77,17 +77,17 @@ static uint32_t partition_blockdev_get_size(void *dev) {
 // 分区块设备的块大小查询函数
 static uint32_t partition_blockdev_get_block_size(void *dev) {
     partition_blockdev_data_t *data = (partition_blockdev_data_t *)dev;
-    return blockdev_get_block_size(data->partition->parent_dev);
+    return fs::Blockdev::get_block_size(data->partition->parent_dev);
 }
 
-int fs::Partition::parse_mbr(blockdev_t *dev, partition_t *partitions, uint32_t *count) {
+int fs::Partition::parse_mbr(fs::Blockdev *dev, partition_t *partitions, uint32_t *count) {
     if (!dev || !partitions || !count) {
         return -1;
     }
     
     // 读取 MBR（第一个扇区）
     mbr_boot_sector_t mbr;
-    if (blockdev_read(dev, 0, 1, (uint8_t *)&mbr) != 0) {
+    if (fs::Blockdev::read(dev, 0, 1, (uint8_t *)&mbr) != 0) {
         LOG_ERROR_MSG("partition: Failed to read MBR\n");
         return -1;
     }
@@ -139,16 +139,16 @@ int fs::Partition::parse_mbr(blockdev_t *dev, partition_t *partitions, uint32_t 
     return 0;
 }
 
-int fs::Partition::parse(blockdev_t *dev, partition_t *partitions, uint32_t *count) {
+int fs::Partition::parse(fs::Blockdev *dev, partition_t *partitions, uint32_t *count) {
     return fs::Partition::parse_mbr(dev, partitions, count);
 }
 
-static int partition_parse_gpt(blockdev_t *dev, partition_t *partitions, uint32_t *count) {
+static int partition_parse_gpt(fs::Blockdev *dev, partition_t *partitions, uint32_t *count) {
     if (!dev || !partitions || !count) {
         return -1;
     }
 
-    uint32_t block_size = blockdev_get_block_size(dev);
+    uint32_t block_size = fs::Blockdev::get_block_size(dev);
     if (block_size == 0) {
         block_size = 512;
     }
@@ -158,7 +158,7 @@ static int partition_parse_gpt(blockdev_t *dev, partition_t *partitions, uint32_
         return -1;
     }
 
-    if (blockdev_read(dev, 1, 1, header_buf) != 0) {
+    if (fs::Blockdev::read(dev, 1, 1, header_buf) != 0) {
         LOG_ERROR_MSG("partition: Failed to read GPT header\n");
         kfree(header_buf);
         return -1;
@@ -208,7 +208,7 @@ static int partition_parse_gpt(blockdev_t *dev, partition_t *partitions, uint32_
         return -1;
     }
 
-    if (blockdev_read(dev, (uint32_t)entries_lba, sectors_to_read, entry_buf) != 0) {
+    if (fs::Blockdev::read(dev, (uint32_t)entries_lba, sectors_to_read, entry_buf) != 0) {
         LOG_ERROR_MSG("partition: Failed to read GPT entries\n");
         kfree(entry_buf);
         kfree(header_buf);
@@ -276,7 +276,24 @@ static int partition_parse_gpt(blockdev_t *dev, partition_t *partitions, uint32_
     return 0;
 }
 
-blockdev_t *fs::Partition::create_blockdev(partition_t *part) {
+class PartitionBlockdevOps final : public fs::BlockdevOps {
+public:
+    int read(void *dev, uint32_t sector, uint32_t count, uint8_t *buffer) const override {
+        return partition_blockdev_read(dev, sector, count, buffer);
+    }
+    int write(void *dev, uint32_t sector, uint32_t count, const uint8_t *buffer) const override {
+        return partition_blockdev_write(dev, sector, count, buffer);
+    }
+    uint32_t get_size(const fs::Blockdev *bdev) const override {
+        return partition_blockdev_get_size(bdev->private_data);
+    }
+    uint32_t get_block_size(const fs::Blockdev *bdev) const override {
+        return partition_blockdev_get_block_size(bdev->private_data);
+    }
+};
+static const PartitionBlockdevOps partition_blockdev_ops{};
+
+fs::Blockdev *fs::Partition::create_blockdev(partition_t *part) {
     if (!part || !part->parent_dev) {
         return NULL;
     }
@@ -290,13 +307,13 @@ blockdev_t *fs::Partition::create_blockdev(partition_t *part) {
     }
     
     // 分配块设备结构
-    blockdev_t *dev = (blockdev_t *)kmalloc(sizeof(blockdev_t));
+    fs::Blockdev *dev = (fs::Blockdev *)kmalloc(sizeof(fs::Blockdev));
     if (!dev) {
         LOG_ERROR_MSG("partition: Failed to allocate blockdev\n");
         return NULL;
     }
     
-    memset(dev, 0, sizeof(blockdev_t));
+    memset(dev, 0, sizeof(fs::Blockdev));
 
     // 分配私有数据
     partition_blockdev_data_t *data = (partition_blockdev_data_t *)kmalloc(sizeof(partition_blockdev_data_t));
@@ -320,20 +337,17 @@ blockdev_t *fs::Partition::create_blockdev(partition_t *part) {
     // 初始化块设备
     snprintf(dev->name, sizeof(dev->name), "partition%d", part->index);
     dev->private_data = data;
-    dev->block_size = blockdev_get_block_size(part->parent_dev);
+    dev->block_size = fs::Blockdev::get_block_size(part->parent_dev);
     dev->total_sectors = (uint32_t)part->sector_count;
-    dev->read = partition_blockdev_read;
-    dev->write = partition_blockdev_write;
-    dev->get_size = partition_blockdev_get_size;
-    dev->get_block_size = partition_blockdev_get_block_size;
+    dev->ops = &partition_blockdev_ops;
     
-    if (blockdev_register(dev) != 0) {
+    if (fs::Blockdev::register_device(dev) != 0) {
         kfree(data);
         kfree(dev);
         return NULL;
     }
 
-    blockdev_retain(dev);
+    fs::Blockdev::retain(dev);
     
     LOG_INFO_MSG("partition: Created blockdev for partition %u (%llu sectors)\n",
                  part->index, (unsigned long long)part->sector_count);
@@ -341,15 +355,15 @@ blockdev_t *fs::Partition::create_blockdev(partition_t *part) {
     return dev;
 }
 
-void fs::Partition::destroy_blockdev(blockdev_t *dev) {
+void fs::Partition::destroy_blockdev(fs::Blockdev *dev) {
     if (!dev) {
         return;
     }
     
     partition_blockdev_data_t *data = (partition_blockdev_data_t *)dev->private_data;
 
-    // blockdev_unregister 内部已经调用了 blockdev_release，所以这里不需要再次调用
-    blockdev_unregister(dev);
+    // fs::Blockdev::unregister_device 内部已经调用了 fs::Blockdev::release，所以这里不需要再次调用
+    fs::Blockdev::unregister_device(dev);
 
     // 只有在引用计数为 0 时才真正释放设备
     // 如果设备仍被 FAT32 文件系统使用，引用计数会 > 0，此时不应该释放

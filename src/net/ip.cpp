@@ -608,7 +608,7 @@ int net::Ip::output(net::Netdev *dev, net::Netbuf *buf, uint32_t dst_ip, uint8_t
 }
 
 uint16_t net::Ip::checksum(void *header, int len) {
-    return checksum(header, len);
+    return ::checksum(header, len);
 }
 
 char *net::Ip::to_str(uint32_t ip, char *buf) {

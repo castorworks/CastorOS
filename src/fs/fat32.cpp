@@ -62,7 +62,7 @@ typedef struct fat32_dirent {
 
 // FAT32 文件系统私有数据
 typedef struct fat32_fs {
-    blockdev_t *dev;              // 块设备
+    fs::Blockdev *dev;              // 块设备
     fat32_bpb_t bpb;              // BPB
     uint32_t fat_start_sector;     // FAT 表起始扇区
     uint32_t data_start_sector;   // 数据区起始扇区
@@ -166,7 +166,7 @@ static uint32_t fat32_read_fat_entry(fat32_fs_t *fs, uint32_t cluster) {
         return 0xFFFFFFFF;
     }
     
-    if (blockdev_read(fs->dev, fat_sector, 1, sector_buffer) != 0) {
+    if (fs::Blockdev::read(fs->dev, fat_sector, 1, sector_buffer) != 0) {
         LOG_ERROR_MSG("fat32: Failed to read FAT sector %u\n", fat_sector);
         kfree(sector_buffer);
         return 0xFFFFFFFF;
@@ -209,7 +209,7 @@ static int fat32_write_fat_entry(fat32_fs_t *fs, uint32_t cluster, uint32_t valu
                           fat_index * fs->bpb.sectors_per_fat_32 +
                           sector_offset;
 
-        if (blockdev_read(fs->dev, sector, 1, sector_buffer) != 0) {
+        if (fs::Blockdev::read(fs->dev, sector, 1, sector_buffer) != 0) {
             LOG_ERROR_MSG("fat32: Failed to read FAT sector %u for write\n", sector);
             kfree(sector_buffer);
             return -1;
@@ -220,7 +220,7 @@ static int fat32_write_fat_entry(fat32_fs_t *fs, uint32_t cluster, uint32_t valu
         current |= (value & 0x0FFFFFFF);  // 设置低 28 位
         *(uint32_t *)(sector_buffer + byte_offset) = current;
 
-        if (blockdev_write(fs->dev, sector, 1, sector_buffer) != 0) {
+        if (fs::Blockdev::write(fs->dev, sector, 1, sector_buffer) != 0) {
             LOG_ERROR_MSG("fat32: Failed to write FAT sector %u\n", sector);
             kfree(sector_buffer);
             return -1;
@@ -285,7 +285,7 @@ static int fat32_zero_cluster(fat32_fs_t *fs, uint32_t cluster) {
     }
     memset(buffer, 0, fs->bytes_per_cluster);
 
-    int ret = blockdev_write(fs->dev,
+    int ret = fs::Blockdev::write(fs->dev,
                              fat32_cluster_to_sector(fs, cluster),
                              fs->bpb.sectors_per_cluster,
                              buffer);
@@ -569,7 +569,7 @@ static int fat32_write_dir_entry(fat32_fs_t *fs, uint32_t dir_cluster, uint32_t 
 
     memcpy(buffer + offset, entry, sizeof(fat32_dirent_t));
 
-    int ret = blockdev_write(fs->dev,
+    int ret = fs::Blockdev::write(fs->dev,
                              fat32_cluster_to_sector(fs, dir_cluster),
                              fs->bpb.sectors_per_cluster,
                              buffer);
@@ -623,7 +623,7 @@ static int fat32_initialize_directory_cluster(fat32_fs_t *fs, uint32_t self_clus
 
     memcpy(buffer + sizeof(fat32_dirent_t), &dotdot, sizeof(fat32_dirent_t));
 
-    int ret = blockdev_write(fs->dev,
+    int ret = fs::Blockdev::write(fs->dev,
                              fat32_cluster_to_sector(fs, self_cluster),
                              fs->bpb.sectors_per_cluster,
                              buffer);
@@ -711,7 +711,7 @@ static int fat32_mark_entry_deleted(fat32_fs_t *fs, uint32_t dir_cluster, uint32
     buffer[offset] = 0xE5;
     memset(buffer + offset + 1, 0, sizeof(fat32_dirent_t) - 1);
 
-    int ret = blockdev_write(fs->dev,
+    int ret = fs::Blockdev::write(fs->dev,
                              fat32_cluster_to_sector(fs, dir_cluster),
                              fs->bpb.sectors_per_cluster,
                              buffer);
@@ -837,7 +837,7 @@ static int fat32_zero_range(fat32_file_t *file, uint32_t start, uint32_t end) {
 
         memset(cluster_buffer + (position - cluster_start), 0, zero_end - position);
 
-        if (blockdev_write(fs->dev,
+        if (fs::Blockdev::write(fs->dev,
                            fat32_cluster_to_sector(fs, cluster),
                            fs->bpb.sectors_per_cluster,
                            cluster_buffer) != 0) {
@@ -884,7 +884,7 @@ static int fat32_update_dirent_metadata(fat32_file_t *file) {
     entry->file_size = file->size;
     entry->attributes |= FAT32_ATTR_ARCHIVE;
 
-    int ret = blockdev_write(fs->dev,
+    int ret = fs::Blockdev::write(fs->dev,
                              fat32_cluster_to_sector(fs, file->dirent_cluster),
                              fs->bpb.sectors_per_cluster,
                              buffer);
@@ -1029,7 +1029,7 @@ static uint32_t fat32_cluster_to_sector(fat32_fs_t *fs, uint32_t cluster) {
  */
 static int fat32_read_cluster(fat32_fs_t *fs, uint32_t cluster, uint8_t *buffer) {
     uint32_t sector = fat32_cluster_to_sector(fs, cluster);
-    return blockdev_read(fs->dev, sector, fs->bpb.sectors_per_cluster, buffer);
+    return fs::Blockdev::read(fs->dev, sector, fs->bpb.sectors_per_cluster, buffer);
 }
 
 /**
@@ -1565,7 +1565,7 @@ static uint32_t fat32_file_write(fs_node_t *node, uint32_t offset, uint32_t size
 
         memcpy(cluster_buffer + cluster_offset, buffer + bytes_written, to_write);
 
-        if (blockdev_write(fs->dev,
+        if (fs::Blockdev::write(fs->dev,
                            fat32_cluster_to_sector(fs, cluster),
                            fs->bpb.sectors_per_cluster,
                            cluster_buffer) != 0) {
@@ -1790,14 +1790,14 @@ static fs_node_t *fat32_dir_finddir(fs_node_t *node, const char *name) {
 // 公共接口
 // ============================================================================
 
-bool fs::Fat32::probe(blockdev_t *dev) {
+bool fs::Fat32::probe(fs::Blockdev *dev) {
     if (!dev) {
         return false;
     }
     
     // 读取引导扇区
     fat32_bpb_t bpb;
-    if (blockdev_read(dev, 0, 1, (uint8_t *)&bpb) != 0) {
+    if (fs::Blockdev::read(dev, 0, 1, (uint8_t *)&bpb) != 0) {
         return false;
     }
     
@@ -1819,7 +1819,7 @@ bool fs::Fat32::probe(blockdev_t *dev) {
     return true;
 }
 
-fs_node_t *fs::Fat32::init(blockdev_t *dev) {
+fs_node_t *fs::Fat32::init(fs::Blockdev *dev) {
     if (!dev) {
         LOG_ERROR_MSG("fat32: Invalid block device\n");
         return NULL;
@@ -1840,10 +1840,10 @@ fs_node_t *fs::Fat32::init(blockdev_t *dev) {
     
     memset(fs, 0, sizeof(fat32_fs_t));
     fs->fs_lock.init();  // 初始化文件系统锁
-    fs->dev = blockdev_retain(dev);  // 保留设备引用，防止被销毁
+    fs->dev = fs::Blockdev::retain(dev);  // 保留设备引用，防止被销毁
     
-    if (blockdev_read(dev, 0, 1, (uint8_t *)&fs->bpb) != 0) {
-        blockdev_release(fs->dev);  // 释放设备引用
+    if (fs::Blockdev::read(dev, 0, 1, (uint8_t *)&fs->bpb) != 0) {
+        fs::Blockdev::release(fs->dev);  // 释放设备引用
         kfree(fs);
         LOG_ERROR_MSG("fat32: Failed to read BPB\n");
         return NULL;
@@ -1860,14 +1860,14 @@ fs_node_t *fs::Fat32::init(blockdev_t *dev) {
                                                      : fs->bpb.total_sectors_16;
     if (fs->bpb.sectors_per_cluster == 0) {
         LOG_ERROR_MSG("fat32: Invalid sectors per cluster (0)\n");
-        blockdev_release(fs->dev);  // 释放设备引用
+        fs::Blockdev::release(fs->dev);  // 释放设备引用
         kfree(fs);
         return NULL;
     }
     uint32_t fats_total = fs->bpb.fat_count * fs->bpb.sectors_per_fat_32;
     if (total_sectors < fs->bpb.reserved_sectors + fats_total) {
         LOG_ERROR_MSG("fat32: Invalid BPB, total sectors too small\n");
-        blockdev_release(fs->dev);  // 释放设备引用
+        fs::Blockdev::release(fs->dev);  // 释放设备引用
         kfree(fs);
         return NULL;
     }
@@ -1875,7 +1875,7 @@ fs_node_t *fs::Fat32::init(blockdev_t *dev) {
     fs->total_clusters = data_sectors / fs->bpb.sectors_per_cluster;
     if (fs->total_clusters == 0) {
         LOG_ERROR_MSG("fat32: No data clusters available\n");
-        blockdev_release(fs->dev);  // 释放设备引用
+        fs::Blockdev::release(fs->dev);  // 释放设备引用
         kfree(fs);
         return NULL;
     }
@@ -1887,7 +1887,7 @@ fs_node_t *fs::Fat32::init(blockdev_t *dev) {
     if (fs->fsinfo_sector > 0 && fs->fsinfo_sector < 100) {
         uint8_t *fsinfo_buffer = (uint8_t *)kmalloc(fs->bpb.bytes_per_sector);
         if (fsinfo_buffer) {
-            if (blockdev_read(fs->dev, fs->fsinfo_sector, 1, fsinfo_buffer) == 0) {
+            if (fs::Blockdev::read(fs->dev, fs->fsinfo_sector, 1, fsinfo_buffer) == 0) {
                 fat32_fsinfo_t *fsinfo = (fat32_fsinfo_t *)fsinfo_buffer;
                 // 检查 FSInfo 签名
                 if (fsinfo->lead_sig == 0x41615252 && fsinfo->struct_sig == 0x61417272) {
@@ -1913,7 +1913,7 @@ fs_node_t *fs::Fat32::init(blockdev_t *dev) {
     // 创建根目录节点
     fs_node_t *root = (fs_node_t *)kmalloc(sizeof(fs_node_t));
     if (!root) {
-        blockdev_release(fs->dev);  // 释放设备引用
+        fs::Blockdev::release(fs->dev);  // 释放设备引用
         kfree(fs);
         return NULL;
     }
@@ -1924,7 +1924,7 @@ fs_node_t *fs::Fat32::init(blockdev_t *dev) {
     fat32_file_t *root_file = (fat32_file_t *)kmalloc(sizeof(fat32_file_t));
     if (!root_file) {
         kfree(root);
-        blockdev_release(fs->dev);  // 释放设备引用
+        fs::Blockdev::release(fs->dev);  // 释放设备引用
         kfree(fs);
         return NULL;
     }
@@ -1975,7 +1975,7 @@ void fs::Fat32::deinit(fs_node_t *root) {
     
     // 释放设备引用
     if (fs->dev) {
-        blockdev_release(fs->dev);
+        fs::Blockdev::release(fs->dev);
         LOG_DEBUG_MSG("fat32: Released block device\n");
     }
     

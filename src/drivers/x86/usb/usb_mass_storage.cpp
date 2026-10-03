@@ -351,6 +351,23 @@ static uint32_t msc_blockdev_get_block_size(void *dev) {
  * 设备探测和断开
  * ============================================================================ */
 
+class MscBlockdevOps final : public fs::BlockdevOps {
+public:
+    int read(void *dev, uint32_t sector, uint32_t count, uint8_t *buffer) const override {
+        return msc_blockdev_read(dev, sector, count, buffer);
+    }
+    int write(void *dev, uint32_t sector, uint32_t count, const uint8_t *buffer) const override {
+        return msc_blockdev_write(dev, sector, count, buffer);
+    }
+    uint32_t get_size(const fs::Blockdev *bdev) const override {
+        return msc_blockdev_get_size(bdev->private_data);
+    }
+    uint32_t get_block_size(const fs::Blockdev *bdev) const override {
+        return msc_blockdev_get_block_size(bdev->private_data);
+    }
+};
+static const MscBlockdevOps msc_blockdev_ops{};
+
 int drivers::UsbMsc::probe(usb_device_t *dev, usb_interface_t *iface) {
     if (!dev || !iface) {
         return -1;
@@ -468,13 +485,10 @@ int drivers::UsbMsc::probe(usb_device_t *dev, usb_interface_t *iface) {
     msc->blockdev.private_data = msc;
     msc->blockdev.block_size = msc->block_size;
     msc->blockdev.total_sectors = msc->block_count;
-    msc->blockdev.read = msc_blockdev_read;
-    msc->blockdev.write = msc_blockdev_write;
-    msc->blockdev.get_size = msc_blockdev_get_size;
-    msc->blockdev.get_block_size = msc_blockdev_get_block_size;
+    msc->blockdev.ops = &msc_blockdev_ops;
     
     /* 注册块设备 */
-    if (blockdev_register(&msc->blockdev) < 0) {
+    if (fs::Blockdev::register_device(&msc->blockdev) < 0) {
         LOG_ERROR_MSG("msc: Failed to register block device\n");
         kfree(msc);
         return -1;
@@ -511,7 +525,7 @@ void drivers::UsbMsc::disconnect(usb_device_t *dev, usb_interface_t *iface) {
     }
     
     /* 注销块设备 */
-    blockdev_unregister(&msc->blockdev);
+    fs::Blockdev::unregister_device(&msc->blockdev);
     
     /* 释放 */
     kfree(msc);
@@ -549,7 +563,7 @@ usb_msc_device_t *drivers::UsbMsc::get_devices() {
     return msc_devices;
 }
 
-blockdev_t *drivers::UsbMsc::get_blockdev(const char *name) {
+fs::Blockdev *drivers::UsbMsc::get_blockdev(const char *name) {
     for (usb_msc_device_t *msc = msc_devices; msc; msc = msc->next) {
         if (strcmp(msc->blockdev.name, name) == 0) {
             return &msc->blockdev;

@@ -115,7 +115,7 @@ uint32_t sys_fstat(int32_t fd, struct stat *buf) {
     LOG_DEBUG_MSG("sys_fstat: fd=%d\n", fd);
     
     // 获取文件描述符表项
-    fd_entry_t *entry = fd_table_get(current->fd_table, fd);
+    kernel::FdEntry *entry = kernel::FdTable::get(current->fd_table, fd);
     if (!entry || !entry->node) {
         LOG_ERROR_MSG("sys_fstat: invalid fd %d\n", fd);
         return (uint32_t)-1;
@@ -181,7 +181,7 @@ uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
     fs::Vfs::open(node, flags);
     
     // 分配文件描述符
-    int32_t fd = fd_table_alloc(current->fd_table, node, flags);
+    int32_t fd = kernel::FdTable::alloc(current->fd_table, node, flags);
     if (fd < 0) {
         LOG_ERROR_MSG("sys_open: failed to allocate fd for '%s'\n", path);
         fs::Vfs::close(node);
@@ -190,12 +190,12 @@ uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
     }
     
     // 关键修复：释放 fs::Vfs::path_to_node 的初始引用
-    // fd_table_alloc 已经增加了引用计数，现在 fd 持有唯一引用
+    // kernel::FdTable::alloc 已经增加了引用计数，现在 fd 持有唯一引用
     fs::Vfs::release_node(node);
     
     // 如果是追加模式，设置偏移量到文件末尾
     if (flags & O_APPEND) {
-        fd_entry_t *entry = fd_table_get(current->fd_table, fd);
+        kernel::FdEntry *entry = kernel::FdTable::get(current->fd_table, fd);
         if (entry) {
             entry->offset = node->size;
         }
@@ -207,7 +207,7 @@ uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
 /**
  * sys_close - 关闭文件描述符
  * 
- * 注意：fs::Vfs::close() 和 fs::Vfs::release_node() 由 fd_table_free() 统一处理
+ * 注意：fs::Vfs::close() 和 fs::Vfs::release_node() 由 kernel::FdTable::free() 统一处理
  * 避免双重 close 问题
  */
 uint32_t sys_close(int32_t fd) {
@@ -217,8 +217,8 @@ uint32_t sys_close(int32_t fd) {
         return (uint32_t)-1;
     }
     
-    // 释放文件描述符（fd_table_free 会处理 fs::Vfs::close 和 fs::Vfs::release_node）
-    if (fd_table_free(current->fd_table, fd) != 0) {
+    // 释放文件描述符（kernel::FdTable::free 会处理 fs::Vfs::close 和 fs::Vfs::release_node）
+    if (kernel::FdTable::free(current->fd_table, fd) != 0) {
         LOG_ERROR_MSG("sys_close: failed to free fd %d\n", fd);
         return (uint32_t)-1;
     }
@@ -242,7 +242,7 @@ uint32_t sys_read(int32_t fd, void *buf, uint32_t count) {
     }
     
     // 获取文件描述符表项
-    fd_entry_t *entry = fd_table_get(current->fd_table, fd);
+    kernel::FdEntry *entry = kernel::FdTable::get(current->fd_table, fd);
     if (!entry || !entry->node) {
         LOG_ERROR_MSG("sys_read: invalid fd %d\n", fd);
         return (uint32_t)-1;
@@ -279,7 +279,7 @@ uint32_t sys_write(int32_t fd, const void *buf, uint32_t count) {
     }
     
     // 获取文件描述符表项
-    fd_entry_t *entry = fd_table_get(current->fd_table, fd);
+    kernel::FdEntry *entry = kernel::FdTable::get(current->fd_table, fd);
     if (!entry || !entry->node) {
         LOG_ERROR_MSG("sys_write: invalid fd %d\n", fd);
         return (uint32_t)-1;
@@ -349,7 +349,7 @@ uint32_t sys_lseek(int32_t fd, int32_t offset, int32_t whence) {
     }
     
     // 获取文件描述符表项
-    fd_entry_t *entry = fd_table_get(current->fd_table, fd);
+    kernel::FdEntry *entry = kernel::FdTable::get(current->fd_table, fd);
     if (!entry || !entry->node) {
         LOG_ERROR_MSG("sys_lseek: invalid fd %d\n", fd);
         return (uint32_t)-1;
@@ -651,7 +651,7 @@ uint32_t sys_ftruncate(int32_t fd, uint32_t length) {
     }
     
     // 获取文件描述符表项
-    fd_entry_t *entry = fd_table_get(current->fd_table, fd);
+    kernel::FdEntry *entry = kernel::FdTable::get(current->fd_table, fd);
     if (!entry || !entry->node) {
         LOG_ERROR_MSG("sys_ftruncate: invalid fd %d\n", fd);
         return (uint32_t)-1;
@@ -698,7 +698,7 @@ uint32_t sys_getdents(int32_t fd, uint32_t index, void *dirent) {
     }
         
     // 获取文件描述符表项
-    fd_entry_t *entry = fd_table_get(current->fd_table, fd);
+    kernel::FdEntry *entry = kernel::FdTable::get(current->fd_table, fd);
     if (!entry || !entry->node) {
         LOG_ERROR_MSG("sys_getdents: invalid fd %d\n", fd);
         return (uint32_t)-1;
@@ -753,7 +753,7 @@ uint32_t sys_pipe(int32_t *fds) {
     }
     
     // 分配读端文件描述符
-    int32_t read_fd = fd_table_alloc(current->fd_table, read_node, O_RDONLY);
+    int32_t read_fd = kernel::FdTable::alloc(current->fd_table, read_node, O_RDONLY);
     if (read_fd < 0) {
         LOG_ERROR_MSG("sys_pipe: failed to allocate read fd\n");
         fs::Vfs::release_node(read_node);
@@ -761,14 +761,14 @@ uint32_t sys_pipe(int32_t *fds) {
         return (uint32_t)-1;
     }
     
-    // 释放 fs::Pipe::create 的初始引用（fd_table_alloc 已增加引用）
+    // 释放 fs::Pipe::create 的初始引用（kernel::FdTable::alloc 已增加引用）
     fs::Vfs::release_node(read_node);
     
     // 分配写端文件描述符
-    int32_t write_fd = fd_table_alloc(current->fd_table, write_node, O_WRONLY);
+    int32_t write_fd = kernel::FdTable::alloc(current->fd_table, write_node, O_WRONLY);
     if (write_fd < 0) {
         LOG_ERROR_MSG("sys_pipe: failed to allocate write fd\n");
-        fd_table_free(current->fd_table, read_fd);
+        kernel::FdTable::free(current->fd_table, read_fd);
         fs::Vfs::release_node(write_node);
         return (uint32_t)-1;
     }
@@ -801,14 +801,14 @@ uint32_t sys_dup(int32_t oldfd) {
     }
     
     // 获取旧的文件描述符表项
-    fd_entry_t *old_entry = fd_table_get(current->fd_table, oldfd);
+    kernel::FdEntry *old_entry = kernel::FdTable::get(current->fd_table, oldfd);
     if (!old_entry || !old_entry->node) {
         LOG_ERROR_MSG("sys_dup: invalid fd %d\n", oldfd);
         return (uint32_t)-1;
     }
     
-    // 分配新的文件描述符（fd_table_alloc 会自动增加引用计数）
-    int32_t newfd = fd_table_alloc(current->fd_table, old_entry->node, old_entry->flags);
+    // 分配新的文件描述符（kernel::FdTable::alloc 会自动增加引用计数）
+    int32_t newfd = kernel::FdTable::alloc(current->fd_table, old_entry->node, old_entry->flags);
     if (newfd < 0) {
         LOG_ERROR_MSG("sys_dup: failed to allocate new fd\n");
         return (uint32_t)-1;
@@ -820,7 +820,7 @@ uint32_t sys_dup(int32_t oldfd) {
     }
     
     // 复制偏移量
-    fd_entry_t *new_entry = fd_table_get(current->fd_table, newfd);
+    kernel::FdEntry *new_entry = kernel::FdTable::get(current->fd_table, newfd);
     if (new_entry) {
         new_entry->offset = old_entry->offset;
     }
@@ -843,7 +843,7 @@ uint32_t sys_dup2(int32_t oldfd, int32_t newfd) {
         if (!current || !current->fd_table) {
             return (uint32_t)-1;
         }
-        fd_entry_t *entry = fd_table_get(current->fd_table, oldfd);
+        kernel::FdEntry *entry = kernel::FdTable::get(current->fd_table, oldfd);
         if (!entry || !entry->node) {
             return (uint32_t)-1;
         }
@@ -863,19 +863,19 @@ uint32_t sys_dup2(int32_t oldfd, int32_t newfd) {
     }
     
     // 获取旧的文件描述符表项
-    fd_entry_t *old_entry = fd_table_get(current->fd_table, oldfd);
+    kernel::FdEntry *old_entry = kernel::FdTable::get(current->fd_table, oldfd);
     if (!old_entry || !old_entry->node) {
         LOG_ERROR_MSG("sys_dup2: invalid oldfd %d\n", oldfd);
         return (uint32_t)-1;
     }
     
     // 如果 newfd 已打开，先关闭它
-    fd_entry_t *existing = fd_table_get(current->fd_table, newfd);
+    kernel::FdEntry *existing = kernel::FdTable::get(current->fd_table, newfd);
     if (existing && existing->in_use) {
-        fd_table_free(current->fd_table, newfd);
+        kernel::FdTable::free(current->fd_table, newfd);
     }
     
-    // 手动设置新的文件描述符（直接操作表项，绕过 fd_table_alloc）
+    // 手动设置新的文件描述符（直接操作表项，绕过 kernel::FdTable::alloc）
     current->fd_table->lock.lock();
     
     current->fd_table->entries[newfd].node = old_entry->node;

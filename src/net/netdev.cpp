@@ -168,7 +168,7 @@ int net::Netdev::up(net::Netdev *dev) {
     }
     
     // 调用驱动的 open 函数
-    if (dev->ops && dev->ops->open) {
+    if (dev->ops) {
         int ret = dev->ops->open(dev);
         if (ret < 0) {
             dev->lock.unlock();
@@ -199,7 +199,7 @@ int net::Netdev::down(net::Netdev *dev) {
     }
     
     // 调用驱动的 close 函数
-    if (dev->ops && dev->ops->close) {
+    if (dev->ops) {
         int ret = dev->ops->close(dev);
         if (ret < 0) {
             dev->lock.unlock();
@@ -228,7 +228,7 @@ int net::Netdev::transmit(net::Netdev *dev, net::Netbuf *buf) {
         return -1;
     }
     
-    if (!dev->ops || !dev->ops->transmit) {
+    if (!dev->ops) {
         LOG_ERROR_MSG("netdev: Device %s has no transmit function\n", dev->name);
         dev->tx_errors++;
         return -1;

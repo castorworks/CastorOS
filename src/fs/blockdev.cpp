@@ -8,7 +8,7 @@
 #include <kernel/sync/mutex.h>
 #include <kernel/sync/spinlock.h>
 
-static blockdev_t *blockdev_registry[BLOCKDEV_MAX_DEVICES];
+static fs::Blockdev *blockdev_registry[BLOCKDEV_MAX_DEVICES];
 static uint32_t blockdev_registry_count = 0;
 
 // 保护注册表的互斥锁
@@ -27,7 +27,7 @@ static void blockdev_ensure_locks_init(void) {
     }
 }
 
-static int blockdev_find_index(blockdev_t *dev) {
+static int blockdev_find_index(fs::Blockdev *dev) {
     for (uint32_t i = 0; i < blockdev_registry_count; i++) {
         if (blockdev_registry[i] == dev) {
             return (int)i;
@@ -36,7 +36,7 @@ static int blockdev_find_index(blockdev_t *dev) {
     return -1;
 }
 
-static blockdev_t *blockdev_find_by_name_internal(const char *name) {
+static fs::Blockdev *blockdev_find_by_name_internal(const char *name) {
     for (uint32_t i = 0; i < blockdev_registry_count; i++) {
         if (strcmp(blockdev_registry[i]->name, name) == 0) {
             return blockdev_registry[i];
@@ -45,8 +45,16 @@ static blockdev_t *blockdev_find_by_name_internal(const char *name) {
     return NULL;
 }
 
-int blockdev_read(blockdev_t *dev, uint32_t sector, uint32_t count, uint8_t *buffer) {
-    if (!dev || !dev->read || !buffer) {
+uint32_t fs::BlockdevOps::get_size(const fs::Blockdev *bdev) const {
+    return bdev->total_sectors;
+}
+
+uint32_t fs::BlockdevOps::get_block_size(const fs::Blockdev *bdev) const {
+    return bdev->block_size;
+}
+
+int fs::Blockdev::read(fs::Blockdev *dev, uint32_t sector, uint32_t count, uint8_t *buffer) {
+    if (!dev || !dev->ops || !buffer) {
         return -1;
     }
     
@@ -56,11 +64,11 @@ int blockdev_read(blockdev_t *dev, uint32_t sector, uint32_t count, uint8_t *buf
         return -1;
     }
     
-    return dev->read(dev->private_data, sector, count, buffer);
+    return dev->ops->read(dev->private_data, sector, count, buffer);
 }
 
-int blockdev_write(blockdev_t *dev, uint32_t sector, uint32_t count, const uint8_t *buffer) {
-    if (!dev || !dev->write || !buffer) {
+int fs::Blockdev::write(fs::Blockdev *dev, uint32_t sector, uint32_t count, const uint8_t *buffer) {
+    if (!dev || !dev->ops || !buffer) {
         return -1;
     }
     
@@ -70,34 +78,34 @@ int blockdev_write(blockdev_t *dev, uint32_t sector, uint32_t count, const uint8
         return -1;
     }
     
-    return dev->write(dev->private_data, sector, count, buffer);
+    return dev->ops->write(dev->private_data, sector, count, buffer);
 }
 
-uint32_t blockdev_get_size(blockdev_t *dev) {
+uint32_t fs::Blockdev::get_size(fs::Blockdev *dev) {
     if (!dev) {
         return 0;
     }
     
-    if (dev->get_size) {
-        return dev->get_size(dev->private_data);
+    if (dev->ops) {
+        return dev->ops->get_size(dev);
     }
     
     return dev->total_sectors;
 }
 
-uint32_t blockdev_get_block_size(blockdev_t *dev) {
+uint32_t fs::Blockdev::get_block_size(fs::Blockdev *dev) {
     if (!dev) {
         return 0;
     }
     
-    if (dev->get_block_size) {
-        return dev->get_block_size(dev->private_data);
+    if (dev->ops) {
+        return dev->ops->get_block_size(dev);
     }
     
     return dev->block_size;
 }
 
-int blockdev_register(blockdev_t *dev) {
+int fs::Blockdev::register_device(fs::Blockdev *dev) {
     if (!dev) {
         return -1;
     }
@@ -133,7 +141,7 @@ int blockdev_register(blockdev_t *dev) {
     return 0;
 }
 
-void blockdev_unregister(blockdev_t *dev) {
+void fs::Blockdev::unregister_device(fs::Blockdev *dev) {
     if (!dev) {
         return;
     }
@@ -169,12 +177,12 @@ void blockdev_unregister(blockdev_t *dev) {
     
     // 在解锁后释放引用，避免在持锁时调用可能重入的操作
     blockdev_registry_mutex.unlock();
-    blockdev_release(dev);
+    fs::Blockdev::release(dev);
 
     LOG_INFO_MSG("blockdev: Unregistered device '%s'\n", dev->name);
 }
 
-blockdev_t *blockdev_get_by_name(const char *name) {
+fs::Blockdev *fs::Blockdev::get_by_name(const char *name) {
     if (!name) {
         return NULL;
     }
@@ -182,17 +190,17 @@ blockdev_t *blockdev_get_by_name(const char *name) {
     blockdev_ensure_locks_init();
     sync::MutexGuard guard(blockdev_registry_mutex);
 
-    blockdev_t *dev = blockdev_find_by_name_internal(name);
+    fs::Blockdev *dev = blockdev_find_by_name_internal(name);
     if (!dev) {
         return NULL;
     }
 
     // 在持有注册表锁的情况下增加引用计数，确保设备不会被删除
-    blockdev_t *result = blockdev_retain(dev);
+    fs::Blockdev *result = fs::Blockdev::retain(dev);
     return result;
 }
 
-blockdev_t *blockdev_retain(blockdev_t *dev) {
+fs::Blockdev *fs::Blockdev::retain(fs::Blockdev *dev) {
     if (!dev) {
         return NULL;
     }
@@ -205,7 +213,7 @@ blockdev_t *blockdev_retain(blockdev_t *dev) {
     return dev;
 }
 
-void blockdev_release(blockdev_t *dev) {
+void fs::Blockdev::release(fs::Blockdev *dev) {
     if (!dev) {
         return;
     }
