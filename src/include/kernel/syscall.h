@@ -109,7 +109,7 @@ void syscall_init(void);
 /**
  * 系统调用处理函数（汇编调用）
  */
-extern void syscall_handler(void);
+extern "C" void syscall_handler(void);
 
 /**
  * 系统调用分发器
@@ -118,7 +118,7 @@ extern void syscall_handler(void);
  * @param frame 栈帧指针
  * @return 系统调用返回值
  */
-syscall_arg_t syscall_dispatcher(syscall_arg_t syscall_num, syscall_arg_t p1, syscall_arg_t p2,
+extern "C" syscall_arg_t syscall_dispatcher(syscall_arg_t syscall_num, syscall_arg_t p1, syscall_arg_t p2,
                                  syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5,
                                  syscall_arg_t *frame);
 

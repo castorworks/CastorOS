@@ -90,21 +90,21 @@ uint64_t irq64_get_timer_ticks(void);
  * IRQ Entry Points (defined in irq64_asm.asm)
  * ========================================================================== */
 
-extern void irq0(void);
-extern void irq1(void);
-extern void irq2(void);
-extern void irq3(void);
-extern void irq4(void);
-extern void irq5(void);
-extern void irq6(void);
-extern void irq7(void);
-extern void irq8(void);
-extern void irq9(void);
-extern void irq10(void);
-extern void irq11(void);
-extern void irq12(void);
-extern void irq13(void);
-extern void irq14(void);
-extern void irq15(void);
+extern "C" void irq0(void);
+extern "C" void irq1(void);
+extern "C" void irq2(void);
+extern "C" void irq3(void);
+extern "C" void irq4(void);
+extern "C" void irq5(void);
+extern "C" void irq6(void);
+extern "C" void irq7(void);
+extern "C" void irq8(void);
+extern "C" void irq9(void);
+extern "C" void irq10(void);
+extern "C" void irq11(void);
+extern "C" void irq12(void);
+extern "C" void irq13(void);
+extern "C" void irq14(void);
+extern "C" void irq15(void);
 
 #endif /* _ARCH_X86_64_IRQ64_H_ */

@@ -116,6 +116,17 @@ typedef struct boot_module {
  * ========================================================================== */
 
 /**
+ * @brief Boot protocol identifier
+ */
+typedef enum {
+    BOOT_PROTO_UNKNOWN = 0,
+    BOOT_PROTO_MULTIBOOT = 1,   /**< Multiboot 1 (i686) */
+    BOOT_PROTO_MULTIBOOT2 = 2,  /**< Multiboot 2 (x86_64) */
+    BOOT_PROTO_DTB = 3,         /**< Device Tree Blob (ARM64) */
+    BOOT_PROTO_UEFI = 4,        /**< UEFI direct boot */
+} boot_protocol_t;
+
+/**
  * @brief Unified boot information structure
  * 
  * This structure is populated by architecture-specific boot code and
@@ -166,13 +177,7 @@ typedef struct boot_info {
     /**
      * @brief Boot protocol identifier
      */
-    enum {
-        BOOT_PROTO_UNKNOWN = 0,
-        BOOT_PROTO_MULTIBOOT = 1,   /**< Multiboot 1 (i686) */
-        BOOT_PROTO_MULTIBOOT2 = 2,  /**< Multiboot 2 (x86_64) */
-        BOOT_PROTO_DTB = 3,         /**< Device Tree Blob (ARM64) */
-        BOOT_PROTO_UEFI = 4,        /**< UEFI direct boot */
-    } boot_protocol;
+    boot_protocol_t boot_protocol;
     
     /* ====== Validity Flag ====== */
     

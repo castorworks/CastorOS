@@ -40,14 +40,6 @@ typedef uint32_t pid_t;
 typedef uint32_t uid_t;
 typedef uint32_t gid_t;
 
-#ifndef __cplusplus
-#ifndef _BOOL_DEFINED
-#define _BOOL_DEFINED
-typedef _Bool bool;
-#define true  1
-#define false 0
-#endif
-#endif
 
 #ifndef _TIME_T_DEFINED
 #define _TIME_T_DEFINED
@@ -63,7 +55,7 @@ struct timespec {
 #endif
 
 #ifndef NULL
-#define NULL ((void *)0)
+#define NULL nullptr
 #endif
 
 #define DT_UNKNOWN       0

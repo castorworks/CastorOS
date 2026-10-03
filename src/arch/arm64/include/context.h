@@ -135,12 +135,5 @@ typedef struct arm64_context {
  * HAL Context Type Alias
  * ========================================================================== */
 
-/**
- * @brief HAL context type for ARM64
- * 
- * This typedef allows the HAL interface to use a generic hal_context_t
- * that maps to the architecture-specific arm64_context_t.
- */
-typedef arm64_context_t hal_context;
 
 #endif /* _ARCH_ARM64_CONTEXT_H_ */

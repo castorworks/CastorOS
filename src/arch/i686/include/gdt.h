@@ -109,7 +109,7 @@ uint32_t tss_get_address(void);
 uint32_t tss_get_size(void);
 
 // 汇编接口
-extern void gdt_flush(uint32_t gdt_ptr);
+extern "C" void gdt_flush(uint32_t gdt_ptr);
 extern void tss_flush(uint16_t selector);
 
 #endif // _ARCH_I686_GDT_H_

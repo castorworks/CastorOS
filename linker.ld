@@ -17,18 +17,31 @@ SECTIONS
     {
         *(.multiboot)
         *(.text)
+        *(.text.*)
     }
 
     /* .rodata 段：只读数据 */
     .rodata ALIGN(4K) : AT(ADDR(.rodata) - 0x80000000)
     {
         *(.rodata*)
+
+        /* C++ 全局构造函数表 */
+        . = ALIGN(8);
+        __init_array_start = .;
+        KEEP(*(SORT_BY_INIT_PRIORITY(.init_array.*)))
+        KEEP(*(.init_array))
+        __init_array_end = .;
+        __ctors_start = .;
+        KEEP(*(SORT_BY_NAME(.ctors.*)))
+        KEEP(*(.ctors))
+        __ctors_end = .;
     }
 
     /* .data 段：已初始化数据 */
     .data ALIGN(4K) : AT(ADDR(.data) - 0x80000000)
     {
         *(.data)
+        *(.data.*)
     }
 
     /* .bss 段：未初始化数据 */
@@ -36,6 +49,7 @@ SECTIONS
     {
         *(COMMON)
         *(.bss)
+        *(.bss.*)
         *(.bootstrap_stack)
     }
 

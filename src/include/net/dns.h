@@ -81,7 +81,7 @@ typedef struct __attribute__((packed)) {
  */
 typedef struct __attribute__((packed)) {
     uint16_t type;          // 类型
-    uint16_t class;         // 类
+    uint16_t rr_class;      // 类（class 是 C++ 关键字）
     uint32_t ttl;           // 生存时间
     uint16_t rdlength;      // 数据长度
 } dns_rr_fixed_t;

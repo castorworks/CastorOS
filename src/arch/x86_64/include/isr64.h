@@ -82,38 +82,38 @@ void isr64_register_handler(uint8_t n, isr_handler_t handler);
  * CPU Exception Entry Points (defined in isr64_asm.asm)
  * ========================================================================== */
 
-extern void isr0(void);   /* #DE - Divide Error */
-extern void isr1(void);   /* #DB - Debug Exception */
-extern void isr2(void);   /* NMI - Non-Maskable Interrupt */
-extern void isr3(void);   /* #BP - Breakpoint */
-extern void isr4(void);   /* #OF - Overflow */
-extern void isr5(void);   /* #BR - Bound Range Exceeded */
-extern void isr6(void);   /* #UD - Invalid Opcode */
-extern void isr7(void);   /* #NM - Device Not Available */
-extern void isr8(void);   /* #DF - Double Fault */
-extern void isr9(void);   /* Coprocessor Segment Overrun (legacy) */
-extern void isr10(void);  /* #TS - Invalid TSS */
-extern void isr11(void);  /* #NP - Segment Not Present */
-extern void isr12(void);  /* #SS - Stack-Segment Fault */
-extern void isr13(void);  /* #GP - General Protection Fault */
-extern void isr14(void);  /* #PF - Page Fault */
-extern void isr15(void);  /* Reserved */
-extern void isr16(void);  /* #MF - x87 FPU Error */
-extern void isr17(void);  /* #AC - Alignment Check */
-extern void isr18(void);  /* #MC - Machine Check */
-extern void isr19(void);  /* #XM/#XF - SIMD Floating-Point */
-extern void isr20(void);  /* #VE - Virtualization Exception */
-extern void isr21(void);  /* #CP - Control Protection Exception */
-extern void isr22(void);  /* Reserved */
-extern void isr23(void);  /* Reserved */
-extern void isr24(void);  /* Reserved */
-extern void isr25(void);  /* Reserved */
-extern void isr26(void);  /* Reserved */
-extern void isr27(void);  /* Reserved */
-extern void isr28(void);  /* Reserved */
-extern void isr29(void);  /* Reserved */
-extern void isr30(void);  /* #SX - Security Exception */
-extern void isr31(void);  /* Reserved */
+extern "C" void isr0(void);   /* #DE - Divide Error */
+extern "C" void isr1(void);   /* #DB - Debug Exception */
+extern "C" void isr2(void);   /* NMI - Non-Maskable Interrupt */
+extern "C" void isr3(void);   /* #BP - Breakpoint */
+extern "C" void isr4(void);   /* #OF - Overflow */
+extern "C" void isr5(void);   /* #BR - Bound Range Exceeded */
+extern "C" void isr6(void);   /* #UD - Invalid Opcode */
+extern "C" void isr7(void);   /* #NM - Device Not Available */
+extern "C" void isr8(void);   /* #DF - Double Fault */
+extern "C" void isr9(void);   /* Coprocessor Segment Overrun (legacy) */
+extern "C" void isr10(void);  /* #TS - Invalid TSS */
+extern "C" void isr11(void);  /* #NP - Segment Not Present */
+extern "C" void isr12(void);  /* #SS - Stack-Segment Fault */
+extern "C" void isr13(void);  /* #GP - General Protection Fault */
+extern "C" void isr14(void);  /* #PF - Page Fault */
+extern "C" void isr15(void);  /* Reserved */
+extern "C" void isr16(void);  /* #MF - x87 FPU Error */
+extern "C" void isr17(void);  /* #AC - Alignment Check */
+extern "C" void isr18(void);  /* #MC - Machine Check */
+extern "C" void isr19(void);  /* #XM/#XF - SIMD Floating-Point */
+extern "C" void isr20(void);  /* #VE - Virtualization Exception */
+extern "C" void isr21(void);  /* #CP - Control Protection Exception */
+extern "C" void isr22(void);  /* Reserved */
+extern "C" void isr23(void);  /* Reserved */
+extern "C" void isr24(void);  /* Reserved */
+extern "C" void isr25(void);  /* Reserved */
+extern "C" void isr26(void);  /* Reserved */
+extern "C" void isr27(void);  /* Reserved */
+extern "C" void isr28(void);  /* Reserved */
+extern "C" void isr29(void);  /* Reserved */
+extern "C" void isr30(void);  /* #SX - Security Exception */
+extern "C" void isr31(void);  /* Reserved */
 
 /* ============================================================================
  * Helper Functions

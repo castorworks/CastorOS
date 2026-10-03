@@ -155,7 +155,7 @@ typedef struct arm64_regs {
 } __attribute__((packed)) arm64_regs_t;
 
 /* Verify structure size matches assembly frame size */
-_Static_assert(sizeof(arm64_regs_t) == 272, "arm64_regs_t size mismatch with FRAME_SIZE");
+static_assert(sizeof(arm64_regs_t) == 272, "arm64_regs_t size mismatch with FRAME_SIZE");
 
 /* ============================================================================
  * Function Declarations
@@ -167,31 +167,31 @@ _Static_assert(sizeof(arm64_regs_t) == 272, "arm64_regs_t size mismatch with FRA
  * Sets VBAR_EL1 to point to the exception vector table.
  * Defined in vectors.S.
  */
-void arm64_install_vectors(void);
+extern "C" void arm64_install_vectors(void);
 
 /**
  * @brief Get ESR_EL1 value
  * @return Exception Syndrome Register value
  */
-uint64_t arm64_get_esr(void);
+extern "C" uint64_t arm64_get_esr(void);
 
 /**
  * @brief Get FAR_EL1 value
  * @return Fault Address Register value
  */
-uint64_t arm64_get_far(void);
+extern "C" uint64_t arm64_get_far(void);
 
 /**
  * @brief Get ELR_EL1 value
  * @return Exception Link Register value
  */
-uint64_t arm64_get_elr(void);
+extern "C" uint64_t arm64_get_elr(void);
 
 /**
  * @brief Get SPSR_EL1 value
  * @return Saved Program Status Register value
  */
-uint64_t arm64_get_spsr(void);
+extern "C" uint64_t arm64_get_spsr(void);
 
 /**
  * @brief Main exception handler (called from vectors.S)
@@ -200,7 +200,7 @@ uint64_t arm64_get_spsr(void);
  * @param type Exception type (EXCEPTION_SYNC, EXCEPTION_IRQ, etc.)
  * @param source Exception source (EXCEPTION_FROM_EL1_SPX, etc.)
  */
-void arm64_exception_handler(arm64_regs_t *regs, uint32_t type, uint32_t source);
+extern "C" void arm64_exception_handler(arm64_regs_t *regs, uint32_t type, uint32_t source);
 
 /**
  * @brief Initialize ARM64 exception handling

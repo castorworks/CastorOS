@@ -41,6 +41,17 @@ SECTIONS
     .rodata ALIGN(4K) : AT(ADDR(.rodata) - KERNEL_VIRTUAL_BASE)
     {
         *(.rodata*)
+
+        /* C++ 全局构造函数表 */
+        . = ALIGN(8);
+        __init_array_start = .;
+        KEEP(*(SORT_BY_INIT_PRIORITY(.init_array.*)))
+        KEEP(*(.init_array))
+        __init_array_end = .;
+        __ctors_start = .;
+        KEEP(*(SORT_BY_NAME(.ctors.*)))
+        KEEP(*(.ctors))
+        __ctors_end = .;
     }
 
     /* .data 段：已初始化数据 */

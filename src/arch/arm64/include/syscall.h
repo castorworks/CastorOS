@@ -47,7 +47,7 @@
  * 
  * @param regs Pointer to saved register frame
  */
-void arm64_syscall_handler(void *regs);
+extern "C" void arm64_syscall_handler(void *regs);
 
 /**
  * @brief Enter user mode (ARM64)
@@ -61,7 +61,7 @@ void arm64_syscall_handler(void *regs);
  * **Feature: multi-arch-support, Property 11: User Mode Transition Correctness (ARM64)**
  * **Validates: Requirements 7.4**
  */
-void enter_usermode_arm64(uint64_t entry_point, uint64_t user_stack);
+extern "C" void enter_usermode_arm64(uint64_t entry_point, uint64_t user_stack);
 
 #endif /* _ARCH_ARM64_SYSCALL_H_ */
 

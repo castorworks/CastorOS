@@ -21,12 +21,12 @@ SECTIONS
     
     /* 数据段 */
     .data ALIGN(0x1000) : {
-        *(.data)
+        *(.data*)
     }
     
     /* BSS 段（未初始化数据） */
     .bss ALIGN(0x1000) : {
-        *(.bss)
+        *(.bss*)
         *(COMMON)
     }
 }

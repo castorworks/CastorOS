@@ -13,8 +13,8 @@ char *strcat(char *dest, const char *src);
 char *strchr(const char *str, int c);
 
 // 内存函数声明
-void *memset(void *ptr, int value, size_t num);
-void *memcpy(void *dest, const void *src, size_t num);
+extern "C" void *memset(void *ptr, int value, size_t num);
+extern "C" void *memcpy(void *dest, const void *src, size_t num);
 
 // 字符分类函数
 int isdigit(int c);

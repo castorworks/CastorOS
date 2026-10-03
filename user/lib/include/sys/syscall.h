@@ -132,40 +132,40 @@ typedef uint32_t syscall_arg_t;
  * @param num 系统调用号
  * @return 系统调用返回值
  */
-syscall_arg_t syscall0(syscall_arg_t num);
+extern "C" syscall_arg_t syscall0(syscall_arg_t num);
 
 /**
  * @brief 1个参数系统调用
  */
-syscall_arg_t syscall1(syscall_arg_t num, syscall_arg_t arg0);
+extern "C" syscall_arg_t syscall1(syscall_arg_t num, syscall_arg_t arg0);
 
 /**
  * @brief 2个参数系统调用
  */
-syscall_arg_t syscall2(syscall_arg_t num, syscall_arg_t arg0, syscall_arg_t arg1);
+extern "C" syscall_arg_t syscall2(syscall_arg_t num, syscall_arg_t arg0, syscall_arg_t arg1);
 
 /**
  * @brief 3个参数系统调用
  */
-syscall_arg_t syscall3(syscall_arg_t num, syscall_arg_t arg0, syscall_arg_t arg1,
+extern "C" syscall_arg_t syscall3(syscall_arg_t num, syscall_arg_t arg0, syscall_arg_t arg1,
                        syscall_arg_t arg2);
 
 /**
  * @brief 4个参数系统调用
  */
-syscall_arg_t syscall4(syscall_arg_t num, syscall_arg_t arg0, syscall_arg_t arg1,
+extern "C" syscall_arg_t syscall4(syscall_arg_t num, syscall_arg_t arg0, syscall_arg_t arg1,
                        syscall_arg_t arg2, syscall_arg_t arg3);
 
 /**
  * @brief 5个参数系统调用
  */
-syscall_arg_t syscall5(syscall_arg_t num, syscall_arg_t arg0, syscall_arg_t arg1,
+extern "C" syscall_arg_t syscall5(syscall_arg_t num, syscall_arg_t arg0, syscall_arg_t arg1,
                        syscall_arg_t arg2, syscall_arg_t arg3, syscall_arg_t arg4);
 
 /**
  * @brief 6个参数系统调用
  */
-syscall_arg_t syscall6(syscall_arg_t num, syscall_arg_t arg0, syscall_arg_t arg1,
+extern "C" syscall_arg_t syscall6(syscall_arg_t num, syscall_arg_t arg0, syscall_arg_t arg1,
                        syscall_arg_t arg2, syscall_arg_t arg3, syscall_arg_t arg4,
                        syscall_arg_t arg5);
 

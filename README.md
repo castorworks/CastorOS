@@ -12,6 +12,11 @@ CastorOS 支持以下 CPU 架构：
 | x86_64 | AMD64/Intel 64位 | ✅ 基础支持 |
 | arm64 | ARM AArch64 | ✅ 基础支持 |
 
+## 开发语言
+
+内核与用户态程序均使用 freestanding C++20 编写（`-std=gnu++20 -fno-exceptions -fno-rtti`），引导与中断入口等少量代码使用汇编。
+与汇编互相调用的符号需声明为 `extern "C"`；内核的最小 C++ 运行时位于 `src/lib/cxxrt.cpp`。
+
 ## 构建系统
 
 ### 安装开发环境

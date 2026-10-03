@@ -143,12 +143,5 @@ typedef struct x86_64_context {
  * HAL Context Type Alias
  * ========================================================================== */
 
-/**
- * @brief HAL context type for x86_64
- * 
- * This typedef allows the HAL interface to use a generic hal_context_t
- * that maps to the architecture-specific x86_64_context_t.
- */
-typedef x86_64_context_t hal_context;
 
 #endif /* _ARCH_X86_64_CONTEXT64_H_ */

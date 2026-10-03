@@ -41,7 +41,7 @@ test_arch_compiler() {
     local actual_cc=$(echo "$output" | awk '/^Compiler:/ {print $2}')
     local actual_ld=$(echo "$output" | awk '/^Linker:/ {print $2}')
     local actual_as=$(echo "$output" | awk '/^Assembler:/ {print $2}')
-    local actual_cflags=$(echo "$output" | awk '/^CFLAGS:/ {$1=""; print $0}')
+    local actual_cflags=$(echo "$output" | awk '/^CXXFLAGS:/ {$1=""; print $0}')
 
     local has_define=false
     case "$actual_cflags" in
@@ -68,7 +68,7 @@ test_arch_compiler() {
     
     if [ "$has_define" != "true" ]; then
         failed=true
-        errors="$errors\n  - CFLAGS missing define: $expected_define"
+        errors="$errors\n  - CXXFLAGS missing define: $expected_define"
     fi
     
     if [ "$failed" = "true" ]; then
@@ -138,9 +138,9 @@ echo "==========================================================================
 echo ""
 
 # Run tests for each architecture
-test_arch_compiler "i686" "i686-elf-gcc" "i686-elf-ld" "nasm" "-DARCH_I686" || true
-test_arch_compiler "x86_64" "x86_64-elf-gcc" "x86_64-elf-ld" "nasm" "-DARCH_X86_64" || true
-test_arch_compiler "arm64" "aarch64-elf-gcc" "aarch64-elf-ld" "aarch64-elf-as" "-DARCH_ARM64" || true
+test_arch_compiler "i686" "i686-elf-g++" "i686-elf-ld" "nasm" "-DARCH_I686" || true
+test_arch_compiler "x86_64" "x86_64-elf-g++" "x86_64-elf-ld" "nasm" "-DARCH_X86_64" || true
+test_arch_compiler "arm64" "aarch64-elf-g++" "aarch64-elf-ld" "aarch64-elf-as" "-DARCH_ARM64" || true
 
 # Test invalid architecture
 test_invalid_arch || true

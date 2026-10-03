@@ -284,7 +284,7 @@ uint32_t task_create_user_process(const char *name, uintptr_t entry_point,
  * @param exit_code 退出码
  * @note 此函数不会返回
  */
-void task_exit(uint32_t exit_code) __attribute__((noreturn));
+extern "C" void task_exit(uint32_t exit_code) __attribute__((noreturn));
 
 /**
  * @brief 主动让出 CPU（切换到其他任务）
@@ -414,14 +414,14 @@ uint32_t task_get_count(void);
  * @param old_ctx 保存旧任务上下文的地址
  * @param new_ctx 新任务上下文的地址
  */
-extern void task_switch_context(cpu_context_t **old_ctx, cpu_context_t *new_ctx);
+extern "C" void task_switch_context(cpu_context_t **old_ctx, cpu_context_t *new_ctx);
 
 /**
  * @brief 首次进入任务（用于内核线程）
  * 
  * 用于第一次启动内核线程
  */
-extern void task_enter_kernel_thread(void);
+extern "C" void task_enter_kernel_thread(void);
 
 /* ============================================================================
  * 测试辅助函数（仅在测试模式下使用）

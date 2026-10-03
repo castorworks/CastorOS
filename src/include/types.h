@@ -45,16 +45,11 @@ struct timespec {
 };
 #endif
 
-// 布尔类型
-#ifndef __cplusplus
-typedef unsigned char bool;
-#define true  1
-#define false 0
-#endif
+// 布尔类型：使用 C++ 内建 bool/true/false
 
-// NULL 定义
+// NULL 定义（新代码请直接使用 nullptr）
 #ifndef NULL
-#define NULL ((void *)0)
+#define NULL nullptr
 #endif
 
 #define PAGE_SIZE           4096

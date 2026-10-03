@@ -42,6 +42,7 @@ endif
 
 ifeq ($(ARCH),i686)
     CC = i686-elf-gcc
+    CXX = i686-elf-g++
     LD = i686-elf-ld
     AS = nasm
     OBJCOPY = i686-elf-objcopy
@@ -54,6 +55,7 @@ ifeq ($(ARCH),i686)
     QEMU_MACHINE =
 else ifeq ($(ARCH),x86_64)
     CC = x86_64-elf-gcc
+    CXX = x86_64-elf-g++
     LD = x86_64-elf-ld
     AS = nasm
     OBJCOPY = x86_64-elf-objcopy
@@ -66,6 +68,7 @@ else ifeq ($(ARCH),x86_64)
     QEMU_MACHINE =
 else ifeq ($(ARCH),arm64)
     CC = aarch64-elf-gcc
+    CXX = aarch64-elf-g++
     LD = aarch64-elf-ld
     AS = aarch64-elf-as
     OBJCOPY = aarch64-elf-objcopy
@@ -82,9 +85,16 @@ endif
 # 通用编译标志
 # ============================================================================
 
-CFLAGS = -std=gnu99 -ffreestanding -O0 -g -Wall -Wextra \
+COMMON_FLAGS = -ffreestanding -O0 -g -Wall -Wextra \
          -Isrc/include -Isrc/arch/$(ARCH)/include \
          $(ARCH_CFLAGS) $(ARCH_DEFINE)
+# CFLAGS 仅用于预处理/汇编 .S 文件
+CFLAGS = $(COMMON_FLAGS)
+CXXFLAGS = -std=gnu++20 $(COMMON_FLAGS) \
+           -fno-exceptions -fno-rtti -fno-threadsafe-statics \
+           -fno-asynchronous-unwind-tables -fno-unwind-tables
+# 自动生成头文件依赖 (.d)
+DEPFLAGS = -MMD -MP
 LDFLAGS = $(ARCH_LDFLAGS)
 ASFLAGS = $(ARCH_ASFLAGS)
 
@@ -110,95 +120,96 @@ DISK_IMAGE = $(BUILD_DIR)/bootable.img
 ifeq ($(ARCH),arm64)
     # ARM64 Common Sources
     # Library modules
-    COMMON_C_SOURCES = $(SRC_DIR)/lib/string.c \
-        $(SRC_DIR)/lib/libgcc_stub.c \
-        $(SRC_DIR)/lib/kprintf.c \
-        $(SRC_DIR)/lib/klog.c \
-        $(wildcard $(SRC_DIR)/drivers/arm/*.c) \
-        $(wildcard $(SRC_DIR)/drivers/platform/*.c) \
-        $(wildcard $(SRC_DIR)/tests/framework/*.c) \
+    COMMON_C_SOURCES = $(SRC_DIR)/lib/string.cpp \
+        $(SRC_DIR)/lib/libgcc_stub.cpp \
+        $(SRC_DIR)/lib/kprintf.cpp \
+        $(SRC_DIR)/lib/klog.cpp \
+        $(SRC_DIR)/lib/cxxrt.cpp \
+        $(wildcard $(SRC_DIR)/drivers/arm/*.cpp) \
+        $(wildcard $(SRC_DIR)/drivers/platform/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/framework/*.cpp) \
         \
-        $(SRC_DIR)/mm/pmm.c \
-        $(SRC_DIR)/mm/vmm.c \
-        $(SRC_DIR)/mm/heap.c \
+        $(SRC_DIR)/mm/pmm.cpp \
+        $(SRC_DIR)/mm/vmm.cpp \
+        $(SRC_DIR)/mm/heap.cpp \
         \
-        $(SRC_DIR)/kernel/kernel.c \
-        $(SRC_DIR)/kernel/task.c \
-        $(SRC_DIR)/kernel/syscall.c \
-        $(SRC_DIR)/kernel/panic.c \
-        $(SRC_DIR)/kernel/fd_table.c \
-        $(SRC_DIR)/kernel/interrupt.c \
-        $(SRC_DIR)/kernel/elf.c \
-        $(SRC_DIR)/kernel/system.c \
-        $(SRC_DIR)/kernel/user.c \
-        $(SRC_DIR)/kernel/loader.c \
-        $(wildcard $(SRC_DIR)/kernel/sync/*.c) \
-        $(SRC_DIR)/kernel/syscalls/fs.c \
-        $(SRC_DIR)/kernel/syscalls/mm.c \
-        $(SRC_DIR)/kernel/syscalls/process.c \
-        $(SRC_DIR)/kernel/syscalls/system.c \
-        $(SRC_DIR)/kernel/syscalls/time.c \
+        $(SRC_DIR)/kernel/kernel.cpp \
+        $(SRC_DIR)/kernel/task.cpp \
+        $(SRC_DIR)/kernel/syscall.cpp \
+        $(SRC_DIR)/kernel/panic.cpp \
+        $(SRC_DIR)/kernel/fd_table.cpp \
+        $(SRC_DIR)/kernel/interrupt.cpp \
+        $(SRC_DIR)/kernel/elf.cpp \
+        $(SRC_DIR)/kernel/system.cpp \
+        $(SRC_DIR)/kernel/user.cpp \
+        $(SRC_DIR)/kernel/loader.cpp \
+        $(wildcard $(SRC_DIR)/kernel/sync/*.cpp) \
+        $(SRC_DIR)/kernel/syscalls/fs.cpp \
+        $(SRC_DIR)/kernel/syscalls/mm.cpp \
+        $(SRC_DIR)/kernel/syscalls/process.cpp \
+        $(SRC_DIR)/kernel/syscalls/system.cpp \
+        $(SRC_DIR)/kernel/syscalls/time.cpp \
         \
-        $(SRC_DIR)/fs/vfs.c \
-        $(SRC_DIR)/fs/ramfs.c \
-        $(SRC_DIR)/fs/devfs.c \
-        $(SRC_DIR)/fs/pipe.c
+        $(SRC_DIR)/fs/vfs.cpp \
+        $(SRC_DIR)/fs/ramfs.cpp \
+        $(SRC_DIR)/fs/devfs.cpp \
+        $(SRC_DIR)/fs/pipe.cpp
 else
-    COMMON_C_SOURCES = $(wildcard $(SRC_DIR)/drivers/common/*.c) \
-        $(wildcard $(SRC_DIR)/drivers/platform/*.c) \
-        $(wildcard $(SRC_DIR)/drivers/x86/*.c) \
-        $(wildcard $(SRC_DIR)/drivers/x86/usb/*.c) \
-        $(wildcard $(SRC_DIR)/fs/*.c) \
-        $(wildcard $(SRC_DIR)/kernel/*.c) \
-        $(wildcard $(SRC_DIR)/kernel/sync/*.c) \
-        $(wildcard $(SRC_DIR)/kernel/syscalls/*.c) \
-        $(wildcard $(SRC_DIR)/lib/*.c) \
-        $(wildcard $(SRC_DIR)/mm/*.c) \
-        $(wildcard $(SRC_DIR)/net/*.c) \
-        $(wildcard $(SRC_DIR)/tests/framework/*.c) \
-        $(wildcard $(SRC_DIR)/tests/lib/*.c) \
-        $(wildcard $(SRC_DIR)/tests/mm/*.c) \
-        $(wildcard $(SRC_DIR)/tests/fs/*.c) \
-        $(wildcard $(SRC_DIR)/tests/net/*.c) \
-        $(wildcard $(SRC_DIR)/tests/kernel/*.c) \
-        $(wildcard $(SRC_DIR)/tests/drivers/*.c) \
-        $(wildcard $(SRC_DIR)/tests/arch/*.c) \
-        $(wildcard $(SRC_DIR)/tests/pbt/*.c) \
-        $(wildcard $(SRC_DIR)/tests/examples/*.c)
+    COMMON_C_SOURCES = $(wildcard $(SRC_DIR)/drivers/common/*.cpp) \
+        $(wildcard $(SRC_DIR)/drivers/platform/*.cpp) \
+        $(wildcard $(SRC_DIR)/drivers/x86/*.cpp) \
+        $(wildcard $(SRC_DIR)/drivers/x86/usb/*.cpp) \
+        $(wildcard $(SRC_DIR)/fs/*.cpp) \
+        $(wildcard $(SRC_DIR)/kernel/*.cpp) \
+        $(wildcard $(SRC_DIR)/kernel/sync/*.cpp) \
+        $(wildcard $(SRC_DIR)/kernel/syscalls/*.cpp) \
+        $(wildcard $(SRC_DIR)/lib/*.cpp) \
+        $(wildcard $(SRC_DIR)/mm/*.cpp) \
+        $(wildcard $(SRC_DIR)/net/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/framework/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/lib/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/mm/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/fs/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/net/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/kernel/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/drivers/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/arch/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/pbt/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/examples/*.cpp)
 endif
 
 # 架构特定测试源文件
 ifeq ($(ARCH),x86_64)
-    ARCH_TEST_SOURCES = $(wildcard $(SRC_DIR)/tests/arch/x86_64/*.c)
+    ARCH_TEST_SOURCES = $(wildcard $(SRC_DIR)/tests/arch/x86_64/*.cpp)
 else ifeq ($(ARCH),arm64)
-    ARCH_TEST_SOURCES = $(wildcard $(SRC_DIR)/tests/arch/arm64/*.c)
+    ARCH_TEST_SOURCES = $(wildcard $(SRC_DIR)/tests/arch/arm64/*.cpp)
 else ifeq ($(ARCH),i686)
-    ARCH_TEST_SOURCES = $(wildcard $(SRC_DIR)/tests/arch/i686/*.c)
+    ARCH_TEST_SOURCES = $(wildcard $(SRC_DIR)/tests/arch/i686/*.cpp)
 endif
 
 ifeq ($(ARCH),arm64)
-    ARCH_C_SOURCES = $(ARCH_DIR)/hal.c \
-        $(ARCH_DIR)/hal_caps.c \
-        $(ARCH_DIR)/stubs.c \
-        $(ARCH_DIR)/boot/boot_info.c \
-        $(ARCH_DIR)/interrupt/exception.c \
-        $(ARCH_DIR)/interrupt/gic.c \
-        $(ARCH_DIR)/interrupt/hal_irq.c \
-        $(ARCH_DIR)/mm/mmu.c \
-        $(ARCH_DIR)/mm/fault.c \
-        $(ARCH_DIR)/mm/pgtable.c \
-        $(ARCH_DIR)/task/context.c \
-        $(ARCH_DIR)/syscall/syscall.c \
-        $(ARCH_DIR)/syscall/hal_syscall.c \
-        $(ARCH_DIR)/dtb/dtb.c
+    ARCH_C_SOURCES = $(ARCH_DIR)/hal.cpp \
+        $(ARCH_DIR)/hal_caps.cpp \
+        $(ARCH_DIR)/stubs.cpp \
+        $(ARCH_DIR)/boot/boot_info.cpp \
+        $(ARCH_DIR)/interrupt/exception.cpp \
+        $(ARCH_DIR)/interrupt/gic.cpp \
+        $(ARCH_DIR)/interrupt/hal_irq.cpp \
+        $(ARCH_DIR)/mm/mmu.cpp \
+        $(ARCH_DIR)/mm/fault.cpp \
+        $(ARCH_DIR)/mm/pgtable.cpp \
+        $(ARCH_DIR)/task/context.cpp \
+        $(ARCH_DIR)/syscall/syscall.cpp \
+        $(ARCH_DIR)/syscall/hal_syscall.cpp \
+        $(ARCH_DIR)/dtb/dtb.cpp
 else
-    ARCH_C_SOURCES = $(wildcard $(ARCH_DIR)/*.c) \
-        $(wildcard $(ARCH_DIR)/boot/*.c) \
-        $(wildcard $(ARCH_DIR)/cpu/*.c) \
-        $(wildcard $(ARCH_DIR)/interrupt/*.c) \
-        $(wildcard $(ARCH_DIR)/mm/*.c) \
-        $(wildcard $(ARCH_DIR)/task/*.c) \
-        $(wildcard $(ARCH_DIR)/syscall/*.c)
+    ARCH_C_SOURCES = $(wildcard $(ARCH_DIR)/*.cpp) \
+        $(wildcard $(ARCH_DIR)/boot/*.cpp) \
+        $(wildcard $(ARCH_DIR)/cpu/*.cpp) \
+        $(wildcard $(ARCH_DIR)/interrupt/*.cpp) \
+        $(wildcard $(ARCH_DIR)/mm/*.cpp) \
+        $(wildcard $(ARCH_DIR)/task/*.cpp) \
+        $(wildcard $(ARCH_DIR)/syscall/*.cpp)
 endif
 
 ifeq ($(ARCH),i686)
@@ -234,7 +245,7 @@ ASM_SOURCES = $(COMMON_ASM_SOURCES) $(ARCH_ASM_SOURCES)
 # 目标文件生成
 # ============================================================================
 
-C_OBJECTS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SOURCES))
+C_OBJECTS = $(patsubst $(SRC_DIR)/%.cpp, $(BUILD_DIR)/%.o, $(C_SOURCES))
 
 ifeq ($(ARCH),arm64)
     ASM_OBJECTS = $(patsubst $(SRC_DIR)/%.S, $(BUILD_DIR)/%.o, $(ASM_SOURCES))
@@ -260,9 +271,9 @@ $(KERNEL): $(OBJECTS)
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
 	@echo "✓ CastorOS kernel built: $(KERNEL)"
 
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.asm
 	@mkdir -p $(dir $@)
@@ -270,7 +281,9 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.asm
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.S
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+-include $(OBJECTS:.o=.d)
 
 # ============================================================================
 # 测试目标 (带超时)
@@ -479,19 +492,20 @@ info:
 	@echo "║     CastorOS Build Configuration     ║"
 	@echo "╚══════════════════════════════════════╝"
 	@echo "Architecture:  $(ARCH)"
-	@echo "Compiler:      $(CC)"
+	@echo "Compiler:      $(CXX)"
 	@echo "Linker:        $(LD)"
 	@echo "Assembler:     $(AS)"
 	@echo "QEMU:          $(QEMU)"
 	@echo "Build Dir:     $(BUILD_DIR)"
 	@echo "Kernel:        $(KERNEL)"
 	@echo "Timeout:       $(TEST_TIMEOUT)s"
+	@echo "CXXFLAGS:      $(CXXFLAGS)"
 	@echo ""
-	@echo "Source files:  $(words $(C_SOURCES)) C, $(words $(ASM_SOURCES)) ASM"
+	@echo "Source files:  $(words $(C_SOURCES)) C++, $(words $(ASM_SOURCES)) ASM"
 
 # 列出源文件
 sources:
-	@echo "=== C Sources ($(words $(C_SOURCES))) ==="
+	@echo "=== C++ Sources ($(words $(C_SOURCES))) ==="
 	@for f in $(C_SOURCES); do echo "  $$f"; done
 	@echo ""
 	@echo "=== ASM Sources ($(words $(ASM_SOURCES))) ==="

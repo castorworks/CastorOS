@@ -210,6 +210,6 @@ void idt64_set_user_interrupt_gate(uint8_t vector, uint64_t handler);
  * @brief Load IDT using LIDT instruction
  * @param idt_ptr Pointer to IDT pointer structure
  */
-extern void idt64_flush(uint64_t idt_ptr);
+extern "C" void idt64_flush(uint64_t idt_ptr);
 
 #endif /* _ARCH_X86_64_IDT64_H_ */

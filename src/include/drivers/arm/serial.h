@@ -74,7 +74,7 @@ void serial_print(const char *msg);
  * @brief Output a null-terminated string (alias for serial_print)
  * @param str String to output
  */
-void serial_puts(const char *str);
+extern "C" void serial_puts(const char *str);
 
 /**
  * @brief Read a character from the serial port (blocking)
@@ -118,7 +118,7 @@ void serial_put_hex32(uint32_t value);
  * @brief Output a 64-bit value in hexadecimal
  * @param value Value to output
  */
-void serial_put_hex64(uint64_t value);
+extern "C" void serial_put_hex64(uint64_t value);
 
 /**
  * @brief Output a decimal number

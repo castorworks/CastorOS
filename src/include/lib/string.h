@@ -170,7 +170,7 @@ int tolower(int c);
  * @param num 字节数
  * @return ptr
  */
-void *memset(void *ptr, int value, size_t num);
+extern "C" void *memset(void *ptr, int value, size_t num);
 
 /**
  * 复制内存区域
@@ -179,7 +179,7 @@ void *memset(void *ptr, int value, size_t num);
  * @param num 字节数
  * @return dest
  */
-void *memcpy(void *dest, const void *src, size_t num);
+extern "C" void *memcpy(void *dest, const void *src, size_t num);
 
 /**
  * 比较内存区域
@@ -188,7 +188,7 @@ void *memcpy(void *dest, const void *src, size_t num);
  * @param num 字节数
  * @return 0 表示相等，< 0 表示 ptr1 < ptr2，> 0 表示 ptr1 > ptr2
  */
-int memcmp(const void *ptr1, const void *ptr2, size_t num);
+extern "C" int memcmp(const void *ptr1, const void *ptr2, size_t num);
 
 /**
  * 移动内存区域（支持重叠区域）
@@ -197,7 +197,7 @@ int memcmp(const void *ptr1, const void *ptr2, size_t num);
  * @param num 字节数
  * @return dest
  */
-void *memmove(void *dest, const void *src, size_t num);
+extern "C" void *memmove(void *dest, const void *src, size_t num);
 
 /**
  * 格式化字符串输出（带长度限制）

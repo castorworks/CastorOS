@@ -61,6 +61,6 @@ void idt_set_gate(uint8_t num, uint32_t base, uint16_t selector, uint8_t flags);
  * 加载 IDT（汇编实现）
  * @param idt_ptr IDT 指针结构地址
  */
-extern void idt_flush(uint32_t idt_ptr);
+extern "C" void idt_flush(uint32_t idt_ptr);
 
 #endif // _ARCH_I686_IDT_H_

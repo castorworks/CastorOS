@@ -47,38 +47,38 @@ void isr_init(void);
 void isr_register_handler(uint8_t n, isr_handler_t handler);
 
 /* CPU 异常（0-31）的汇编入口点 */
-extern void isr0(void);   // 除零错误
-extern void isr1(void);   // 调试异常
-extern void isr2(void);   // 非屏蔽中断
-extern void isr3(void);   // 断点
-extern void isr4(void);   // 溢出
-extern void isr5(void);   // 边界检查
-extern void isr6(void);   // 无效操作码
-extern void isr7(void);   // 设备不可用
-extern void isr8(void);   // 双重故障
-extern void isr9(void);   // 协处理器段超限（保留）
-extern void isr10(void);  // 无效 TSS
-extern void isr11(void);  // 段不存在
-extern void isr12(void);  // 栈段错误
-extern void isr13(void);  // 一般保护错误
-extern void isr14(void);  // 页错误
-extern void isr15(void);  // 保留
-extern void isr16(void);  // 浮点异常
-extern void isr17(void);  // 对齐检查
-extern void isr18(void);  // 机器检查
-extern void isr19(void);  // SIMD 浮点异常
-extern void isr20(void);  // 保留
-extern void isr21(void);  // 保留
-extern void isr22(void);  // 保留
-extern void isr23(void);  // 保留
-extern void isr24(void);  // 保留
-extern void isr25(void);  // 保留
-extern void isr26(void);  // 保留
-extern void isr27(void);  // 保留
-extern void isr28(void);  // 保留
-extern void isr29(void);  // 保留
-extern void isr30(void);  // 保留
-extern void isr31(void);  // 保留
+extern "C" void isr0(void);   // 除零错误
+extern "C" void isr1(void);   // 调试异常
+extern "C" void isr2(void);   // 非屏蔽中断
+extern "C" void isr3(void);   // 断点
+extern "C" void isr4(void);   // 溢出
+extern "C" void isr5(void);   // 边界检查
+extern "C" void isr6(void);   // 无效操作码
+extern "C" void isr7(void);   // 设备不可用
+extern "C" void isr8(void);   // 双重故障
+extern "C" void isr9(void);   // 协处理器段超限（保留）
+extern "C" void isr10(void);  // 无效 TSS
+extern "C" void isr11(void);  // 段不存在
+extern "C" void isr12(void);  // 栈段错误
+extern "C" void isr13(void);  // 一般保护错误
+extern "C" void isr14(void);  // 页错误
+extern "C" void isr15(void);  // 保留
+extern "C" void isr16(void);  // 浮点异常
+extern "C" void isr17(void);  // 对齐检查
+extern "C" void isr18(void);  // 机器检查
+extern "C" void isr19(void);  // SIMD 浮点异常
+extern "C" void isr20(void);  // 保留
+extern "C" void isr21(void);  // 保留
+extern "C" void isr22(void);  // 保留
+extern "C" void isr23(void);  // 保留
+extern "C" void isr24(void);  // 保留
+extern "C" void isr25(void);  // 保留
+extern "C" void isr26(void);  // 保留
+extern "C" void isr27(void);  // 保留
+extern "C" void isr28(void);  // 保留
+extern "C" void isr29(void);  // 保留
+extern "C" void isr30(void);  // 保留
+extern "C" void isr31(void);  // 保留
 
 /**
  * 获取 CR2 寄存器（页错误地址）

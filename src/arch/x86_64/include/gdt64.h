@@ -223,12 +223,12 @@ uint32_t tss64_get_size(void);
  * @brief Load GDT and reload segment registers
  * @param gdt_ptr Pointer to GDT pointer structure
  */
-extern void gdt64_flush(uint64_t gdt_ptr);
+extern "C" void gdt64_flush(uint64_t gdt_ptr);
 
 /**
  * @brief Load TSS selector into TR register
  * @param selector TSS segment selector
  */
-extern void tss64_load(uint16_t selector);
+extern "C" void tss64_load(uint16_t selector);
 
 #endif /* _ARCH_X86_64_GDT64_H_ */

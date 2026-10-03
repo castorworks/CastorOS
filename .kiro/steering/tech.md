@@ -3,17 +3,20 @@
 ## Build System
 
 - GNU Make with multi-architecture support
-- Cross-compiler toolchain: `i686-elf-gcc`, `x86_64-elf-gcc`, `aarch64-elf-gcc`
+- Language: freestanding C++20 (no exceptions, no RTTI); assembly for boot/entry stubs
+- Cross-compiler toolchain: `i686-elf-g++`, `x86_64-elf-g++`, `aarch64-elf-g++`
 - Assembler: NASM (x86) or GNU as (ARM64)
 - Linker scripts: `linker.ld` (i686), `linker_x86_64.ld`, `linker_arm64.ld`
 
 ## Compiler Flags
 
 ```
-CFLAGS = -std=gnu99 -ffreestanding -O0 -g -Wall -Wextra
+CXXFLAGS = -std=gnu++20 -ffreestanding -O0 -g -Wall -Wextra \
+           -fno-exceptions -fno-rtti -fno-threadsafe-statics
 ```
 
-- Freestanding environment (no standard library)
+- Freestanding environment (no standard library; minimal C++ runtime in `src/lib/cxxrt.cpp`)
+- Symbols shared with assembly must be declared `extern "C"`
 - Debug symbols enabled
 - Strict warnings
 

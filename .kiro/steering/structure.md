@@ -13,7 +13,7 @@ CastorOS/
 │   │   │   ├── mm/         # Paging implementation
 │   │   │   ├── task/       # Context switching
 │   │   │   ├── syscall/    # System call entry
-│   │   │   └── hal.c       # HAL implementation
+│   │   │   └── hal.cpp       # HAL implementation
 │   │   ├── x86_64/         # 64-bit x86 (placeholder)
 │   │   └── arm64/          # ARM64 (placeholder)
 │   ├── drivers/            # Device drivers
@@ -49,7 +49,7 @@ CastorOS/
 ### HAL (Hardware Abstraction Layer)
 
 - `src/include/hal/hal.h` - Unified interface for all architectures
-- `src/arch/$(ARCH)/hal.c` - Architecture-specific implementation
+- `src/arch/$(ARCH)/hal.cpp` - Architecture-specific implementation
 - Use `hal_*` functions for portable code
 
 ### Header Organization

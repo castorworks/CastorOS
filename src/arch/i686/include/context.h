@@ -131,12 +131,5 @@ typedef struct i686_context {
  * HAL Context Type Alias
  * ========================================================================== */
 
-/**
- * @brief HAL context type for i686
- * 
- * This typedef allows the HAL interface to use a generic hal_context_t
- * that maps to the architecture-specific i686_context_t.
- */
-typedef i686_context_t hal_context;
 
 #endif /* _ARCH_I686_CONTEXT_H_ */

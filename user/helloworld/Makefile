@@ -11,18 +11,21 @@ ARCH ?= i686
 # 架构特定配置
 ifeq ($(ARCH),i686)
     CC = i686-elf-gcc
+    CXX = i686-elf-g++
     LD = i686-elf-ld
     OBJCOPY = i686-elf-objcopy
     ARCH_CFLAGS = -m32 -DARCH_I686
     LDSCRIPT = ../linker/user_i686.ld
 else ifeq ($(ARCH),x86_64)
     CC = x86_64-elf-gcc
+    CXX = x86_64-elf-g++
     LD = x86_64-elf-ld
     OBJCOPY = x86_64-elf-objcopy
     ARCH_CFLAGS = -m64 -DARCH_X86_64 -mcmodel=large -mno-red-zone
     LDSCRIPT = ../linker/user_x86_64.ld
 else ifeq ($(ARCH),arm64)
     CC = aarch64-elf-gcc
+    CXX = aarch64-elf-g++
     LD = aarch64-elf-ld
     OBJCOPY = aarch64-elf-objcopy
     ARCH_CFLAGS = -DARCH_ARM64
@@ -35,9 +38,11 @@ endif
 # 编译标志
 # ============================================================================
 
-CFLAGS = -std=gnu99 -ffreestanding -nostdlib -nostartfiles \
+CXXFLAGS = -std=gnu++20 -ffreestanding -nostdlib -nostartfiles \
          -fno-builtin -fno-stack-protector -O0 -g -Wall -Wextra \
-         -I../lib/include $(ARCH_CFLAGS)
+         -I../lib/include $(ARCH_CFLAGS) \
+           -fno-exceptions -fno-rtti -fno-threadsafe-statics \
+           -fno-asynchronous-unwind-tables -fno-unwind-tables
 
 # ============================================================================
 # 目录和文件
@@ -48,8 +53,8 @@ LIB_DIR = ../lib
 LIBRARY = $(LIB_DIR)/build/$(ARCH)/libuser.a
 
 # 源文件
-SOURCES = hello.c
-OBJECTS = $(patsubst %.c, $(BUILD_DIR)/%.o, $(SOURCES))
+SOURCES = hello.cpp
+OBJECTS = $(patsubst %.cpp, $(BUILD_DIR)/%.o, $(SOURCES))
 
 # 目标文件
 TARGET = hello
@@ -73,11 +78,11 @@ lib:
 
 $(LIBRARY): lib
 
-# 编译 C 文件
-$(BUILD_DIR)/%.o: %.c
+# 编译 C++ 文件
+$(BUILD_DIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
-	@echo "[CC] $< -> $@"
-	$(CC) $(CFLAGS) -c $< -o $@
+	@echo "[CXX] $< -> $@"
+	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
 
 # 链接为 ELF
 $(ELF): $(OBJECTS) $(LIBRARY)
@@ -89,6 +94,8 @@ $(ELF): $(OBJECTS) $(LIBRARY)
 $(BINARY): $(ELF)
 	@echo "[OBJCOPY] $@"
 	$(OBJCOPY) -O binary $< $@
+
+-include $(OBJECTS:.o=.d)
 
 # 清理当前架构
 clean:
@@ -104,9 +111,9 @@ clean-all:
 info:
 	@echo "=== Hello World Build Configuration ==="
 	@echo "Architecture: $(ARCH)"
-	@echo "Compiler:     $(CC)"
+	@echo "Compiler:     $(CXX)"
 	@echo "Linker:       $(LD)"
-	@echo "CFLAGS:       $(CFLAGS)"
+	@echo "CXXFLAGS:     $(CXXFLAGS)"
 	@echo "Linker Script: $(LDSCRIPT)"
 	@echo "Library:      $(LIBRARY)"
 	@echo "Output:       $(ELF)"
