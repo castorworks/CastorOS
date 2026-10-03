@@ -65,25 +65,25 @@ void fs::Vfs::set_root(fs_node_t *root) {
 }
 
 uint32_t fs::Vfs::read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
-    if (!node || !node->read) {
+    if (!node || !fs::node_supports(node, fs::NodeOps::OP_READ)) {
         return 0;
     }
-    return node->read(node, offset, size, buffer);
+    return node->ops->read(node, offset, size, buffer);
 }
 
 uint32_t fs::Vfs::write(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
-    if (!node || !node->write) {
+    if (!node || !fs::node_supports(node, fs::NodeOps::OP_WRITE)) {
         return 0;
     }
-    return node->write(node, offset, size, buffer);
+    return node->ops->write(node, offset, size, buffer);
 }
 
 void fs::Vfs::open(fs_node_t *node, uint32_t flags) {
     if (!node) {
         return;
     }
-    if (node->open) {
-        node->open(node, flags);
+    if (fs::node_supports(node, fs::NodeOps::OP_OPEN)) {
+        node->ops->open(node, flags);
     }
 }
 
@@ -91,8 +91,8 @@ void fs::Vfs::close(fs_node_t *node) {
     if (!node) {
         return;
     }
-    if (node->close) {
-        node->close(node);
+    if (fs::node_supports(node, fs::NodeOps::OP_CLOSE)) {
+        node->ops->close(node);
     }
 }
 
@@ -160,10 +160,10 @@ struct dirent *fs::Vfs::readdir(fs_node_t *node, uint32_t index) {
     }
     
     /* 正常读取（挂载点切换在 fs::Vfs::path_to_node 中处理） */
-    if (!node->readdir) {
+    if (!fs::node_supports(node, fs::NodeOps::OP_READDIR)) {
         return NULL;
     }
-    return node->readdir(node, index);
+    return node->ops->readdir(node, index);
 }
 
 fs_node_t *fs::Vfs::finddir(fs_node_t *node, const char *name) {
@@ -179,8 +179,8 @@ fs_node_t *fs::Vfs::finddir(fs_node_t *node, const char *name) {
     /* 处理特殊目录条目 '..' - 让文件系统处理，如果文件系统不支持则回退 */
     if (strcmp(name, "..") == 0) {
         /* 首先尝试让文件系统处理 */
-        if (node->finddir) {
-            fs_node_t *parent = node->finddir(node, "..");
+        if (fs::node_supports(node, fs::NodeOps::OP_FINDDIR)) {
+            fs_node_t *parent = node->ops->finddir(node, "..");
             if (parent) {
                 return parent;
             }
@@ -195,10 +195,10 @@ fs_node_t *fs::Vfs::finddir(fs_node_t *node, const char *name) {
     }
     
     /* 正常查找（挂载点切换在 fs::Vfs::path_to_node 中处理） */
-    if (!node->finddir) {
+    if (!fs::node_supports(node, fs::NodeOps::OP_FINDDIR)) {
         return NULL;
     }
-    return node->finddir(node, name);
+    return node->ops->finddir(node, name);
 }
 
 // 路径解析：将路径字符串转换为文件节点
@@ -439,12 +439,12 @@ int fs::Vfs::create(const char *path) {
     }
     
     // 调用父目录的 create 操作
-    if (!parent->create) {
+    if (!fs::node_supports(parent, fs::NodeOps::OP_CREATE)) {
         fs::Vfs::release_node(parent);  // 释放节点
         return -1;
     }
     
-    int result = parent->create(parent, file_name);
+    int result = parent->ops->create(parent, file_name);
     fs::Vfs::release_node(parent);  // 释放节点
     return result;
 }
@@ -493,12 +493,12 @@ int fs::Vfs::mkdir(const char *path, uint32_t permissions) {
     }
     
     // 调用父目录的 mkdir 操作
-    if (!parent->mkdir) {
+    if (!fs::node_supports(parent, fs::NodeOps::OP_MKDIR)) {
         fs::Vfs::release_node(parent);  // 释放节点
         return -1;
     }
     
-    int result = parent->mkdir(parent, dir_name, permissions);
+    int result = parent->ops->mkdir(parent, dir_name, permissions);
     fs::Vfs::release_node(parent);  // 释放节点
     return result;
 }
@@ -552,12 +552,12 @@ int fs::Vfs::unlink(const char *path) {
     }
     
     // 调用父目录的 unlink 操作
-    if (!parent->unlink) {
+    if (!fs::node_supports(parent, fs::NodeOps::OP_UNLINK)) {
         fs::Vfs::release_node(parent);  // 释放节点
         return -1;
     }
     
-    int result = parent->unlink(parent, file_name);
+    int result = parent->ops->unlink(parent, file_name);
     fs::Vfs::release_node(parent);  // 释放节点
     return result;
 }
@@ -575,8 +575,8 @@ int fs::Vfs::truncate(fs_node_t *node, uint32_t new_size) {
     }
     
     // 如果文件系统支持 truncate 操作，调用它
-    if (node->truncate) {
-        return node->truncate(node, new_size);
+    if (fs::node_supports(node, fs::NodeOps::OP_TRUNCATE)) {
+        return node->ops->truncate(node, new_size);
     }
     
     // 否则，只更新大小（对于简单的内存文件系统）
@@ -673,14 +673,14 @@ int fs::Vfs::rename(const char *oldpath, const char *newpath) {
     }
     
     // 检查文件系统是否支持重命名操作
-    if (!parent->rename) {
+    if (!fs::node_supports(parent, fs::NodeOps::OP_RENAME)) {
         LOG_ERROR_MSG("fs::Vfs::rename: filesystem does not support rename operation\n");
         fs::Vfs::release_node(parent);
         return -1;
     }
     
     // 调用文件系统的重命名操作
-    int result = parent->rename(parent, old_name, new_name);
+    int result = parent->ops->rename(parent, old_name, new_name);
     
     fs::Vfs::release_node(parent);
     

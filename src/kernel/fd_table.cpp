@@ -99,7 +99,7 @@ int32_t fd_table_free(fd_table_t *table, int32_t fd) {
     // 在解锁后关闭文件和释放节点
     // 避免在持有锁的情况下调用可能阻塞的 VFS 操作
     if (node) {
-        if (node->close) {
+        if (fs::node_supports(node, fs::NodeOps::OP_CLOSE)) {
             fs::Vfs::close(node);
         }
         // 释放动态分配的节点

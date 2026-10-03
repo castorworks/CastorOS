@@ -51,6 +51,30 @@ void fs::Pipe::on_dup(fs_node_t *node) {
     }
 }
 
+class PipeReadOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READ | OP_CLOSE; }
+    uint32_t read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return pipe_read(node, offset, size, buffer);
+    }
+    void close(fs_node_t *node) const override {
+        pipe_close(node);
+    }
+};
+static const PipeReadOps pipe_read_ops{};
+
+class PipeWriteOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_WRITE | OP_CLOSE; }
+    uint32_t write(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return pipe_write(node, offset, size, buffer);
+    }
+    void close(fs_node_t *node) const override {
+        pipe_close(node);
+    }
+};
+static const PipeWriteOps pipe_write_ops{};
+
 /**
  * 创建管道
  * @param read_node 输出读端节点
@@ -110,16 +134,7 @@ int fs::Pipe::create(fs_node_t **read_node, fs_node_t **write_node) {
     rnode->ref_count = 1;
     
     // 设置读端操作函数
-    rnode->read = pipe_read;
-    rnode->write = NULL;            // 读端不能写
-    rnode->open = NULL;
-    rnode->close = pipe_close;
-    rnode->readdir = NULL;
-    rnode->finddir = NULL;
-    rnode->create = NULL;
-    rnode->mkdir = NULL;
-    rnode->unlink = NULL;
-    rnode->truncate = NULL;
+    rnode->ops = &pipe_read_ops;
     rnode->ptr = NULL;
     
     // 创建写端节点
@@ -145,16 +160,7 @@ int fs::Pipe::create(fs_node_t **read_node, fs_node_t **write_node) {
     wnode->ref_count = 1;
     
     // 设置写端操作函数
-    wnode->read = NULL;             // 写端不能读
-    wnode->write = pipe_write;
-    wnode->open = NULL;
-    wnode->close = pipe_close;
-    wnode->readdir = NULL;
-    wnode->finddir = NULL;
-    wnode->create = NULL;
-    wnode->mkdir = NULL;
-    wnode->unlink = NULL;
-    wnode->truncate = NULL;
+    wnode->ops = &pipe_write_ops;
     wnode->ptr = NULL;
     
     *read_node = rnode;

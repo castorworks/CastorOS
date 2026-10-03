@@ -1676,6 +1676,47 @@ static struct dirent *fat32_dir_readdir(fs_node_t *node, uint32_t index) {
     return NULL;
 }
 
+static fs_node_t *fat32_dir_finddir(fs_node_t *node, const char *name);
+
+class Fat32DirOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READDIR | OP_FINDDIR | OP_CREATE | OP_MKDIR | OP_UNLINK | OP_RENAME; }
+    struct dirent *readdir(fs_node_t *node, uint32_t index) const override {
+        return fat32_dir_readdir(node, index);
+    }
+    fs_node_t *finddir(fs_node_t *node, const char *name) const override {
+        return fat32_dir_finddir(node, name);
+    }
+    int create(fs_node_t *node, const char *name) const override {
+        return fat32_dir_create(node, name);
+    }
+    int mkdir(fs_node_t *node, const char *name, uint32_t permissions) const override {
+        return fat32_dir_mkdir(node, name, permissions);
+    }
+    int unlink(fs_node_t *node, const char *name) const override {
+        return fat32_dir_unlink(node, name);
+    }
+    int rename(fs_node_t *node, const char *old_name, const char *new_name) const override {
+        return fat32_dir_rename(node, old_name, new_name);
+    }
+};
+static const Fat32DirOps fat32_dir_ops{};
+
+class Fat32FileOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READ | OP_WRITE | OP_TRUNCATE; }
+    uint32_t read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return fat32_file_read(node, offset, size, buffer);
+    }
+    uint32_t write(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return fat32_file_write(node, offset, size, buffer);
+    }
+    int truncate(fs_node_t *node, uint32_t new_size) const override {
+        return fat32_file_truncate(node, new_size);
+    }
+};
+static const Fat32FileOps fat32_file_ops{};
+
 /**
  * FAT32 目录查找
  */
@@ -1724,19 +1765,12 @@ static fs_node_t *fat32_dir_finddir(fs_node_t *node, const char *name) {
     
     if (lookup->entry.attributes & FAT32_ATTR_DIRECTORY) {
         new_node->type = FS_DIRECTORY;
-        new_node->readdir = fat32_dir_readdir;
-        new_node->finddir = fat32_dir_finddir;
-        new_node->create = fat32_dir_create;
-        new_node->mkdir = fat32_dir_mkdir;
-        new_node->unlink = fat32_dir_unlink;
-        new_node->rename = fat32_dir_rename;
+        new_node->ops = &fat32_dir_ops;
         new_node->permissions = FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC;
         new_file->is_dir = true;
     } else {
         new_node->type = FS_FILE;
-        new_node->read = fat32_file_read;
-        new_node->write = fat32_file_write;
-        new_node->truncate = fat32_file_truncate;
+        new_node->ops = &fat32_file_ops;
         new_file->is_dir = false;
     }
     
@@ -1903,12 +1937,7 @@ fs_node_t *fs::Fat32::init(blockdev_t *dev) {
     root->size = 0;
     root->permissions = FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC;
     root->ref_count = 0;  // 初始化引用计数
-    root->readdir = fat32_dir_readdir;
-    root->finddir = fat32_dir_finddir;
-    root->create = fat32_dir_create;
-    root->mkdir = fat32_dir_mkdir;
-    root->unlink = fat32_dir_unlink;
-    root->rename = fat32_dir_rename;
+    root->ops = &fat32_dir_ops;
     
     root_file->fs = fs;
     root_file->start_cluster = fs->root_cluster;

@@ -358,6 +358,75 @@ static fs_node_t *devfs_finddir(fs_node_t *node, const char *name) {
     return NULL;
 }
 
+class DevnullOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READ | OP_WRITE; }
+    uint32_t read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return devnull_read(node, offset, size, buffer);
+    }
+    uint32_t write(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return devnull_write(node, offset, size, buffer);
+    }
+};
+static const DevnullOps devnull_ops{};
+
+class DevzeroOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READ | OP_WRITE; }
+    uint32_t read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return devzero_read(node, offset, size, buffer);
+    }
+    uint32_t write(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return devzero_write(node, offset, size, buffer);
+    }
+};
+static const DevzeroOps devzero_ops{};
+
+class DevserialOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READ | OP_WRITE; }
+    uint32_t read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return devserial_read(node, offset, size, buffer);
+    }
+    uint32_t write(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return devserial_write(node, offset, size, buffer);
+    }
+};
+static const DevserialOps devserial_ops{};
+
+class DevconsoleOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READ | OP_WRITE; }
+    uint32_t read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return devconsole_read(node, offset, size, buffer);
+    }
+    uint32_t write(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return devconsole_write(node, offset, size, buffer);
+    }
+};
+static const DevconsoleOps devconsole_ops{};
+
+class DevrtcOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READ; }
+    uint32_t read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return devrtc_read(node, offset, size, buffer);
+    }
+};
+static const DevrtcOps devrtc_ops{};
+
+class DevfsOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READDIR | OP_FINDDIR; }
+    struct dirent *readdir(fs_node_t *node, uint32_t index) const override {
+        return devfs_readdir(node, index);
+    }
+    fs_node_t *finddir(fs_node_t *node, const char *name) const override {
+        return devfs_finddir(node, name);
+    }
+};
+static const DevfsOps devfs_ops{};
+
 /**
  * 初始化 devfs
  */
@@ -377,15 +446,7 @@ fs_node_t *fs::Devfs::init() {
     devfs_devices[0].gid = 0;
     devfs_devices[0].flags = 0;
     devfs_devices[0].ref_count = 0;  // 初始化引用计数
-    devfs_devices[0].read = devnull_read;
-    devfs_devices[0].write = devnull_write;
-    devfs_devices[0].open = NULL;
-    devfs_devices[0].close = NULL;
-    devfs_devices[0].readdir = NULL;
-    devfs_devices[0].finddir = NULL;
-    devfs_devices[0].create = NULL;
-    devfs_devices[0].mkdir = NULL;
-    devfs_devices[0].unlink = NULL;
+    devfs_devices[0].ops = &devnull_ops;
     devfs_devices[0].ptr = NULL;
     devfs_devices[0].impl = &devfs_device_private[0];  // 设置私有数据
     
@@ -399,15 +460,7 @@ fs_node_t *fs::Devfs::init() {
     devfs_devices[1].gid = 0;
     devfs_devices[1].flags = 0;
     devfs_devices[1].ref_count = 0;  // 初始化引用计数
-    devfs_devices[1].read = devzero_read;
-    devfs_devices[1].write = devzero_write;
-    devfs_devices[1].open = NULL;
-    devfs_devices[1].close = NULL;
-    devfs_devices[1].readdir = NULL;
-    devfs_devices[1].finddir = NULL;
-    devfs_devices[1].create = NULL;
-    devfs_devices[1].mkdir = NULL;
-    devfs_devices[1].unlink = NULL;
+    devfs_devices[1].ops = &devzero_ops;
     devfs_devices[1].ptr = NULL;
     devfs_devices[1].impl = &devfs_device_private[1];  // 设置私有数据
     
@@ -421,15 +474,7 @@ fs_node_t *fs::Devfs::init() {
     devfs_devices[2].gid = 0;
     devfs_devices[2].flags = 0;
     devfs_devices[2].ref_count = 0;  // 初始化引用计数
-    devfs_devices[2].read = devserial_read;
-    devfs_devices[2].write = devserial_write;
-    devfs_devices[2].open = NULL;
-    devfs_devices[2].close = NULL;
-    devfs_devices[2].readdir = NULL;
-    devfs_devices[2].finddir = NULL;
-    devfs_devices[2].create = NULL;
-    devfs_devices[2].mkdir = NULL;
-    devfs_devices[2].unlink = NULL;
+    devfs_devices[2].ops = &devserial_ops;
     devfs_devices[2].ptr = NULL;
     devfs_devices[2].impl = &devfs_device_private[2];  // 设置私有数据
     
@@ -443,15 +488,7 @@ fs_node_t *fs::Devfs::init() {
     devfs_devices[3].gid = 0;
     devfs_devices[3].flags = 0;
     devfs_devices[3].ref_count = 0;  // 初始化引用计数
-    devfs_devices[3].read = devconsole_read;
-    devfs_devices[3].write = devconsole_write;
-    devfs_devices[3].open = NULL;
-    devfs_devices[3].close = NULL;
-    devfs_devices[3].readdir = NULL;
-    devfs_devices[3].finddir = NULL;
-    devfs_devices[3].create = NULL;
-    devfs_devices[3].mkdir = NULL;
-    devfs_devices[3].unlink = NULL;
+    devfs_devices[3].ops = &devconsole_ops;
     devfs_devices[3].ptr = NULL;
     devfs_devices[3].impl = &devfs_device_private[3];  // 设置私有数据
     
@@ -465,15 +502,7 @@ fs_node_t *fs::Devfs::init() {
     devfs_devices[4].gid = 0;
     devfs_devices[4].flags = 0;
     devfs_devices[4].ref_count = 0;  // 初始化引用计数
-    devfs_devices[4].read = devrtc_read;
-    devfs_devices[4].write = NULL;  // 只读设备
-    devfs_devices[4].open = NULL;
-    devfs_devices[4].close = NULL;
-    devfs_devices[4].readdir = NULL;
-    devfs_devices[4].finddir = NULL;
-    devfs_devices[4].create = NULL;
-    devfs_devices[4].mkdir = NULL;
-    devfs_devices[4].unlink = NULL;
+    devfs_devices[4].ops = &devrtc_ops;
     devfs_devices[4].ptr = NULL;
     devfs_devices[4].impl = &devfs_device_private[4];  // 设置私有数据
     
@@ -504,15 +533,7 @@ fs_node_t *fs::Devfs::init() {
     devfs_root->gid = 0;
     devfs_root->flags = 0;
     devfs_root->ref_count = 0;  // 初始化引用计数
-    devfs_root->read = NULL;
-    devfs_root->write = NULL;
-    devfs_root->open = NULL;
-    devfs_root->close = NULL;
-    devfs_root->readdir = devfs_readdir;
-    devfs_root->finddir = devfs_finddir;
-    devfs_root->create = NULL;  // 不支持创建设备
-    devfs_root->mkdir = NULL;   // 不支持创建目录
-    devfs_root->unlink = NULL;  // 不支持删除设备
+    devfs_root->ops = &devfs_ops;
     devfs_root->ptr = NULL;
     devfs_root->impl = devfs_root_private;  // 设置私有数据
     

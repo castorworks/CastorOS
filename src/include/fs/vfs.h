@@ -31,17 +31,8 @@ typedef enum {
 struct fs_node;
 
 /* 文件操作函数类型 */
-typedef uint32_t (*read_type_t)(struct fs_node *node, uint32_t offset, uint32_t size, uint8_t *buffer);
-typedef uint32_t (*write_type_t)(struct fs_node *node, uint32_t offset, uint32_t size, uint8_t *buffer);
-typedef void (*open_type_t)(struct fs_node *node, uint32_t flags);
-typedef void (*close_type_t)(struct fs_node *node);
-typedef struct dirent *(*readdir_type_t)(struct fs_node *node, uint32_t index);
-typedef struct fs_node *(*finddir_type_t)(struct fs_node *node, const char *name);
-typedef int (*create_type_t)(struct fs_node *node, const char *name);
-typedef int (*mkdir_type_t)(struct fs_node *node, const char *name, uint32_t permissions);
-typedef int (*unlink_type_t)(struct fs_node *node, const char *name);
-typedef int (*truncate_type_t)(struct fs_node *node, uint32_t new_size);
-typedef int (*rename_type_t)(struct fs_node *node, const char *old_name, const char *new_name);
+
+namespace fs { class NodeOps; }
 
 /**
  * 文件节点（inode）
@@ -60,21 +51,64 @@ typedef struct fs_node {
     uint32_t impl_data;          // 文件系统私有整数值（如 procfs 的 PID），不会被 kfree
     uint32_t ref_count;          // 引用计数（用于资源管理）
 
-    // 文件操作函数
-    read_type_t read;
-    write_type_t write;
-    open_type_t open;
-    close_type_t close;
-    readdir_type_t readdir;
-    finddir_type_t finddir;
-    create_type_t create;
-    mkdir_type_t mkdir;
-    unlink_type_t unlink;
-    truncate_type_t truncate;
-    rename_type_t rename;        // 重命名操作
+    // 节点操作（虚函数接口，见下方 fs::NodeOps）；NULL 表示不支持任何操作
+    const fs::NodeOps *ops;
 
     struct fs_node *ptr;         // 用于符号链接和挂载点
 } fs_node_t;
+
+namespace fs {
+
+/**
+ * @brief 节点操作接口
+ *
+ * 每种节点（ramfs 文件、ramfs 目录、/dev/null、/proc/meminfo ...）提供一个无状态的
+ * 实现对象，fs_node_t::ops 指向它。supported() 返回该节点类型实际支持的操作集合，
+ * VFS 在调用前据此判断；未重写的操作保持“不支持”的默认实现。
+ */
+class NodeOps {
+public:
+    enum Op : uint32_t {
+        OP_READ     = 1u << 0,
+        OP_WRITE    = 1u << 1,
+        OP_OPEN     = 1u << 2,
+        OP_CLOSE    = 1u << 3,
+        OP_READDIR  = 1u << 4,
+        OP_FINDDIR  = 1u << 5,
+        OP_CREATE   = 1u << 6,
+        OP_MKDIR    = 1u << 7,
+        OP_UNLINK   = 1u << 8,
+        OP_TRUNCATE = 1u << 9,
+        OP_RENAME   = 1u << 10,
+    };
+
+    /** @brief 该节点类型支持的操作（Op 位的组合） */
+    virtual uint32_t supported() const = 0;
+    bool supports(Op op) const { return (supported() & op) != 0; }
+
+    virtual uint32_t read(fs_node_t *, uint32_t, uint32_t, uint8_t *) const { return 0; }
+    virtual uint32_t write(fs_node_t *, uint32_t, uint32_t, uint8_t *) const { return 0; }
+    virtual void open(fs_node_t *, uint32_t) const {}
+    virtual void close(fs_node_t *) const {}
+    virtual struct dirent *readdir(fs_node_t *, uint32_t) const { return nullptr; }
+    virtual fs_node_t *finddir(fs_node_t *, const char *) const { return nullptr; }
+    virtual int create(fs_node_t *, const char *) const { return -1; }
+    virtual int mkdir(fs_node_t *, const char *, uint32_t) const { return -1; }
+    virtual int unlink(fs_node_t *, const char *) const { return -1; }
+    virtual int truncate(fs_node_t *, uint32_t) const { return -1; }
+    virtual int rename(fs_node_t *, const char *, const char *) const { return -1; }
+
+protected:
+    /* 实现对象都是静态存储期的单例，不会通过基类指针销毁 */
+    ~NodeOps() = default;
+};
+
+/** @brief 节点是否支持某个操作（node 或 node->ops 为空时返回 false） */
+inline bool node_supports(const fs_node_t *node, NodeOps::Op op) {
+    return node && node->ops && node->ops->supports(op);
+}
+
+} // namespace fs
 
 namespace fs {
 

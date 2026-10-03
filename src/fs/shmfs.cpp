@@ -390,6 +390,27 @@ static fs_node_t *shmfs_finddir(fs_node_t *node, const char *name) {
     return result;
 }
 
+class ShmfsFileOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READ | OP_WRITE | OP_OPEN | OP_CLOSE | OP_TRUNCATE; }
+    uint32_t read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return shmfs_read(node, offset, size, buffer);
+    }
+    uint32_t write(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return shmfs_write(node, offset, size, buffer);
+    }
+    void open(fs_node_t *node, uint32_t flags) const override {
+        shmfs_open(node, flags);
+    }
+    void close(fs_node_t *node) const override {
+        shmfs_close(node);
+    }
+    int truncate(fs_node_t *node, uint32_t new_size) const override {
+        return shmfs_truncate(node, new_size);
+    }
+};
+static const ShmfsFileOps shmfs_file_ops{};
+
 /**
  * 创建共享内存文件
  */
@@ -451,11 +472,7 @@ static int shmfs_create_file(fs_node_t *node, const char *name) {
     new_node->flags = 0;
     
     // 设置操作函数
-    new_node->read = shmfs_read;
-    new_node->write = shmfs_write;
-    new_node->open = shmfs_open;
-    new_node->close = shmfs_close;
-    new_node->truncate = shmfs_truncate;
+    new_node->ops = &shmfs_file_ops;
     
     // 创建目录项
     shmfs_dirent_t *new_entry = (shmfs_dirent_t *)kmalloc(sizeof(shmfs_dirent_t));
@@ -616,6 +633,24 @@ bool fs::Shmfs::is_shmfs_node(fs_node_t *node) {
     return node->impl_data == SHMFS_MAGIC;
 }
 
+class ShmfsDirOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READDIR | OP_FINDDIR | OP_CREATE | OP_UNLINK; }
+    struct dirent *readdir(fs_node_t *node, uint32_t index) const override {
+        return shmfs_readdir(node, index);
+    }
+    fs_node_t *finddir(fs_node_t *node, const char *name) const override {
+        return shmfs_finddir(node, name);
+    }
+    int create(fs_node_t *node, const char *name) const override {
+        return shmfs_create_file(node, name);
+    }
+    int unlink(fs_node_t *node, const char *name) const override {
+        return shmfs_unlink(node, name);
+    }
+};
+static const ShmfsDirOps shmfs_dir_ops{};
+
 /**
  * 创建 shmfs 根目录
  */
@@ -658,10 +693,7 @@ fs_node_t *fs::Shmfs::create(const char *name) {
     root->flags = 0;
     
     // 设置操作函数
-    root->readdir = shmfs_readdir;
-    root->finddir = shmfs_finddir;
-    root->create = shmfs_create_file;
-    root->unlink = shmfs_unlink;
+    root->ops = &shmfs_dir_ops;
     
     return root;
 }

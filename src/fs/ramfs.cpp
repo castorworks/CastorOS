@@ -317,6 +317,24 @@ static fs_node_t *ramfs_finddir(fs_node_t *node, const char *name) {
     return result;
 }
 
+class RamfsFileOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READ | OP_WRITE | OP_OPEN | OP_CLOSE; }
+    uint32_t read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return ramfs_read(node, offset, size, buffer);
+    }
+    uint32_t write(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return ramfs_write(node, offset, size, buffer);
+    }
+    void open(fs_node_t *node, uint32_t flags) const override {
+        ramfs_open(node, flags);
+    }
+    void close(fs_node_t *node) const override {
+        ramfs_close(node);
+    }
+};
+static const RamfsFileOps ramfs_file_ops{};
+
 /**
  * 创建文件（VFS 操作函数）
  */
@@ -375,10 +393,7 @@ static int ramfs_create_file(fs_node_t *node, const char *name) {
     new_node->flags = 0;  // RAMFS 节点不应该被自动释放
     
     // 设置操作函数
-    new_node->read = ramfs_read;
-    new_node->write = ramfs_write;
-    new_node->open = ramfs_open;
-    new_node->close = ramfs_close;
+    new_node->ops = &ramfs_file_ops;
     
     // 添加到目录
     if (ramfs_add_entry(dir, name, new_node) != 0) {
@@ -389,6 +404,32 @@ static int ramfs_create_file(fs_node_t *node, const char *name) {
     
     return 0;
 }
+
+static int ramfs_mkdir(fs_node_t *node, const char *name, uint32_t permissions);
+
+class RamfsDirOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READDIR | OP_FINDDIR | OP_CREATE | OP_MKDIR | OP_UNLINK | OP_RENAME; }
+    struct dirent *readdir(fs_node_t *node, uint32_t index) const override {
+        return ramfs_readdir(node, index);
+    }
+    fs_node_t *finddir(fs_node_t *node, const char *name) const override {
+        return ramfs_finddir(node, name);
+    }
+    int create(fs_node_t *node, const char *name) const override {
+        return ramfs_create_file(node, name);
+    }
+    int mkdir(fs_node_t *node, const char *name, uint32_t permissions) const override {
+        return ramfs_mkdir(node, name, permissions);
+    }
+    int unlink(fs_node_t *node, const char *name) const override {
+        return ramfs_unlink(node, name);
+    }
+    int rename(fs_node_t *node, const char *old_name, const char *new_name) const override {
+        return ramfs_rename(node, old_name, new_name);
+    }
+};
+static const RamfsDirOps ramfs_dir_ops{};
 
 /**
  * 创建目录
@@ -447,12 +488,7 @@ static int ramfs_mkdir(fs_node_t *node, const char *name, uint32_t permissions) 
     new_node->flags = 0;  // RAMFS 节点不应该被自动释放
     
     // 设置操作函数
-    new_node->readdir = ramfs_readdir;
-    new_node->finddir = ramfs_finddir;
-    new_node->create = ramfs_create_file;
-    new_node->mkdir = ramfs_mkdir;
-    new_node->unlink = ramfs_unlink;
-    new_node->rename = ramfs_rename;
+    new_node->ops = &ramfs_dir_ops;
     
     // 添加到父目录
     if (ramfs_add_entry(parent_dir, name, new_node) != 0) {
@@ -625,12 +661,7 @@ fs_node_t *fs::Ramfs::create(const char *name) {
     root->flags = 0;  // RAMFS 节点不应该被自动释放
     
     // 设置操作函数
-    root->readdir = ramfs_readdir;
-    root->finddir = ramfs_finddir;
-    root->create = ramfs_create_file;
-    root->mkdir = ramfs_mkdir;
-    root->unlink = ramfs_unlink;
-    root->rename = ramfs_rename;
+    root->ops = &ramfs_dir_ops;
     
     return root;
 }

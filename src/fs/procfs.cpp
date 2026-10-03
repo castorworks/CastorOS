@@ -713,6 +713,15 @@ static struct dirent *procfs_pid_readdir(fs_node_t *node, uint32_t index) {
     return NULL;
 }
 
+class ProcfsStatusOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READ; }
+    uint32_t read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return procfs_status_read(node, offset, size, buffer);
+    }
+};
+static const ProcfsStatusOps procfs_status_ops{};
+
 /**
  * 在 /proc/[pid] 目录中查找文件
  */
@@ -753,15 +762,7 @@ static fs_node_t *procfs_pid_finddir(fs_node_t *node, const char *name) {
         status_file->impl_data = pid;  // 存储 PID
         status_file->impl = NULL;  // status 文件不需要私有数据
         status_file->ref_count = 1;  // 返回时引用计数为 1
-        status_file->read = procfs_status_read;
-        status_file->write = NULL;
-        status_file->open = NULL;
-        status_file->close = NULL;
-        status_file->readdir = NULL;
-        status_file->finddir = NULL;
-        status_file->create = NULL;
-        status_file->mkdir = NULL;
-        status_file->unlink = NULL;
+        status_file->ops = &procfs_status_ops;
         status_file->ptr = NULL;
         status_file->flags = FS_NODE_FLAG_ALLOCATED;  // 标记为动态分配
         
@@ -869,6 +870,18 @@ static struct dirent *procfs_root_readdir(fs_node_t *node, uint32_t index) {
     return NULL;
 }
 
+class ProcfsPidOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READDIR | OP_FINDDIR; }
+    struct dirent *readdir(fs_node_t *node, uint32_t index) const override {
+        return procfs_pid_readdir(node, index);
+    }
+    fs_node_t *finddir(fs_node_t *node, const char *name) const override {
+        return procfs_pid_finddir(node, name);
+    }
+};
+static const ProcfsPidOps procfs_pid_ops{};
+
 /**
  * 在 /proc 根目录中查找进程目录
  */
@@ -944,15 +957,7 @@ static fs_node_t *procfs_root_finddir(fs_node_t *node, const char *name) {
             pid_dir->impl_data = pid;  // 存储 PID
             pid_dir->impl = priv;  // 设置私有数据（包含 readdir 缓冲区）
             pid_dir->ref_count = 1;  // 返回时引用计数为 1
-            pid_dir->read = NULL;
-            pid_dir->write = NULL;
-            pid_dir->open = NULL;
-            pid_dir->close = NULL;
-            pid_dir->readdir = procfs_pid_readdir;
-            pid_dir->finddir = procfs_pid_finddir;
-            pid_dir->create = NULL;
-            pid_dir->mkdir = NULL;
-            pid_dir->unlink = NULL;
+            pid_dir->ops = &procfs_pid_ops;
             pid_dir->ptr = NULL;
             pid_dir->flags = FS_NODE_FLAG_ALLOCATED;  // 标记为动态分配
             
@@ -962,6 +967,84 @@ static fs_node_t *procfs_root_finddir(fs_node_t *node, const char *name) {
     
     return NULL;
 }
+
+class ProcfsRootOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READDIR | OP_FINDDIR; }
+    struct dirent *readdir(fs_node_t *node, uint32_t index) const override {
+        return procfs_root_readdir(node, index);
+    }
+    fs_node_t *finddir(fs_node_t *node, const char *name) const override {
+        return procfs_root_finddir(node, name);
+    }
+};
+static const ProcfsRootOps procfs_root_ops{};
+
+class ProcfsMeminfoOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READ; }
+    uint32_t read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return procfs_meminfo_read(node, offset, size, buffer);
+    }
+};
+static const ProcfsMeminfoOps procfs_meminfo_ops{};
+
+class ProcfsPciOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READ; }
+    uint32_t read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return procfs_pci_read(node, offset, size, buffer);
+    }
+};
+static const ProcfsPciOps procfs_pci_ops{};
+
+class ProcfsUsbOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READ; }
+    uint32_t read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return procfs_usb_read(node, offset, size, buffer);
+    }
+};
+static const ProcfsUsbOps procfs_usb_ops{};
+
+class ProcfsNetOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READDIR | OP_FINDDIR; }
+    struct dirent *readdir(fs_node_t *node, uint32_t index) const override {
+        return procfs_net_readdir(node, index);
+    }
+    fs_node_t *finddir(fs_node_t *node, const char *name) const override {
+        return procfs_net_finddir(node, name);
+    }
+};
+static const ProcfsNetOps procfs_net_ops{};
+
+class ProcfsNetTcpOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READ; }
+    uint32_t read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return procfs_net_tcp_read(node, offset, size, buffer);
+    }
+};
+static const ProcfsNetTcpOps procfs_net_tcp_ops{};
+
+class ProcfsNetUdpOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READ; }
+    uint32_t read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return procfs_net_udp_read(node, offset, size, buffer);
+    }
+};
+static const ProcfsNetUdpOps procfs_net_udp_ops{};
+
+class ProcfsNetRouteOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READ; }
+    uint32_t read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
+        return procfs_net_route_read(node, offset, size, buffer);
+    }
+};
+static const ProcfsNetRouteOps procfs_net_route_ops{};
 
 /**
  * 初始化 procfs
@@ -996,15 +1079,7 @@ fs_node_t *fs::Procfs::init() {
     procfs_root->gid = 0;
     procfs_root->flags = 0;
     procfs_root->ref_count = 0;  // 初始化引用计数
-    procfs_root->read = NULL;
-    procfs_root->write = NULL;
-    procfs_root->open = NULL;
-    procfs_root->close = NULL;
-    procfs_root->readdir = procfs_root_readdir;
-    procfs_root->finddir = procfs_root_finddir;
-    procfs_root->create = NULL;  // 不支持创建文件
-    procfs_root->mkdir = NULL;   // 不支持创建目录
-    procfs_root->unlink = NULL;  // 不支持删除
+    procfs_root->ops = &procfs_root_ops;
     procfs_root->ptr = NULL;
     procfs_root->impl = procfs_root_private;  // 设置私有数据
     
@@ -1022,15 +1097,7 @@ fs_node_t *fs::Procfs::init() {
     procfs_meminfo_file->size = 512;
     procfs_meminfo_file->permissions = FS_PERM_READ;
     procfs_meminfo_file->ref_count = 0;  // 初始化引用计数
-    procfs_meminfo_file->read = procfs_meminfo_read;
-    procfs_meminfo_file->write = NULL;
-    procfs_meminfo_file->open = NULL;
-    procfs_meminfo_file->close = NULL;
-    procfs_meminfo_file->readdir = NULL;
-    procfs_meminfo_file->finddir = NULL;
-    procfs_meminfo_file->create = NULL;
-    procfs_meminfo_file->mkdir = NULL;
-    procfs_meminfo_file->unlink = NULL;
+    procfs_meminfo_file->ops = &procfs_meminfo_ops;
     procfs_meminfo_file->ptr = NULL;
     
     /* 创建 pci 文件节点 */
@@ -1047,15 +1114,7 @@ fs_node_t *fs::Procfs::init() {
     procfs_pci_file->size = 4096;
     procfs_pci_file->permissions = FS_PERM_READ;
     procfs_pci_file->ref_count = 0;
-    procfs_pci_file->read = procfs_pci_read;
-    procfs_pci_file->write = NULL;
-    procfs_pci_file->open = NULL;
-    procfs_pci_file->close = NULL;
-    procfs_pci_file->readdir = NULL;
-    procfs_pci_file->finddir = NULL;
-    procfs_pci_file->create = NULL;
-    procfs_pci_file->mkdir = NULL;
-    procfs_pci_file->unlink = NULL;
+    procfs_pci_file->ops = &procfs_pci_ops;
     procfs_pci_file->ptr = NULL;
     
     /* 创建 usb 文件节点 */
@@ -1072,15 +1131,7 @@ fs_node_t *fs::Procfs::init() {
     procfs_usb_file->size = 4096;
     procfs_usb_file->permissions = FS_PERM_READ;
     procfs_usb_file->ref_count = 0;
-    procfs_usb_file->read = procfs_usb_read;
-    procfs_usb_file->write = NULL;
-    procfs_usb_file->open = NULL;
-    procfs_usb_file->close = NULL;
-    procfs_usb_file->readdir = NULL;
-    procfs_usb_file->finddir = NULL;
-    procfs_usb_file->create = NULL;
-    procfs_usb_file->mkdir = NULL;
-    procfs_usb_file->unlink = NULL;
+    procfs_usb_file->ops = &procfs_usb_ops;
     procfs_usb_file->ptr = NULL;
     
     /* 创建 /proc/net/ 目录节点 */
@@ -1106,15 +1157,7 @@ fs_node_t *fs::Procfs::init() {
     procfs_net_dir->size = 0;
     procfs_net_dir->permissions = FS_PERM_READ | FS_PERM_EXEC;
     procfs_net_dir->ref_count = 0;
-    procfs_net_dir->read = NULL;
-    procfs_net_dir->write = NULL;
-    procfs_net_dir->open = NULL;
-    procfs_net_dir->close = NULL;
-    procfs_net_dir->readdir = procfs_net_readdir;
-    procfs_net_dir->finddir = procfs_net_finddir;
-    procfs_net_dir->create = NULL;
-    procfs_net_dir->mkdir = NULL;
-    procfs_net_dir->unlink = NULL;
+    procfs_net_dir->ops = &procfs_net_ops;
     procfs_net_dir->ptr = NULL;
     procfs_net_dir->impl = procfs_net_private;
     
@@ -1132,15 +1175,7 @@ fs_node_t *fs::Procfs::init() {
     procfs_net_tcp_file->size = 8192;
     procfs_net_tcp_file->permissions = FS_PERM_READ;
     procfs_net_tcp_file->ref_count = 0;
-    procfs_net_tcp_file->read = procfs_net_tcp_read;
-    procfs_net_tcp_file->write = NULL;
-    procfs_net_tcp_file->open = NULL;
-    procfs_net_tcp_file->close = NULL;
-    procfs_net_tcp_file->readdir = NULL;
-    procfs_net_tcp_file->finddir = NULL;
-    procfs_net_tcp_file->create = NULL;
-    procfs_net_tcp_file->mkdir = NULL;
-    procfs_net_tcp_file->unlink = NULL;
+    procfs_net_tcp_file->ops = &procfs_net_tcp_ops;
     procfs_net_tcp_file->ptr = NULL;
     
     /* 创建 /proc/net/udp 文件节点 */
@@ -1157,15 +1192,7 @@ fs_node_t *fs::Procfs::init() {
     procfs_net_udp_file->size = 4096;
     procfs_net_udp_file->permissions = FS_PERM_READ;
     procfs_net_udp_file->ref_count = 0;
-    procfs_net_udp_file->read = procfs_net_udp_read;
-    procfs_net_udp_file->write = NULL;
-    procfs_net_udp_file->open = NULL;
-    procfs_net_udp_file->close = NULL;
-    procfs_net_udp_file->readdir = NULL;
-    procfs_net_udp_file->finddir = NULL;
-    procfs_net_udp_file->create = NULL;
-    procfs_net_udp_file->mkdir = NULL;
-    procfs_net_udp_file->unlink = NULL;
+    procfs_net_udp_file->ops = &procfs_net_udp_ops;
     procfs_net_udp_file->ptr = NULL;
     
     /* 创建 /proc/net/route 文件节点 */
@@ -1182,15 +1209,7 @@ fs_node_t *fs::Procfs::init() {
     procfs_net_route_file->size = 4096;
     procfs_net_route_file->permissions = FS_PERM_READ;
     procfs_net_route_file->ref_count = 0;
-    procfs_net_route_file->read = procfs_net_route_read;
-    procfs_net_route_file->write = NULL;
-    procfs_net_route_file->open = NULL;
-    procfs_net_route_file->close = NULL;
-    procfs_net_route_file->readdir = NULL;
-    procfs_net_route_file->finddir = NULL;
-    procfs_net_route_file->create = NULL;
-    procfs_net_route_file->mkdir = NULL;
-    procfs_net_route_file->unlink = NULL;
+    procfs_net_route_file->ops = &procfs_net_route_ops;
     procfs_net_route_file->ptr = NULL;
     
     LOG_INFO_MSG("procfs: Initialized (with /proc/net/ support)\n");
