@@ -24,7 +24,7 @@ static ip_reassembly_t reass_table[IP_REASS_MAX_ENTRIES];
 
 // 路由表
 static ip_route_t route_table[IP_ROUTE_MAX];
-static spinlock_t route_lock;  // 静态变量自动初始化为 0（未锁定状态）
+static sync::Spinlock route_lock;  // 静态变量自动初始化为 0（未锁定状态）
 
 // 前向声明上层协议处理函数
 extern void icmp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip);
@@ -392,7 +392,7 @@ int ip_route_dump(char *buf, size_t size) {
     } while(0)
     
     bool irq_state;
-    spinlock_lock_irqsave(&route_lock, &irq_state);
+    route_lock.lock_irqsave(irq_state);
     
     // 表头
     OUTPUT("Kernel IP Routing Table\n");
@@ -419,7 +419,7 @@ int ip_route_dump(char *buf, size_t size) {
                r->dev ? r->dev->name : "N/A", r->metric);
     }
     
-    spinlock_unlock_irqrestore(&route_lock, irq_state);
+    route_lock.unlock_irqrestore(irq_state);
     
     #undef OUTPUT
     return len;

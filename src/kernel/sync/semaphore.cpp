@@ -3,29 +3,23 @@
 #include <kernel/task.h>
 #include <types.h>
 
-void semaphore_init(semaphore_t *sem, int32_t initial_count) {
-    if (sem == NULL) {
-        return;
-    }
+namespace sync {
 
-    spinlock_init(&sem->lock);
-    sem->count = initial_count;
+void Semaphore::init(int32_t initial_count) {
+lock_.init();
+    count_ = initial_count;
 }
 
-static bool semaphore_try_consume(semaphore_t *sem) {
-    if (sem->count > 0) {
-        sem->count--;
+bool Semaphore::try_consume() {
+    if (count_ > 0) {
+        count_--;
         return true;
     }
     return false;
 }
 
-void semaphore_wait(semaphore_t *sem) {
-    if (sem == NULL) {
-        return;
-    }
-
-    task_t *current = task_get_current();
+void Semaphore::wait() {
+task_t *current = task_get_current();
     if (current == NULL) {
         return;
     }
@@ -33,11 +27,11 @@ void semaphore_wait(semaphore_t *sem) {
     while (1) {
         bool irq_state = interrupts_disable();
 
-        spinlock_lock(&sem->lock);
+        lock_.lock();
         
         // 尝试获取信号量
-        if (semaphore_try_consume(sem)) {
-            spinlock_unlock(&sem->lock);
+        if (try_consume()) {
+            lock_.unlock();
             interrupts_restore(irq_state);
             return;
         }
@@ -46,7 +40,7 @@ void semaphore_wait(semaphore_t *sem) {
         // 这样可以防止 Lost Wakeup
         current->state = TASK_BLOCKED;
         
-        spinlock_unlock(&sem->lock);
+        lock_.unlock();
         
         // 现在可以安全地调度到其他任务了
         task_schedule();
@@ -57,52 +51,41 @@ void semaphore_wait(semaphore_t *sem) {
     }
 }
 
-bool semaphore_try_wait(semaphore_t *sem) {
-    if (sem == NULL) {
-        return false;
-    }
-
-    bool irq_state = interrupts_disable();
+bool Semaphore::try_wait() {
+bool irq_state = interrupts_disable();
     bool acquired = false;
 
-    spinlock_lock(&sem->lock);
-    acquired = semaphore_try_consume(sem);
-    spinlock_unlock(&sem->lock);
+    lock_.lock();
+    acquired = try_consume();
+    lock_.unlock();
 
     interrupts_restore(irq_state);
     return acquired;
 }
 
-void semaphore_signal(semaphore_t *sem) {
-    if (sem == NULL) {
-        return;
-    }
+void Semaphore::signal() {
+bool irq_state = interrupts_disable();
 
-    bool irq_state = interrupts_disable();
-
-    spinlock_lock(&sem->lock);
+    lock_.lock();
     
     // 防止整数溢出
-    if (sem->count < INT32_MAX) {
-        sem->count++;
+    if (count_ < INT32_MAX) {
+        count_++;
     }
     
-    spinlock_unlock(&sem->lock);
+    lock_.unlock();
 
-    task_wakeup(sem);
+    task_wakeup(this);
     interrupts_restore(irq_state);
 }
 
-int32_t semaphore_get_value(semaphore_t *sem) {
-    if (sem == NULL) {
-        return 0;
-    }
-
-    bool irq_state = interrupts_disable();
-    spinlock_lock(&sem->lock);
-    int32_t value = sem->count;
-    spinlock_unlock(&sem->lock);
+int32_t Semaphore::value() {
+bool irq_state = interrupts_disable();
+    lock_.lock();
+    int32_t value = count_;
+    lock_.unlock();
     interrupts_restore(irq_state);
     return value;
 }
 
+} // namespace sync

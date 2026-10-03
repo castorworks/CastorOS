@@ -18,7 +18,7 @@
 // TCP PCB 链表
 static tcp_pcb_t *tcp_pcbs = NULL;          // 活动连接
 static tcp_pcb_t *tcp_listen_pcbs = NULL;   // 监听连接
-static spinlock_t tcp_lock;
+static sync::Spinlock tcp_lock;
 
 // 临时端口分配
 #define TCP_EPHEMERAL_PORT_MIN  49152
@@ -504,7 +504,7 @@ static void tcp_send_rst(uint32_t src_ip, uint32_t dst_ip,
 }
 
 void tcp_init(void) {
-    spinlock_init(&tcp_lock);
+    tcp_lock.init();
     tcp_pcbs = NULL;
     tcp_listen_pcbs = NULL;
     next_ephemeral_port = TCP_EPHEMERAL_PORT_MIN;
@@ -561,12 +561,12 @@ void tcp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
     
     // 查找匹配的 PCB
     bool irq_state;
-    spinlock_lock_irqsave(&tcp_lock, &irq_state);
+    tcp_lock.lock_irqsave(irq_state);
     
     tcp_pcb_t *pcb = tcp_find_pcb(dst_ip, dst_port, src_ip, src_port);
     
     if (!pcb) {
-        spinlock_unlock_irqrestore(&tcp_lock, irq_state);
+        tcp_lock.unlock_irqrestore(irq_state);
         
         // 没有匹配的连接，发送 RST
         if (!(flags & TCP_FLAG_RST)) {
@@ -625,7 +625,7 @@ void tcp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
                 pcb->pending_queue = new_pcb;
                 pcb->pending_count++;
                 
-                spinlock_unlock_irqrestore(&tcp_lock, irq_state);
+                tcp_lock.unlock_irqrestore(irq_state);
                 
                 // 发送 SYN+ACK
                 tcp_send_segment(new_pcb, TCP_FLAG_SYN | TCP_FLAG_ACK, NULL, 0);
@@ -651,7 +651,7 @@ void tcp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
                 if (flags & TCP_FLAG_ACK) {
                     pcb->state = TCP_CLOSED;
                     if (pcb->error_callback) {
-                        spinlock_unlock_irqrestore(&tcp_lock, irq_state);
+                        tcp_lock.unlock_irqrestore(irq_state);
                         pcb->error_callback(pcb, -1, pcb->callback_arg);
                         netbuf_free(buf);
                         return;
@@ -669,7 +669,7 @@ void tcp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
                 if (TCP_SEQ_GT(pcb->snd_una, pcb->iss)) {
                     // 连接建立
                     pcb->state = TCP_ESTABLISHED;
-                    spinlock_unlock_irqrestore(&tcp_lock, irq_state);
+                    tcp_lock.unlock_irqrestore(irq_state);
                     
                     // 发送 ACK
                     tcp_send_segment(pcb, TCP_FLAG_ACK, NULL, 0);
@@ -679,7 +679,7 @@ void tcp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
                 } else {
                     // 同时打开
                     pcb->state = TCP_SYN_RECEIVED;
-                    spinlock_unlock_irqrestore(&tcp_lock, irq_state);
+                    tcp_lock.unlock_irqrestore(irq_state);
                     
                     tcp_send_segment(pcb, TCP_FLAG_SYN | TCP_FLAG_ACK, NULL, 0);
                     
@@ -721,7 +721,7 @@ void tcp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
                         
                         // 调用回调
                         if (listen->accept_callback) {
-                            spinlock_unlock_irqrestore(&tcp_lock, irq_state);
+                            tcp_lock.unlock_irqrestore(irq_state);
                             listen->accept_callback(pcb, listen->callback_arg);
                             netbuf_free(buf);
                             return;
@@ -742,7 +742,7 @@ void tcp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
                 tcp_free_unacked(pcb);
                 tcp_free_ooseq(pcb);
                 if (pcb->error_callback) {
-                    spinlock_unlock_irqrestore(&tcp_lock, irq_state);
+                    tcp_lock.unlock_irqrestore(irq_state);
                     pcb->error_callback(pcb, -1, pcb->callback_arg);
                     netbuf_free(buf);
                     return;
@@ -774,7 +774,7 @@ void tcp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
                 
                 // 如果有数据被接收（按序或乱序合并后）
                 if (pcb->rcv_nxt != old_rcv_nxt) {
-                    spinlock_unlock_irqrestore(&tcp_lock, irq_state);
+                    tcp_lock.unlock_irqrestore(irq_state);
                     
                     // 发送 ACK
                     tcp_send_segment(pcb, TCP_FLAG_ACK, NULL, 0);
@@ -788,7 +788,7 @@ void tcp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
                     return;
                 } else if (TCP_SEQ_GT(seq, pcb->rcv_nxt)) {
                     // 乱序数据，发送重复 ACK
-                    spinlock_unlock_irqrestore(&tcp_lock, irq_state);
+                    tcp_lock.unlock_irqrestore(irq_state);
                     tcp_send_segment(pcb, TCP_FLAG_ACK, NULL, 0);
                     netbuf_free(buf);
                     return;
@@ -816,7 +816,7 @@ void tcp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
                         break;
                 }
                 
-                spinlock_unlock_irqrestore(&tcp_lock, irq_state);
+                tcp_lock.unlock_irqrestore(irq_state);
                 
                 // 发送 ACK
                 tcp_send_segment(pcb, TCP_FLAG_ACK, NULL, 0);
@@ -849,7 +849,7 @@ void tcp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
             break;
     }
     
-    spinlock_unlock_irqrestore(&tcp_lock, irq_state);
+    tcp_lock.unlock_irqrestore(irq_state);
     netbuf_free(buf);
 }
 
@@ -884,10 +884,10 @@ tcp_pcb_t *tcp_pcb_new(void) {
         return NULL;
     }
     
-    mutex_init(&pcb->lock);
+    pcb->lock.init();
     
     // 添加到活动链表
-    SpinlockIrqGuard guard(tcp_lock);
+    sync::SpinlockIrqGuard guard(tcp_lock);
     pcb->next = tcp_pcbs;
     tcp_pcbs = pcb;
     
@@ -900,7 +900,7 @@ void tcp_pcb_free(tcp_pcb_t *pcb) {
     }
     
     bool irq_state;
-    spinlock_lock_irqsave(&tcp_lock, &irq_state);
+    tcp_lock.lock_irqsave(irq_state);
     
     // 从活动链表移除
     tcp_pcb_t **pp = &tcp_pcbs;
@@ -920,7 +920,7 @@ void tcp_pcb_free(tcp_pcb_t *pcb) {
         *pp = pcb->next;
     }
     
-    spinlock_unlock_irqrestore(&tcp_lock, irq_state);
+    tcp_lock.unlock_irqrestore(irq_state);
     
     // 释放未确认队列
     tcp_free_unacked(pcb);
@@ -940,7 +940,7 @@ int tcp_bind(tcp_pcb_t *pcb, uint32_t local_ip, uint16_t local_port) {
         return -1;
     }
     
-    SpinlockIrqGuard guard(tcp_lock);
+    sync::SpinlockIrqGuard guard(tcp_lock);
     
     // 检查端口是否已被使用
     for (tcp_pcb_t *p = tcp_pcbs; p != NULL; p = p->next) {
@@ -973,7 +973,7 @@ int tcp_listen(tcp_pcb_t *pcb, int backlog) {
         return -1;  // 必须先绑定
     }
     
-    SpinlockIrqGuard guard(tcp_lock);
+    sync::SpinlockIrqGuard guard(tcp_lock);
     
     // 从活动链表移到监听链表
     tcp_pcb_t **pp = &tcp_pcbs;
@@ -1025,7 +1025,7 @@ tcp_pcb_t *tcp_accept(tcp_pcb_t *pcb) {
         return NULL;
     }
     
-    SpinlockIrqGuard guard(tcp_lock);
+    sync::SpinlockIrqGuard guard(tcp_lock);
     
     tcp_pcb_t *new_pcb = pcb->accept_queue;
     if (new_pcb) {
@@ -1205,7 +1205,7 @@ const char *tcp_state_name(tcp_state_t state) {
 }
 
 uint16_t tcp_alloc_port(void) {
-    SpinlockIrqGuard guard(tcp_lock);
+    sync::SpinlockIrqGuard guard(tcp_lock);
     
     uint16_t start_port = next_ephemeral_port;
     
@@ -1255,7 +1255,7 @@ int tcp_pcb_list_dump(char *buf, size_t size) {
     } while(0)
     
     bool irq_state;
-    spinlock_lock_irqsave(&tcp_lock, &irq_state);
+    tcp_lock.lock_irqsave(irq_state);
     
     // 表头
     OUTPUT("TCP Connections:\n");
@@ -1302,7 +1302,7 @@ int tcp_pcb_list_dump(char *buf, size_t size) {
                tcp_state_name(pcb->state));
     }
     
-    spinlock_unlock_irqrestore(&tcp_lock, irq_state);
+    tcp_lock.unlock_irqrestore(irq_state);
     
     #undef OUTPUT
     return len;
@@ -1319,7 +1319,7 @@ void tcp_timer(void) {
     uint32_t now = (uint32_t)timer_get_uptime_ms();
     
     bool irq_state;
-    spinlock_lock_irqsave(&tcp_lock, &irq_state);
+    tcp_lock.lock_irqsave(irq_state);
     
     // 遍历所有活动 PCB
     tcp_pcb_t *pcb = tcp_pcbs;
@@ -1339,9 +1339,9 @@ void tcp_timer(void) {
                     tcp_free_ooseq(pcb);
                     
                     if (pcb->error_callback) {
-                        spinlock_unlock_irqrestore(&tcp_lock, irq_state);
+                        tcp_lock.unlock_irqrestore(irq_state);
                         pcb->error_callback(pcb, -1, pcb->callback_arg);
-                        spinlock_lock_irqsave(&tcp_lock, &irq_state);
+                        tcp_lock.lock_irqsave(irq_state);
                     }
                 } else {
                     // 重传
@@ -1349,7 +1349,7 @@ void tcp_timer(void) {
                                   seg->seq, seg->retries + 1, pcb->rto);
                     
                     // 暂时解锁以发送段
-                    spinlock_unlock_irqrestore(&tcp_lock, irq_state);
+                    tcp_lock.unlock_irqrestore(irq_state);
                     
                     // 重新发送段（不通过 tcp_send_segment 以避免再次加入队列）
                     netdev_t *dev = netdev_get_default();
@@ -1384,7 +1384,7 @@ void tcp_timer(void) {
                         }
                     }
                     
-                    spinlock_lock_irqsave(&tcp_lock, &irq_state);
+                    tcp_lock.lock_irqsave(irq_state);
                     
                     // 更新重传信息
                     seg->retries++;
@@ -1418,6 +1418,6 @@ void tcp_timer(void) {
         pcb = next;
     }
     
-    spinlock_unlock_irqrestore(&tcp_lock, irq_state);
+    tcp_lock.unlock_irqrestore(irq_state);
 }
 

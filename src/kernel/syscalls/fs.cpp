@@ -876,7 +876,7 @@ uint32_t sys_dup2(int32_t oldfd, int32_t newfd) {
     }
     
     // 手动设置新的文件描述符（直接操作表项，绕过 fd_table_alloc）
-    spinlock_lock(&current->fd_table->lock);
+    current->fd_table->lock.lock();
     
     current->fd_table->entries[newfd].node = old_entry->node;
     current->fd_table->entries[newfd].offset = old_entry->offset;
@@ -891,7 +891,7 @@ uint32_t sys_dup2(int32_t oldfd, int32_t newfd) {
         pipe_on_dup(old_entry->node);
     }
     
-    spinlock_unlock(&current->fd_table->lock);
+    current->fd_table->lock.unlock();
     
     LOG_DEBUG_MSG("sys_dup2: duplicated fd %d -> %d\n", oldfd, newfd);
     

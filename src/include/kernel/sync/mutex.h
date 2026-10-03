@@ -4,18 +4,30 @@
 #include <types.h>
 #include <kernel/sync/spinlock.h>
 
-typedef struct {
-    spinlock_t lock;
-    bool locked;
-    uint32_t owner_pid;
-    uint32_t recursion;
-} mutex_t;
+namespace sync {
 
-void mutex_init(mutex_t *mutex);
-void mutex_lock(mutex_t *mutex);
-bool mutex_try_lock(mutex_t *mutex);
-void mutex_unlock(mutex_t *mutex);
-bool mutex_is_locked(const mutex_t *mutex);
+/**
+ * @brief 可递归的阻塞互斥锁
+ *
+ * 获取不到锁时当前任务会被阻塞并让出 CPU。同一任务可以重复加锁，
+ * 需要对应次数的 unlock() 才会真正释放。
+ * 平凡类型：使用前必须调用 init()。
+ */
+class Mutex {
+public:
+    void init();
+
+    void lock();
+    bool try_lock();
+    void unlock();
+    bool is_locked() const;
+
+private:
+    Spinlock lock_;
+    bool locked_;
+    uint32_t owner_pid_;
+    uint32_t recursion_;
+};
 
 /**
  * @brief RAII 互斥锁守卫
@@ -24,15 +36,16 @@ bool mutex_is_locked(const mutex_t *mutex);
  */
 class MutexGuard {
 public:
-    explicit MutexGuard(mutex_t &mutex) : mutex_(mutex) { mutex_lock(&mutex_); }
-    ~MutexGuard() { mutex_unlock(&mutex_); }
+    explicit MutexGuard(Mutex &mutex) : mutex_(mutex) { mutex_.lock(); }
+    ~MutexGuard() { mutex_.unlock(); }
 
     MutexGuard(const MutexGuard &) = delete;
     MutexGuard &operator=(const MutexGuard &) = delete;
 
 private:
-    mutex_t &mutex_;
+    Mutex &mutex_;
 };
 
-#endif // _KERNEL_SYNC_MUTEX_H_
+} // namespace sync
 
+#endif // _KERNEL_SYNC_MUTEX_H_

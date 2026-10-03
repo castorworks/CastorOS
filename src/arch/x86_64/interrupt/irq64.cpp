@@ -42,7 +42,7 @@
 static isr_handler_t irq_handlers[16] = {0};
 
 /* Spinlock for IRQ handler registration */
-static spinlock_t irq_registry_lock;
+static sync::Spinlock irq_registry_lock;
 static bool irq_registry_lock_initialized = false;
 
 /* IRQ statistics */
@@ -165,12 +165,12 @@ void irq64_register_handler(uint8_t irq, isr_handler_t handler) {
     
     /* Ensure lock is initialized */
     if (!irq_registry_lock_initialized) {
-        spinlock_init(&irq_registry_lock);
+        irq_registry_lock.init();
         irq_registry_lock_initialized = true;
     }
     
     /* Use IRQ-safe spinlock */
-    SpinlockIrqGuard guard(irq_registry_lock);
+    sync::SpinlockIrqGuard guard(irq_registry_lock);
     irq_handlers[irq] = handler;
 }
 
@@ -224,7 +224,7 @@ void irq64_init(void) {
     LOG_INFO_MSG("Initializing x86_64 IRQ...\n");
 
     /* Initialize IRQ registry lock */
-    spinlock_init(&irq_registry_lock);
+    irq_registry_lock.init();
     irq_registry_lock_initialized = true;
     LOG_DEBUG_MSG("  IRQ registry lock initialized\n");
 

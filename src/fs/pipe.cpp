@@ -40,7 +40,7 @@ void pipe_on_dup(fs_node_t *node) {
     pipe_t *pipe = (pipe_t *)node->impl;
     bool is_write_end = (node->impl_data == 1);
     
-    MutexGuard guard(pipe->lock);
+    sync::MutexGuard guard(pipe->lock);
     
     if (is_write_end) {
         pipe->writers++;
@@ -81,9 +81,9 @@ int pipe_create(fs_node_t **read_node, fs_node_t **write_node) {
     pipe->write_closed = false;
     
     // 初始化同步原语
-    mutex_init(&pipe->lock);
-    semaphore_init(&pipe->read_sem, 0);              // 初始无数据可读
-    semaphore_init(&pipe->write_sem, PIPE_BUFFER_SIZE);  // 初始全部空间可写
+    pipe->lock.init();
+    pipe->read_sem.init(0);              // 初始无数据可读
+    pipe->write_sem.init(PIPE_BUFFER_SIZE);  // 初始全部空间可写
     
     // 分配 inode 号
     uint32_t inode = pipe_inode_counter++;
@@ -187,28 +187,28 @@ static uint32_t pipe_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8
     
     while (bytes_read < size) {
         // 等待数据可用
-        mutex_lock(&pipe->lock);
+        pipe->lock.lock();
         
         while (pipe->count == 0) {
             // 如果写端已关闭且没有数据，返回 EOF
             if (pipe->write_closed) {
-                mutex_unlock(&pipe->lock);
+                pipe->lock.unlock();
                 LOG_DEBUG_MSG("pipe_read: EOF (write_closed), read %u bytes\n", bytes_read);
                 return bytes_read;
             }
             
             // 释放锁，等待数据
-            mutex_unlock(&pipe->lock);
+            pipe->lock.unlock();
             
             // 等待读信号量（有数据可读）
-            semaphore_wait(&pipe->read_sem);
+            pipe->read_sem.wait();
             
             // 重新获取锁
-            mutex_lock(&pipe->lock);
+            pipe->lock.lock();
             
             // 再次检查写端是否关闭（可能在等待期间被关闭）
             if (pipe->count == 0 && pipe->write_closed) {
-                mutex_unlock(&pipe->lock);
+                pipe->lock.unlock();
                 return bytes_read;
             }
         }
@@ -226,12 +226,12 @@ static uint32_t pipe_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8
             pipe->count--;
             
             // 通知写端有空间可用
-            semaphore_signal(&pipe->write_sem);
+            pipe->write_sem.signal();
         }
         
         bytes_read += to_read;
         
-        mutex_unlock(&pipe->lock);
+        pipe->lock.unlock();
         
         // 如果已读取到数据，可以返回（不必填满整个缓冲区）
         if (bytes_read > 0) {
@@ -264,39 +264,39 @@ static uint32_t pipe_write(fs_node_t *node, uint32_t offset, uint32_t size, uint
     uint32_t bytes_written = 0;
     
     // 检查读端是否已关闭
-    mutex_lock(&pipe->lock);
+    pipe->lock.lock();
     if (pipe->read_closed) {
-        mutex_unlock(&pipe->lock);
+        pipe->lock.unlock();
         LOG_WARN_MSG("pipe_write: broken pipe (read_closed)\n");
         // 实际应该发送 SIGPIPE 信号
         return 0;
     }
-    mutex_unlock(&pipe->lock);
+    pipe->lock.unlock();
     
     while (bytes_written < size) {
         // 等待空间可用
-        mutex_lock(&pipe->lock);
+        pipe->lock.lock();
         
         while (pipe->count == PIPE_BUFFER_SIZE) {
             // 如果读端已关闭，返回错误
             if (pipe->read_closed) {
-                mutex_unlock(&pipe->lock);
+                pipe->lock.unlock();
                 LOG_WARN_MSG("pipe_write: broken pipe during write\n");
                 return bytes_written;
             }
             
             // 释放锁，等待空间
-            mutex_unlock(&pipe->lock);
+            pipe->lock.unlock();
             
             // 等待写信号量（有空间可写）
-            semaphore_wait(&pipe->write_sem);
+            pipe->write_sem.wait();
             
             // 重新获取锁
-            mutex_lock(&pipe->lock);
+            pipe->lock.lock();
             
             // 再次检查读端是否关闭
             if (pipe->read_closed) {
-                mutex_unlock(&pipe->lock);
+                pipe->lock.unlock();
                 return bytes_written;
             }
         }
@@ -315,12 +315,12 @@ static uint32_t pipe_write(fs_node_t *node, uint32_t offset, uint32_t size, uint
             pipe->count++;
             
             // 通知读端有数据可读
-            semaphore_signal(&pipe->read_sem);
+            pipe->read_sem.signal();
         }
         
         bytes_written += to_write;
         
-        mutex_unlock(&pipe->lock);
+        pipe->lock.unlock();
     }
     
     LOG_DEBUG_MSG("pipe_write: wrote %u bytes\n", bytes_written);
@@ -347,7 +347,7 @@ static void pipe_close(fs_node_t *node) {
     bool is_write_end = (node->impl_data == 1);
     bool should_free = false;
     
-    mutex_lock(&pipe->lock);
+    pipe->lock.lock();
     
     if (is_write_end) {
         // 关闭写端
@@ -359,7 +359,7 @@ static void pipe_close(fs_node_t *node) {
             // 唤醒所有等待读取的进程，让它们看到 EOF
             // 发送多个信号确保所有等待的读者被唤醒
             for (int i = 0; i < 10; i++) {
-                semaphore_signal(&pipe->read_sem);
+                pipe->read_sem.signal();
             }
         }
     } else {
@@ -371,7 +371,7 @@ static void pipe_close(fs_node_t *node) {
             pipe->read_closed = true;
             // 唤醒所有等待写入的进程，让它们看到错误
             for (int i = 0; i < 10; i++) {
-                semaphore_signal(&pipe->write_sem);
+                pipe->write_sem.signal();
             }
         }
     }
@@ -379,7 +379,7 @@ static void pipe_close(fs_node_t *node) {
     // 检查是否两端都已关闭
     should_free = (pipe->readers == 0 && pipe->writers == 0);
     
-    mutex_unlock(&pipe->lock);
+    pipe->lock.unlock();
     
     // 如果两端都关闭，释放管道资源
     if (should_free) {

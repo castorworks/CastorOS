@@ -74,7 +74,7 @@ typedef struct fat32_fs {
     uint32_t last_allocated_cluster;  // 上次分配的簇号（用于加速下次分配）
     uint32_t next_free_cluster;   // FSInfo 中的下一个空闲簇号
     uint32_t fsinfo_sector;       // FSInfo 扇区号
-    mutex_t fs_lock;              // 文件系统级别锁，保护 FAT 表和簇分配
+    sync::Mutex fs_lock;              // 文件系统级别锁，保护 FAT 表和簇分配
 } fat32_fs_t;
 
 // FAT32 文件节点私有数据
@@ -962,27 +962,27 @@ static int fat32_file_truncate(fs_node_t *node, uint32_t new_size) {
         return -1;
     }
     
-    mutex_lock(&fs->fs_lock);
+    fs->fs_lock.lock();
     
     uint32_t cluster_size = fs->bytes_per_cluster;
     uint32_t old_size = file->size;
     
     if (new_size == old_size) {
         // 大小不变
-        mutex_unlock(&fs->fs_lock);
+        fs->fs_lock.unlock();
         return 0;
     }
     
     if (new_size > old_size) {
         // 扩展文件
         if (fat32_ensure_file_size(file, new_size) != 0) {
-            mutex_unlock(&fs->fs_lock);
+            fs->fs_lock.unlock();
             return -1;
         }
         
         // 将新扩展的区域填充为 0
         if (fat32_zero_range(file, old_size, new_size) != 0) {
-            mutex_unlock(&fs->fs_lock);
+            fs->fs_lock.unlock();
             return -1;
         }
     } else {
@@ -1011,7 +1011,7 @@ static int fat32_file_truncate(fs_node_t *node, uint32_t new_size) {
     // 更新目录项
     fat32_update_dirent_metadata(file);
     
-    mutex_unlock(&fs->fs_lock);
+    fs->fs_lock.unlock();
     
     LOG_DEBUG_MSG("fat32: Truncated file from %u to %u bytes\n", old_size, new_size);
     
@@ -1238,7 +1238,7 @@ static int fat32_dir_create(fs_node_t *node, const char *name) {
     }
     
     // 获取文件系统锁
-    MutexGuard guard(dir->fs->fs_lock);
+    sync::MutexGuard guard(dir->fs->fs_lock);
     int ret = fat32_dir_create_entry(dir, name, false);
     return ret;
 }
@@ -1254,7 +1254,7 @@ static int fat32_dir_mkdir(fs_node_t *node, const char *name, uint32_t permissio
     }
     
     // 获取文件系统锁
-    MutexGuard guard(dir->fs->fs_lock);
+    sync::MutexGuard guard(dir->fs->fs_lock);
     int ret = fat32_dir_create_entry(dir, name, true);
     return ret;
 }
@@ -1316,7 +1316,7 @@ static int fat32_dir_unlink(fs_node_t *node, const char *name) {
     }
     
     // 获取文件系统锁
-    MutexGuard guard(dir->fs->fs_lock);
+    sync::MutexGuard guard(dir->fs->fs_lock);
     int ret = fat32_dir_remove_entry(node, name);
     return ret;
 }
@@ -1353,12 +1353,12 @@ static int fat32_dir_rename(fs_node_t *node, const char *old_name, const char *n
     fat32_fs_t *fs = dir->fs;
     
     // 获取文件系统锁
-    mutex_lock(&fs->fs_lock);
+    fs->fs_lock.lock();
     
     // 查找旧文件
     fat32_dir_lookup_t *lookup = fat32_find_file_in_dir(fs, dir->start_cluster, old_name);
     if (!lookup) {
-        mutex_unlock(&fs->fs_lock);
+        fs->fs_lock.unlock();
         LOG_ERROR_MSG("fat32_dir_rename: '%s' not found\n", old_name);
         return -1;
     }
@@ -1368,7 +1368,7 @@ static int fat32_dir_rename(fs_node_t *node, const char *old_name, const char *n
     if (existing) {
         kfree(existing);
         kfree(lookup);
-        mutex_unlock(&fs->fs_lock);
+        fs->fs_lock.unlock();
         LOG_ERROR_MSG("fat32_dir_rename: '%s' already exists\n", new_name);
         return -1;
     }
@@ -1377,7 +1377,7 @@ static int fat32_dir_rename(fs_node_t *node, const char *old_name, const char *n
     char short_name[11];
     if (fat32_make_short_name(new_name, short_name) != 0) {
         kfree(lookup);
-        mutex_unlock(&fs->fs_lock);
+        fs->fs_lock.unlock();
         LOG_ERROR_MSG("fat32_dir_rename: invalid new name '%s'\n", new_name);
         return -1;
     }
@@ -1389,7 +1389,7 @@ static int fat32_dir_rename(fs_node_t *node, const char *old_name, const char *n
     int ret = fat32_write_dir_entry(fs, lookup->cluster, lookup->offset, &lookup->entry);
     
     kfree(lookup);
-    mutex_unlock(&fs->fs_lock);
+    fs->fs_lock.unlock();
     
     if (ret == 0) {
         LOG_DEBUG_MSG("fat32_dir_rename: '%s' -> '%s' success\n", old_name, new_name);
@@ -1428,7 +1428,7 @@ static uint32_t fat32_file_read(fs_node_t *node, uint32_t offset, uint32_t size,
     fat32_fs_t *fs = file->fs;
     
     // 获取文件系统锁
-    MutexGuard guard(fs->fs_lock);
+    sync::MutexGuard guard(fs->fs_lock);
     
     uint32_t bytes_read = 0;
     uint32_t current_cluster = file->start_cluster;
@@ -1500,7 +1500,7 @@ static uint32_t fat32_file_write(fs_node_t *node, uint32_t offset, uint32_t size
     fat32_fs_t *fs = file->fs;
     
     // 获取文件系统锁
-    MutexGuard guard(fs->fs_lock);
+    sync::MutexGuard guard(fs->fs_lock);
     
     uint32_t cluster_size = fs->bytes_per_cluster;
     uint32_t original_size = file->size;
@@ -1609,7 +1609,7 @@ static struct dirent *fat32_dir_readdir(fs_node_t *node, uint32_t index) {
     fat32_fs_t *fs = file->fs;
     
     // 获取文件系统锁
-    MutexGuard guard(fs->fs_lock);
+    sync::MutexGuard guard(fs->fs_lock);
     
     uint8_t *cluster_buffer = (uint8_t *)kmalloc(fs->bytes_per_cluster);
     if (!cluster_buffer) {
@@ -1688,7 +1688,7 @@ static fs_node_t *fat32_dir_finddir(fs_node_t *node, const char *name) {
     fat32_fs_t *fs = file->fs;
     
     // 获取文件系统锁
-    MutexGuard guard(fs->fs_lock);
+    sync::MutexGuard guard(fs->fs_lock);
     
     // 查找目录项
     fat32_dir_lookup_t *lookup = fat32_find_file_in_dir(fs, file->start_cluster, name);
@@ -1805,7 +1805,7 @@ fs_node_t *fat32_init(blockdev_t *dev) {
     }
     
     memset(fs, 0, sizeof(fat32_fs_t));
-    mutex_init(&fs->fs_lock);  // 初始化文件系统锁
+    fs->fs_lock.init();  // 初始化文件系统锁
     fs->dev = blockdev_retain(dev);  // 保留设备引用，防止被销毁
     
     if (blockdev_read(dev, 0, 1, (uint8_t *)&fs->bpb) != 0) {

@@ -3,54 +3,44 @@
 #include <kernel/interrupt.h>
 #include <lib/klog.h>
 
+namespace sync {
+
 static inline task_t *mutex_current_task(void) {
     return task_get_current();
 }
 
-void mutex_init(mutex_t *mutex) {
-    if (mutex == NULL) {
-        return;
-    }
-
-    spinlock_init(&mutex->lock);
-    mutex->locked = false;
-    mutex->owner_pid = 0;
-    mutex->recursion = 0;
+void Mutex::init() {
+lock_.init();
+    locked_ = false;
+    owner_pid_ = 0;
+    recursion_ = 0;
 }
 
-bool mutex_try_lock(mutex_t *mutex) {
-    if (mutex == NULL) {
-        return false;
-    }
-
-    bool irq_state = interrupts_disable();
+bool Mutex::try_lock() {
+bool irq_state = interrupts_disable();
     task_t *current = mutex_current_task();
     bool acquired = false;
 
-    spinlock_lock(&mutex->lock);
+    lock_.lock();
 
-    if (!mutex->locked) {
-        mutex->locked = true;
-        mutex->owner_pid = current ? current->pid : 0;
-        mutex->recursion = 1;
+    if (!locked_) {
+        locked_ = true;
+        owner_pid_ = current ? current->pid : 0;
+        recursion_ = 1;
         acquired = true;
-    } else if (current != NULL && mutex->owner_pid == current->pid) {
-        mutex->recursion++;
+    } else if (current != NULL && owner_pid_ == current->pid) {
+        recursion_++;
         acquired = true;
     }
 
-    spinlock_unlock(&mutex->lock);
+    lock_.unlock();
     interrupts_restore(irq_state);
 
     return acquired;
 }
 
-void mutex_lock(mutex_t *mutex) {
-    if (mutex == NULL) {
-        return;
-    }
-
-    task_t *current = mutex_current_task();
+void Mutex::lock() {
+task_t *current = mutex_current_task();
     if (current == NULL) {
         return;
     }
@@ -58,22 +48,22 @@ void mutex_lock(mutex_t *mutex) {
     while (1) {
         bool irq_state = interrupts_disable();
 
-        spinlock_lock(&mutex->lock);
+        lock_.lock();
 
         // 检查互斥锁是否可用
-        if (!mutex->locked) {
-            mutex->locked = true;
-            mutex->owner_pid = current->pid;
-            mutex->recursion = 1;
-            spinlock_unlock(&mutex->lock);
+        if (!locked_) {
+            locked_ = true;
+            owner_pid_ = current->pid;
+            recursion_ = 1;
+            lock_.unlock();
             interrupts_restore(irq_state);
             return;
         }
 
         // 检查是否是递归锁定（同一任务再次获取）
-        if (mutex->owner_pid == current->pid) {
-            mutex->recursion++;
-            spinlock_unlock(&mutex->lock);
+        if (owner_pid_ == current->pid) {
+            recursion_++;
+            lock_.unlock();
             interrupts_restore(irq_state);
             return;
         }
@@ -82,7 +72,7 @@ void mutex_lock(mutex_t *mutex) {
         // 这样可以防止 Lost Wakeup
         current->state = TASK_BLOCKED;
         
-        spinlock_unlock(&mutex->lock);
+        lock_.unlock();
         
         // 现在可以安全地调度到其他任务了
         task_schedule();
@@ -93,12 +83,8 @@ void mutex_lock(mutex_t *mutex) {
     }
 }
 
-void mutex_unlock(mutex_t *mutex) {
-    if (mutex == NULL) {
-        return;
-    }
-
-    task_t *current = mutex_current_task();
+void Mutex::unlock() {
+task_t *current = mutex_current_task();
     // 如果任务系统还未初始化，直接返回（与 mutex_lock 保持一致）
     if (current == NULL) {
         return;
@@ -107,34 +93,32 @@ void mutex_unlock(mutex_t *mutex) {
     bool irq_state = interrupts_disable();
     bool should_wakeup = false;
 
-    spinlock_lock(&mutex->lock);
+    lock_.lock();
 
-    if (!mutex->locked) {
+    if (!locked_) {
         LOG_WARN_MSG("mutex_unlock: unlock called on unlocked mutex\n");
-    } else if (mutex->owner_pid != current->pid) {
+    } else if (owner_pid_ != current->pid) {
         LOG_WARN_MSG("mutex_unlock: current task is not the owner (owner=%u)\n",
-                     mutex->owner_pid);
+                     owner_pid_);
     } else {
-        if (--mutex->recursion == 0) {
-            mutex->locked = false;
-            mutex->owner_pid = 0;
+        if (--recursion_ == 0) {
+            locked_ = false;
+            owner_pid_ = 0;
             should_wakeup = true;
         }
     }
 
-    spinlock_unlock(&mutex->lock);
+    lock_.unlock();
 
     if (should_wakeup) {
-        task_wakeup(mutex);
+        task_wakeup(this);
     }
 
     interrupts_restore(irq_state);
 }
 
-bool mutex_is_locked(const mutex_t *mutex) {
-    if (mutex == NULL) {
-        return false;
-    }
-    return mutex->locked;
+bool Mutex::is_locked() const {
+return locked_;
 }
 
+} // namespace sync

@@ -5,52 +5,52 @@
 #include <kernel/sync/semaphore.h>
 
 static void test_spinlock_basic(void) {
-    spinlock_t lock;
-    spinlock_init(&lock);
+    sync::Spinlock lock;
+    lock.init();
 
-    ASSERT_FALSE(spinlock_is_locked(&lock));
-    spinlock_lock(&lock);
-    ASSERT_TRUE(spinlock_is_locked(&lock));
-    spinlock_unlock(&lock);
-    ASSERT_FALSE(spinlock_is_locked(&lock));
+    ASSERT_FALSE(lock.is_locked());
+    lock.lock();
+    ASSERT_TRUE(lock.is_locked());
+    lock.unlock();
+    ASSERT_FALSE(lock.is_locked());
 }
 
 static void test_mutex_recursive(void) {
-    mutex_t mutex;
-    mutex_init(&mutex);
+    sync::Mutex mutex;
+    mutex.init();
 
-    ASSERT_FALSE(mutex_is_locked(&mutex));
-    mutex_lock(&mutex);
-    ASSERT_TRUE(mutex_is_locked(&mutex));
+    ASSERT_FALSE(mutex.is_locked());
+    mutex.lock();
+    ASSERT_TRUE(mutex.is_locked());
 
     /* 同一任务递归加锁 */
-    mutex_lock(&mutex);
-    ASSERT_TRUE(mutex_is_locked(&mutex));
+    mutex.lock();
+    ASSERT_TRUE(mutex.is_locked());
 
     /* 释放两次 */
-    mutex_unlock(&mutex);
-    ASSERT_TRUE(mutex_is_locked(&mutex));
+    mutex.unlock();
+    ASSERT_TRUE(mutex.is_locked());
 
-    mutex_unlock(&mutex);
-    ASSERT_FALSE(mutex_is_locked(&mutex));
+    mutex.unlock();
+    ASSERT_FALSE(mutex.is_locked());
 }
 
 static void test_semaphore_basic(void) {
-    semaphore_t sem;
-    semaphore_init(&sem, 2);
+    sync::Semaphore sem;
+    sem.init(2);
 
-    ASSERT_EQ(2, semaphore_get_value(&sem));
+    ASSERT_EQ(2, sem.value());
 
-    semaphore_wait(&sem);
-    ASSERT_EQ(1, semaphore_get_value(&sem));
+    sem.wait();
+    ASSERT_EQ(1, sem.value());
 
-    ASSERT_TRUE(semaphore_try_wait(&sem));
-    ASSERT_EQ(0, semaphore_get_value(&sem));
+    ASSERT_TRUE(sem.try_wait());
+    ASSERT_EQ(0, sem.value());
 
-    ASSERT_FALSE(semaphore_try_wait(&sem));
+    ASSERT_FALSE(sem.try_wait());
 
-    semaphore_signal(&sem);
-    ASSERT_EQ(1, semaphore_get_value(&sem));
+    sem.signal();
+    ASSERT_EQ(1, sem.value());
 }
 
 void run_sync_tests(void) {

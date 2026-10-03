@@ -15,7 +15,7 @@ typedef struct ramfs_file {
     uint8_t *data;        // 文件数据
     uint32_t size;        // 文件大小
     uint32_t capacity;    // 已分配容量
-    mutex_t lock;         // 文件锁（保护文件数据）
+    sync::Mutex lock;         // 文件锁（保护文件数据）
 } ramfs_file_t;
 
 // ramfs 目录项
@@ -29,14 +29,14 @@ typedef struct ramfs_dirent {
 typedef struct ramfs_dir {
     ramfs_dirent_t *entries;  // 目录项链表
     uint32_t count;           // 目录项数量
-    mutex_t lock;             // 目录锁（保护目录操作）
+    sync::Mutex lock;             // 目录锁（保护目录操作）
 } ramfs_dir_t;
 
 // 全局 inode 计数器
 static uint32_t next_inode = 1;
 
 // inode 分配锁（保护 next_inode 的并发访问）
-static spinlock_t inode_alloc_lock;
+static sync::Spinlock inode_alloc_lock;
 
 // ============================================================================
 // 内部辅助函数
@@ -123,7 +123,7 @@ static uint32_t ramfs_read(fs_node_t *node, uint32_t offset, uint32_t size, uint
     }
     
     // 加锁保护文件读取
-    MutexGuard guard(file->lock);
+    sync::MutexGuard guard(file->lock);
     
     if (!file->data) {
         return 0;
@@ -160,7 +160,7 @@ static uint32_t ramfs_write(fs_node_t *node, uint32_t offset, uint32_t size, uin
     }
     
     // 加锁保护文件写入
-    mutex_lock(&file->lock);
+    file->lock.lock();
     
     // 计算需要的总大小
     uint32_t new_size = offset + size;
@@ -173,7 +173,7 @@ static uint32_t ramfs_write(fs_node_t *node, uint32_t offset, uint32_t size, uin
         // 重新分配内存
         uint8_t *new_data = (uint8_t *)kmalloc(new_capacity);
         if (!new_data) {
-            mutex_unlock(&file->lock);
+            file->lock.unlock();
             return 0;  // 内存不足
         }
         
@@ -200,7 +200,7 @@ static uint32_t ramfs_write(fs_node_t *node, uint32_t offset, uint32_t size, uin
         node->size = new_size;
     }
     
-    mutex_unlock(&file->lock);
+    file->lock.unlock();
     return size;
 }
 
@@ -235,7 +235,7 @@ static struct dirent *ramfs_readdir(fs_node_t *node, uint32_t index) {
     }
     
     // 加锁保护目录读取
-    mutex_lock(&dir->lock);
+    dir->lock.lock();
     
     // 遍历到指定索引
     ramfs_dirent_t *current = dir->entries;
@@ -247,7 +247,7 @@ static struct dirent *ramfs_readdir(fs_node_t *node, uint32_t index) {
     }
     
     if (!current) {
-        mutex_unlock(&dir->lock);
+        dir->lock.unlock();
         return NULL;  // 索引超出范围
     }
     
@@ -286,7 +286,7 @@ static struct dirent *ramfs_readdir(fs_node_t *node, uint32_t index) {
             break;
     }
     
-    mutex_unlock(&dir->lock);
+    dir->lock.unlock();
     return &dent;
 }
 
@@ -304,10 +304,10 @@ static fs_node_t *ramfs_finddir(fs_node_t *node, const char *name) {
     }
     
     // 加锁保护目录查找
-    mutex_lock(&dir->lock);
+    dir->lock.lock();
     ramfs_dirent_t *entry = ramfs_find_entry(dir, name);
     fs_node_t *result = entry ? entry->node : NULL;
-    mutex_unlock(&dir->lock);
+    dir->lock.unlock();
     
     // 增加引用计数
     if (result) {
@@ -331,7 +331,7 @@ static int ramfs_create_file(fs_node_t *node, const char *name) {
     }
     
     // 加锁保护目录修改
-    MutexGuard guard(dir->lock);
+    sync::MutexGuard guard(dir->lock);
     
     // 检查文件是否已存在
     if (ramfs_find_entry(dir, name)) {
@@ -355,7 +355,7 @@ static int ramfs_create_file(fs_node_t *node, const char *name) {
     file->data = NULL;
     file->size = 0;
     file->capacity = 0;
-    mutex_init(&file->lock);  // 初始化文件锁
+    file->lock.init();  // 初始化文件锁
     
     // 初始化文件节点
     memset(new_node, 0, sizeof(fs_node_t));
@@ -363,9 +363,9 @@ static int ramfs_create_file(fs_node_t *node, const char *name) {
     new_node->name[127] = '\0';
     
     // 分配 inode（原子操作）
-    spinlock_lock(&inode_alloc_lock);
+    inode_alloc_lock.lock();
     new_node->inode = next_inode++;
-    spinlock_unlock(&inode_alloc_lock);
+    inode_alloc_lock.unlock();
     
     new_node->type = FS_FILE;
     new_node->size = 0;
@@ -404,7 +404,7 @@ static int ramfs_mkdir(fs_node_t *node, const char *name, uint32_t permissions) 
     }
     
     // 加锁保护父目录修改
-    MutexGuard guard(parent_dir->lock);
+    sync::MutexGuard guard(parent_dir->lock);
     
     // 检查目录是否已存在
     if (ramfs_find_entry(parent_dir, name)) {
@@ -427,7 +427,7 @@ static int ramfs_mkdir(fs_node_t *node, const char *name, uint32_t permissions) 
     // 初始化目录数据
     new_dir->entries = NULL;
     new_dir->count = 0;
-    mutex_init(&new_dir->lock);  // 初始化新目录的锁
+    new_dir->lock.init();  // 初始化新目录的锁
     
     // 初始化目录节点
     memset(new_node, 0, sizeof(fs_node_t));
@@ -435,9 +435,9 @@ static int ramfs_mkdir(fs_node_t *node, const char *name, uint32_t permissions) 
     new_node->name[127] = '\0';
     
     // 分配 inode（原子操作）
-    spinlock_lock(&inode_alloc_lock);
+    inode_alloc_lock.lock();
     new_node->inode = next_inode++;
-    spinlock_unlock(&inode_alloc_lock);
+    inode_alloc_lock.unlock();
     
     new_node->type = FS_DIRECTORY;
     new_node->size = 0;
@@ -488,19 +488,19 @@ static int ramfs_rename(fs_node_t *node, const char *old_name, const char *new_n
     }
     
     // 加锁保护目录修改
-    mutex_lock(&dir->lock);
+    dir->lock.lock();
     
     // 查找要重命名的条目
     ramfs_dirent_t *entry = ramfs_find_entry(dir, old_name);
     if (!entry) {
-        mutex_unlock(&dir->lock);
+        dir->lock.unlock();
         LOG_ERROR_MSG("ramfs_rename: '%s' not found\n", old_name);
         return -1;  // 源文件不存在
     }
     
     // 检查目标名字是否已存在
     if (ramfs_find_entry(dir, new_name)) {
-        mutex_unlock(&dir->lock);
+        dir->lock.unlock();
         LOG_ERROR_MSG("ramfs_rename: '%s' already exists\n", new_name);
         return -1;  // 目标文件已存在
     }
@@ -513,7 +513,7 @@ static int ramfs_rename(fs_node_t *node, const char *old_name, const char *new_n
     strncpy(entry->node->name, new_name, 127);
     entry->node->name[127] = '\0';
     
-    mutex_unlock(&dir->lock);
+    dir->lock.unlock();
     
     LOG_DEBUG_MSG("ramfs_rename: '%s' -> '%s' success\n", old_name, new_name);
     return 0;
@@ -533,12 +533,12 @@ static int ramfs_unlink(fs_node_t *node, const char *name) {
     }
     
     // 加锁保护父目录修改
-    mutex_lock(&dir->lock);
+    dir->lock.lock();
     
     // 查找要删除的条目
     ramfs_dirent_t *entry = ramfs_find_entry(dir, name);
     if (!entry) {
-        mutex_unlock(&dir->lock);
+        dir->lock.unlock();
         return -1;  // 文件不存在
     }
     
@@ -548,7 +548,7 @@ static int ramfs_unlink(fs_node_t *node, const char *name) {
     if (target->type == FS_DIRECTORY) {
         ramfs_dir_t *target_dir = (ramfs_dir_t *)target->impl;
         if (target_dir && target_dir->count > 0) {
-            mutex_unlock(&dir->lock);
+            dir->lock.unlock();
             return -1;  // 目录不为空
         }
         
@@ -575,7 +575,7 @@ static int ramfs_unlink(fs_node_t *node, const char *name) {
     // 释放节点
     kfree(target);
     
-    mutex_unlock(&dir->lock);
+    dir->lock.unlock();
     return 0;
 }
 
@@ -605,7 +605,7 @@ fs_node_t *ramfs_create(const char *name) {
     // 初始化根目录数据
     root_dir->entries = NULL;
     root_dir->count = 0;
-    mutex_init(&root_dir->lock);  // 初始化根目录的锁
+    root_dir->lock.init();  // 初始化根目录的锁
     
     // 初始化根目录节点
     memset(root, 0, sizeof(fs_node_t));
@@ -613,9 +613,9 @@ fs_node_t *ramfs_create(const char *name) {
     root->name[127] = '\0';
     
     // 分配 inode（原子操作）
-    spinlock_lock(&inode_alloc_lock);
+    inode_alloc_lock.lock();
     root->inode = next_inode++;
-    spinlock_unlock(&inode_alloc_lock);
+    inode_alloc_lock.unlock();
     
     root->type = FS_DIRECTORY;
     root->size = 0;
@@ -642,7 +642,7 @@ fs_node_t *ramfs_init(void) {
     LOG_INFO_MSG("RAMFS: Initializing RAM filesystem...\n");
     
     // 初始化 inode 分配锁
-    spinlock_init(&inode_alloc_lock);
+    inode_alloc_lock.init();
     
     fs_node_t *root = ramfs_create("/");
     if (!root) {

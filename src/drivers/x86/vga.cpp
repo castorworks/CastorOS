@@ -19,7 +19,7 @@ static int vga_col = 0;
 
 /* 当前颜色属性 */
 static uint8_t vga_color = 0x0F;  // 默认白色文字，黑色背景
-static spinlock_t vga_lock;
+static sync::Spinlock vga_lock;
 
 /* ANSI 转义序列解析状态 */
 typedef enum {
@@ -221,13 +221,13 @@ static void vga_clear_locked(void) {
 }
 
 void vga_init(void) {
-    spinlock_init(&vga_lock);
-    SpinlockIrqGuard guard(vga_lock);
+    vga_lock.init();
+    sync::SpinlockIrqGuard guard(vga_lock);
     vga_clear_locked();
 }
 
 void vga_clear(void) {
-    SpinlockIrqGuard guard(vga_lock);
+    sync::SpinlockIrqGuard guard(vga_lock);
     vga_clear_locked();
 }
 
@@ -371,7 +371,7 @@ static void vga_handle_char(char c) {
 }
 
 void vga_putchar(char c) {
-    SpinlockIrqGuard guard(vga_lock);
+    sync::SpinlockIrqGuard guard(vga_lock);
     vga_handle_char(c);
 }
 
@@ -380,19 +380,19 @@ void vga_print(const char *msg) {
         return;
     }
 
-    SpinlockIrqGuard guard(vga_lock);
+    sync::SpinlockIrqGuard guard(vga_lock);
     while (*msg) {
         vga_handle_char(*msg++);
     }
 }
 
 void vga_set_color(vga_color_t fg, vga_color_t bg) {
-    SpinlockIrqGuard guard(vga_lock);
+    sync::SpinlockIrqGuard guard(vga_lock);
     vga_color = vga_make_color(fg, bg);
 }
 
 uint8_t vga_get_color(void) {
-    SpinlockIrqGuard guard(vga_lock);
+    sync::SpinlockIrqGuard guard(vga_lock);
     uint8_t color = vga_color;
     return color;
 }

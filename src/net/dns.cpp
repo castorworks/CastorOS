@@ -27,7 +27,7 @@ static uint32_t dns_server_secondary = 0;
 
 // DNS 缓存
 static dns_cache_entry_t dns_cache[DNS_CACHE_SIZE];
-static spinlock_t dns_lock;
+static sync::Spinlock dns_lock;
 
 // DNS 查询 ID
 static uint16_t dns_query_id = 0;
@@ -212,7 +212,7 @@ int dns_cache_lookup(const char *hostname, uint32_t *ip) {
     
     uint32_t now = (uint32_t)timer_get_uptime_ms();
     
-    SpinlockIrqGuard guard(dns_lock);
+    sync::SpinlockIrqGuard guard(dns_lock);
     
     for (int i = 0; i < DNS_CACHE_SIZE; i++) {
         dns_cache_entry_t *entry = &dns_cache[i];
@@ -241,7 +241,7 @@ void dns_cache_add(const char *hostname, uint32_t ip, uint32_t ttl) {
     uint32_t expire = now + (ttl * 1000);
     if (expire < now) expire = 0xFFFFFFFF;  // 防止溢出
     
-    SpinlockIrqGuard guard(dns_lock);
+    sync::SpinlockIrqGuard guard(dns_lock);
     
     // 查找现有条目或空闲条目
     dns_cache_entry_t *target = NULL;
@@ -287,7 +287,7 @@ void dns_cache_add(const char *hostname, uint32_t ip, uint32_t ttl) {
  * @brief 清除缓存
  */
 void dns_cache_clear(void) {
-    SpinlockIrqGuard guard(dns_lock);
+    sync::SpinlockIrqGuard guard(dns_lock);
     
     for (int i = 0; i < DNS_CACHE_SIZE; i++) {
         dns_cache[i].valid = false;
@@ -312,7 +312,7 @@ int dns_cache_dump(char *buf, size_t size) {
     uint32_t now = (uint32_t)timer_get_uptime_ms();
     
     bool irq_state;
-    spinlock_lock_irqsave(&dns_lock, &irq_state);
+    dns_lock.lock_irqsave(irq_state);
     
     OUTPUT("DNS Cache:\n");
     OUTPUT("%-32s %-16s TTL\n", "Hostname", "IP Address");
@@ -341,7 +341,7 @@ int dns_cache_dump(char *buf, size_t size) {
         OUTPUT("(empty)\n");
     }
     
-    spinlock_unlock_irqrestore(&dns_lock, irq_state);
+    dns_lock.unlock_irqrestore(irq_state);
     
     #undef OUTPUT
     return len;

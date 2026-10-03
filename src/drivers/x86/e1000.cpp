@@ -32,7 +32,7 @@ static e1000_device_t e1000_devices[E1000_MAX_DEVICES];
 static int e1000_device_count = 0;
 
 /* 设备访问锁 */
-static mutex_t e1000_mutex;
+static sync::Mutex e1000_mutex;
 
 /* ============================================================================
  * 寄存器访问函数
@@ -387,7 +387,7 @@ static int e1000_netdev_transmit(netdev_t *netdev, netbuf_t *buf) {
         return -1;
     }
     
-    MutexGuard guard(e1000_mutex);
+    sync::MutexGuard guard(e1000_mutex);
     
     uint32_t cur = dev->tx_cur;
     e1000_tx_desc_t *desc = &dev->tx_descs[cur];
@@ -637,7 +637,7 @@ static int e1000_init_device(pci_device_t *pci_dev) {
     dev->netdev.priv = dev;
     
     /* 初始化 netdev 锁 */
-    mutex_init(&dev->netdev.lock);
+    dev->netdev.lock.init();
     
     /* 注册网络设备 */
     if (netdev_register(&dev->netdev) < 0) {
@@ -678,7 +678,7 @@ static const uint16_t e1000_device_ids[] = {
  * @brief 初始化 E1000 驱动
  */
 int e1000_init(void) {
-    mutex_init(&e1000_mutex);
+    e1000_mutex.init();
     e1000_device_count = 0;
     
     /* 扫描 PCI 总线查找 E1000 设备 */

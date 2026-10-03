@@ -17,7 +17,7 @@
 
 // 全局 inode 计数器
 static uint32_t shmfs_next_inode = 1;
-static spinlock_t shmfs_inode_lock;
+static sync::Spinlock shmfs_inode_lock;
 
 // 用于标识 shmfs 节点的魔数
 #define SHMFS_MAGIC 0x53484D46  // "SHMF"
@@ -140,11 +140,11 @@ static uint32_t shmfs_read(fs_node_t *node, uint32_t offset,
         return 0;
     }
     
-    mutex_lock(&file->lock);
+    file->lock.lock();
     
     // 检查偏移量
     if (offset >= file->size) {
-        mutex_unlock(&file->lock);
+        file->lock.unlock();
         return 0;
     }
     
@@ -176,7 +176,7 @@ static uint32_t shmfs_read(fs_node_t *node, uint32_t offset,
         page = page->next;
     }
     
-    mutex_unlock(&file->lock);
+    file->lock.unlock();
     return bytes_read;
 }
 
@@ -194,13 +194,13 @@ static uint32_t shmfs_write(fs_node_t *node, uint32_t offset,
         return 0;
     }
     
-    mutex_lock(&file->lock);
+    file->lock.lock();
     
     // 扩展文件大小（如果需要）
     uint32_t new_size = offset + size;
     if (new_size > file->size) {
         if (shmfs_alloc_pages(file, new_size) != 0) {
-            mutex_unlock(&file->lock);
+            file->lock.unlock();
             return 0;
         }
         file->size = new_size;
@@ -229,7 +229,7 @@ static uint32_t shmfs_write(fs_node_t *node, uint32_t offset,
         page = page->next;
     }
     
-    mutex_unlock(&file->lock);
+    file->lock.unlock();
     return bytes_written;
 }
 
@@ -246,7 +246,7 @@ static int shmfs_truncate(fs_node_t *node, uint32_t new_size) {
         return -1;
     }
     
-    MutexGuard guard(file->lock);
+    sync::MutexGuard guard(file->lock);
     
     if (new_size > file->size) {
         // 扩展
@@ -324,7 +324,7 @@ static struct dirent *shmfs_readdir(fs_node_t *node, uint32_t index) {
         return NULL;
     }
     
-    MutexGuard guard(dir->lock);
+    sync::MutexGuard guard(dir->lock);
     
     // 遍历到指定索引
     shmfs_dirent_t *current = dir->entries;
@@ -377,10 +377,10 @@ static fs_node_t *shmfs_finddir(fs_node_t *node, const char *name) {
         return NULL;
     }
     
-    mutex_lock(&dir->lock);
+    dir->lock.lock();
     shmfs_dirent_t *entry = shmfs_find_entry(dir, name);
     fs_node_t *result = entry ? entry->node : NULL;
-    mutex_unlock(&dir->lock);
+    dir->lock.unlock();
     
     // 增加引用计数
     if (result) {
@@ -403,18 +403,18 @@ static int shmfs_create_file(fs_node_t *node, const char *name) {
         return -1;
     }
     
-    mutex_lock(&dir->lock);
+    dir->lock.lock();
     
     // 检查文件是否已存在
     if (shmfs_find_entry(dir, name)) {
-        mutex_unlock(&dir->lock);
+        dir->lock.unlock();
         return -1;  // 已存在
     }
     
     // 创建新文件节点
     fs_node_t *new_node = (fs_node_t *)kmalloc(sizeof(fs_node_t));
     if (!new_node) {
-        mutex_unlock(&dir->lock);
+        dir->lock.unlock();
         return -1;
     }
     
@@ -422,7 +422,7 @@ static int shmfs_create_file(fs_node_t *node, const char *name) {
     shmfs_file_t *file = (shmfs_file_t *)kmalloc(sizeof(shmfs_file_t));
     if (!file) {
         kfree(new_node);
-        mutex_unlock(&dir->lock);
+        dir->lock.unlock();
         return -1;
     }
     
@@ -431,16 +431,16 @@ static int shmfs_create_file(fs_node_t *node, const char *name) {
     file->size = 0;
     file->num_pages = 0;
     file->map_count = 0;
-    mutex_init(&file->lock);
+    file->lock.init();
     
     // 初始化文件节点
     memset(new_node, 0, sizeof(fs_node_t));
     strncpy(new_node->name, name, 127);
     new_node->name[127] = '\0';
     
-    spinlock_lock(&shmfs_inode_lock);
+    shmfs_inode_lock.lock();
     new_node->inode = shmfs_next_inode++;
-    spinlock_unlock(&shmfs_inode_lock);
+    shmfs_inode_lock.unlock();
     
     new_node->type = FS_FILE;
     new_node->size = 0;
@@ -462,7 +462,7 @@ static int shmfs_create_file(fs_node_t *node, const char *name) {
     if (!new_entry) {
         kfree(file);
         kfree(new_node);
-        mutex_unlock(&dir->lock);
+        dir->lock.unlock();
         return -1;
     }
     
@@ -475,7 +475,7 @@ static int shmfs_create_file(fs_node_t *node, const char *name) {
     
     LOG_DEBUG_MSG("shmfs: created file '%s'\n", name);
     
-    mutex_unlock(&dir->lock);
+    dir->lock.unlock();
     return 0;
 }
 
@@ -492,7 +492,7 @@ static int shmfs_unlink(fs_node_t *node, const char *name) {
         return -1;
     }
     
-    mutex_lock(&dir->lock);
+    dir->lock.lock();
     
     // 查找并删除
     shmfs_dirent_t **current = &dir->entries;
@@ -508,7 +508,7 @@ static int shmfs_unlink(fs_node_t *node, const char *name) {
                     // 有进程还在使用此共享内存
                     LOG_WARN_MSG("shmfs: cannot unlink '%s', map_count=%d\n", 
                                  name, file->map_count);
-                    mutex_unlock(&dir->lock);
+                    dir->lock.unlock();
                     return -1;
                 }
                 
@@ -526,13 +526,13 @@ static int shmfs_unlink(fs_node_t *node, const char *name) {
             
             LOG_DEBUG_MSG("shmfs: unlinked file '%s'\n", name);
             
-            mutex_unlock(&dir->lock);
+            dir->lock.unlock();
             return 0;
         }
         current = &(*current)->next;
     }
     
-    mutex_unlock(&dir->lock);
+    dir->lock.unlock();
     return -1;  // 未找到
 }
 
@@ -554,7 +554,7 @@ uint32_t shmfs_get_phys_pages(fs_node_t *node, uint32_t offset,
         return 0;
     }
     
-    mutex_lock(&file->lock);
+    file->lock.lock();
     
     uint32_t start_page = offset / PAGE_SIZE;
     uint32_t count = 0;
@@ -566,7 +566,7 @@ uint32_t shmfs_get_phys_pages(fs_node_t *node, uint32_t offset,
         page = page->next;
     }
     
-    mutex_unlock(&file->lock);
+    file->lock.unlock();
     return count;
 }
 
@@ -580,10 +580,10 @@ void shmfs_map_ref(fs_node_t *node) {
     
     shmfs_file_t *file = (shmfs_file_t *)node->impl;
     if (file) {
-        mutex_lock(&file->lock);
+        file->lock.lock();
         file->map_count++;
         LOG_DEBUG_MSG("shmfs: map_ref, count=%d\n", file->map_count);
-        mutex_unlock(&file->lock);
+        file->lock.unlock();
     }
 }
 
@@ -597,12 +597,12 @@ void shmfs_map_unref(fs_node_t *node) {
     
     shmfs_file_t *file = (shmfs_file_t *)node->impl;
     if (file) {
-        mutex_lock(&file->lock);
+        file->lock.lock();
         if (file->map_count > 0) {
             file->map_count--;
         }
         LOG_DEBUG_MSG("shmfs: map_unref, count=%d\n", file->map_count);
-        mutex_unlock(&file->lock);
+        file->lock.unlock();
     }
 }
 
@@ -638,16 +638,16 @@ fs_node_t *shmfs_create(const char *name) {
     // 初始化根目录数据
     root_dir->entries = NULL;
     root_dir->count = 0;
-    mutex_init(&root_dir->lock);
+    root_dir->lock.init();
     
     // 初始化根目录节点
     memset(root, 0, sizeof(fs_node_t));
     strncpy(root->name, name ? name : "shm", 127);
     root->name[127] = '\0';
     
-    spinlock_lock(&shmfs_inode_lock);
+    shmfs_inode_lock.lock();
     root->inode = shmfs_next_inode++;
-    spinlock_unlock(&shmfs_inode_lock);
+    shmfs_inode_lock.unlock();
     
     root->type = FS_DIRECTORY;
     root->size = 0;
@@ -673,7 +673,7 @@ fs_node_t *shmfs_init(void) {
     LOG_INFO_MSG("SHMFS: Initializing shared memory filesystem...\n");
     
     // 初始化 inode 分配锁
-    spinlock_init(&shmfs_inode_lock);
+    shmfs_inode_lock.init();
     
     fs_node_t *root = shmfs_create("shm");
     if (!root) {

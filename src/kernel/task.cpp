@@ -55,7 +55,7 @@ static task_t *idle_task = NULL;
 static bool scheduler_initialized = false;
 
 /** @brief 任务管理全局锁 - 保护任务池、就绪队列和 PID 分配 */
-static spinlock_t task_lock;
+static sync::Spinlock task_lock;
 
 /** @brief 待清理的 terminated 任务（用于延迟清理） */
 static task_t *pending_cleanup_task = NULL;
@@ -82,7 +82,7 @@ void ready_queue_add(task_t *task) {
         return;
     }
     
-    SpinlockIrqGuard guard(task_lock);
+    sync::SpinlockIrqGuard guard(task_lock);
     
     task->next = NULL;
     task->prev = ready_queue_tail;
@@ -104,7 +104,7 @@ void ready_queue_remove(task_t *task) {
         return;
     }
     
-    SpinlockIrqGuard guard(task_lock);
+    sync::SpinlockIrqGuard guard(task_lock);
     
     if (task->prev) {
         task->prev->next = task->next;
@@ -128,7 +128,7 @@ void ready_queue_remove(task_t *task) {
  * @return 下一个就绪任务，如果队列为空返回 NULL
  */
 static task_t* ready_queue_pop(void) {
-    SpinlockIrqGuard guard(task_lock);
+    sync::SpinlockIrqGuard guard(task_lock);
     
     task_t *task = ready_queue_head;
     if (task) {
@@ -155,7 +155,7 @@ static task_t* ready_queue_pop(void) {
  */
 task_t* task_alloc(void) {
     bool irq_state;
-    spinlock_lock_irqsave(&task_lock, &irq_state);
+    task_lock.lock_irqsave(irq_state);
     
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         if (task_pool[i].state == TASK_UNUSED) {
@@ -166,12 +166,12 @@ task_t* task_alloc(void) {
             task_pool[i].time_slice = DEFAULT_TIME_SLICE;
             active_task_count++;
             
-            spinlock_unlock_irqrestore(&task_lock, irq_state);
+            task_lock.unlock_irqrestore(irq_state);
             return &task_pool[i];
         }
     }
     
-    spinlock_unlock_irqrestore(&task_lock, irq_state);
+    task_lock.unlock_irqrestore(irq_state);
     LOG_ERROR_MSG("task_alloc: No free PCB available (max: %d)\n", MAX_TASKS);
     return NULL;
 }
@@ -214,7 +214,7 @@ void task_free(task_t *task) {
     }
     
     // 在锁内清空 PCB
-    SpinlockIrqGuard guard(task_lock);
+    sync::SpinlockIrqGuard guard(task_lock);
     
     memset(task, 0, sizeof(task_t));
     task->state = TASK_UNUSED;
@@ -225,7 +225,7 @@ void task_free(task_t *task) {
  * @brief 根据 PID 查找任务
  */
 task_t* task_get_by_pid(uint32_t pid) {
-    SpinlockIrqGuard guard(task_lock);
+    sync::SpinlockIrqGuard guard(task_lock);
     
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         if (task_pool[i].state != TASK_UNUSED && task_pool[i].pid == pid) {
@@ -247,7 +247,7 @@ task_t* task_get_current(void) {
  * @brief 获取活动任务数量
  */
 uint32_t task_get_count(void) {
-    SpinlockIrqGuard guard(task_lock);
+    sync::SpinlockIrqGuard guard(task_lock);
     uint32_t count = active_task_count;
     return count;
 }
@@ -936,11 +936,11 @@ void task_schedule(void) {
         
         // 先在锁内清空 PCB
         bool irq_state_cleanup;
-        spinlock_lock_irqsave(&task_lock, &irq_state_cleanup);
+        task_lock.lock_irqsave(irq_state_cleanup);
         memset(task_to_cleanup, 0, sizeof(task_t));
         task_to_cleanup->state = TASK_UNUSED;
         active_task_count--;
-        spinlock_unlock_irqrestore(&task_lock, irq_state_cleanup);
+        task_lock.unlock_irqrestore(irq_state_cleanup);
         
         // 然后在锁外释放资源（避免死锁）
         if (kernel_stack_base) {
@@ -1121,7 +1121,7 @@ void task_timer_tick(void) {
     uint32_t wake_count = 0;
     
     bool irq_state;
-    spinlock_lock_irqsave(&task_lock, &irq_state);
+    task_lock.lock_irqsave(irq_state);
     
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         task_t *task = &task_pool[i];
@@ -1135,7 +1135,7 @@ void task_timer_tick(void) {
         }
     }
     
-    spinlock_unlock_irqrestore(&task_lock, irq_state);
+    task_lock.unlock_irqrestore(irq_state);
     
     // 在锁外将任务添加到就绪队列
     for (uint32_t i = 0; i < wake_count; i++) {
@@ -1186,7 +1186,7 @@ void task_exit(uint32_t exit_code) {
     uint32_t zombie_count = 0;
     
     bool irq_state_child;
-    spinlock_lock_irqsave(&task_lock, &irq_state_child);
+    task_lock.lock_irqsave(irq_state_child);
     
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         task_t *task = &task_pool[i];
@@ -1213,7 +1213,7 @@ void task_exit(uint32_t exit_code) {
         }
     }
     
-    spinlock_unlock_irqrestore(&task_lock, irq_state_child);
+    task_lock.unlock_irqrestore(irq_state_child);
     
     // 在锁外清理僵尸子进程
     for (uint32_t i = 0; i < zombie_count; i++) {
@@ -1309,7 +1309,7 @@ void task_wakeup(void *wait_object) {
     task_t *task_to_wake = NULL;
     
     bool irq_state;
-    spinlock_lock_irqsave(&task_lock, &irq_state);
+    task_lock.lock_irqsave(irq_state);
     
     // 简化实现：唤醒第一个阻塞的任务
     // 完整实现应该维护每个等待对象的等待队列
@@ -1324,7 +1324,7 @@ void task_wakeup(void *wait_object) {
         }
     }
     
-    spinlock_unlock_irqrestore(&task_lock, irq_state);
+    task_lock.unlock_irqrestore(irq_state);
     
     // 在锁外添加到就绪队列
     if (task_to_wake) {
@@ -1363,7 +1363,7 @@ void task_init(void) {
     LOG_INFO_MSG("Initializing task management...\n");
     
     // 初始化任务管理锁
-    spinlock_init(&task_lock);
+    task_lock.init();
     
     // 清空任务池
     memset(task_pool, 0, sizeof(task_pool));
@@ -1406,7 +1406,7 @@ void task_print_all(void) {
     kprintf("PID  State     Priority  Runtime(ms)  Name\n");
     kprintf("---  --------  --------  -----------  ----\n");
     
-    SpinlockIrqGuard guard(task_lock);
+    sync::SpinlockIrqGuard guard(task_lock);
     
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         task_t *task = &task_pool[i];

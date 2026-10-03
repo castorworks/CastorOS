@@ -4,18 +4,32 @@
 #include <types.h>
 #include <kernel/interrupt.h>
 
-typedef struct {
-    volatile uint32_t value;
-} spinlock_t;
+namespace sync {
 
-void spinlock_init(spinlock_t *lock);
-void spinlock_lock(spinlock_t *lock);
-bool spinlock_try_lock(spinlock_t *lock);
-void spinlock_unlock(spinlock_t *lock);
-bool spinlock_is_locked(const spinlock_t *lock);
+/**
+ * @brief 自旋锁
+ *
+ * 平凡类型（无构造函数）：可以安全地放在全局/静态存储区（零初始化即为未锁定），
+ * 也可以嵌入通过 kmalloc + memset 创建的结构体中；后一种情况请显式调用 init()。
+ */
+class Spinlock {
+public:
+    /** @brief 重置为未锁定状态 */
+    void init();
 
-void spinlock_lock_irqsave(spinlock_t *lock, bool *irq_state);
-void spinlock_unlock_irqrestore(spinlock_t *lock, bool irq_state);
+    void lock();
+    bool try_lock();
+    void unlock();
+    bool is_locked() const;
+
+    /** @brief 保存中断状态、关中断并加锁 */
+    void lock_irqsave(bool &irq_state);
+    /** @brief 解锁并恢复 lock_irqsave 保存的中断状态 */
+    void unlock_irqrestore(bool irq_state);
+
+private:
+    volatile uint32_t value_;
+};
 
 /**
  * @brief RAII 自旋锁守卫
@@ -24,14 +38,14 @@ void spinlock_unlock_irqrestore(spinlock_t *lock, bool irq_state);
  */
 class SpinlockGuard {
 public:
-    explicit SpinlockGuard(spinlock_t &lock) : lock_(lock) { spinlock_lock(&lock_); }
-    ~SpinlockGuard() { spinlock_unlock(&lock_); }
+    explicit SpinlockGuard(Spinlock &lock) : lock_(lock) { lock_.lock(); }
+    ~SpinlockGuard() { lock_.unlock(); }
 
     SpinlockGuard(const SpinlockGuard &) = delete;
     SpinlockGuard &operator=(const SpinlockGuard &) = delete;
 
 private:
-    spinlock_t &lock_;
+    Spinlock &lock_;
 };
 
 /**
@@ -41,18 +55,17 @@ private:
  */
 class SpinlockIrqGuard {
 public:
-    explicit SpinlockIrqGuard(spinlock_t &lock) : lock_(lock) {
-        spinlock_lock_irqsave(&lock_, &irq_state_);
-    }
-    ~SpinlockIrqGuard() { spinlock_unlock_irqrestore(&lock_, irq_state_); }
+    explicit SpinlockIrqGuard(Spinlock &lock) : lock_(lock) { lock_.lock_irqsave(irq_state_); }
+    ~SpinlockIrqGuard() { lock_.unlock_irqrestore(irq_state_); }
 
     SpinlockIrqGuard(const SpinlockIrqGuard &) = delete;
     SpinlockIrqGuard &operator=(const SpinlockIrqGuard &) = delete;
 
 private:
-    spinlock_t &lock_;
+    Spinlock &lock_;
     bool irq_state_;
 };
 
-#endif // _KERNEL_SYNC_SPINLOCK_H_
+} // namespace sync
 
+#endif // _KERNEL_SYNC_SPINLOCK_H_

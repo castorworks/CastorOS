@@ -62,7 +62,7 @@ typedef struct netdev {
     netdev_ops_t *ops;              ///< 设备操作函数
     void *priv;                     ///< 驱动私有数据
     
-    mutex_t lock;                   ///< 设备锁
+    sync::Mutex lock;                   ///< 设备锁
 } netdev_t;
 
 /**

@@ -17,7 +17,7 @@
 
 // UDP PCB 链表
 static udp_pcb_t *udp_pcbs = NULL;
-static spinlock_t udp_lock;
+static sync::Spinlock udp_lock;
 
 // 临时端口分配范围
 #define UDP_EPHEMERAL_PORT_MIN  49152
@@ -76,7 +76,7 @@ static udp_pcb_t *udp_find_pcb(uint32_t local_ip, uint16_t local_port,
 }
 
 void udp_init(void) {
-    spinlock_init(&udp_lock);
+    udp_lock.init();
     udp_pcbs = NULL;
     next_ephemeral_port = UDP_EPHEMERAL_PORT_MIN;
     
@@ -125,7 +125,7 @@ void udp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
     
     // 查找匹配的 PCB
     bool irq_state;
-    spinlock_lock_irqsave(&udp_lock, &irq_state);
+    udp_lock.lock_irqsave(irq_state);
     
     udp_pcb_t *pcb = udp_find_pcb(dst_ip, dst_port, src_ip, src_port);
     
@@ -139,7 +139,7 @@ void udp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
         
         // 调用回调函数
         if (pcb->recv_callback) {
-            spinlock_unlock_irqrestore(&udp_lock, irq_state);
+            udp_lock.unlock_irqrestore(irq_state);
             pcb->recv_callback(pcb, buf, src_ip, src_port);
             return;  // 回调函数负责释放 buf
         }
@@ -157,11 +157,11 @@ void udp_input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
         }
         pcb->recv_queue_len++;
         
-        spinlock_unlock_irqrestore(&udp_lock, irq_state);
+        udp_lock.unlock_irqrestore(irq_state);
         return;
     }
     
-    spinlock_unlock_irqrestore(&udp_lock, irq_state);
+    udp_lock.unlock_irqrestore(irq_state);
     
     // 没有找到匹配的 PCB，发送 ICMP 端口不可达
     LOG_DEBUG_MSG("udp: No PCB for port %u, sending ICMP unreachable\n", dst_port);
@@ -226,7 +226,7 @@ udp_pcb_t *udp_pcb_new(void) {
     memset(pcb, 0, sizeof(udp_pcb_t));
     
     // 添加到链表
-    SpinlockIrqGuard guard(udp_lock);
+    sync::SpinlockIrqGuard guard(udp_lock);
     pcb->next = udp_pcbs;
     udp_pcbs = pcb;
     
@@ -239,7 +239,7 @@ void udp_pcb_free(udp_pcb_t *pcb) {
     }
     
     bool irq_state;
-    spinlock_lock_irqsave(&udp_lock, &irq_state);
+    udp_lock.lock_irqsave(irq_state);
     
     // 从链表移除
     if (udp_pcbs == pcb) {
@@ -254,7 +254,7 @@ void udp_pcb_free(udp_pcb_t *pcb) {
         }
     }
     
-    spinlock_unlock_irqrestore(&udp_lock, irq_state);
+    udp_lock.unlock_irqrestore(irq_state);
     
     // 释放接收队列
     netbuf_t *buf = pcb->recv_queue;
@@ -273,13 +273,13 @@ int udp_bind(udp_pcb_t *pcb, uint32_t local_ip, uint16_t local_port) {
     }
     
     bool irq_state;
-    spinlock_lock_irqsave(&udp_lock, &irq_state);
+    udp_lock.lock_irqsave(irq_state);
     
     // 检查端口是否已被使用
     for (udp_pcb_t *p = udp_pcbs; p != NULL; p = p->next) {
         if (p != pcb && p->local_port == local_port) {
             if (p->local_ip == 0 || local_ip == 0 || p->local_ip == local_ip) {
-                spinlock_unlock_irqrestore(&udp_lock, irq_state);
+                udp_lock.unlock_irqrestore(irq_state);
                 return -1;  // 端口已被使用
             }
         }
@@ -288,7 +288,7 @@ int udp_bind(udp_pcb_t *pcb, uint32_t local_ip, uint16_t local_port) {
     pcb->local_ip = local_ip;
     pcb->local_port = local_port;
     
-    spinlock_unlock_irqrestore(&udp_lock, irq_state);
+    udp_lock.unlock_irqrestore(irq_state);
     return 0;
 }
 
@@ -383,7 +383,7 @@ void udp_recv(udp_pcb_t *pcb,
 netbuf_t *udp_recv_poll(udp_pcb_t *pcb) {
     if (!pcb) return NULL;
     
-    SpinlockIrqGuard guard(udp_lock);
+    sync::SpinlockIrqGuard guard(udp_lock);
     
     netbuf_t *buf = NULL;
     if (pcb->recv_queue) {
@@ -399,7 +399,7 @@ netbuf_t *udp_recv_poll(udp_pcb_t *pcb) {
 bool udp_has_data(udp_pcb_t *pcb) {
     if (!pcb) return false;
     
-    SpinlockIrqGuard guard(udp_lock);
+    sync::SpinlockIrqGuard guard(udp_lock);
     bool has_data = (pcb->recv_queue != NULL);
     
     return has_data;
@@ -426,7 +426,7 @@ uint16_t udp_checksum(uint32_t src_ip, uint32_t dst_ip, udp_header_t *udp, uint1
 
 uint16_t udp_alloc_port(void) {
     bool irq_state;
-    spinlock_lock_irqsave(&udp_lock, &irq_state);
+    udp_lock.lock_irqsave(irq_state);
     
     uint16_t start_port = next_ephemeral_port;
     
@@ -446,13 +446,13 @@ uint16_t udp_alloc_port(void) {
         }
         
         if (!in_use) {
-            spinlock_unlock_irqrestore(&udp_lock, irq_state);
+            udp_lock.unlock_irqrestore(irq_state);
             return port;
         }
         
     } while (next_ephemeral_port != start_port);
     
-    spinlock_unlock_irqrestore(&udp_lock, irq_state);
+    udp_lock.unlock_irqrestore(irq_state);
     return 0;  // 没有可用端口
 }
 
@@ -469,7 +469,7 @@ int udp_pcb_list_dump(char *buf, size_t size) {
     } while(0)
     
     bool irq_state;
-    spinlock_lock_irqsave(&udp_lock, &irq_state);
+    udp_lock.lock_irqsave(irq_state);
     
     // 表头
     OUTPUT("UDP Endpoints:\n");
@@ -501,7 +501,7 @@ int udp_pcb_list_dump(char *buf, size_t size) {
         }
     }
     
-    spinlock_unlock_irqrestore(&udp_lock, irq_state);
+    udp_lock.unlock_irqrestore(irq_state);
     
     #undef OUTPUT
     return len;

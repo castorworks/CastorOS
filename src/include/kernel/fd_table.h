@@ -24,7 +24,7 @@ typedef struct {
 
 /* 文件描述符表 */
 typedef struct {
-    spinlock_t lock;                // 保护 FD 表的自旋锁
+    sync::Spinlock lock;                // 保护 FD 表的自旋锁
     fd_entry_t entries[MAX_FDS];
 } fd_table_t;
 

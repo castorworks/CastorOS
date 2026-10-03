@@ -23,17 +23,17 @@ static vfs_mount_entry_t mount_table[MAX_MOUNTS];
 static uint32_t mount_count = 0;
 
 /* VFS 挂载表互斥锁 - 保护 mount_table 和 mount_count */
-static mutex_t vfs_mount_mutex;
+static sync::Mutex vfs_mount_mutex;
 
 /* VFS 引用计数互斥锁 - 保护所有节点的引用计数操作 */
-static mutex_t vfs_refcount_mutex;
+static sync::Mutex vfs_refcount_mutex;
 
 void vfs_init(void) {
     LOG_INFO_MSG("VFS: Initializing virtual file system...\n");
     fs_root = NULL;
     mount_count = 0;
-    mutex_init(&vfs_mount_mutex);
-    mutex_init(&vfs_refcount_mutex);
+    vfs_mount_mutex.init();
+    vfs_refcount_mutex.init();
     LOG_INFO_MSG("VFS: Mount table and refcount mutexes initialized\n");
 }
 
@@ -43,7 +43,7 @@ static fs_node_t *vfs_get_mounted_root_by_path(const char *path) {
         return NULL;
     }
     
-    MutexGuard guard(vfs_mount_mutex);
+    sync::MutexGuard guard(vfs_mount_mutex);
     
     for (uint32_t i = 0; i < mount_count; i++) {
         if (strcmp(mount_table[i].path, path) == 0) {
@@ -107,7 +107,7 @@ void vfs_ref_node(fs_node_t *node) {
     }
     
     // 保护引用计数操作，防止并发竞争
-    MutexGuard guard(vfs_refcount_mutex);
+    sync::MutexGuard guard(vfs_refcount_mutex);
     node->ref_count++;
 }
 
@@ -123,7 +123,7 @@ void vfs_release_node(fs_node_t *node) {
     }
     
     // 保护引用计数操作，防止并发竞争
-    mutex_lock(&vfs_refcount_mutex);
+    vfs_refcount_mutex.lock();
     
     // 减少引用计数
     if (node->ref_count > 0) {
@@ -131,7 +131,7 @@ void vfs_release_node(fs_node_t *node) {
     } else {
         // 动态分配的节点引用计数为 0，打印警告（可能是双重释放）
         LOG_WARN_MSG("vfs_release_node: %s already has ref_count=0, skipping free\n", node->name);
-        mutex_unlock(&vfs_refcount_mutex);
+        vfs_refcount_mutex.unlock();
         return;  // 立即返回，防止双重释放
     }
     
@@ -139,7 +139,7 @@ void vfs_release_node(fs_node_t *node) {
     if (node->ref_count == 0) {
         LOG_DEBUG_MSG("vfs_release_node: freeing node %s\n", node->name);
         // 释放之前先解锁，因为释放操作可能需要较长时间
-        mutex_unlock(&vfs_refcount_mutex);
+        vfs_refcount_mutex.unlock();
         
         // 释放实现相关的数据（如 fat32_file_t）
         // 注意：impl 是指针，会被 kfree；impl_data 是整数值，不会被释放
@@ -151,7 +151,7 @@ void vfs_release_node(fs_node_t *node) {
         return;
     }
     
-    mutex_unlock(&vfs_refcount_mutex);
+    vfs_refcount_mutex.unlock();
 }
 
 struct dirent *vfs_readdir(fs_node_t *node, uint32_t index) {
@@ -219,7 +219,7 @@ fs_node_t *vfs_path_to_node(const char *path) {
     }
     
     /* 检查是否是挂载点的子路径（如 /dev/zero） */
-    mutex_lock(&vfs_mount_mutex);
+    vfs_mount_mutex.lock();
     for (uint32_t i = 0; i < mount_count; i++) {
         const char *mount_path = mount_table[i].path;
         uint32_t mount_len = strlen(mount_path);
@@ -230,7 +230,7 @@ fs_node_t *vfs_path_to_node(const char *path) {
             
             /* 如果正好是挂载点，返回根 */
             if (path[mount_len] == '\0') {
-                mutex_unlock(&vfs_mount_mutex);
+                vfs_mount_mutex.unlock();
                 return mount_table[i].root;
             }
             
@@ -251,7 +251,7 @@ fs_node_t *vfs_path_to_node(const char *path) {
                 if (*remaining && *remaining != '/') {
                     LOG_ERROR_MSG("VFS: Path component too long\n");
                     vfs_release_node(current);  // 释放中间节点
-                    mutex_unlock(&vfs_mount_mutex);
+                    vfs_mount_mutex.unlock();
                     return NULL;
                 }
                 
@@ -276,7 +276,7 @@ fs_node_t *vfs_path_to_node(const char *path) {
                     fs_node_t *parent = vfs_finddir(current, "..");
                     if (!parent) {
                         vfs_release_node(current);  // 释放中间节点
-                        mutex_unlock(&vfs_mount_mutex);
+                        vfs_mount_mutex.unlock();
                         return NULL;
                     }
                     // 释放旧的 current（如果它是动态分配的且不是根）
@@ -294,7 +294,7 @@ fs_node_t *vfs_path_to_node(const char *path) {
                     if (current != mount_table[i].root) {
                         vfs_release_node(current);
                     }
-                    mutex_unlock(&vfs_mount_mutex);
+                    vfs_mount_mutex.unlock();
                     return NULL;
                 }
                 
@@ -305,12 +305,12 @@ fs_node_t *vfs_path_to_node(const char *path) {
                 current = next;
             }
             
-            mutex_unlock(&vfs_mount_mutex);
+            vfs_mount_mutex.unlock();
             // 如果返回的节点是动态分配的，已经在 finddir 中设置了 ref_count=1
             return current;
         }
     }
-    mutex_unlock(&vfs_mount_mutex);
+    vfs_mount_mutex.unlock();
     
     /* 正常路径解析（不在任何挂载点下） */
     // 跳过开头的 '/'
@@ -717,7 +717,7 @@ int vfs_mount(const char *path, fs_node_t *root) {
     vfs_release_node(mount_point);
     
     /* 获取挂载表锁，保护后续的检查和修改操作 */
-    mutex_lock(&vfs_mount_mutex);
+    vfs_mount_mutex.lock();
     
     /* 检查是否已经挂载了文件系统 */
     bool already_mounted = false;
@@ -729,14 +729,14 @@ int vfs_mount(const char *path, fs_node_t *root) {
     }
     
     if (already_mounted) {
-        mutex_unlock(&vfs_mount_mutex);
+        vfs_mount_mutex.unlock();
         LOG_ERROR_MSG("VFS: Mount point '%s' is already mounted\n", path);
         return -1;
     }
     
     /* 检查挂载表是否满 */
     if (mount_count >= MAX_MOUNTS) {
-        mutex_unlock(&vfs_mount_mutex);
+        vfs_mount_mutex.unlock();
         LOG_ERROR_MSG("VFS: Mount table is full (max %u mounts)\n", MAX_MOUNTS);
         return -1;
     }
@@ -747,7 +747,7 @@ int vfs_mount(const char *path, fs_node_t *root) {
     mount_table[mount_count].root = root;
     mount_count++;
     
-    mutex_unlock(&vfs_mount_mutex);
+    vfs_mount_mutex.unlock();
     
     LOG_INFO_MSG("VFS: Filesystem mounted at '%s' (root=%p, total_mounts=%u)\n", 
                  path, root, mount_count);

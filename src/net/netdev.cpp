@@ -49,7 +49,7 @@ netdev_t *netdev_alloc(const char *name) {
     dev->mtu = 1500;
     
     // 初始化互斥锁
-    mutex_init(&dev->lock);
+    dev->lock.init();
     
     return dev;
 }
@@ -159,10 +159,10 @@ int netdev_up(netdev_t *dev) {
         return -1;
     }
     
-    mutex_lock(&dev->lock);
+    dev->lock.lock();
     
     if (dev->state == NETDEV_UP) {
-        mutex_unlock(&dev->lock);
+        dev->lock.unlock();
         return 0;  // 已经启用
     }
     
@@ -170,7 +170,7 @@ int netdev_up(netdev_t *dev) {
     if (dev->ops && dev->ops->open) {
         int ret = dev->ops->open(dev);
         if (ret < 0) {
-            mutex_unlock(&dev->lock);
+            dev->lock.unlock();
             LOG_ERROR_MSG("netdev: Failed to open device %s\n", dev->name);
             return ret;
         }
@@ -178,7 +178,7 @@ int netdev_up(netdev_t *dev) {
     
     dev->state = NETDEV_UP;
     
-    mutex_unlock(&dev->lock);
+    dev->lock.unlock();
     
     LOG_INFO_MSG("netdev: Device %s is up\n", dev->name);
     
@@ -190,10 +190,10 @@ int netdev_down(netdev_t *dev) {
         return -1;
     }
     
-    mutex_lock(&dev->lock);
+    dev->lock.lock();
     
     if (dev->state == NETDEV_DOWN) {
-        mutex_unlock(&dev->lock);
+        dev->lock.unlock();
         return 0;  // 已经禁用
     }
     
@@ -201,7 +201,7 @@ int netdev_down(netdev_t *dev) {
     if (dev->ops && dev->ops->close) {
         int ret = dev->ops->close(dev);
         if (ret < 0) {
-            mutex_unlock(&dev->lock);
+            dev->lock.unlock();
             LOG_ERROR_MSG("netdev: Failed to close device %s\n", dev->name);
             return ret;
         }
@@ -209,7 +209,7 @@ int netdev_down(netdev_t *dev) {
     
     dev->state = NETDEV_DOWN;
     
-    mutex_unlock(&dev->lock);
+    dev->lock.unlock();
     
     LOG_INFO_MSG("netdev: Device %s is down\n", dev->name);
     
@@ -273,21 +273,21 @@ void netdev_receive(netdev_t *dev, netbuf_t *buf) {
 void netdev_set_ipaddr(netdev_t *dev, uint32_t ip) {
     if (!dev) return;
     
-    MutexGuard guard(dev->lock);
+    sync::MutexGuard guard(dev->lock);
     dev->ip_addr = ip;
 }
 
 void netdev_set_netmask(netdev_t *dev, uint32_t netmask) {
     if (!dev) return;
     
-    MutexGuard guard(dev->lock);
+    sync::MutexGuard guard(dev->lock);
     dev->netmask = netmask;
 }
 
 void netdev_set_gateway(netdev_t *dev, uint32_t gateway) {
     if (!dev) return;
     
-    MutexGuard guard(dev->lock);
+    sync::MutexGuard guard(dev->lock);
     dev->gateway = gateway;
 }
 

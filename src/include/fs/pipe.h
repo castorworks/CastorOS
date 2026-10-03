@@ -31,9 +31,9 @@ typedef struct pipe {
     uint32_t readers;                    // 读端引用计数
     uint32_t writers;                    // 写端引用计数
     
-    mutex_t lock;                        // 保护缓冲区
-    semaphore_t read_sem;                // 读信号量（数据可用）
-    semaphore_t write_sem;               // 写信号量（空间可用）
+    sync::Mutex lock;                        // 保护缓冲区
+    sync::Semaphore read_sem;                // 读信号量（数据可用）
+    sync::Semaphore write_sem;               // 写信号量（空间可用）
     
     bool read_closed;                    // 读端是否关闭
     bool write_closed;                   // 写端是否关闭

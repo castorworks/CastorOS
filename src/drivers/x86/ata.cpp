@@ -54,7 +54,7 @@ typedef struct ata_device {
 } ata_device_t;
 
 /* 每个 ATA 通道一个 mutex（主通道和次通道各一个） */
-static mutex_t ata_channel_mutex[2];
+static sync::Mutex ata_channel_mutex[2];
 
 static ata_device_t ata_devices[ATA_MAX_DEVICES] = {
     {.io_base = ATA_PRIMARY_IO_BASE,    .ctrl_base = ATA_PRIMARY_CTRL_BASE,    .drive = 0, .present = false, .total_sectors = 0, .channel = 0}, // ata0: primary master
@@ -208,7 +208,7 @@ static int ata_blockdev_read(void *dev_ptr, uint32_t sector, uint32_t count, uin
     }
 
     /* 获取通道锁 */
-    MutexGuard guard(ata_channel_mutex[dev->channel]);
+    sync::MutexGuard guard(ata_channel_mutex[dev->channel]);
 
     int result = 0;
     for (uint32_t i = 0; i < count; i++) {
@@ -235,7 +235,7 @@ static int ata_blockdev_write(void *dev_ptr, uint32_t sector, uint32_t count, co
     }
 
     /* 获取通道锁 */
-    MutexGuard guard(ata_channel_mutex[dev->channel]);
+    sync::MutexGuard guard(ata_channel_mutex[dev->channel]);
 
     int result = 0;
     for (uint32_t i = 0; i < count; i++) {
@@ -251,8 +251,8 @@ static int ata_blockdev_write(void *dev_ptr, uint32_t sector, uint32_t count, co
 
 void ata_init(void) {
     /* 初始化通道 mutex */
-    mutex_init(&ata_channel_mutex[0]);  // 主通道
-    mutex_init(&ata_channel_mutex[1]);  // 次通道
+    ata_channel_mutex[0].init();  // 主通道
+    ata_channel_mutex[1].init();  // 次通道
     
     irq_disable_line(14);
     

@@ -29,7 +29,7 @@ extern uint64_t boot_page_directory[];         ///< 引导时的 PML4 (x86_64)
 extern uint32_t boot_page_directory[];         ///< 引导时的页目录 (i686)
 #endif
 
-static spinlock_t vmm_lock;                    ///< VMM 自旋锁，保护页表操作
+static sync::Spinlock vmm_lock;                    ///< VMM 自旋锁，保护页表操作
 
 /* 内核页目录范围 - 使用 pgtable 抽象层获取配置 */
 #if defined(ARCH_X86_64)
@@ -226,7 +226,7 @@ static page_table_t* create_page_table(void) {
  */
 void vmm_init(void) {
     // 初始化 VMM 自旋锁
-    spinlock_init(&vmm_lock);
+    vmm_lock.init();
     
 #if defined(ARCH_ARM64)
     // ARM64: 引导代码已经设置了 4 级页表
@@ -473,14 +473,14 @@ bool vmm_handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
     }
     
     bool irq_state;
-    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    vmm_lock.lock_irqsave(irq_state);
     
     // 使用 HAL 接口查询页面映射
     paddr_t old_frame;
     uint32_t hal_flags;
     if (!hal_mmu_query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)addr, &old_frame, &hal_flags)) {
         LOG_DEBUG_MSG("COW: Page not mapped - addr=0x%lx\n", (unsigned long)addr);
-        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        vmm_lock.unlock_irqrestore(irq_state);
         return false;
     }
     
@@ -488,7 +488,7 @@ bool vmm_handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
     if (!(hal_flags & HAL_PAGE_COW)) {
         LOG_DEBUG_MSG("COW: Not a COW page - addr=0x%lx, flags=0x%x\n",
                      (unsigned long)addr, hal_flags);
-        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        vmm_lock.unlock_irqrestore(irq_state);
         return false;
     }
     
@@ -496,7 +496,7 @@ bool vmm_handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
     if (old_frame == PADDR_INVALID || old_frame == 0) {
         LOG_ERROR_MSG("COW: Invalid old frame address 0x%llx at addr=0x%lx\n", 
                      (unsigned long long)old_frame, (unsigned long)addr);
-        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        vmm_lock.unlock_irqrestore(irq_state);
         return false;
     }
     
@@ -513,7 +513,7 @@ bool vmm_handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
         hal_mmu_protect(HAL_ADDR_SPACE_CURRENT, (vaddr_t)addr, 
                        HAL_PAGE_WRITE, HAL_PAGE_COW);
         hal_mmu_flush_tlb((vaddr_t)addr);
-        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        vmm_lock.unlock_irqrestore(irq_state);
         return true;
     }
     
@@ -522,7 +522,7 @@ bool vmm_handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
         hal_mmu_protect(HAL_ADDR_SPACE_CURRENT, (vaddr_t)addr, 
                        HAL_PAGE_WRITE, HAL_PAGE_COW);
         hal_mmu_flush_tlb((vaddr_t)addr);
-        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        vmm_lock.unlock_irqrestore(irq_state);
         LOG_DEBUG_MSG("COW: Single reference (refcount=1), restored write permission\n");
         return true;
     }
@@ -530,7 +530,7 @@ bool vmm_handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
     // 多个进程共享（refcount > 1），需要复制页面
     paddr_t new_frame = pmm_alloc_frame();
     if (new_frame == PADDR_INVALID) {
-        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        vmm_lock.unlock_irqrestore(irq_state);
         LOG_ERROR_MSG("COW: Failed to allocate frame for COW copy (out of memory)\n");
         return false;
     }
@@ -556,7 +556,7 @@ bool vmm_handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
     // 减少旧页面的引用计数
     pmm_frame_ref_dec(old_frame);
     
-    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+    vmm_lock.unlock_irqrestore(irq_state);
     
     LOG_DEBUG_MSG("COW: Copied page (refcount was %u), old_frame=0x%llx -> new_frame=0x%llx\n", 
                  refcount, (unsigned long long)old_frame, (unsigned long long)new_frame);
@@ -693,7 +693,7 @@ bool vmm_map_page(uintptr_t virt, uintptr_t phys, uint32_t flags) {
     // 检查页对齐
     if ((virt | phys) & (PAGE_SIZE-1)) return false;
     
-    SpinlockIrqGuard guard(vmm_lock);
+    sync::SpinlockIrqGuard guard(vmm_lock);
     
     // 转换为 HAL 标志
     uint32_t hal_flags = vmm_flags_to_hal(flags);
@@ -731,7 +731,7 @@ void vmm_unmap_page(uintptr_t virt) {
     // 检查页对齐
     if (virt & (PAGE_SIZE-1)) return;
     
-    SpinlockIrqGuard guard(vmm_lock);
+    sync::SpinlockIrqGuard guard(vmm_lock);
     
     // 使用 HAL 接口取消映射
     hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, (vaddr_t)virt);
@@ -773,13 +773,13 @@ uintptr_t vmm_get_page_directory(void) {
  */
 uintptr_t vmm_create_page_directory(void) {
     bool irq_state;
-    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    vmm_lock.lock_irqsave(irq_state);
     
     // 使用 HAL 接口创建新地址空间
     hal_addr_space_t new_space = hal_mmu_create_space();
     
     if (new_space == HAL_ADDR_SPACE_INVALID) {
-        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        vmm_lock.unlock_irqrestore(irq_state);
         return 0;
     }
     
@@ -790,7 +790,7 @@ uintptr_t vmm_create_page_directory(void) {
     register_page_directory((uintptr_t)new_space);
 #endif
     
-    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+    vmm_lock.unlock_irqrestore(irq_state);
     return (uintptr_t)new_space;
 }
 
@@ -813,7 +813,7 @@ uintptr_t vmm_clone_page_directory(uintptr_t src_dir_phys) {
     // **Feature: arm64-kernel-integration**
     // **Validates: Requirements 7.1**
     bool irq_state;
-    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    vmm_lock.lock_irqsave(irq_state);
     
     hal_addr_space_t src_space = (src_dir_phys == 0) 
                                  ? HAL_ADDR_SPACE_CURRENT 
@@ -821,7 +821,7 @@ uintptr_t vmm_clone_page_directory(uintptr_t src_dir_phys) {
     
     hal_addr_space_t new_space = hal_mmu_clone_space(src_space);
     
-    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+    vmm_lock.unlock_irqrestore(irq_state);
     
     if (new_space == HAL_ADDR_SPACE_INVALID) {
         return 0;
@@ -847,7 +847,7 @@ uintptr_t vmm_clone_page_directory(uintptr_t src_dir_phys) {
     }
     
     bool irq_state;
-    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    vmm_lock.lock_irqsave(irq_state);
     
     page_directory_t *src_dir = (page_directory_t*)PHYS_TO_VIRT(src_dir_phys);
     page_directory_t *new_dir = (page_directory_t*)PHYS_TO_VIRT((uintptr_t)new_dir_phys);
@@ -976,7 +976,7 @@ uintptr_t vmm_clone_page_directory(uintptr_t src_dir_phys) {
         // （直接恢复写权限，无需复制）
         
         // 释放已分配的新页目录资源
-        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        vmm_lock.unlock_irqrestore(irq_state);
         vmm_free_page_directory(new_dir_phys);
         return 0;
     }
@@ -984,7 +984,7 @@ uintptr_t vmm_clone_page_directory(uintptr_t src_dir_phys) {
     // 注册为活动页目录
     register_page_directory((uintptr_t)new_dir_phys);
     
-    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+    vmm_lock.unlock_irqrestore(irq_state);
     return (uintptr_t)new_dir_phys;
 #endif /* !ARCH_X86_64 */
 }
@@ -1035,11 +1035,11 @@ void vmm_free_page_directory(uintptr_t dir_phys) {
     }
     
     bool irq_state;
-    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    vmm_lock.lock_irqsave(irq_state);
     
     hal_mmu_destroy_space((hal_addr_space_t)dir_phys);
     
-    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+    vmm_lock.unlock_irqrestore(irq_state);
     return;
 #else
     LOG_INFO_MSG("vmm_free_page_directory: Attempting to free page directory 0x%lx\n", (unsigned long)dir_phys);
@@ -1070,7 +1070,7 @@ void vmm_free_page_directory(uintptr_t dir_phys) {
     }
     
     bool irq_state;
-    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    vmm_lock.lock_irqsave(irq_state);
     
     page_directory_t *dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
     
@@ -1153,7 +1153,7 @@ void vmm_free_page_directory(uintptr_t dir_phys) {
                   freed_pages, (unsigned long long)info_start.used_frames, (unsigned long long)info_end.used_frames, 
                   (int)(info_start.used_frames - info_end.used_frames), freed_tables);
     
-    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+    vmm_lock.unlock_irqrestore(irq_state);
 #endif /* !ARCH_X86_64 */
 }
 
@@ -1167,7 +1167,7 @@ void vmm_free_page_directory(uintptr_t dir_phys) {
 void vmm_sync_current_dir(uintptr_t dir_phys) {
     if (!dir_phys) return;
     
-    SpinlockIrqGuard guard(vmm_lock);
+    sync::SpinlockIrqGuard guard(vmm_lock);
     
     current_dir_phys = dir_phys;
     current_dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
@@ -1182,7 +1182,7 @@ void vmm_sync_current_dir(uintptr_t dir_phys) {
 void vmm_switch_page_directory(uintptr_t dir_phys) {
     if (!dir_phys) return;
     
-    SpinlockIrqGuard guard(vmm_lock);
+    sync::SpinlockIrqGuard guard(vmm_lock);
     
     current_dir_phys = dir_phys;
     current_dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
@@ -1207,7 +1207,7 @@ bool vmm_map_page_in_directory(uintptr_t dir_phys, uintptr_t virt,
     if ((virt | phys) & (PAGE_SIZE-1)) return false;
     
     bool irq_state;
-    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    vmm_lock.lock_irqsave(irq_state);
     
     // 转换为 HAL 标志
     uint32_t hal_flags = vmm_flags_to_hal(flags);
@@ -1224,7 +1224,7 @@ bool vmm_map_page_in_directory(uintptr_t dir_phys, uintptr_t virt,
         hal_mmu_flush_tlb((vaddr_t)virt);
     }
     
-    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+    vmm_lock.unlock_irqrestore(irq_state);
     return result;
 }
 
@@ -1234,7 +1234,7 @@ uintptr_t vmm_unmap_page_in_directory(uintptr_t dir_phys, uintptr_t virt) {
     }
 
     bool irq_state;
-    spinlock_lock_irqsave(&vmm_lock, &irq_state);
+    vmm_lock.lock_irqsave(irq_state);
 
     // 使用 HAL 接口查询原物理地址
     hal_addr_space_t space = (dir_phys == current_dir_phys) 
@@ -1243,7 +1243,7 @@ uintptr_t vmm_unmap_page_in_directory(uintptr_t dir_phys, uintptr_t virt) {
     
     paddr_t old_phys;
     if (!hal_mmu_query(space, (vaddr_t)virt, &old_phys, NULL)) {
-        spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+        vmm_lock.unlock_irqrestore(irq_state);
         return 0;
     }
 
@@ -1255,7 +1255,7 @@ uintptr_t vmm_unmap_page_in_directory(uintptr_t dir_phys, uintptr_t virt) {
         hal_mmu_flush_tlb((vaddr_t)virt);
     }
 
-    spinlock_unlock_irqrestore(&vmm_lock, irq_state);
+    vmm_lock.unlock_irqrestore(irq_state);
     return (uintptr_t)old_phys;
 }
 
@@ -1278,7 +1278,7 @@ void vmm_cleanup_empty_page_tables(uintptr_t dir_phys, uintptr_t start_virt, uin
         return;
     }
     
-    SpinlockIrqGuard guard(vmm_lock);
+    sync::SpinlockIrqGuard guard(vmm_lock);
     
     page_directory_t *dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
     
@@ -1356,7 +1356,7 @@ uintptr_t vmm_map_mmio(uintptr_t phys_addr, size_t size) {
         return 0;
     }
     
-    SpinlockIrqGuard guard(vmm_lock);
+    sync::SpinlockIrqGuard guard(vmm_lock);
     
     // 计算需要的页数（向上取整）
     uintptr_t phys_start = PAGE_ALIGN_DOWN(phys_addr);
@@ -1413,7 +1413,7 @@ void vmm_unmap_mmio(uintptr_t virt_addr, size_t size) {
         return;
     }
     
-    SpinlockIrqGuard guard(vmm_lock);
+    sync::SpinlockIrqGuard guard(vmm_lock);
     
     uintptr_t virt_start = PAGE_ALIGN_DOWN(virt_addr);
     uintptr_t virt_end = PAGE_ALIGN_UP(virt_addr + size);
@@ -1434,7 +1434,7 @@ void vmm_unmap_mmio(uintptr_t virt_addr, size_t size) {
  * 使用 HAL MMU 接口实现跨架构地址转换
  */
 uintptr_t vmm_virt_to_phys(uintptr_t virt) {
-    SpinlockIrqGuard guard(vmm_lock);
+    sync::SpinlockIrqGuard guard(vmm_lock);
     
     paddr_t phys;
     if (!hal_mmu_query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)virt, &phys, NULL)) {
@@ -1559,7 +1559,7 @@ uintptr_t vmm_map_framebuffer(uintptr_t phys_addr, size_t size) {
         return 0;
     }
     
-    SpinlockIrqGuard guard(vmm_lock);
+    sync::SpinlockIrqGuard guard(vmm_lock);
     
     // 计算需要的页数（向上取整）
     uintptr_t phys_start = PAGE_ALIGN_DOWN(phys_addr);

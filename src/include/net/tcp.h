@@ -210,7 +210,7 @@ typedef struct tcp_pcb {
     void *callback_arg;
     
     // 同步
-    mutex_t lock;
+    sync::Mutex lock;
     
     // 链表指针
     struct tcp_pcb *next;

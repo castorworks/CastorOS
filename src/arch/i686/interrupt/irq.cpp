@@ -32,7 +32,7 @@ static isr_handler_t irq_handlers[16] = {0};
  * 但由于 irq_handler 本身就在中断禁用状态下运行，所以读取时不需要额外保护
  * 只需要保护 irq_register_handler() 的写操作
  */
-static spinlock_t irq_registry_lock;
+static sync::Spinlock irq_registry_lock;
 static bool irq_registry_lock_initialized = false;
 
 /* IRQ 统计计数器 */
@@ -143,12 +143,12 @@ void irq_register_handler(uint8_t irq, isr_handler_t handler) {
     
     /* 确保锁已初始化 */
     if (!irq_registry_lock_initialized) {
-        spinlock_init(&irq_registry_lock);
+        irq_registry_lock.init();
         irq_registry_lock_initialized = true;
     }
     
     /* 使用 IRQ save 版本，防止在注册过程中被中断打断 */
-    SpinlockIrqGuard guard(irq_registry_lock);
+    sync::SpinlockIrqGuard guard(irq_registry_lock);
     irq_handlers[irq] = handler;
 }
 
@@ -194,7 +194,7 @@ void irq_init(void) {
     LOG_INFO_MSG("Initializing IRQ...\n");
 
     /* 初始化 IRQ 注册表锁 */
-    spinlock_init(&irq_registry_lock);
+    irq_registry_lock.init();
     irq_registry_lock_initialized = true;
     LOG_DEBUG_MSG("  IRQ registry lock initialized\n");
 

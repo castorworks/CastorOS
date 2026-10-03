@@ -25,7 +25,7 @@
 #define DHCP_MAX_CLIENTS    4       // 最大 DHCP 客户端数量
 
 static dhcp_client_t dhcp_clients[DHCP_MAX_CLIENTS];
-static spinlock_t dhcp_lock;
+static sync::Spinlock dhcp_lock;
 
 // ============================================================================
 // 辅助函数
@@ -480,7 +480,7 @@ void dhcp_input(netdev_t *dev, uint8_t *data, uint32_t len) {
     if (pkt->op != DHCP_OP_REPLY) return;
     if (ntohl(pkt->magic) != DHCP_MAGIC_COOKIE) return;
     
-    SpinlockIrqGuard guard(dhcp_lock);
+    sync::SpinlockIrqGuard guard(dhcp_lock);
     
     dhcp_client_t *client = dhcp_find_client(dev);
     if (!client) {
@@ -534,19 +534,19 @@ int dhcp_start(netdev_t *dev) {
     if (!dev) return -1;
     
     bool irq_state;
-    spinlock_lock_irqsave(&dhcp_lock, &irq_state);
+    dhcp_lock.lock_irqsave(irq_state);
     
     // 检查是否已存在客户端
     dhcp_client_t *client = dhcp_find_client(dev);
     if (client) {
-        spinlock_unlock_irqrestore(&dhcp_lock, irq_state);
+        dhcp_lock.unlock_irqrestore(irq_state);
         return -1;  // 已经在运行
     }
     
     // 分配新客户端
     client = dhcp_alloc_client(dev);
     if (!client) {
-        spinlock_unlock_irqrestore(&dhcp_lock, irq_state);
+        dhcp_lock.unlock_irqrestore(irq_state);
         LOG_ERROR_MSG("dhcp: No available client slots\n");
         return -1;
     }
@@ -563,7 +563,7 @@ int dhcp_start(netdev_t *dev) {
     client->state = DHCP_STATE_SELECTING;
     int ret = dhcp_send_discover(client);
     
-    spinlock_unlock_irqrestore(&dhcp_lock, irq_state);
+    dhcp_lock.unlock_irqrestore(irq_state);
     
     return ret;
 }
@@ -574,7 +574,7 @@ int dhcp_start(netdev_t *dev) {
 void dhcp_stop(netdev_t *dev) {
     if (!dev) return;
     
-    SpinlockIrqGuard guard(dhcp_lock);
+    sync::SpinlockIrqGuard guard(dhcp_lock);
     
     dhcp_client_t *client = dhcp_find_client(dev);
     if (client) {
@@ -590,11 +590,11 @@ int dhcp_release(netdev_t *dev) {
     if (!dev) return -1;
     
     bool irq_state;
-    spinlock_lock_irqsave(&dhcp_lock, &irq_state);
+    dhcp_lock.lock_irqsave(irq_state);
     
     dhcp_client_t *client = dhcp_find_client(dev);
     if (!client || client->state != DHCP_STATE_BOUND) {
-        spinlock_unlock_irqrestore(&dhcp_lock, irq_state);
+        dhcp_lock.unlock_irqrestore(irq_state);
         return -1;
     }
     
@@ -605,7 +605,7 @@ int dhcp_release(netdev_t *dev) {
     netdev_set_ipaddr(dev, 0);
     client->state = DHCP_STATE_INIT;
     
-    spinlock_unlock_irqrestore(&dhcp_lock, irq_state);
+    dhcp_lock.unlock_irqrestore(irq_state);
     
     LOG_INFO_MSG("dhcp: Released lease\n");
     return 0;
@@ -617,7 +617,7 @@ int dhcp_release(netdev_t *dev) {
 dhcp_state_t dhcp_get_status(netdev_t *dev, dhcp_info_t *info) {
     if (!dev) return DHCP_STATE_ERROR;
     
-    SpinlockIrqGuard guard(dhcp_lock);
+    sync::SpinlockIrqGuard guard(dhcp_lock);
     
     dhcp_client_t *client = dhcp_find_client(dev);
     if (!client) {
@@ -638,7 +638,7 @@ dhcp_state_t dhcp_get_status(netdev_t *dev, dhcp_info_t *info) {
 void dhcp_timer(void) {
     uint32_t now = (uint32_t)timer_get_uptime_ms();
     
-    SpinlockIrqGuard guard(dhcp_lock);
+    sync::SpinlockIrqGuard guard(dhcp_lock);
     
     for (int i = 0; i < DHCP_MAX_CLIENTS; i++) {
         dhcp_client_t *client = &dhcp_clients[i];

@@ -47,7 +47,7 @@ typedef struct socket {
 // Socket 表
 #define MAX_SOCKETS     64
 static socket_t *socket_table[MAX_SOCKETS];
-static spinlock_t socket_lock;
+static sync::Spinlock socket_lock;
 
 // 用于标记正在分配中的 socket 槽位
 static socket_t socket_allocating_marker;
@@ -56,7 +56,7 @@ static socket_t socket_allocating_marker;
  * @brief 分配 socket 描述符（原子地标记为分配中）
  */
 static int socket_alloc_fd(void) {
-    SpinlockIrqGuard guard(socket_lock);
+    sync::SpinlockIrqGuard guard(socket_lock);
     
     for (int i = 0; i < MAX_SOCKETS; i++) {
         if (socket_table[i] == NULL) {
@@ -75,11 +75,11 @@ static int socket_alloc_fd(void) {
 static void socket_free_fd(int fd) {
     if (fd >= 0 && fd < MAX_SOCKETS) {
         bool irq_state;
-        spinlock_lock_irqsave(&socket_lock, &irq_state);
+        socket_lock.lock_irqsave(irq_state);
         if (socket_table[fd] == &socket_allocating_marker) {
             socket_table[fd] = NULL;
         }
-        spinlock_unlock_irqrestore(&socket_lock, irq_state);
+        socket_lock.unlock_irqrestore(irq_state);
     }
 }
 
@@ -99,7 +99,7 @@ static socket_t *socket_get(int fd) {
 }
 
 void socket_init(void) {
-    spinlock_init(&socket_lock);
+    socket_lock.init();
     memset(socket_table, 0, sizeof(socket_table));
     
     LOG_INFO_MSG("socket: Socket subsystem initialized\n");
@@ -164,7 +164,7 @@ int sys_socket(int domain, int type, int protocol) {
         }
     }
     
-    SpinlockIrqGuard guard(socket_lock);
+    sync::SpinlockIrqGuard guard(socket_lock);
     socket_table[fd] = sock;  // 替换占位符为实际 socket
     
     return fd;
@@ -280,7 +280,7 @@ int sys_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
         }
     }
     
-    SpinlockIrqGuard guard(socket_lock);
+    sync::SpinlockIrqGuard guard(socket_lock);
     socket_table[new_fd] = new_sock;
     
     return new_fd;
@@ -497,9 +497,9 @@ int sys_closesocket(int sockfd) {
     
     // 从表中移除
     bool irq_state;
-    spinlock_lock_irqsave(&socket_lock, &irq_state);
+    socket_lock.lock_irqsave(irq_state);
     socket_table[sockfd] = NULL;
-    spinlock_unlock_irqrestore(&socket_lock, irq_state);
+    socket_lock.unlock_irqrestore(irq_state);
     
     kfree(sock);
     return 0;

@@ -12,17 +12,17 @@ static blockdev_t *blockdev_registry[BLOCKDEV_MAX_DEVICES];
 static uint32_t blockdev_registry_count = 0;
 
 // 保护注册表的互斥锁
-static mutex_t blockdev_registry_mutex;
+static sync::Mutex blockdev_registry_mutex;
 // 保护引用计数操作的自旋锁
-static spinlock_t blockdev_refcount_lock;
+static sync::Spinlock blockdev_refcount_lock;
 // 标记是否已初始化锁
 static bool blockdev_locks_initialized = false;
 
 // 确保锁已初始化
 static void blockdev_ensure_locks_init(void) {
     if (!blockdev_locks_initialized) {
-        mutex_init(&blockdev_registry_mutex);
-        spinlock_init(&blockdev_refcount_lock);
+        blockdev_registry_mutex.init();
+        blockdev_refcount_lock.init();
         blockdev_locks_initialized = true;
     }
 }
@@ -103,7 +103,7 @@ int blockdev_register(blockdev_t *dev) {
     }
     
     blockdev_ensure_locks_init();
-    MutexGuard guard(blockdev_registry_mutex);
+    sync::MutexGuard guard(blockdev_registry_mutex);
 
     if (dev->registered) {
         LOG_WARN_MSG("blockdev: Device '%s' already registered\n", dev->name);
@@ -139,10 +139,10 @@ void blockdev_unregister(blockdev_t *dev) {
     }
     
     blockdev_ensure_locks_init();
-    mutex_lock(&blockdev_registry_mutex);
+    blockdev_registry_mutex.lock();
     
     if (!dev->registered) {
-        mutex_unlock(&blockdev_registry_mutex);
+        blockdev_registry_mutex.unlock();
         return;
     }
 
@@ -150,7 +150,7 @@ void blockdev_unregister(blockdev_t *dev) {
     if (index < 0) {
         LOG_WARN_MSG("blockdev: Device '%s' not found in registry\n", dev->name);
         dev->registered = false;
-        mutex_unlock(&blockdev_registry_mutex);
+        blockdev_registry_mutex.unlock();
         return;
     }
 
@@ -168,7 +168,7 @@ void blockdev_unregister(blockdev_t *dev) {
     dev->registered = false;
     
     // 在解锁后释放引用，避免在持锁时调用可能重入的操作
-    mutex_unlock(&blockdev_registry_mutex);
+    blockdev_registry_mutex.unlock();
     blockdev_release(dev);
 
     LOG_INFO_MSG("blockdev: Unregistered device '%s'\n", dev->name);
@@ -180,7 +180,7 @@ blockdev_t *blockdev_get_by_name(const char *name) {
     }
     
     blockdev_ensure_locks_init();
-    MutexGuard guard(blockdev_registry_mutex);
+    sync::MutexGuard guard(blockdev_registry_mutex);
 
     blockdev_t *dev = blockdev_find_by_name_internal(name);
     if (!dev) {
@@ -199,7 +199,7 @@ blockdev_t *blockdev_retain(blockdev_t *dev) {
     
     blockdev_ensure_locks_init();
     
-    SpinlockIrqGuard guard(blockdev_refcount_lock);
+    sync::SpinlockIrqGuard guard(blockdev_refcount_lock);
     dev->ref_count++;
     
     return dev;
@@ -213,15 +213,15 @@ void blockdev_release(blockdev_t *dev) {
     blockdev_ensure_locks_init();
     
     bool irq_state;
-    spinlock_lock_irqsave(&blockdev_refcount_lock, &irq_state);
+    blockdev_refcount_lock.lock_irqsave(irq_state);
     
     if (dev->ref_count == 0) {
-        spinlock_unlock_irqrestore(&blockdev_refcount_lock, irq_state);
+        blockdev_refcount_lock.unlock_irqrestore(irq_state);
         LOG_WARN_MSG("blockdev: Device '%s' reference underflow\n", dev->name);
         return;
     }
 
     dev->ref_count--;
-    spinlock_unlock_irqrestore(&blockdev_refcount_lock, irq_state);
+    blockdev_refcount_lock.unlock_irqrestore(irq_state);
 }
 

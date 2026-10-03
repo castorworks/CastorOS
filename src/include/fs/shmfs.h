@@ -28,7 +28,7 @@ typedef struct shmfs_file {
     uint32_t size;                // 文件大小
     uint32_t num_pages;           // 页数
     uint32_t map_count;           // 映射计数（有多少进程映射了此文件）
-    mutex_t lock;                 // 保护文件数据
+    sync::Mutex lock;                 // 保护文件数据
 } shmfs_file_t;
 
 // 共享内存目录项
@@ -42,7 +42,7 @@ typedef struct shmfs_dirent {
 typedef struct shmfs_dir {
     shmfs_dirent_t *entries;      // 目录项链表
     uint32_t count;               // 目录项数量
-    mutex_t lock;                 // 目录锁
+    sync::Mutex lock;                 // 目录锁
 } shmfs_dir_t;
 
 /**

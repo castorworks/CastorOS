@@ -1,7 +1,7 @@
 #include <kernel/sync/spinlock.h>
 
-#define SPINLOCK_UNLOCKED 0
-#define SPINLOCK_LOCKED   1
+static constexpr uint32_t SPINLOCK_UNLOCKED = 0;
+static constexpr uint32_t SPINLOCK_LOCKED   = 1;
 
 #if defined(ARCH_ARM64)
 /* ARM64 原子交换操作 */
@@ -39,63 +39,39 @@ static inline void cpu_relax(void) {
 }
 #endif
 
-void spinlock_init(spinlock_t *lock) {
-    if (lock == NULL) {
-        return;
-    }
-    lock->value = SPINLOCK_UNLOCKED;
+namespace sync {
+
+void Spinlock::init() {
+    value_ = SPINLOCK_UNLOCKED;
 }
 
-bool spinlock_try_lock(spinlock_t *lock) {
-    if (lock == NULL) {
-        return false;
-    }
-    return atomic_xchg(&lock->value, SPINLOCK_LOCKED) == SPINLOCK_UNLOCKED;
+bool Spinlock::try_lock() {
+    return atomic_xchg(&value_, SPINLOCK_LOCKED) == SPINLOCK_UNLOCKED;
 }
 
-void spinlock_lock(spinlock_t *lock) {
-    if (lock == NULL) {
-        return;
-    }
-
-    while (!spinlock_try_lock(lock)) {
+void Spinlock::lock() {
+    while (!try_lock()) {
         cpu_relax();
     }
 }
 
-void spinlock_unlock(spinlock_t *lock) {
-    if (lock == NULL) {
-        return;
-    }
+void Spinlock::unlock() {
     // 使用原子交换操作确保多核可见性
-    atomic_xchg(&lock->value, SPINLOCK_UNLOCKED);
+    atomic_xchg(&value_, SPINLOCK_UNLOCKED);
 }
 
-bool spinlock_is_locked(const spinlock_t *lock) {
-    if (lock == NULL) {
-        return false;
-    }
-    return lock->value == SPINLOCK_LOCKED;
+bool Spinlock::is_locked() const {
+    return value_ == SPINLOCK_LOCKED;
 }
 
-void spinlock_lock_irqsave(spinlock_t *lock, bool *irq_state) {
-    if (lock == NULL) {
-        if (irq_state != NULL) {
-            *irq_state = false;
-        }
-        return;
-    }
-    bool prev = interrupts_disable();
-    if (irq_state != NULL) {
-        *irq_state = prev;
-    }
-    spinlock_lock(lock);
+void Spinlock::lock_irqsave(bool &irq_state) {
+    irq_state = interrupts_disable();
+    lock();
 }
 
-void spinlock_unlock_irqrestore(spinlock_t *lock, bool irq_state) {
-    if (lock != NULL) {
-        spinlock_unlock(lock);
-    }
+void Spinlock::unlock_irqrestore(bool irq_state) {
+    unlock();
     interrupts_restore(irq_state);
 }
 
+} // namespace sync

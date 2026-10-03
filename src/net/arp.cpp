@@ -16,7 +16,7 @@
 
 // ARP 缓存表
 static arp_entry_t arp_cache[ARP_CACHE_SIZE];
-static spinlock_t arp_cache_lock;
+static sync::Spinlock arp_cache_lock;
 
 // 字节序转换
 static inline uint16_t arp_ntohs(uint16_t n) {
@@ -98,7 +98,7 @@ static void arp_free_pending(arp_entry_t *entry) {
 }
 
 void arp_init(void) {
-    spinlock_init(&arp_cache_lock);
+    arp_cache_lock.init();
     memset(arp_cache, 0, sizeof(arp_cache));
     
     LOG_INFO_MSG("arp: ARP protocol initialized\n");
@@ -173,7 +173,7 @@ int arp_resolve(netdev_t *dev, uint32_t ip, uint8_t *mac) {
     }
     
     bool irq_state;
-    spinlock_lock_irqsave(&arp_cache_lock, &irq_state);
+    arp_cache_lock.lock_irqsave(irq_state);
     
     // 查找缓存
     arp_entry_t *entry = arp_cache_find(ip);
@@ -183,11 +183,11 @@ int arp_resolve(netdev_t *dev, uint32_t ip, uint8_t *mac) {
             // 已解析，复制 MAC 地址
             memcpy(mac, entry->mac_addr, 6);
             entry->timestamp = (uint32_t)timer_get_uptime_ms();
-            spinlock_unlock_irqrestore(&arp_cache_lock, irq_state);
+            arp_cache_lock.unlock_irqrestore(irq_state);
             return 0;
         } else if (entry->state == ARP_STATE_PENDING) {
             // 正在解析中
-            spinlock_unlock_irqrestore(&arp_cache_lock, irq_state);
+            arp_cache_lock.unlock_irqrestore(irq_state);
             return -1;
         }
     }
@@ -208,7 +208,7 @@ int arp_resolve(netdev_t *dev, uint32_t ip, uint8_t *mac) {
         memset(entry->mac_addr, 0, 6);
     }
     
-    spinlock_unlock_irqrestore(&arp_cache_lock, irq_state);
+    arp_cache_lock.unlock_irqrestore(irq_state);
     
     // 发送 ARP 请求
     arp_request(dev, ip);
@@ -293,7 +293,7 @@ void arp_cache_update(uint32_t ip, const uint8_t *mac) {
         return;
     }
     
-    SpinlockIrqGuard guard(arp_cache_lock);
+    sync::SpinlockIrqGuard guard(arp_cache_lock);
     
     // 查找现有条目
     arp_entry_t *entry = arp_cache_find(ip);
@@ -329,7 +329,7 @@ int arp_cache_lookup(uint32_t ip, uint8_t *mac) {
         return -1;
     }
     
-    SpinlockIrqGuard guard(arp_cache_lock);
+    sync::SpinlockIrqGuard guard(arp_cache_lock);
     
     arp_entry_t *entry = arp_cache_find(ip);
     
@@ -352,7 +352,7 @@ int arp_cache_add_static(uint32_t ip, const uint8_t *mac) {
 }
 
 int arp_cache_delete(uint32_t ip) {
-    SpinlockIrqGuard guard(arp_cache_lock);
+    sync::SpinlockIrqGuard guard(arp_cache_lock);
     
     arp_entry_t *entry = arp_cache_find(ip);
     
@@ -369,7 +369,7 @@ int arp_cache_delete(uint32_t ip) {
 void arp_cache_cleanup(void) {
     uint32_t now = (uint32_t)timer_get_uptime_ms();
     
-    SpinlockIrqGuard guard(arp_cache_lock);
+    sync::SpinlockIrqGuard guard(arp_cache_lock);
     
     for (int i = 0; i < ARP_CACHE_SIZE; i++) {
         if (arp_cache[i].state == ARP_STATE_RESOLVED) {
@@ -388,7 +388,7 @@ void arp_cache_cleanup(void) {
 }
 
 void arp_cache_clear(void) {
-    SpinlockIrqGuard guard(arp_cache_lock);
+    sync::SpinlockIrqGuard guard(arp_cache_lock);
     
     for (int i = 0; i < ARP_CACHE_SIZE; i++) {
         arp_free_pending(&arp_cache[i]);
@@ -402,7 +402,7 @@ void arp_cache_dump(void) {
     kprintf("------------------------------------------------\n");
     
     bool irq_state;
-    spinlock_lock_irqsave(&arp_cache_lock, &irq_state);
+    arp_cache_lock.lock_irqsave(irq_state);
     
     int count = 0;
     for (int i = 0; i < ARP_CACHE_SIZE; i++) {
@@ -425,7 +425,7 @@ void arp_cache_dump(void) {
         }
     }
     
-    spinlock_unlock_irqrestore(&arp_cache_lock, irq_state);
+    arp_cache_lock.unlock_irqrestore(irq_state);
     
     if (count == 0) {
         kprintf("(empty)\n");
@@ -435,7 +435,7 @@ void arp_cache_dump(void) {
 int arp_cache_count(void) {
     int count = 0;
     
-    SpinlockIrqGuard guard(arp_cache_lock);
+    sync::SpinlockIrqGuard guard(arp_cache_lock);
     
     for (int i = 0; i < ARP_CACHE_SIZE; i++) {
         if (arp_cache[i].state != ARP_STATE_FREE) {
@@ -451,7 +451,7 @@ int arp_cache_get_entry(int index, uint32_t *ip, uint8_t *mac, uint8_t *state) {
         return -1;
     }
     
-    SpinlockIrqGuard guard(arp_cache_lock);
+    sync::SpinlockIrqGuard guard(arp_cache_lock);
     
     if (arp_cache[index].state == ARP_STATE_FREE) {
         return -1;
@@ -469,7 +469,7 @@ int arp_queue_packet(uint32_t ip, netbuf_t *buf) {
         return -1;
     }
     
-    SpinlockIrqGuard guard(arp_cache_lock);
+    sync::SpinlockIrqGuard guard(arp_cache_lock);
     
     arp_entry_t *entry = arp_cache_find(ip);
     

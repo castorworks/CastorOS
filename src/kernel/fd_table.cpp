@@ -18,7 +18,7 @@ void fd_table_init(fd_table_t *table) {
     }
     
     // 初始化自旋锁
-    spinlock_init(&table->lock);
+    table->lock.init();
     
     for (int i = 0; i < MAX_FDS; i++) {
         table->entries[i].node = NULL;
@@ -33,7 +33,7 @@ int32_t fd_table_alloc(fd_table_t *table, fs_node_t *node, int32_t flags) {
         return -1;
     }
     
-    spinlock_lock(&table->lock);
+    table->lock.lock();
     
     // 查找第一个空闲的文件描述符
     int32_t result = -1;
@@ -52,7 +52,7 @@ int32_t fd_table_alloc(fd_table_t *table, fs_node_t *node, int32_t flags) {
         }
     }
     
-    spinlock_unlock(&table->lock);
+    table->lock.unlock();
     
     // 表满时 result 保持为 -1
     return result;
@@ -63,7 +63,7 @@ fd_entry_t *fd_table_get(fd_table_t *table, int32_t fd) {
         return NULL;
     }
     
-    SpinlockGuard guard(table->lock);
+    sync::SpinlockGuard guard(table->lock);
     
     fd_entry_t *result = NULL;
     if (table->entries[fd].in_use) {
@@ -78,10 +78,10 @@ int32_t fd_table_free(fd_table_t *table, int32_t fd) {
         return -1;
     }
     
-    spinlock_lock(&table->lock);
+    table->lock.lock();
     
     if (!table->entries[fd].in_use) {
-        spinlock_unlock(&table->lock);
+        table->lock.unlock();
         return -1;
     }
     
@@ -94,7 +94,7 @@ int32_t fd_table_free(fd_table_t *table, int32_t fd) {
     table->entries[fd].flags = 0;
     table->entries[fd].in_use = false;
     
-    spinlock_unlock(&table->lock);
+    table->lock.unlock();
     
     // 在解锁后关闭文件和释放节点
     // 避免在持有锁的情况下调用可能阻塞的 VFS 操作
@@ -115,7 +115,7 @@ int32_t fd_table_copy(fd_table_t *src, fd_table_t *dst) {
     }
     
     // 按地址顺序加锁，避免死锁
-    spinlock_t *first_lock, *second_lock;
+    sync::Spinlock *first_lock, *second_lock;
     if ((uintptr_t)src < (uintptr_t)dst) {
         first_lock = &src->lock;
         second_lock = &dst->lock;
@@ -124,10 +124,10 @@ int32_t fd_table_copy(fd_table_t *src, fd_table_t *dst) {
         second_lock = &src->lock;
     }
     
-    spinlock_lock(first_lock);
+    first_lock->lock();
     // 如果 src == dst，不要重复加锁
     if (src != dst) {
-        spinlock_lock(second_lock);
+        second_lock->lock();
     }
     
     for (int i = 0; i < MAX_FDS; i++) {
@@ -153,9 +153,9 @@ int32_t fd_table_copy(fd_table_t *src, fd_table_t *dst) {
     
     // 解锁顺序与加锁顺序相反
     if (src != dst) {
-        spinlock_unlock(second_lock);
+        second_lock->unlock();
     }
-    spinlock_unlock(first_lock);
+    first_lock->unlock();
     
     return 0;
 }

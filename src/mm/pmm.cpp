@@ -29,7 +29,7 @@ static pfn_t bitmap_size = 0;             ///< 位图大小（32位字数量）
 static pfn_t total_frames = 0;            ///< 总页帧数
 static pmm_info_t pmm_info = {};         ///< 物理内存信息
 static pfn_t last_free_index = 0;         ///< 上次分配的空闲页帧索引（优化搜索）
-static spinlock_t pmm_lock;               ///< PMM 自旋锁
+static sync::Spinlock pmm_lock;               ///< PMM 自旋锁
 static protected_frame_t protected_frames[MAX_PROTECTED_FRAMES];
 static uint32_t protected_frame_count = 0;
 static uint16_t *frame_refcount = NULL;   ///< 页帧引用计数数组（每帧2字节，最大65535引用）
@@ -150,7 +150,7 @@ void pmm_protect_frame(paddr_t frame) {
         frame = PADDR_ALIGN_DOWN(frame);
     }
     
-    SpinlockIrqGuard guard(pmm_lock);
+    sync::SpinlockIrqGuard guard(pmm_lock);
     
     // 确保受保护的帧在位图中被标记为已使用
     pfn_t idx = PADDR_TO_PFN(frame);
@@ -189,7 +189,7 @@ void pmm_unprotect_frame(paddr_t frame) {
         frame = PADDR_ALIGN_DOWN(frame);
     }
     
-    SpinlockIrqGuard guard(pmm_lock);
+    sync::SpinlockIrqGuard guard(pmm_lock);
     
     protected_frame_t *entry = find_protected_frame_unsafe(frame);
     if (!entry) {
@@ -222,7 +222,7 @@ bool pmm_is_frame_protected(paddr_t frame) {
         frame = PADDR_ALIGN_DOWN(frame);
     }
     
-    SpinlockIrqGuard guard(pmm_lock);
+    sync::SpinlockIrqGuard guard(pmm_lock);
     bool protected_flag = (find_protected_frame_unsafe(frame) != NULL);
     return protected_flag;
 }
@@ -276,7 +276,7 @@ void pmm_init(multiboot_info_t *mbi) {
     pmm_info.total_frames = total_frames;
     
     // 初始化 PMM 锁
-    spinlock_init(&pmm_lock);
+    pmm_lock.init();
     
     // 初始化位图（默认所有页帧已使用）
     pfn_t bitmap_bytes = PAGE_ALIGN_UP((total_frames + 31) / 32 * 4);
@@ -480,7 +480,7 @@ void pmm_init_boot_info(boot_info_t *boot_info) {
     pmm_info.total_frames = total_frames;
     
     /* 初始化 PMM 锁 */
-    spinlock_init(&pmm_lock);
+    pmm_lock.init();
     
     /* 初始化位图（默认所有页帧已使用） */
     pfn_t bitmap_bytes = PAGE_ALIGN_UP((total_frames + 31) / 32 * 4);
@@ -616,7 +616,7 @@ void pmm_init_boot_info(boot_info_t *boot_info) {
  * 分配后会清零页帧内容
  */
 paddr_t pmm_alloc_frame(void) {
-    SpinlockIrqGuard guard(pmm_lock);
+    sync::SpinlockIrqGuard guard(pmm_lock);
 
     pfn_t idx = find_free_frame();
     if (idx == PFN_INVALID) {
@@ -797,7 +797,7 @@ paddr_t pmm_alloc_frames_zone(size_t count, pmm_zone_t zone) {
     }
     
     bool irq_state;
-    spinlock_lock_irqsave(&pmm_lock, &irq_state);
+    pmm_lock.lock_irqsave(irq_state);
     
     /* Search for consecutive free frames within zone */
     pfn_t found_start = PFN_INVALID;
@@ -825,7 +825,7 @@ paddr_t pmm_alloc_frames_zone(size_t count, pmm_zone_t zone) {
     }
     
     if (consecutive < count || found_start == PFN_INVALID) {
-        spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+        pmm_lock.unlock_irqrestore(irq_state);
         LOG_DEBUG_MSG("PMM: Failed to allocate %zu contiguous frames in zone %d\n", 
                      count, zone);
         return PADDR_INVALID;
@@ -845,7 +845,7 @@ paddr_t pmm_alloc_frames_zone(size_t count, pmm_zone_t zone) {
     /* Clear all frames */
     memset((void*)PHYS_TO_VIRT(addr), 0, count * PAGE_SIZE);
     
-    spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+    pmm_lock.unlock_irqrestore(irq_state);
     
     LOG_DEBUG_MSG("PMM: Allocated %zu contiguous frames at 0x%llx (zone %d)\n",
                  count, (unsigned long long)addr, zone);
@@ -869,7 +869,7 @@ paddr_t pmm_alloc_frames(size_t count) {
         return pmm_alloc_frame();
     }
     
-    SpinlockIrqGuard guard(pmm_lock);
+    sync::SpinlockIrqGuard guard(pmm_lock);
     
     // 搜索连续的空闲帧
     pfn_t start_pfn = PFN_INVALID;
@@ -930,7 +930,7 @@ void pmm_free_frame(paddr_t frame) {
     
     pfn_t idx = PADDR_TO_PFN(frame);
 
-    SpinlockIrqGuard guard(pmm_lock);
+    sync::SpinlockIrqGuard guard(pmm_lock);
 
     // 检查有效性和状态
     if (idx >= total_frames) {
@@ -1096,13 +1096,13 @@ static pfn_t find_huge_page_frames(pfn_t zone_start, pfn_t zone_end) {
  */
 paddr_t pmm_alloc_huge_page(void) {
     bool irq_state;
-    spinlock_lock_irqsave(&pmm_lock, &irq_state);
+    pmm_lock.lock_irqsave(irq_state);
     
     /* Search for 2MB-aligned consecutive frames */
     pfn_t start_pfn = find_huge_page_frames(0, total_frames);
     
     if (start_pfn == PFN_INVALID) {
-        spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+        pmm_lock.unlock_irqrestore(irq_state);
         LOG_DEBUG_MSG("PMM: Failed to allocate 2MB huge page (no contiguous 2MB-aligned region)\n");
         return PADDR_INVALID;
     }
@@ -1122,7 +1122,7 @@ paddr_t pmm_alloc_huge_page(void) {
     /* Clear all frames */
     memset((void*)PHYS_TO_VIRT(addr), 0, HUGE_PAGE_SIZE);
     
-    spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+    pmm_lock.unlock_irqrestore(irq_state);
     
     LOG_DEBUG_MSG("PMM: Allocated 2MB huge page at 0x%llx\n", (unsigned long long)addr);
     
@@ -1153,13 +1153,13 @@ paddr_t pmm_alloc_huge_page_zone(pmm_zone_t zone) {
     }
     
     bool irq_state;
-    spinlock_lock_irqsave(&pmm_lock, &irq_state);
+    pmm_lock.lock_irqsave(irq_state);
     
     /* Search for 2MB-aligned consecutive frames within zone */
     pfn_t start_pfn = find_huge_page_frames(start_frame, end_frame);
     
     if (start_pfn == PFN_INVALID) {
-        spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+        pmm_lock.unlock_irqrestore(irq_state);
         LOG_DEBUG_MSG("PMM: Failed to allocate 2MB huge page in zone %d\n", zone);
         return PADDR_INVALID;
     }
@@ -1179,7 +1179,7 @@ paddr_t pmm_alloc_huge_page_zone(pmm_zone_t zone) {
     /* Clear all frames */
     memset((void*)PHYS_TO_VIRT(addr), 0, HUGE_PAGE_SIZE);
     
-    spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+    pmm_lock.unlock_irqrestore(irq_state);
     
     LOG_DEBUG_MSG("PMM: Allocated 2MB huge page at 0x%llx (zone %d)\n", 
                   (unsigned long long)addr, zone);
@@ -1213,7 +1213,7 @@ void pmm_free_huge_page(paddr_t huge_page) {
     }
     
     bool irq_state;
-    spinlock_lock_irqsave(&pmm_lock, &irq_state);
+    pmm_lock.lock_irqsave(irq_state);
     
     /* Free all 512 frames */
     for (pfn_t i = 0; i < frames_count; i++) {
@@ -1244,7 +1244,7 @@ void pmm_free_huge_page(paddr_t huge_page) {
         last_free_index = bitmap_idx;
     }
     
-    spinlock_unlock_irqrestore(&pmm_lock, irq_state);
+    pmm_lock.unlock_irqrestore(irq_state);
     
     LOG_DEBUG_MSG("PMM: Freed 2MB huge page at 0x%llx\n", (unsigned long long)huge_page);
 }
@@ -1285,7 +1285,7 @@ uint32_t pmm_frame_ref_inc(paddr_t frame) {
         return 0;
     }
     
-    SpinlockIrqGuard guard(pmm_lock);
+    sync::SpinlockIrqGuard guard(pmm_lock);
     
     if (frame_refcount[idx] == 0xFFFF) {
         LOG_ERROR_MSG("PMM: pmm_frame_ref_inc frame 0x%llx refcount overflow!\n", 
@@ -1323,7 +1323,7 @@ uint32_t pmm_frame_ref_dec(paddr_t frame) {
         return 0;
     }
     
-    SpinlockIrqGuard guard(pmm_lock);
+    sync::SpinlockIrqGuard guard(pmm_lock);
     
     if (frame_refcount[idx] == 0) {
         LOG_WARN_MSG("PMM: pmm_frame_ref_dec frame 0x%llx already zero!\n", 
@@ -1356,7 +1356,7 @@ uint32_t pmm_frame_get_refcount(paddr_t frame) {
         return 1;  // 未初始化时假设引用计数为 1
     }
     
-    SpinlockIrqGuard guard(pmm_lock);
+    sync::SpinlockIrqGuard guard(pmm_lock);
     uint32_t count = frame_refcount[idx];
     
     return count;
@@ -1373,7 +1373,7 @@ uint32_t pmm_frame_get_refcount(paddr_t frame) {
  * @return 一致性检查通过返回 true，发现问题返回 false
  */
 bool pmm_verify_consistency(void) {
-    SpinlockIrqGuard guard(pmm_lock);
+    sync::SpinlockIrqGuard guard(pmm_lock);
     
     bool consistent = true;
     pfn_t counted_free = 0;
@@ -1517,7 +1517,7 @@ bool pmm_verify_consistency(void) {
  * @brief 打印 PMM 详细诊断信息
  */
 void pmm_print_diagnostics(void) {
-    SpinlockIrqGuard guard(pmm_lock);
+    sync::SpinlockIrqGuard guard(pmm_lock);
     
     kprintf("\n==================== PMM Diagnostics ====================\n");
     

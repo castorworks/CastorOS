@@ -21,7 +21,7 @@ static uintptr_t heap_end;          ///< 堆当前结束地址
 static uintptr_t heap_max;          ///< 堆最大地址
 static heap_block_t *first_block = NULL;  ///< 第一个内存块指针
 static heap_block_t *last_block = NULL;   ///< 最后一个内存块指针
-static spinlock_t heap_lock;       ///< 堆自旋锁，保护堆的内部状态
+static sync::Spinlock heap_lock;       ///< 堆自旋锁，保护堆的内部状态
 
 /**
  * @brief 扩展堆空间
@@ -216,7 +216,7 @@ void heap_init(uintptr_t start, uint32_t size) {
     LOG_INFO_MSG("heap_init: start=0x%llx, max=0x%llx, size=%u\n", (unsigned long long)heap_start, (unsigned long long)heap_max, size);
     
     // 初始化堆自旋锁
-    spinlock_init(&heap_lock);
+    heap_lock.init();
     
     // 分配第一页作为初始堆空间
     if (!expand(PAGE_SIZE)) PANIC("Heap init failed");
@@ -245,7 +245,7 @@ void heap_init(uintptr_t start, uint32_t size) {
 void* kmalloc(size_t size) {
     if (!size) return NULL;
     
-    SpinlockIrqGuard guard(heap_lock);
+    sync::SpinlockIrqGuard guard(heap_lock);
     
     // 【安全检查】验证 first_block 的有效性
     if (first_block == NULL) {
@@ -317,7 +317,7 @@ void* kmalloc(size_t size) {
 void kfree(void* ptr) {
     if (!ptr) return;
     
-    SpinlockIrqGuard guard(heap_lock);
+    sync::SpinlockIrqGuard guard(heap_lock);
     
     // 获取块头指针
     heap_block_t *b = (heap_block_t*)((uintptr_t)ptr - sizeof(heap_block_t));
@@ -345,7 +345,7 @@ void* krealloc(void* ptr, size_t size) {
     
     size_t old_size;
     {
-        SpinlockIrqGuard guard(heap_lock);
+        sync::SpinlockIrqGuard guard(heap_lock);
 
         heap_block_t *b = (heap_block_t*)((uintptr_t)ptr - sizeof(heap_block_t));
         if (b->magic != HEAP_MAGIC) {
@@ -459,7 +459,7 @@ int heap_get_info(heap_info_t *info) {
         return -1;
     }
     
-    SpinlockIrqGuard guard(heap_lock);
+    sync::SpinlockIrqGuard guard(heap_lock);
     
     size_t total = heap_end - heap_start;
     size_t used = 0, free = 0;

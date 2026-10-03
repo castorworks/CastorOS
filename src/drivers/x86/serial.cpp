@@ -14,10 +14,10 @@
 #define COM1 0x3F8
 
 /* 串口输出锁 */
-static spinlock_t serial_lock;
+static sync::Spinlock serial_lock;
 
 void serial_init(void) {
-    spinlock_init(&serial_lock);
+    serial_lock.init();
     
     outb(COM1 + 1, 0x00);  // 禁用中断
     outb(COM1 + 3, 0x80);  // 启用 DLAB（Divisor Latch Access Bit）
@@ -38,12 +38,12 @@ static void serial_putchar_nolock(char c) {
 }
 
 void serial_putchar(char c) {
-    SpinlockIrqGuard guard(serial_lock);
+    sync::SpinlockIrqGuard guard(serial_lock);
     serial_putchar_nolock(c);
 }
 
 void serial_print(const char *msg) {
-    SpinlockIrqGuard guard(serial_lock);
+    sync::SpinlockIrqGuard guard(serial_lock);
     
     while (*msg) {
         /* 自动处理换行符，添加回车符 */
