@@ -32,21 +32,27 @@ private:
 };
 
 /**
- * @brief RAII 自旋锁守卫
+ * @brief 通用 RAII 锁守卫
  *
+ * 适用于任何提供 lock()/unlock() 的锁类型（Spinlock、Mutex）。
  * 构造时加锁，离开作用域时自动解锁，避免在多个 return 路径上遗漏解锁。
+ * 可以省略模板参数：`sync::LockGuard guard(some_lock);`
  */
-class SpinlockGuard {
+template <typename Lock>
+class LockGuard {
 public:
-    explicit SpinlockGuard(Spinlock &lock) : lock_(lock) { lock_.lock(); }
-    ~SpinlockGuard() { lock_.unlock(); }
+    explicit LockGuard(Lock &lock) : lock_(lock) { lock_.lock(); }
+    ~LockGuard() { lock_.unlock(); }
 
-    SpinlockGuard(const SpinlockGuard &) = delete;
-    SpinlockGuard &operator=(const SpinlockGuard &) = delete;
+    LockGuard(const LockGuard &) = delete;
+    LockGuard &operator=(const LockGuard &) = delete;
 
 private:
-    Spinlock &lock_;
+    Lock &lock_;
 };
+
+/** @brief RAII 自旋锁守卫 */
+using SpinlockGuard = LockGuard<Spinlock>;
 
 /**
  * @brief RAII 自旋锁守卫（同时保存并关闭中断）

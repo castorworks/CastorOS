@@ -589,23 +589,20 @@ void net::Dhcp::stop(net::Netdev *dev) {
 int net::Dhcp::release(net::Netdev *dev) {
     if (!dev) return -1;
     
-    bool irq_state;
-    dhcp_lock.lock_irqsave(irq_state);
+    {
+        sync::SpinlockIrqGuard guard(dhcp_lock);
+        dhcp_client_t *client = dhcp_find_client(dev);
+        if (!client || client->state != DHCP_STATE_BOUND) {
+            return -1;
+        }
     
-    dhcp_client_t *client = dhcp_find_client(dev);
-    if (!client || client->state != DHCP_STATE_BOUND) {
-        dhcp_lock.unlock_irqrestore(irq_state);
-        return -1;
+        // 发送 RELEASE
+        dhcp_send_release(client);
+    
+        // 清除配置
+        net::Netdev::set_ipaddr(dev, 0);
+        client->state = DHCP_STATE_INIT;
     }
-    
-    // 发送 RELEASE
-    dhcp_send_release(client);
-    
-    // 清除配置
-    net::Netdev::set_ipaddr(dev, 0);
-    client->state = DHCP_STATE_INIT;
-    
-    dhcp_lock.unlock_irqrestore(irq_state);
     
     LOG_INFO_MSG("dhcp: Released lease\n");
     return 0;

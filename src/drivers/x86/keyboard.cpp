@@ -437,10 +437,10 @@ void drivers::Keyboard::clear_buffer() {
  * 注册按键事件处理函数
  */
 void drivers::Keyboard::register_event_handler(key_event_handler_t handler) {
-    bool irq_state;
-    keyboard_lock.lock_irqsave(irq_state);
-    event_handler = handler;
-    keyboard_lock.unlock_irqrestore(irq_state);
+    {
+        sync::SpinlockIrqGuard guard(keyboard_lock);
+        event_handler = handler;
+    }
     LOG_DEBUG_MSG("Keyboard event handler registered\n");
 }
 
@@ -448,10 +448,10 @@ void drivers::Keyboard::register_event_handler(key_event_handler_t handler) {
  * 取消注册按键事件处理函数
  */
 void drivers::Keyboard::unregister_event_handler() {
-    bool irq_state;
-    keyboard_lock.lock_irqsave(irq_state);
-    event_handler = NULL;
-    keyboard_lock.unlock_irqrestore(irq_state);
+    {
+        sync::SpinlockIrqGuard guard(keyboard_lock);
+        event_handler = NULL;
+    }
     LOG_DEBUG_MSG("Keyboard event handler unregistered\n");
 }
 
@@ -501,12 +501,12 @@ void drivers::Keyboard::update_leds() {
  * 设置键盘 LED 状态
  */
 void drivers::Keyboard::set_leds(bool caps_lock, bool num_lock, bool scroll_lock) {
-    bool irq_state;
-    keyboard_lock.lock_irqsave(irq_state);
-    modifiers.caps_lock = caps_lock;
-    modifiers.num_lock = num_lock;
-    modifiers.scroll_lock = scroll_lock;
-    keyboard_lock.unlock_irqrestore(irq_state);
+    {
+        sync::SpinlockIrqGuard guard(keyboard_lock);
+        modifiers.caps_lock = caps_lock;
+        modifiers.num_lock = num_lock;
+        modifiers.scroll_lock = scroll_lock;
+    }
     
     // LED 更新在解锁后执行，避免持锁时长等待
     drivers::Keyboard::update_leds();

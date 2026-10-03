@@ -159,24 +159,21 @@ static task_t* ready_queue_pop(void) {
  * @brief 分配一个空闲的任务控制块
  */
 task_t* kernel::Scheduler::alloc() {
-    bool irq_state;
-    task_lock.lock_irqsave(irq_state);
-    
-    for (uint32_t i = 0; i < MAX_TASKS; i++) {
-        if (task_pool[i].state == TASK_UNUSED) {
-            memset(&task_pool[i], 0, sizeof(task_t));
-            task_pool[i].pid = next_pid++;
-            task_pool[i].state = TASK_READY;
-            task_pool[i].priority = DEFAULT_PRIORITY;
-            task_pool[i].time_slice = DEFAULT_TIME_SLICE;
-            active_task_count++;
+    {
+        sync::SpinlockIrqGuard guard(task_lock);
+        for (uint32_t i = 0; i < MAX_TASKS; i++) {
+            if (task_pool[i].state == TASK_UNUSED) {
+                memset(&task_pool[i], 0, sizeof(task_t));
+                task_pool[i].pid = next_pid++;
+                task_pool[i].state = TASK_READY;
+                task_pool[i].priority = DEFAULT_PRIORITY;
+                task_pool[i].time_slice = DEFAULT_TIME_SLICE;
+                active_task_count++;
             
-            task_lock.unlock_irqrestore(irq_state);
-            return &task_pool[i];
+                return &task_pool[i];
+            }
         }
     }
-    
-    task_lock.unlock_irqrestore(irq_state);
     LOG_ERROR_MSG("kernel::Scheduler::alloc: No free PCB available (max: %d)\n", MAX_TASKS);
     return NULL;
 }
@@ -940,12 +937,12 @@ void kernel::Scheduler::schedule() {
         kernel::FdTable *fd_table = task_to_cleanup->fd_table;
         
         // 先在锁内清空 PCB
-        bool irq_state_cleanup;
-        task_lock.lock_irqsave(irq_state_cleanup);
-        memset(task_to_cleanup, 0, sizeof(task_t));
-        task_to_cleanup->state = TASK_UNUSED;
-        active_task_count--;
-        task_lock.unlock_irqrestore(irq_state_cleanup);
+        {
+            sync::SpinlockIrqGuard guard(task_lock);
+            memset(task_to_cleanup, 0, sizeof(task_t));
+            task_to_cleanup->state = TASK_UNUSED;
+            active_task_count--;
+        }
         
         // 然后在锁外释放资源（避免死锁）
         if (kernel_stack_base) {
@@ -1124,22 +1121,20 @@ void kernel::Scheduler::timer_tick() {
     task_t *tasks_to_wake[MAX_TASKS];
     uint32_t wake_count = 0;
     
-    bool irq_state;
-    task_lock.lock_irqsave(irq_state);
-    
-    for (uint32_t i = 0; i < MAX_TASKS; i++) {
-        task_t *task = &task_pool[i];
+    {
+        sync::SpinlockIrqGuard guard(task_lock);
+        for (uint32_t i = 0; i < MAX_TASKS; i++) {
+            task_t *task = &task_pool[i];
         
-        if (task->state == TASK_BLOCKED && task->sleep_until_ms > 0) {
-            if (current_time_ms >= task->sleep_until_ms) {
-                task->sleep_until_ms = 0;
-                task->state = TASK_READY;
-                tasks_to_wake[wake_count++] = task;
+            if (task->state == TASK_BLOCKED && task->sleep_until_ms > 0) {
+                if (current_time_ms >= task->sleep_until_ms) {
+                    task->sleep_until_ms = 0;
+                    task->state = TASK_READY;
+                    tasks_to_wake[wake_count++] = task;
+                }
             }
         }
     }
-    
-    task_lock.unlock_irqrestore(irq_state);
     
     // 在锁外将任务添加到就绪队列
     for (uint32_t i = 0; i < wake_count; i++) {

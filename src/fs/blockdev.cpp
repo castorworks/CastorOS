@@ -147,36 +147,34 @@ void fs::Blockdev::unregister_device(fs::Blockdev *dev) {
     }
     
     blockdev_ensure_locks_init();
-    blockdev_registry_mutex.lock();
-    
-    if (!dev->registered) {
-        blockdev_registry_mutex.unlock();
-        return;
-    }
+    {
+        sync::LockGuard guard(blockdev_registry_mutex);
+        if (!dev->registered) {
+            return;
+        }
 
-    int index = blockdev_find_index(dev);
-    if (index < 0) {
-        LOG_WARN_MSG("blockdev: Device '%s' not found in registry\n", dev->name);
+        int index = blockdev_find_index(dev);
+        if (index < 0) {
+            LOG_WARN_MSG("blockdev: Device '%s' not found in registry\n", dev->name);
+            dev->registered = false;
+            return;
+        }
+
+        if (dev->ref_count > 1) {
+            LOG_WARN_MSG("blockdev: Unregistering device '%s' with %u outstanding references\n",
+                         dev->name, dev->ref_count - 1);
+        }
+
+        for (uint32_t i = (uint32_t)index; i + 1 < blockdev_registry_count; i++) {
+            blockdev_registry[i] = blockdev_registry[i + 1];
+        }
+        blockdev_registry_count--;
+        blockdev_registry[blockdev_registry_count] = NULL;
+
         dev->registered = false;
-        blockdev_registry_mutex.unlock();
-        return;
-    }
-
-    if (dev->ref_count > 1) {
-        LOG_WARN_MSG("blockdev: Unregistering device '%s' with %u outstanding references\n",
-                     dev->name, dev->ref_count - 1);
-    }
-
-    for (uint32_t i = (uint32_t)index; i + 1 < blockdev_registry_count; i++) {
-        blockdev_registry[i] = blockdev_registry[i + 1];
-    }
-    blockdev_registry_count--;
-    blockdev_registry[blockdev_registry_count] = NULL;
-
-    dev->registered = false;
     
-    // 在解锁后释放引用，避免在持锁时调用可能重入的操作
-    blockdev_registry_mutex.unlock();
+        // 在解锁后释放引用，避免在持锁时调用可能重入的操作
+    }
     fs::Blockdev::release(dev);
 
     LOG_INFO_MSG("blockdev: Unregistered device '%s'\n", dev->name);

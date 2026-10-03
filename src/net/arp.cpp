@@ -172,43 +172,39 @@ int net::Arp::resolve(net::Netdev *dev, uint32_t ip, uint8_t *mac) {
         return -2;
     }
     
-    bool irq_state;
-    arp_cache_lock.lock_irqsave(irq_state);
+    {
+        sync::SpinlockIrqGuard guard(arp_cache_lock);
+        // 查找缓存
+        arp_entry_t *entry = arp_cache_find(ip);
     
-    // 查找缓存
-    arp_entry_t *entry = arp_cache_find(ip);
-    
-    if (entry) {
-        if (entry->state == ARP_STATE_RESOLVED) {
-            // 已解析，复制 MAC 地址
-            memcpy(mac, entry->mac_addr, 6);
-            entry->timestamp = (uint32_t)drivers::Timer::get_uptime_ms();
-            arp_cache_lock.unlock_irqrestore(irq_state);
-            return 0;
-        } else if (entry->state == ARP_STATE_PENDING) {
-            // 正在解析中
-            arp_cache_lock.unlock_irqrestore(irq_state);
-            return -1;
+        if (entry) {
+            if (entry->state == ARP_STATE_RESOLVED) {
+                // 已解析，复制 MAC 地址
+                memcpy(mac, entry->mac_addr, 6);
+                entry->timestamp = (uint32_t)drivers::Timer::get_uptime_ms();
+                return 0;
+            } else if (entry->state == ARP_STATE_PENDING) {
+                // 正在解析中
+                return -1;
+            }
         }
-    }
     
-    // 创建新的待解析条目
-    entry = arp_cache_find_free();
-    if (entry) {
-        // 释放旧条目的等待队列
-        if (entry->pending_queue) {
-            arp_free_pending(entry);
-        }
+        // 创建新的待解析条目
+        entry = arp_cache_find_free();
+        if (entry) {
+            // 释放旧条目的等待队列
+            if (entry->pending_queue) {
+                arp_free_pending(entry);
+            }
         
-        entry->ip_addr = ip;
-        entry->state = ARP_STATE_PENDING;
-        entry->timestamp = (uint32_t)drivers::Timer::get_uptime_ms();
-        entry->retries = 0;
-        entry->pending_queue = NULL;
-        memset(entry->mac_addr, 0, 6);
+            entry->ip_addr = ip;
+            entry->state = ARP_STATE_PENDING;
+            entry->timestamp = (uint32_t)drivers::Timer::get_uptime_ms();
+            entry->retries = 0;
+            entry->pending_queue = NULL;
+            memset(entry->mac_addr, 0, 6);
+        }
     }
-    
-    arp_cache_lock.unlock_irqrestore(irq_state);
     
     // 发送 ARP 请求
     net::Arp::request(dev, ip);

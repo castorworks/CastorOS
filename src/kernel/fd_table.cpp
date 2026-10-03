@@ -78,23 +78,22 @@ int32_t kernel::FdTable::free(kernel::FdTable *table, int32_t fd) {
         return -1;
     }
     
-    table->lock.lock();
+    fs_node_t *node;
+    {
+        sync::LockGuard guard(table->lock);
+        if (!table->entries[fd].in_use) {
+            return -1;
+        }
     
-    if (!table->entries[fd].in_use) {
-        table->lock.unlock();
-        return -1;
+        // 保存节点指针，在解锁后处理
+        node = table->entries[fd].node;
+    
+        // 清理表项
+        table->entries[fd].node = NULL;
+        table->entries[fd].offset = 0;
+        table->entries[fd].flags = 0;
+        table->entries[fd].in_use = false;
     }
-    
-    // 保存节点指针，在解锁后处理
-    fs_node_t *node = table->entries[fd].node;
-    
-    // 清理表项
-    table->entries[fd].node = NULL;
-    table->entries[fd].offset = 0;
-    table->entries[fd].flags = 0;
-    table->entries[fd].in_use = false;
-    
-    table->lock.unlock();
     
     // 在解锁后关闭文件和释放节点
     // 避免在持有锁的情况下调用可能阻塞的 VFS 操作
@@ -124,38 +123,39 @@ int32_t kernel::FdTable::copy(kernel::FdTable *src, kernel::FdTable *dst) {
         second_lock = &src->lock;
     }
     
-    first_lock->lock();
-    // 如果 src == dst，不要重复加锁
-    if (src != dst) {
-        second_lock->lock();
-    }
+    {
+        sync::LockGuard guard(*first_lock);
+        // 如果 src == dst，不要重复加锁
+        if (src != dst) {
+            second_lock->lock();
+        }
     
-    for (int i = 0; i < MAX_FDS; i++) {
-        if (src->entries[i].in_use) {
-            dst->entries[i].node = src->entries[i].node;
-            dst->entries[i].offset = src->entries[i].offset;
-            dst->entries[i].flags = src->entries[i].flags;
-            dst->entries[i].in_use = true;
+        for (int i = 0; i < MAX_FDS; i++) {
+            if (src->entries[i].in_use) {
+                dst->entries[i].node = src->entries[i].node;
+                dst->entries[i].offset = src->entries[i].offset;
+                dst->entries[i].flags = src->entries[i].flags;
+                dst->entries[i].in_use = true;
             
-            // 关键修复：增加引用计数，因为现在有两个fd指向同一个节点
-            if (dst->entries[i].node) {
-                fs::Vfs::ref_node(dst->entries[i].node);
+                // 关键修复：增加引用计数，因为现在有两个fd指向同一个节点
+                if (dst->entries[i].node) {
+                    fs::Vfs::ref_node(dst->entries[i].node);
                 
-                // 如果是管道，还需要增加 readers/writers 计数
-                if (dst->entries[i].node->type == FS_PIPE) {
-                    fs::Pipe::on_dup(dst->entries[i].node);
+                    // 如果是管道，还需要增加 readers/writers 计数
+                    if (dst->entries[i].node->type == FS_PIPE) {
+                        fs::Pipe::on_dup(dst->entries[i].node);
+                    }
                 }
+            } else {
+                dst->entries[i].in_use = false;
             }
-        } else {
-            dst->entries[i].in_use = false;
+        }
+    
+        // 解锁顺序与加锁顺序相反
+        if (src != dst) {
+            second_lock->unlock();
         }
     }
-    
-    // 解锁顺序与加锁顺序相反
-    if (src != dst) {
-        second_lock->unlock();
-    }
-    first_lock->unlock();
     
     return 0;
 }

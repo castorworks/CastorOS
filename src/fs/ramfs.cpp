@@ -304,10 +304,12 @@ static fs_node_t *ramfs_finddir(fs_node_t *node, const char *name) {
     }
     
     // 加锁保护目录查找
-    dir->lock.lock();
-    ramfs_dirent_t *entry = ramfs_find_entry(dir, name);
-    fs_node_t *result = entry ? entry->node : NULL;
-    dir->lock.unlock();
+    fs_node_t *result;
+    {
+        sync::LockGuard guard(dir->lock);
+        ramfs_dirent_t *entry = ramfs_find_entry(dir, name);
+        result = entry ? entry->node : NULL;
+    }
     
     // 增加引用计数
     if (result) {
@@ -381,9 +383,10 @@ static int ramfs_create_file(fs_node_t *node, const char *name) {
     new_node->name[127] = '\0';
     
     // 分配 inode（原子操作）
-    inode_alloc_lock.lock();
-    new_node->inode = next_inode++;
-    inode_alloc_lock.unlock();
+    {
+        sync::LockGuard guard(inode_alloc_lock);
+        new_node->inode = next_inode++;
+    }
     
     new_node->type = FS_FILE;
     new_node->size = 0;
@@ -476,9 +479,10 @@ static int ramfs_mkdir(fs_node_t *node, const char *name, uint32_t permissions) 
     new_node->name[127] = '\0';
     
     // 分配 inode（原子操作）
-    inode_alloc_lock.lock();
-    new_node->inode = next_inode++;
-    inode_alloc_lock.unlock();
+    {
+        sync::LockGuard guard(inode_alloc_lock);
+        new_node->inode = next_inode++;
+    }
     
     new_node->type = FS_DIRECTORY;
     new_node->size = 0;
@@ -649,9 +653,10 @@ fs_node_t *fs::Ramfs::create(const char *name) {
     root->name[127] = '\0';
     
     // 分配 inode（原子操作）
-    inode_alloc_lock.lock();
-    root->inode = next_inode++;
-    inode_alloc_lock.unlock();
+    {
+        sync::LockGuard guard(inode_alloc_lock);
+        root->inode = next_inode++;
+    }
     
     root->type = FS_DIRECTORY;
     root->size = 0;

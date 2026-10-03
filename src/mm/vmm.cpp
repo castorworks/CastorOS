@@ -813,15 +813,15 @@ uintptr_t mm::Vmm::clone_page_directory(uintptr_t src_dir_phys) {
     // **Feature: arm64-kernel-integration**
     // **Validates: Requirements 7.1**
     bool irq_state;
-    vmm_lock.lock_irqsave(irq_state);
+    hal_addr_space_t new_space;
+    {
+        sync::SpinlockIrqGuard guard(vmm_lock);
+        hal_addr_space_t src_space = (src_dir_phys == 0) 
+                                     ? HAL_ADDR_SPACE_CURRENT 
+                                     : (hal_addr_space_t)src_dir_phys;
     
-    hal_addr_space_t src_space = (src_dir_phys == 0) 
-                                 ? HAL_ADDR_SPACE_CURRENT 
-                                 : (hal_addr_space_t)src_dir_phys;
-    
-    hal_addr_space_t new_space = hal::Mmu::clone_space(src_space);
-    
-    vmm_lock.unlock_irqrestore(irq_state);
+        new_space = hal::Mmu::clone_space(src_space);
+    }
     
     if (new_space == HAL_ADDR_SPACE_INVALID) {
         return 0;
@@ -1035,11 +1035,10 @@ void mm::Vmm::free_page_directory(uintptr_t dir_phys) {
     }
     
     bool irq_state;
-    vmm_lock.lock_irqsave(irq_state);
-    
-    hal::Mmu::destroy_space((hal_addr_space_t)dir_phys);
-    
-    vmm_lock.unlock_irqrestore(irq_state);
+    {
+        sync::SpinlockIrqGuard guard(vmm_lock);
+        hal::Mmu::destroy_space((hal_addr_space_t)dir_phys);
+    }
     return;
 #else
     LOG_INFO_MSG("mm::Vmm::free_page_directory: Attempting to free page directory 0x%lx\n", (unsigned long)dir_phys);
@@ -1206,25 +1205,24 @@ bool mm::Vmm::map_page_in_directory(uintptr_t dir_phys, uintptr_t virt,
     // 检查页对齐
     if ((virt | phys) & (PAGE_SIZE-1)) return false;
     
-    bool irq_state;
-    vmm_lock.lock_irqsave(irq_state);
+    bool result;
+    {
+        sync::SpinlockIrqGuard guard(vmm_lock);
+        // 转换为 HAL 标志
+        uint32_t hal_flags = vmm_flags_to_hal(flags);
     
-    // 转换为 HAL 标志
-    uint32_t hal_flags = vmm_flags_to_hal(flags);
+        // 使用 HAL 接口映射页面
+        hal_addr_space_t space = (dir_phys == current_dir_phys) 
+                                 ? HAL_ADDR_SPACE_CURRENT 
+                                 : (hal_addr_space_t)dir_phys;
     
-    // 使用 HAL 接口映射页面
-    hal_addr_space_t space = (dir_phys == current_dir_phys) 
-                             ? HAL_ADDR_SPACE_CURRENT 
-                             : (hal_addr_space_t)dir_phys;
+        result = hal::Mmu::map(space, (vaddr_t)virt, (paddr_t)phys, hal_flags);
     
-    bool result = hal::Mmu::map(space, (vaddr_t)virt, (paddr_t)phys, hal_flags);
-    
-    // 如果是当前页目录，刷新 TLB
-    if (result && dir_phys == current_dir_phys) {
-        hal::Mmu::flush_tlb((vaddr_t)virt);
+        // 如果是当前页目录，刷新 TLB
+        if (result && dir_phys == current_dir_phys) {
+            hal::Mmu::flush_tlb((vaddr_t)virt);
+        }
     }
-    
-    vmm_lock.unlock_irqrestore(irq_state);
     return result;
 }
 
@@ -1233,29 +1231,26 @@ uintptr_t mm::Vmm::unmap_page_in_directory(uintptr_t dir_phys, uintptr_t virt) {
         return 0;
     }
 
-    bool irq_state;
-    vmm_lock.lock_irqsave(irq_state);
-
-    // 使用 HAL 接口查询原物理地址
-    hal_addr_space_t space = (dir_phys == current_dir_phys) 
-                             ? HAL_ADDR_SPACE_CURRENT 
-                             : (hal_addr_space_t)dir_phys;
-    
     paddr_t old_phys;
-    if (!hal::Mmu::query(space, (vaddr_t)virt, &old_phys, NULL)) {
-        vmm_lock.unlock_irqrestore(irq_state);
-        return 0;
+    {
+        sync::SpinlockIrqGuard guard(vmm_lock);
+        // 使用 HAL 接口查询原物理地址
+        hal_addr_space_t space = (dir_phys == current_dir_phys) 
+                                 ? HAL_ADDR_SPACE_CURRENT 
+                                 : (hal_addr_space_t)dir_phys;
+    
+        if (!hal::Mmu::query(space, (vaddr_t)virt, &old_phys, NULL)) {
+            return 0;
+        }
+
+        // 使用 HAL 接口取消映射
+        hal::Mmu::unmap(space, (vaddr_t)virt);
+
+        // 如果是当前页目录，刷新 TLB
+        if (dir_phys == current_dir_phys) {
+            hal::Mmu::flush_tlb((vaddr_t)virt);
+        }
     }
-
-    // 使用 HAL 接口取消映射
-    hal::Mmu::unmap(space, (vaddr_t)virt);
-
-    // 如果是当前页目录，刷新 TLB
-    if (dir_phys == current_dir_phys) {
-        hal::Mmu::flush_tlb((vaddr_t)virt);
-    }
-
-    vmm_lock.unlock_irqrestore(irq_state);
     return (uintptr_t)old_phys;
 }
 

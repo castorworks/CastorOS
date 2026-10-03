@@ -75,12 +75,12 @@ static int socket_alloc_fd(void) {
  */
 static void socket_free_fd(int fd) {
     if (fd >= 0 && fd < MAX_SOCKETS) {
-        bool irq_state;
-        socket_lock.lock_irqsave(irq_state);
-        if (socket_table[fd] == &socket_allocating_marker) {
-            socket_table[fd] = NULL;
+        {
+            sync::SpinlockIrqGuard guard(socket_lock);
+            if (socket_table[fd] == &socket_allocating_marker) {
+                socket_table[fd] = NULL;
+            }
         }
-        socket_lock.unlock_irqrestore(irq_state);
     }
 }
 
@@ -497,10 +497,10 @@ int net::Socket::closesocket(int sockfd) {
     }
     
     // 从表中移除
-    bool irq_state;
-    socket_lock.lock_irqsave(irq_state);
-    socket_table[sockfd] = NULL;
-    socket_lock.unlock_irqrestore(irq_state);
+    {
+        sync::SpinlockIrqGuard guard(socket_lock);
+        socket_table[sockfd] = NULL;
+    }
     
     kfree(sock);
     return 0;

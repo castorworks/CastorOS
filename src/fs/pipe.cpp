@@ -353,39 +353,38 @@ static void pipe_close(fs_node_t *node) {
     bool is_write_end = (node->impl_data == 1);
     bool should_free = false;
     
-    pipe->lock.lock();
+    {
+        sync::LockGuard guard(pipe->lock);
+        if (is_write_end) {
+            // 关闭写端
+            pipe->writers--;
+            LOG_DEBUG_MSG("pipe_close: closing write end, writers=%u\n", pipe->writers);
+        
+            if (pipe->writers == 0) {
+                pipe->write_closed = true;
+                // 唤醒所有等待读取的进程，让它们看到 EOF
+                // 发送多个信号确保所有等待的读者被唤醒
+                for (int i = 0; i < 10; i++) {
+                    pipe->read_sem.signal();
+                }
+            }
+        } else {
+            // 关闭读端
+            pipe->readers--;
+            LOG_DEBUG_MSG("pipe_close: closing read end, readers=%u\n", pipe->readers);
+        
+            if (pipe->readers == 0) {
+                pipe->read_closed = true;
+                // 唤醒所有等待写入的进程，让它们看到错误
+                for (int i = 0; i < 10; i++) {
+                    pipe->write_sem.signal();
+                }
+            }
+        }
     
-    if (is_write_end) {
-        // 关闭写端
-        pipe->writers--;
-        LOG_DEBUG_MSG("pipe_close: closing write end, writers=%u\n", pipe->writers);
-        
-        if (pipe->writers == 0) {
-            pipe->write_closed = true;
-            // 唤醒所有等待读取的进程，让它们看到 EOF
-            // 发送多个信号确保所有等待的读者被唤醒
-            for (int i = 0; i < 10; i++) {
-                pipe->read_sem.signal();
-            }
-        }
-    } else {
-        // 关闭读端
-        pipe->readers--;
-        LOG_DEBUG_MSG("pipe_close: closing read end, readers=%u\n", pipe->readers);
-        
-        if (pipe->readers == 0) {
-            pipe->read_closed = true;
-            // 唤醒所有等待写入的进程，让它们看到错误
-            for (int i = 0; i < 10; i++) {
-                pipe->write_sem.signal();
-            }
-        }
+        // 检查是否两端都已关闭
+        should_free = (pipe->readers == 0 && pipe->writers == 0);
     }
-    
-    // 检查是否两端都已关闭
-    should_free = (pipe->readers == 0 && pipe->writers == 0);
-    
-    pipe->lock.unlock();
     
     // 如果两端都关闭，释放管道资源
     if (should_free) {

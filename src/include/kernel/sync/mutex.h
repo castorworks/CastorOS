@@ -29,22 +29,8 @@ private:
     uint32_t recursion_;
 };
 
-/**
- * @brief RAII 互斥锁守卫
- *
- * 构造时加锁，离开作用域时自动解锁。
- */
-class MutexGuard {
-public:
-    explicit MutexGuard(Mutex &mutex) : mutex_(mutex) { mutex_.lock(); }
-    ~MutexGuard() { mutex_.unlock(); }
-
-    MutexGuard(const MutexGuard &) = delete;
-    MutexGuard &operator=(const MutexGuard &) = delete;
-
-private:
-    Mutex &mutex_;
-};
+/** @brief RAII 互斥锁守卫 */
+using MutexGuard = LockGuard<Mutex>;
 
 } // namespace sync
 

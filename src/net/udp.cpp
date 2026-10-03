@@ -238,23 +238,21 @@ void net::Udp::pcb_free(udp_pcb_t *pcb) {
         return;
     }
     
-    bool irq_state;
-    udp_lock.lock_irqsave(irq_state);
-    
-    // 从链表移除
-    if (udp_pcbs == pcb) {
-        udp_pcbs = pcb->next;
-    } else {
-        udp_pcb_t *prev = udp_pcbs;
-        while (prev && prev->next != pcb) {
-            prev = prev->next;
-        }
-        if (prev) {
-            prev->next = pcb->next;
+    {
+        sync::SpinlockIrqGuard guard(udp_lock);
+        // 从链表移除
+        if (udp_pcbs == pcb) {
+            udp_pcbs = pcb->next;
+        } else {
+            udp_pcb_t *prev = udp_pcbs;
+            while (prev && prev->next != pcb) {
+                prev = prev->next;
+            }
+            if (prev) {
+                prev->next = pcb->next;
+            }
         }
     }
-    
-    udp_lock.unlock_irqrestore(irq_state);
     
     // 释放接收队列
     net::Netbuf *buf = pcb->recv_queue;

@@ -962,56 +962,53 @@ static int fat32_file_truncate(fs_node_t *node, uint32_t new_size) {
         return -1;
     }
     
-    fs->fs_lock.lock();
+    uint32_t old_size;
+    {
+        sync::LockGuard guard(fs->fs_lock);
+        uint32_t cluster_size = fs->bytes_per_cluster;
+        old_size = file->size;
     
-    uint32_t cluster_size = fs->bytes_per_cluster;
-    uint32_t old_size = file->size;
-    
-    if (new_size == old_size) {
-        // 大小不变
-        fs->fs_lock.unlock();
-        return 0;
-    }
-    
-    if (new_size > old_size) {
-        // 扩展文件
-        if (fat32_ensure_file_size(file, new_size) != 0) {
-            fs->fs_lock.unlock();
-            return -1;
+        if (new_size == old_size) {
+            // 大小不变
+            return 0;
         }
+    
+        if (new_size > old_size) {
+            // 扩展文件
+            if (fat32_ensure_file_size(file, new_size) != 0) {
+                return -1;
+            }
         
-        // 将新扩展的区域填充为 0
-        if (fat32_zero_range(file, old_size, new_size) != 0) {
-            fs->fs_lock.unlock();
-            return -1;
-        }
-    } else {
-        // 收缩文件
-        if (new_size == 0) {
-            // 截断到 0：释放所有簇
-            if (file->start_cluster >= 2) {
-                fat32_free_cluster_chain(fs, file->start_cluster);
-                file->start_cluster = 0;
+            // 将新扩展的区域填充为 0
+            if (fat32_zero_range(file, old_size, new_size) != 0) {
+                return -1;
             }
         } else {
-            // 计算需要保留的簇数
-            uint32_t keep_clusters = (new_size + cluster_size - 1) / cluster_size;
+            // 收缩文件
+            if (new_size == 0) {
+                // 截断到 0：释放所有簇
+                if (file->start_cluster >= 2) {
+                    fat32_free_cluster_chain(fs, file->start_cluster);
+                    file->start_cluster = 0;
+                }
+            } else {
+                // 计算需要保留的簇数
+                uint32_t keep_clusters = (new_size + cluster_size - 1) / cluster_size;
             
-            // 截断簇链
-            if (file->start_cluster >= 2) {
-                fat32_truncate_cluster_chain(fs, file->start_cluster, keep_clusters);
+                // 截断簇链
+                if (file->start_cluster >= 2) {
+                    fat32_truncate_cluster_chain(fs, file->start_cluster, keep_clusters);
+                }
             }
         }
+    
+        // 更新文件大小
+        file->size = new_size;
+        node->size = new_size;
+    
+        // 更新目录项
+        fat32_update_dirent_metadata(file);
     }
-    
-    // 更新文件大小
-    file->size = new_size;
-    node->size = new_size;
-    
-    // 更新目录项
-    fat32_update_dirent_metadata(file);
-    
-    fs->fs_lock.unlock();
     
     LOG_DEBUG_MSG("fat32: Truncated file from %u to %u bytes\n", old_size, new_size);
     

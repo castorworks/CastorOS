@@ -876,22 +876,21 @@ uint32_t syscall::Fs::dup2(int32_t oldfd, int32_t newfd) {
     }
     
     // 手动设置新的文件描述符（直接操作表项，绕过 kernel::FdTable::alloc）
-    current->fd_table->lock.lock();
+    {
+        sync::LockGuard guard(current->fd_table->lock);
+        current->fd_table->entries[newfd].node = old_entry->node;
+        current->fd_table->entries[newfd].offset = old_entry->offset;
+        current->fd_table->entries[newfd].flags = old_entry->flags;
+        current->fd_table->entries[newfd].in_use = true;
     
-    current->fd_table->entries[newfd].node = old_entry->node;
-    current->fd_table->entries[newfd].offset = old_entry->offset;
-    current->fd_table->entries[newfd].flags = old_entry->flags;
-    current->fd_table->entries[newfd].in_use = true;
+        // 增加引用计数
+        fs::Vfs::ref_node(old_entry->node);
     
-    // 增加引用计数
-    fs::Vfs::ref_node(old_entry->node);
-    
-    // 如果是管道，增加 readers/writers 计数
-    if (old_entry->node->type == FS_PIPE) {
-        fs::Pipe::on_dup(old_entry->node);
+        // 如果是管道，增加 readers/writers 计数
+        if (old_entry->node->type == FS_PIPE) {
+            fs::Pipe::on_dup(old_entry->node);
+        }
     }
-    
-    current->fd_table->lock.unlock();
     
     LOG_DEBUG_MSG("syscall::Fs::dup2: duplicated fd %d -> %d\n", oldfd, newfd);
     

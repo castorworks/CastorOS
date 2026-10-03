@@ -899,28 +899,26 @@ void net::Tcp::pcb_free(tcp_pcb_t *pcb) {
         return;
     }
     
-    bool irq_state;
-    tcp_lock.lock_irqsave(irq_state);
+    {
+        sync::SpinlockIrqGuard guard(tcp_lock);
+        // 从活动链表移除
+        tcp_pcb_t **pp = &tcp_pcbs;
+        while (*pp && *pp != pcb) {
+            pp = &(*pp)->next;
+        }
+        if (*pp == pcb) {
+            *pp = pcb->next;
+        }
     
-    // 从活动链表移除
-    tcp_pcb_t **pp = &tcp_pcbs;
-    while (*pp && *pp != pcb) {
-        pp = &(*pp)->next;
+        // 从监听链表移除
+        pp = &tcp_listen_pcbs;
+        while (*pp && *pp != pcb) {
+            pp = &(*pp)->next;
+        }
+        if (*pp == pcb) {
+            *pp = pcb->next;
+        }
     }
-    if (*pp == pcb) {
-        *pp = pcb->next;
-    }
-    
-    // 从监听链表移除
-    pp = &tcp_listen_pcbs;
-    while (*pp && *pp != pcb) {
-        pp = &(*pp)->next;
-    }
-    if (*pp == pcb) {
-        *pp = pcb->next;
-    }
-    
-    tcp_lock.unlock_irqrestore(irq_state);
     
     // 释放未确认队列
     tcp_free_unacked(pcb);

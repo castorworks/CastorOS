@@ -140,43 +140,42 @@ static uint32_t shmfs_read(fs_node_t *node, uint32_t offset,
         return 0;
     }
     
-    file->lock.lock();
-    
-    // 检查偏移量
-    if (offset >= file->size) {
-        file->lock.unlock();
-        return 0;
-    }
-    
-    // 调整读取大小
-    uint32_t to_read = size;
-    if (offset + to_read > file->size) {
-        to_read = file->size - offset;
-    }
-    
-    // 按页读取
-    uint32_t bytes_read = 0;
-    uint32_t page_idx = offset / PAGE_SIZE;
-    uint32_t page_offset = offset % PAGE_SIZE;
-    
-    shmfs_page_t *page = shmfs_get_page(file, page_idx);
-    
-    while (bytes_read < to_read && page) {
-        uint32_t chunk = PAGE_SIZE - page_offset;
-        if (chunk > to_read - bytes_read) {
-            chunk = to_read - bytes_read;
+    uint32_t bytes_read;
+    {
+        sync::LockGuard guard(file->lock);
+        // 检查偏移量
+        if (offset >= file->size) {
+            return 0;
         }
-        
-        // 从物理页复制数据
-        uint8_t *virt_ptr = (uint8_t *)PHYS_TO_VIRT(page->phys_addr);
-        memcpy(buffer + bytes_read, virt_ptr + page_offset, chunk);
-        
-        bytes_read += chunk;
-        page_offset = 0;  // 后续页从头开始
-        page = page->next;
-    }
     
-    file->lock.unlock();
+        // 调整读取大小
+        uint32_t to_read = size;
+        if (offset + to_read > file->size) {
+            to_read = file->size - offset;
+        }
+    
+        // 按页读取
+        bytes_read = 0;
+        uint32_t page_idx = offset / PAGE_SIZE;
+        uint32_t page_offset = offset % PAGE_SIZE;
+    
+        shmfs_page_t *page = shmfs_get_page(file, page_idx);
+    
+        while (bytes_read < to_read && page) {
+            uint32_t chunk = PAGE_SIZE - page_offset;
+            if (chunk > to_read - bytes_read) {
+                chunk = to_read - bytes_read;
+            }
+        
+            // 从物理页复制数据
+            uint8_t *virt_ptr = (uint8_t *)PHYS_TO_VIRT(page->phys_addr);
+            memcpy(buffer + bytes_read, virt_ptr + page_offset, chunk);
+        
+            bytes_read += chunk;
+            page_offset = 0;  // 后续页从头开始
+            page = page->next;
+        }
+    }
     return bytes_read;
 }
 
@@ -194,42 +193,41 @@ static uint32_t shmfs_write(fs_node_t *node, uint32_t offset,
         return 0;
     }
     
-    file->lock.lock();
-    
-    // 扩展文件大小（如果需要）
-    uint32_t new_size = offset + size;
-    if (new_size > file->size) {
-        if (shmfs_alloc_pages(file, new_size) != 0) {
-            file->lock.unlock();
-            return 0;
+    uint32_t bytes_written;
+    {
+        sync::LockGuard guard(file->lock);
+        // 扩展文件大小（如果需要）
+        uint32_t new_size = offset + size;
+        if (new_size > file->size) {
+            if (shmfs_alloc_pages(file, new_size) != 0) {
+                return 0;
+            }
+            file->size = new_size;
+            node->size = new_size;
         }
-        file->size = new_size;
-        node->size = new_size;
-    }
     
-    // 按页写入
-    uint32_t bytes_written = 0;
-    uint32_t page_idx = offset / PAGE_SIZE;
-    uint32_t page_offset = offset % PAGE_SIZE;
+        // 按页写入
+        bytes_written = 0;
+        uint32_t page_idx = offset / PAGE_SIZE;
+        uint32_t page_offset = offset % PAGE_SIZE;
     
-    shmfs_page_t *page = shmfs_get_page(file, page_idx);
+        shmfs_page_t *page = shmfs_get_page(file, page_idx);
     
-    while (bytes_written < size && page) {
-        uint32_t chunk = PAGE_SIZE - page_offset;
-        if (chunk > size - bytes_written) {
-            chunk = size - bytes_written;
+        while (bytes_written < size && page) {
+            uint32_t chunk = PAGE_SIZE - page_offset;
+            if (chunk > size - bytes_written) {
+                chunk = size - bytes_written;
+            }
+        
+            // 写入物理页
+            uint8_t *virt_ptr = (uint8_t *)PHYS_TO_VIRT(page->phys_addr);
+            memcpy(virt_ptr + page_offset, buffer + bytes_written, chunk);
+        
+            bytes_written += chunk;
+            page_offset = 0;
+            page = page->next;
         }
-        
-        // 写入物理页
-        uint8_t *virt_ptr = (uint8_t *)PHYS_TO_VIRT(page->phys_addr);
-        memcpy(virt_ptr + page_offset, buffer + bytes_written, chunk);
-        
-        bytes_written += chunk;
-        page_offset = 0;
-        page = page->next;
     }
-    
-    file->lock.unlock();
     return bytes_written;
 }
 
@@ -377,10 +375,12 @@ static fs_node_t *shmfs_finddir(fs_node_t *node, const char *name) {
         return NULL;
     }
     
-    dir->lock.lock();
-    shmfs_dirent_t *entry = shmfs_find_entry(dir, name);
-    fs_node_t *result = entry ? entry->node : NULL;
-    dir->lock.unlock();
+    fs_node_t *result;
+    {
+        sync::LockGuard guard(dir->lock);
+        shmfs_dirent_t *entry = shmfs_find_entry(dir, name);
+        result = entry ? entry->node : NULL;
+    }
     
     // 增加引用计数
     if (result) {
@@ -459,9 +459,10 @@ static int shmfs_create_file(fs_node_t *node, const char *name) {
     strncpy(new_node->name, name, 127);
     new_node->name[127] = '\0';
     
-    shmfs_inode_lock.lock();
-    new_node->inode = shmfs_next_inode++;
-    shmfs_inode_lock.unlock();
+    {
+        sync::LockGuard guard(shmfs_inode_lock);
+        new_node->inode = shmfs_next_inode++;
+    }
     
     new_node->type = FS_FILE;
     new_node->size = 0;
@@ -509,47 +510,44 @@ static int shmfs_unlink(fs_node_t *node, const char *name) {
         return -1;
     }
     
-    dir->lock.lock();
-    
-    // 查找并删除
-    shmfs_dirent_t **current = &dir->entries;
-    while (*current) {
-        if (strcmp((*current)->name, name) == 0) {
-            shmfs_dirent_t *to_remove = *current;
-            fs_node_t *target = to_remove->node;
+    {
+        sync::LockGuard guard(dir->lock);
+        // 查找并删除
+        shmfs_dirent_t **current = &dir->entries;
+        while (*current) {
+            if (strcmp((*current)->name, name) == 0) {
+                shmfs_dirent_t *to_remove = *current;
+                fs_node_t *target = to_remove->node;
             
-            // 检查是否还有进程在映射
-            if (target->type == FS_FILE) {
-                shmfs_file_t *file = (shmfs_file_t *)target->impl;
-                if (file && file->map_count > 0) {
-                    // 有进程还在使用此共享内存
-                    LOG_WARN_MSG("shmfs: cannot unlink '%s', map_count=%d\n", 
-                                 name, file->map_count);
-                    dir->lock.unlock();
-                    return -1;
-                }
+                // 检查是否还有进程在映射
+                if (target->type == FS_FILE) {
+                    shmfs_file_t *file = (shmfs_file_t *)target->impl;
+                    if (file && file->map_count > 0) {
+                        // 有进程还在使用此共享内存
+                        LOG_WARN_MSG("shmfs: cannot unlink '%s', map_count=%d\n", 
+                                     name, file->map_count);
+                        return -1;
+                    }
                 
-                // 释放物理页
-                if (file) {
-                    shmfs_free_pages(file);
-                    kfree(file);
+                    // 释放物理页
+                    if (file) {
+                        shmfs_free_pages(file);
+                        kfree(file);
+                    }
                 }
+            
+                *current = (*current)->next;
+                kfree(to_remove);
+                kfree(target);
+                dir->count--;
+            
+                LOG_DEBUG_MSG("shmfs: unlinked file '%s'\n", name);
+            
+                return 0;
             }
-            
-            *current = (*current)->next;
-            kfree(to_remove);
-            kfree(target);
-            dir->count--;
-            
-            LOG_DEBUG_MSG("shmfs: unlinked file '%s'\n", name);
-            
-            dir->lock.unlock();
-            return 0;
+            current = &(*current)->next;
         }
-        current = &(*current)->next;
     }
-    
-    dir->lock.unlock();
     return -1;  // 未找到
 }
 
@@ -571,19 +569,19 @@ uint32_t fs::Shmfs::get_phys_pages(fs_node_t *node, uint32_t offset,
         return 0;
     }
     
-    file->lock.lock();
+    uint32_t count;
+    {
+        sync::LockGuard guard(file->lock);
+        uint32_t start_page = offset / PAGE_SIZE;
+        count = 0;
     
-    uint32_t start_page = offset / PAGE_SIZE;
-    uint32_t count = 0;
+        shmfs_page_t *page = shmfs_get_page(file, start_page);
     
-    shmfs_page_t *page = shmfs_get_page(file, start_page);
-    
-    while (page && count < num_pages) {
-        phys_pages[count++] = page->phys_addr;
-        page = page->next;
+        while (page && count < num_pages) {
+            phys_pages[count++] = page->phys_addr;
+            page = page->next;
+        }
     }
-    
-    file->lock.unlock();
     return count;
 }
 
@@ -597,10 +595,11 @@ void fs::Shmfs::map_ref(fs_node_t *node) {
     
     shmfs_file_t *file = (shmfs_file_t *)node->impl;
     if (file) {
-        file->lock.lock();
-        file->map_count++;
-        LOG_DEBUG_MSG("shmfs: map_ref, count=%d\n", file->map_count);
-        file->lock.unlock();
+        {
+            sync::LockGuard guard(file->lock);
+            file->map_count++;
+            LOG_DEBUG_MSG("shmfs: map_ref, count=%d\n", file->map_count);
+        }
     }
 }
 
@@ -614,12 +613,13 @@ void fs::Shmfs::map_unref(fs_node_t *node) {
     
     shmfs_file_t *file = (shmfs_file_t *)node->impl;
     if (file) {
-        file->lock.lock();
-        if (file->map_count > 0) {
-            file->map_count--;
+        {
+            sync::LockGuard guard(file->lock);
+            if (file->map_count > 0) {
+                file->map_count--;
+            }
+            LOG_DEBUG_MSG("shmfs: map_unref, count=%d\n", file->map_count);
         }
-        LOG_DEBUG_MSG("shmfs: map_unref, count=%d\n", file->map_count);
-        file->lock.unlock();
     }
 }
 
@@ -680,9 +680,10 @@ fs_node_t *fs::Shmfs::create(const char *name) {
     strncpy(root->name, name ? name : "shm", 127);
     root->name[127] = '\0';
     
-    shmfs_inode_lock.lock();
-    root->inode = shmfs_next_inode++;
-    shmfs_inode_lock.unlock();
+    {
+        sync::LockGuard guard(shmfs_inode_lock);
+        root->inode = shmfs_next_inode++;
+    }
     
     root->type = FS_DIRECTORY;
     root->size = 0;
