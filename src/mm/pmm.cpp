@@ -27,7 +27,7 @@ typedef struct {
 static uint32_t *frame_bitmap = NULL;     ///< 页帧位图
 static pfn_t bitmap_size = 0;             ///< 位图大小（32位字数量）
 static pfn_t total_frames = 0;            ///< 总页帧数
-static pmm_info_t pmm_info = {};         ///< 物理内存信息
+static mm::PmmInfo pmm_info = {};         ///< 物理内存信息
 static pfn_t last_free_index = 0;         ///< 上次分配的空闲页帧索引（优化搜索）
 static sync::Spinlock pmm_lock;               ///< PMM 自旋锁
 static protected_frame_t protected_frames[MAX_PROTECTED_FRAMES];
@@ -140,12 +140,12 @@ static pfn_t find_free_frame(void) {
 /**
  * @brief 将物理帧加入保护列表
  */
-void pmm_protect_frame(paddr_t frame) {
+void mm::Pmm::protect_frame(paddr_t frame) {
     if (frame == 0 || frame == PADDR_INVALID) {
         return;
     }
     if (!IS_PADDR_ALIGNED(frame)) {
-        LOG_WARN_MSG("PMM: pmm_protect_frame received unaligned frame 0x%llx, aligning down\n", 
+        LOG_WARN_MSG("PMM: mm::Pmm::protect_frame received unaligned frame 0x%llx, aligning down\n", 
                     (unsigned long long)frame);
         frame = PADDR_ALIGN_DOWN(frame);
     }
@@ -179,12 +179,12 @@ void pmm_protect_frame(paddr_t frame) {
 /**
  * @brief 将物理帧从保护列表移除
  */
-void pmm_unprotect_frame(paddr_t frame) {
+void mm::Pmm::unprotect_frame(paddr_t frame) {
     if (frame == 0 || frame == PADDR_INVALID) {
         return;
     }
     if (!IS_PADDR_ALIGNED(frame)) {
-        LOG_WARN_MSG("PMM: pmm_unprotect_frame received unaligned frame 0x%llx, aligning down\n", 
+        LOG_WARN_MSG("PMM: mm::Pmm::unprotect_frame received unaligned frame 0x%llx, aligning down\n", 
                     (unsigned long long)frame);
         frame = PADDR_ALIGN_DOWN(frame);
     }
@@ -214,7 +214,7 @@ void pmm_unprotect_frame(paddr_t frame) {
 /**
  * @brief 查询物理帧是否处于保护状态
  */
-bool pmm_is_frame_protected(paddr_t frame) {
+bool mm::Pmm::is_frame_protected(paddr_t frame) {
     if (frame == 0 || frame == PADDR_INVALID) {
         return false;
     }
@@ -233,11 +233,11 @@ bool pmm_is_frame_protected(paddr_t frame) {
  * 
  * 解析内存映射，初始化位图，标记已使用和空闲的页帧
  */
-void pmm_init(multiboot_info_t *mbi) {
+void mm::Pmm::init(multiboot_info_t *mbi) {
     if (!(mbi->flags & MULTIBOOT_INFO_MEM_MAP))
         PANIC("No memory map");
     
-    memset(&pmm_info, 0, sizeof(pmm_info_t));
+    memset(&pmm_info, 0, sizeof(mm::PmmInfo));
     paddr_t kernel_start = 0x100000;  // 1MB，内核加载位置
     paddr_t kernel_end = PAGE_ALIGN_UP(VIRT_TO_PHYS((uintptr_t)_kernel_end));
     
@@ -404,7 +404,7 @@ void pmm_init(multiboot_info_t *mbi) {
         }
     }
     
-    pmm_print_info();
+    mm::Pmm::print_info();
 }
 
 /**
@@ -417,7 +417,7 @@ void pmm_init(multiboot_info_t *mbi) {
  * **Feature: arm64-kernel-integration**
  * **Validates: Requirements 1.1, 1.4**
  */
-void pmm_init_boot_info(boot_info_t *boot_info) {
+void mm::Pmm::init_boot_info(boot_info_t *boot_info) {
     if (!boot_info || !boot_info->valid) {
         PANIC("PMM: Invalid boot_info");
     }
@@ -426,7 +426,7 @@ void pmm_init_boot_info(boot_info_t *boot_info) {
         PANIC("PMM: No memory map in boot_info");
     }
     
-    memset(&pmm_info, 0, sizeof(pmm_info_t));
+    memset(&pmm_info, 0, sizeof(mm::PmmInfo));
     
     /* 
      * ARM64 内核物理地址范围
@@ -606,7 +606,7 @@ void pmm_init_boot_info(boot_info_t *boot_info) {
         }
     }
     
-    pmm_print_info();
+    mm::Pmm::print_info();
 }
 
 /**
@@ -615,7 +615,7 @@ void pmm_init_boot_info(boot_info_t *boot_info) {
  * 
  * 分配后会清零页帧内容
  */
-paddr_t pmm_alloc_frame(void) {
+paddr_t mm::Pmm::alloc_frame() {
     sync::SpinlockIrqGuard guard(pmm_lock);
 
     pfn_t idx = find_free_frame();
@@ -705,11 +705,11 @@ paddr_t pmm_alloc_frame(void) {
  * @param zone 内存区域
  * @return 成功返回物理地址，失败返回 PADDR_INVALID
  */
-paddr_t pmm_alloc_frame_zone(pmm_zone_t zone) {
+paddr_t mm::Pmm::alloc_frame_zone(pmm_zone_t zone) {
     // TODO: 实现区域分配
     // 目前简单地调用普通分配
     (void)zone;
-    return pmm_alloc_frame();
+    return mm::Pmm::alloc_frame();
 }
 
 /*============================================================================
@@ -774,7 +774,7 @@ static void get_zone_range(pmm_zone_t zone, paddr_t *start, paddr_t *end) {
  * 
  * @see Requirements 10.1
  */
-paddr_t pmm_alloc_frames_zone(size_t count, pmm_zone_t zone) {
+paddr_t mm::Pmm::alloc_frames_zone(size_t count, pmm_zone_t zone) {
     if (count == 0) {
         return PADDR_INVALID;
     }
@@ -859,14 +859,14 @@ paddr_t pmm_alloc_frames_zone(size_t count, pmm_zone_t zone) {
  * @return 成功返回起始物理地址，失败返回 PADDR_INVALID
  * 
  * 此函数从任意可用区域分配连续帧。
- * 如需 DMA 区域分配，请使用 pmm_alloc_frames_zone(count, ZONE_DMA)。
+ * 如需 DMA 区域分配，请使用 mm::Pmm::alloc_frames_zone(count, ZONE_DMA)。
  */
-paddr_t pmm_alloc_frames(size_t count) {
+paddr_t mm::Pmm::alloc_frames(size_t count) {
     if (count == 0) {
         return PADDR_INVALID;
     }
     if (count == 1) {
-        return pmm_alloc_frame();
+        return mm::Pmm::alloc_frame();
     }
     
     sync::SpinlockIrqGuard guard(pmm_lock);
@@ -918,7 +918,7 @@ paddr_t pmm_alloc_frames(size_t count) {
  * 
  * COW 支持：如果帧的引用计数 > 1，只递减计数，不实际释放
  */
-void pmm_free_frame(paddr_t frame) {
+void mm::Pmm::free_frame(paddr_t frame) {
     // 检查无效地址
     if (frame == 0 || frame == PADDR_INVALID) {
         return;
@@ -981,9 +981,9 @@ void pmm_free_frame(paddr_t frame) {
  * @param frame 起始物理地址
  * @param count 页帧数量
  */
-void pmm_free_frames(paddr_t frame, size_t count) {
+void mm::Pmm::free_frames(paddr_t frame, size_t count) {
     for (size_t i = 0; i < count; i++) {
-        pmm_free_frame(frame + i * PAGE_SIZE);
+        mm::Pmm::free_frame(frame + i * PAGE_SIZE);
     }
 }
 
@@ -991,7 +991,7 @@ void pmm_free_frames(paddr_t frame, size_t count) {
  * @brief 获取物理内存信息
  * @return 物理内存信息结构
  */
-pmm_info_t pmm_get_info(void) {
+mm::PmmInfo mm::Pmm::get_info() {
     return pmm_info;
 }
 
@@ -999,7 +999,7 @@ pmm_info_t pmm_get_info(void) {
  * @brief 获取 PMM 数据结构结束地址（虚拟地址）
  * @return PMM 数据结构结束的虚拟地址（页对齐）
  */
-uintptr_t pmm_get_bitmap_end(void) {
+uintptr_t mm::Pmm::get_bitmap_end() {
     if (pmm_data_end_virt != 0) {
         return pmm_data_end_virt;
     }
@@ -1015,14 +1015,14 @@ uintptr_t pmm_get_bitmap_end(void) {
  * 
  * 用于确定堆的起始位置，确保堆不会与 PMM 数据结构重叠。
  */
-uintptr_t pmm_get_data_end_virt(void) {
-    return pmm_get_bitmap_end();
+uintptr_t mm::Pmm::get_data_end_virt() {
+    return mm::Pmm::get_bitmap_end();
 }
 
 /**
  * @brief 设置堆保留区域的物理地址范围
  */
-void pmm_set_heap_reserved_range(uintptr_t heap_virt_start, uintptr_t heap_virt_end) {
+void mm::Pmm::set_heap_reserved_range(uintptr_t heap_virt_start, uintptr_t heap_virt_end) {
     if (heap_virt_start >= KERNEL_VIRTUAL_BASE && heap_virt_end > heap_virt_start) {
         heap_reserved_phys_start = VIRT_TO_PHYS(heap_virt_start);
         heap_reserved_phys_end = VIRT_TO_PHYS(heap_virt_end);
@@ -1094,7 +1094,7 @@ static pfn_t find_huge_page_frames(pfn_t zone_start, pfn_t zone_end) {
  * @brief 分配一个 2MB 大页
  * @return 成功返回 2MB 对齐的物理地址，失败返回 PADDR_INVALID
  */
-paddr_t pmm_alloc_huge_page(void) {
+paddr_t mm::Pmm::alloc_huge_page() {
     bool irq_state;
     pmm_lock.lock_irqsave(irq_state);
     
@@ -1134,7 +1134,7 @@ paddr_t pmm_alloc_huge_page(void) {
  * @param zone 内存区域
  * @return 成功返回 2MB 对齐的物理地址，失败返回 PADDR_INVALID
  */
-paddr_t pmm_alloc_huge_page_zone(pmm_zone_t zone) {
+paddr_t mm::Pmm::alloc_huge_page_zone(pmm_zone_t zone) {
     /* Get zone boundaries */
     paddr_t zone_start, zone_end;
     get_zone_range(zone, &zone_start, &zone_end);
@@ -1191,10 +1191,10 @@ paddr_t pmm_alloc_huge_page_zone(pmm_zone_t zone) {
  * @brief 释放一个 2MB 大页
  * @param huge_page 大页的物理地址（必须 2MB 对齐）
  */
-void pmm_free_huge_page(paddr_t huge_page) {
+void mm::Pmm::free_huge_page(paddr_t huge_page) {
     /* Validate alignment */
-    if (!pmm_is_huge_page_aligned(huge_page)) {
-        LOG_ERROR_MSG("PMM: pmm_free_huge_page: address 0x%llx is not 2MB aligned\n",
+    if (!mm::Pmm::is_huge_page_aligned(huge_page)) {
+        LOG_ERROR_MSG("PMM: mm::Pmm::free_huge_page: address 0x%llx is not 2MB aligned\n",
                      (unsigned long long)huge_page);
         return;
     }
@@ -1207,7 +1207,7 @@ void pmm_free_huge_page(paddr_t huge_page) {
     const pfn_t frames_count = HUGE_PAGE_SIZE / PAGE_SIZE;
     
     if (start_pfn + frames_count > total_frames) {
-        LOG_ERROR_MSG("PMM: pmm_free_huge_page: address 0x%llx out of range\n",
+        LOG_ERROR_MSG("PMM: mm::Pmm::free_huge_page: address 0x%llx out of range\n",
                      (unsigned long long)huge_page);
         return;
     }
@@ -1220,7 +1220,7 @@ void pmm_free_huge_page(paddr_t huge_page) {
         pfn_t idx = start_pfn + i;
         
         if (!test_frame(idx)) {
-            LOG_WARN_MSG("PMM: pmm_free_huge_page: frame %llu already free\n",
+            LOG_WARN_MSG("PMM: mm::Pmm::free_huge_page: frame %llu already free\n",
                         (unsigned long long)idx);
             continue;
         }
@@ -1252,7 +1252,7 @@ void pmm_free_huge_page(paddr_t huge_page) {
 /**
  * @brief 打印物理内存使用信息
  */
-void pmm_print_info(void) {
+void mm::Pmm::print_info() {
     kprintf("\n=============================== Physical Memory ================================\n");
     kprintf("Total: %llu MB\n", (unsigned long long)((pmm_info.total_frames * PAGE_SIZE) / (1024*1024)));
     kprintf("Free:  %llu MB\n", (unsigned long long)((pmm_info.free_frames * PAGE_SIZE) / (1024*1024)));
@@ -1265,30 +1265,30 @@ void pmm_print_info(void) {
  * @param frame 页帧的物理地址
  * @return 新的引用计数值
  */
-uint32_t pmm_frame_ref_inc(paddr_t frame) {
+uint32_t mm::Pmm::frame_ref_inc(paddr_t frame) {
     if (frame == 0 || frame == PADDR_INVALID || !IS_PADDR_ALIGNED(frame)) {
-        LOG_ERROR_MSG("PMM: pmm_frame_ref_inc invalid frame 0x%llx\n", 
+        LOG_ERROR_MSG("PMM: mm::Pmm::frame_ref_inc invalid frame 0x%llx\n", 
                      (unsigned long long)frame);
         return 0;
     }
     
     pfn_t idx = PADDR_TO_PFN(frame);
     if (idx >= total_frames) {
-        LOG_ERROR_MSG("PMM: pmm_frame_ref_inc frame 0x%llx out of range (idx=%llu, total=%llu)\n", 
+        LOG_ERROR_MSG("PMM: mm::Pmm::frame_ref_inc frame 0x%llx out of range (idx=%llu, total=%llu)\n", 
                      (unsigned long long)frame, (unsigned long long)idx, 
                      (unsigned long long)total_frames);
         return 0;
     }
     
     if (!frame_refcount) {
-        LOG_ERROR_MSG("PMM: pmm_frame_ref_inc called but frame_refcount not initialized!\n");
+        LOG_ERROR_MSG("PMM: mm::Pmm::frame_ref_inc called but frame_refcount not initialized!\n");
         return 0;
     }
     
     sync::SpinlockIrqGuard guard(pmm_lock);
     
     if (frame_refcount[idx] == 0xFFFF) {
-        LOG_ERROR_MSG("PMM: pmm_frame_ref_inc frame 0x%llx refcount overflow!\n", 
+        LOG_ERROR_MSG("PMM: mm::Pmm::frame_ref_inc frame 0x%llx refcount overflow!\n", 
                      (unsigned long long)frame);
         return 0xFFFF;
     }
@@ -1304,29 +1304,29 @@ uint32_t pmm_frame_ref_inc(paddr_t frame) {
  * @param frame 页帧的物理地址
  * @return 新的引用计数值
  */
-uint32_t pmm_frame_ref_dec(paddr_t frame) {
+uint32_t mm::Pmm::frame_ref_dec(paddr_t frame) {
     if (frame == 0 || frame == PADDR_INVALID || !IS_PADDR_ALIGNED(frame)) {
-        LOG_ERROR_MSG("PMM: pmm_frame_ref_dec invalid frame 0x%llx\n", 
+        LOG_ERROR_MSG("PMM: mm::Pmm::frame_ref_dec invalid frame 0x%llx\n", 
                      (unsigned long long)frame);
         return 0;
     }
     
     pfn_t idx = PADDR_TO_PFN(frame);
     if (idx >= total_frames) {
-        LOG_ERROR_MSG("PMM: pmm_frame_ref_dec frame 0x%llx out of range\n", 
+        LOG_ERROR_MSG("PMM: mm::Pmm::frame_ref_dec frame 0x%llx out of range\n", 
                      (unsigned long long)frame);
         return 0;
     }
     
     if (!frame_refcount) {
-        LOG_ERROR_MSG("PMM: pmm_frame_ref_dec called but frame_refcount not initialized!\n");
+        LOG_ERROR_MSG("PMM: mm::Pmm::frame_ref_dec called but frame_refcount not initialized!\n");
         return 0;
     }
     
     sync::SpinlockIrqGuard guard(pmm_lock);
     
     if (frame_refcount[idx] == 0) {
-        LOG_WARN_MSG("PMM: pmm_frame_ref_dec frame 0x%llx already zero!\n", 
+        LOG_WARN_MSG("PMM: mm::Pmm::frame_ref_dec frame 0x%llx already zero!\n", 
                     (unsigned long long)frame);
         return 0;
     }
@@ -1342,7 +1342,7 @@ uint32_t pmm_frame_ref_dec(paddr_t frame) {
  * @param frame 页帧的物理地址
  * @return 引用计数值
  */
-uint32_t pmm_frame_get_refcount(paddr_t frame) {
+uint32_t mm::Pmm::frame_get_refcount(paddr_t frame) {
     if (frame == 0 || frame == PADDR_INVALID || !IS_PADDR_ALIGNED(frame)) {
         return 0;
     }
@@ -1372,7 +1372,7 @@ uint32_t pmm_frame_get_refcount(paddr_t frame) {
  * @brief 验证 PMM 内部数据结构一致性
  * @return 一致性检查通过返回 true，发现问题返回 false
  */
-bool pmm_verify_consistency(void) {
+bool mm::Pmm::verify_consistency() {
     sync::SpinlockIrqGuard guard(pmm_lock);
     
     bool consistent = true;
@@ -1516,7 +1516,7 @@ bool pmm_verify_consistency(void) {
 /**
  * @brief 打印 PMM 详细诊断信息
  */
-void pmm_print_diagnostics(void) {
+void mm::Pmm::print_diagnostics() {
     sync::SpinlockIrqGuard guard(pmm_lock);
     
     kprintf("\n==================== PMM Diagnostics ====================\n");

@@ -92,35 +92,35 @@ static bool expand(size_t size) {
 #else
     // i686: 原有实现
     uintptr_t old_heap_end = heap_end;
-    uintptr_t current_dir_phys = vmm_get_page_directory();
+    uintptr_t current_dir_phys = mm::Vmm::get_page_directory();
     
     // 分配物理页并映射到虚拟地址空间
     for (size_t i = 0; i < pages; i++) {
-        paddr_t frame = pmm_alloc_frame();
+        paddr_t frame = mm::Pmm::alloc_frame();
         if (frame == PADDR_INVALID) {
             // 分配失败：清理已分配的页
             LOG_ERROR_MSG("heap: expand failed at page %u/%u (out of physical memory)\n", 
                          (unsigned int)(i + 1), (unsigned int)pages);
             for (size_t j = 0; j < i; j++) {
                 uintptr_t virt = old_heap_end + j * PAGE_SIZE;
-                uintptr_t phys = vmm_unmap_page_in_directory(current_dir_phys, virt);
+                uintptr_t phys = mm::Vmm::unmap_page_in_directory(current_dir_phys, virt);
                 if (phys) {
-                    pmm_free_frame((paddr_t)phys);
+                    mm::Pmm::free_frame((paddr_t)phys);
                 }
             }
             return false;
         }
         
-        if (!vmm_map_page(heap_end + i * PAGE_SIZE, (uintptr_t)frame, PAGE_PRESENT | PAGE_WRITE)) {
+        if (!mm::Vmm::map_page(heap_end + i * PAGE_SIZE, (uintptr_t)frame, PAGE_PRESENT | PAGE_WRITE)) {
             // 映射失败：清理已分配的页
             LOG_ERROR_MSG("heap: expand failed at mapping page %u/%u\n", 
                          (unsigned int)(i + 1), (unsigned int)pages);
-            pmm_free_frame(frame);
+            mm::Pmm::free_frame(frame);
             for (size_t j = 0; j < i; j++) {
                 uintptr_t virt = old_heap_end + j * PAGE_SIZE;
-                uintptr_t phys = vmm_unmap_page_in_directory(current_dir_phys, virt);
+                uintptr_t phys = mm::Vmm::unmap_page_in_directory(current_dir_phys, virt);
                 if (phys) {
-                    pmm_free_frame((paddr_t)phys);
+                    mm::Pmm::free_frame((paddr_t)phys);
                 }
             }
             return false;
@@ -209,11 +209,11 @@ static void split(heap_block_t *b, size_t size) {
  * @param start 堆起始地址
  * @param size 堆最大大小（字节）
  */
-void heap_init(uintptr_t start, uint32_t size) {
+void mm::Heap::init(uintptr_t start, uint32_t size) {
     heap_start = heap_end = PAGE_ALIGN_UP(start);
     heap_max = heap_start + size;
     
-    LOG_INFO_MSG("heap_init: start=0x%llx, max=0x%llx, size=%u\n", (unsigned long long)heap_start, (unsigned long long)heap_max, size);
+    LOG_INFO_MSG("mm::Heap::init: start=0x%llx, max=0x%llx, size=%u\n", (unsigned long long)heap_start, (unsigned long long)heap_max, size);
     
     // 初始化堆自旋锁
     heap_lock.init();
@@ -223,7 +223,7 @@ void heap_init(uintptr_t start, uint32_t size) {
     
     // 初始化第一个内存块
     first_block = (heap_block_t*)heap_start;
-    LOG_INFO_MSG("heap_init: first_block at 0x%llx, setting magic...\n", (unsigned long long)(uintptr_t)first_block);
+    LOG_INFO_MSG("mm::Heap::init: first_block at 0x%llx, setting magic...\n", (unsigned long long)(uintptr_t)first_block);
     
     first_block->size = PAGE_SIZE - sizeof(heap_block_t);
     first_block->is_free = true;
@@ -231,7 +231,7 @@ void heap_init(uintptr_t start, uint32_t size) {
     first_block->next = first_block->prev = NULL;
     last_block = first_block;
     
-    LOG_INFO_MSG("heap_init: first_block magic=0x%x (expected 0x%x)\n", 
+    LOG_INFO_MSG("mm::Heap::init: first_block magic=0x%x (expected 0x%x)\n", 
                  first_block->magic, HEAP_MAGIC);
 }
 
@@ -454,7 +454,7 @@ void kfree_aligned(void* ptr) {
  * @param info 输出参数，用于存储堆统计信息
  * @return 成功返回 0，失败返回 -1
  */
-int heap_get_info(heap_info_t *info) {
+int mm::Heap::get_info(mm::HeapInfo *info) {
     if (!info) {
         return -1;
     }
@@ -498,9 +498,9 @@ int heap_get_info(heap_info_t *info) {
  * 
  * 统计并打印堆的总大小、已使用和空闲内存
  */
-void heap_print_info(void) {
-    heap_info_t info;
-    if (heap_get_info(&info) != 0) {
+void mm::Heap::print_info() {
+    mm::HeapInfo info;
+    if (mm::Heap::get_info(&info) != 0) {
         kprintf("Error: Failed to get heap info\n");
         return;
     }

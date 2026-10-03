@@ -116,12 +116,12 @@ void isr_handler(registers_t *regs) {
     uint32_t faulting_address = get_cr2();
     
     // 尝试处理内核空间缺页（同步页目录）
-    if (vmm_handle_kernel_page_fault(faulting_address)) {
+    if (mm::Vmm::handle_kernel_page_fault(faulting_address)) {
         return;
     }
     
     // 尝试处理 COW 写保护异常
-    if (vmm_handle_cow_page_fault(faulting_address, regs->err_code)) {
+    if (mm::Vmm::handle_cow_page_fault(faulting_address, regs->err_code)) {
         return;
     }
 

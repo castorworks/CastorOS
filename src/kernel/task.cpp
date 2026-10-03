@@ -184,7 +184,7 @@ void task_free(task_t *task) {
         return;
     }
     
-    // 注意：不能在持有 spinlock 时调用可能阻塞的函数（kfree、vmm_free_page_directory）
+    // 注意：不能在持有 spinlock 时调用可能阻塞的函数（kfree、mm::Vmm::free_page_directory）
     // 所以先在锁外释放资源，最后在锁内清理 PCB
     
     uintptr_t kernel_stack_base = task->kernel_stack_base;
@@ -210,7 +210,7 @@ void task_free(task_t *task) {
     
     // 释放页目录（在锁外执行，仅用户进程）
     if (is_user && page_dir_phys) {
-        vmm_free_page_directory(page_dir_phys);
+        mm::Vmm::free_page_directory(page_dir_phys);
     }
     
     // 在锁内清空 PCB
@@ -305,7 +305,7 @@ bool task_setup_user_stack(task_t *task) {
                 paddr_t phys = hal_mmu_unmap(space, cleanup_virt);
                 if (phys != PADDR_INVALID) {
                     hal_mmu_flush_tlb(cleanup_virt);
-                    pmm_free_frame(phys);
+                    mm::Pmm::free_frame(phys);
                 }
             }
             
@@ -315,7 +315,7 @@ bool task_setup_user_stack(task_t *task) {
         }
         
         /* Allocate physical page */
-        paddr_t phys_addr = pmm_alloc_frame();
+        paddr_t phys_addr = mm::Pmm::alloc_frame();
         if (phys_addr == PADDR_INVALID) {
             LOG_ERROR_MSG("task_setup_user_stack: Failed to allocate physical page %u/%u\n", 
                          i + 1, num_pages);
@@ -326,7 +326,7 @@ bool task_setup_user_stack(task_t *task) {
                 paddr_t cleanup_phys = hal_mmu_unmap(space, cleanup_virt);
                 if (cleanup_phys != PADDR_INVALID) {
                     hal_mmu_flush_tlb(cleanup_virt);
-                    pmm_free_frame(cleanup_phys);
+                    mm::Pmm::free_frame(cleanup_phys);
                 }
             }
             
@@ -340,7 +340,7 @@ bool task_setup_user_stack(task_t *task) {
                          i + 1, num_pages, (unsigned long long)virt_addr);
             
             /* Free the just-allocated physical page */
-            pmm_free_frame(phys_addr);
+            mm::Pmm::free_frame(phys_addr);
             
             /* Cleanup previously mapped pages */
             for (uint32_t j = 0; j < i; j++) {
@@ -348,7 +348,7 @@ bool task_setup_user_stack(task_t *task) {
                 paddr_t cleanup_phys = hal_mmu_unmap(space, cleanup_virt);
                 if (cleanup_phys != PADDR_INVALID) {
                     hal_mmu_flush_tlb(cleanup_virt);
-                    pmm_free_frame(cleanup_phys);
+                    mm::Pmm::free_frame(cleanup_phys);
                 }
             }
             
@@ -395,14 +395,14 @@ bool task_setup_user_stack(task_t *task) {
             // 清理已分配的页面
             for (uint32_t j = 0; j < i; j++) {
                 uint32_t cleanup_virt = stack_bottom + (j * PAGE_SIZE);
-                uint32_t phys = vmm_unmap_page_in_directory(task->page_dir_phys, cleanup_virt);
+                uint32_t phys = mm::Vmm::unmap_page_in_directory(task->page_dir_phys, cleanup_virt);
                 if (phys) {
-                    pmm_free_frame(phys);
+                    mm::Pmm::free_frame(phys);
                 }
             }
             
             // 清理空的页表
-            vmm_cleanup_empty_page_tables(task->page_dir_phys, stack_bottom, stack_top);
+            mm::Vmm::cleanup_empty_page_tables(task->page_dir_phys, stack_bottom, stack_top);
             
             task->user_stack_base = 0;
             task->user_stack = 0;
@@ -410,7 +410,7 @@ bool task_setup_user_stack(task_t *task) {
         }
         
         // 分配物理页
-        paddr_t phys_addr = pmm_alloc_frame();
+        paddr_t phys_addr = mm::Pmm::alloc_frame();
         if (phys_addr == PADDR_INVALID) {
             LOG_ERROR_MSG("task_setup_user_stack: Failed to allocate physical page %u/%u\n", 
                          i + 1, num_pages);
@@ -418,37 +418,37 @@ bool task_setup_user_stack(task_t *task) {
             // 清理已分配的页面
             for (uint32_t j = 0; j < i; j++) {
                 uint32_t cleanup_virt = stack_bottom + (j * PAGE_SIZE);
-                uint32_t cleanup_phys = vmm_unmap_page_in_directory(task->page_dir_phys, cleanup_virt);
+                uint32_t cleanup_phys = mm::Vmm::unmap_page_in_directory(task->page_dir_phys, cleanup_virt);
                 if (cleanup_phys) {
-                    pmm_free_frame(cleanup_phys);
+                    mm::Pmm::free_frame(cleanup_phys);
                 }
             }
             
             // 清理空的页表
-            vmm_cleanup_empty_page_tables(task->page_dir_phys, stack_bottom, stack_top);
+            mm::Vmm::cleanup_empty_page_tables(task->page_dir_phys, stack_bottom, stack_top);
             
             return false;
         }
         
         // 映射到用户空间（用户可读写）
-        if (!vmm_map_page_in_directory(task->page_dir_phys, virt_addr, (uintptr_t)phys_addr,
+        if (!mm::Vmm::map_page_in_directory(task->page_dir_phys, virt_addr, (uintptr_t)phys_addr,
                                        PAGE_PRESENT | PAGE_WRITE | PAGE_USER)) {
             LOG_ERROR_MSG("task_setup_user_stack: Failed to map page %u/%u\n", i + 1, num_pages);
             
             // 释放刚分配的物理页
-            pmm_free_frame(phys_addr);
+            mm::Pmm::free_frame(phys_addr);
             
             // 清理之前映射的页面
             for (uint32_t j = 0; j < i; j++) {
                 uint32_t cleanup_virt = stack_bottom + (j * PAGE_SIZE);
-                uint32_t cleanup_phys = vmm_unmap_page_in_directory(task->page_dir_phys, cleanup_virt);
+                uint32_t cleanup_phys = mm::Vmm::unmap_page_in_directory(task->page_dir_phys, cleanup_virt);
                 if (cleanup_phys) {
-                    pmm_free_frame(cleanup_phys);
+                    mm::Pmm::free_frame(cleanup_phys);
                 }
             }
             
             // 清理空的页表
-            vmm_cleanup_empty_page_tables(task->page_dir_phys, stack_bottom, stack_top);
+            mm::Vmm::cleanup_empty_page_tables(task->page_dir_phys, stack_bottom, stack_top);
             
             return false;
         }
@@ -517,7 +517,7 @@ uint32_t task_create_kernel_thread(void (*entry)(void), const char *name) {
     task->kernel_stack = task->kernel_stack_base + KERNEL_STACK_SIZE;
     
     // 使用内核页目录
-    task->page_dir_phys = vmm_get_page_directory();
+    task->page_dir_phys = mm::Vmm::get_page_directory();
     task->page_dir = (page_directory_t*)PHYS_TO_VIRT(task->page_dir_phys);
     
     // 初始化上下文
@@ -859,7 +859,7 @@ static bool task_create_idle(void) {
     idle_task->kernel_stack = idle_task->kernel_stack_base + KERNEL_STACK_SIZE;
     
     // 使用内核页目录
-    idle_task->page_dir_phys = vmm_get_page_directory();
+    idle_task->page_dir_phys = mm::Vmm::get_page_directory();
     idle_task->page_dir = (page_directory_t*)PHYS_TO_VIRT(idle_task->page_dir_phys);
     
     // 初始化上下文
@@ -958,7 +958,7 @@ void task_schedule(void) {
         }
         
         if (is_user && page_dir_phys) {
-            vmm_free_page_directory(page_dir_phys);  // ✅ 释放页目录
+            mm::Vmm::free_page_directory(page_dir_phys);  // ✅ 释放页目录
         }
         
         LOG_DEBUG_MSG("Terminated task cleanup complete\n");
@@ -1019,7 +1019,7 @@ void task_schedule(void) {
     // task_switch_context 会直接修改 CR3，但不会更新 current_dir_phys
     // 我们必须在切换前就更新，因为切换后不能再调用任何函数
     if (prev_task != next_task && next_task->is_user_process) {
-        vmm_sync_current_dir(next_task->page_dir_phys);
+        mm::Vmm::sync_current_dir(next_task->page_dir_phys);
         
         // 【调试】如果是切换到 Shell，验证其页目录完整性
         if (next_task->pid == 1) {

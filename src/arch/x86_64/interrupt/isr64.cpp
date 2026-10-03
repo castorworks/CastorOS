@@ -122,12 +122,12 @@ static void page_fault_handler(registers_t *regs) {
     uint64_t faulting_address = get_cr2();
     
     /* Try to handle kernel page fault (sync page directory) */
-    if (vmm_handle_kernel_page_fault(faulting_address)) {
+    if (mm::Vmm::handle_kernel_page_fault(faulting_address)) {
         return;
     }
     
     /* Try to handle COW write protection fault */
-    if (vmm_handle_cow_page_fault(faulting_address, regs->err_code)) {
+    if (mm::Vmm::handle_cow_page_fault(faulting_address, regs->err_code)) {
         return;
     }
 

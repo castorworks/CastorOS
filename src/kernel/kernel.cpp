@@ -162,22 +162,22 @@ void kernel_main(void *dtb_addr) {
     
     if (boot_info) {
         // 3.1 Initialize PMM using boot_info from DTB
-        pmm_init_boot_info(boot_info);
+        mm::Pmm::init_boot_info(boot_info);
         LOG_INFO_MSG("  [3.1] PMM initialized\n");
         
         // 3.2 Initialize VMM
-        vmm_init();
+        mm::Vmm::init();
         LOG_INFO_MSG("  [3.2] VMM initialized\n");
         
         // 3.3 Initialize Heap
         // ARM64 heap should be placed after PMM data structures, within physical memory
         // Get the end of PMM data structures and place heap there
-        uintptr_t pmm_data_end = pmm_get_data_end_virt();
+        uintptr_t pmm_data_end = mm::Pmm::get_data_end_virt();
         uintptr_t heap_start = PAGE_ALIGN_UP(pmm_data_end);
         
         // Calculate available memory for heap (leave some room for other allocations)
         // Physical memory ends at max_phys, heap should not exceed that
-        pmm_info_t pmm_info_local = pmm_get_info();
+        mm::PmmInfo pmm_info_local = mm::Pmm::get_info();
         uint64_t max_phys = (uint64_t)pmm_info_local.total_frames * PAGE_SIZE;
         uintptr_t max_heap_virt = PHYS_TO_VIRT(max_phys);
         
@@ -193,13 +193,13 @@ void kernel_main(void *dtb_addr) {
         LOG_INFO_MSG("        PMM data end: 0x%llx, max_heap_virt: 0x%llx\n",
                      (unsigned long long)pmm_data_end, (unsigned long long)max_heap_virt);
         
-        heap_init(heap_start, heap_size);
+        mm::Heap::init(heap_start, heap_size);
         
         // 【关键】通知 PMM 堆的虚拟地址范围，防止分配会与堆重叠的物理帧
         // 这解决了堆扩展时覆盖已分配帧的恒等映射导致的页目录损坏问题
-        pmm_set_heap_reserved_range(heap_start, heap_start + heap_size);
+        mm::Pmm::set_heap_reserved_range(heap_start, heap_start + heap_size);
         
-        heap_print_info();
+        mm::Heap::print_info();
         LOG_INFO_MSG("  [3.3] Heap initialized\n");
         
         // Test heap allocation
@@ -445,21 +445,21 @@ void kernel_main(multiboot_info_t* mbi) {
     
     // 3.1 初始化 PMM（Physical Memory Manager - 物理内存管理）阶段1
     //     解析内存映射，记录所有可用区域
-    pmm_init(mbi);
+    mm::Pmm::init(mbi);
     LOG_INFO_MSG("  [3.1] PMM phase 1 initialized\n");
     
     // 3.2 初始化 VMM（Virtual Memory Manager - 虚拟内存管理）
-    vmm_init();
+    mm::Vmm::init();
     LOG_INFO_MSG("  [3.2] VMM initialized\n");
     
     // 3.3 初始化 PAT（Page Attribute Table）
     //     用于支持帧缓冲的 Write-Combining 模式，提升图形性能
-    vmm_init_pat();
+    mm::Vmm::init_pat();
     LOG_INFO_MSG("  [3.3] PAT initialized\n");
     
     // 3.5 初始化 Heap（堆内存分配器）
     // 堆起始地址：PMM 位图之后（避免与位图重叠）
-    uintptr_t heap_start = pmm_get_bitmap_end();
+    uintptr_t heap_start = mm::Pmm::get_bitmap_end();
     
     // 确保堆不会覆盖 multiboot 模块
     if (mbi->flags & MULTIBOOT_INFO_MODS && mbi->mods_count > 0) {
@@ -484,19 +484,19 @@ void kernel_main(multiboot_info_t* mbi) {
     }
     
     uint32_t heap_size = 32 * 1024 * 1024;  // 32MB 堆
-    heap_init((uintptr_t)heap_start, heap_size);
+    mm::Heap::init((uintptr_t)heap_start, heap_size);
     
     // 【关键】通知 PMM 堆的虚拟地址范围，防止分配会与堆重叠的物理帧
     // 这解决了堆扩展时覆盖已分配帧的恒等映射导致的页目录损坏问题
-    pmm_set_heap_reserved_range(heap_start, heap_start + heap_size);
+    mm::Pmm::set_heap_reserved_range(heap_start, heap_start + heap_size);
     
-    heap_print_info();
+    mm::Heap::print_info();
     LOG_INFO_MSG("  [3.3] Heap initialized\n");
     
     // DEBUG: 验证堆状态
     {
         heap_block_t *fb = (heap_block_t*)heap_start;
-        LOG_INFO_MSG("  DEBUG: first_block magic after heap_init = 0x%x\n", fb->magic);
+        LOG_INFO_MSG("  DEBUG: first_block magic after mm::Heap::init = 0x%x\n", fb->magic);
     }
 
     // ========================================================================

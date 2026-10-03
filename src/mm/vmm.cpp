@@ -118,13 +118,13 @@ static bool is_active_page_directory(uintptr_t frame) {
 
 static inline void protect_phys_frame(paddr_t frame) {
     if (frame && frame != PADDR_INVALID) {
-        pmm_protect_frame(frame);
+        mm::Pmm::protect_frame(frame);
     }
 }
 
 static inline void unprotect_phys_frame(paddr_t frame) {
     if (frame && frame != PADDR_INVALID) {
-        pmm_unprotect_frame(frame);
+        mm::Pmm::unprotect_frame(frame);
     }
 }
 
@@ -209,7 +209,7 @@ static void unregister_page_directory(uintptr_t dir_phys) {
  * @return 成功返回页表虚拟地址，失败返回 NULL
  */
 static page_table_t* create_page_table(void) {
-    paddr_t frame = pmm_alloc_frame();
+    paddr_t frame = mm::Pmm::alloc_frame();
     if (frame == PADDR_INVALID) return NULL;
     return (page_table_t*)PHYS_TO_VIRT(frame);
 }
@@ -224,7 +224,7 @@ static page_table_t* create_page_table(void) {
  * **Feature: arm64-kernel-integration**
  * **Validates: Requirements 2.1**
  */
-void vmm_init(void) {
+void mm::Vmm::init() {
     // 初始化 VMM 自旋锁
     vmm_lock.init();
     
@@ -239,7 +239,7 @@ void vmm_init(void) {
                  (unsigned long long)current_dir_phys, (unsigned long long)current_dir);
     
     // 获取 PMM 信息以确定需要映射的物理内存范围
-    pmm_info_t pmm_info = pmm_get_info();
+    mm::PmmInfo pmm_info = mm::Pmm::get_info();
     uint64_t max_phys = (uint64_t)pmm_info.total_frames * PAGE_SIZE;
     
     LOG_INFO_MSG("VMM: Physical memory: %llu MB (%llu frames)\n", 
@@ -319,7 +319,7 @@ void vmm_init(void) {
     // 扩展高半核映射以覆盖所有可用的物理内存
     // 引导时已经映射了前8MB（页目录项512-513）
     // 现在需要扩展到所有可用内存（最多2GB）
-    pmm_info_t pmm_info = pmm_get_info();
+    mm::PmmInfo pmm_info = mm::Pmm::get_info();
     uint32_t max_phys = pmm_info.total_frames * PAGE_SIZE;
     
     // 限制在2GB以内（高半核虚拟地址空间限制）
@@ -341,8 +341,8 @@ void vmm_init(void) {
                  (start_pde - 512) << 22, ((end_pde - 512) << 22) - 1);
     
     // 为每个页目录项创建页表并映射
-    // 注意：每映射完一个 PDE 后立即刷新 TLB，这样后续的 pmm_alloc_frame 
-    // 可以使用新映射的内存区域（因为 pmm_alloc_frame 会清零新分配的帧）
+    // 注意：每映射完一个 PDE 后立即刷新 TLB，这样后续的 mm::Pmm::alloc_frame 
+    // 可以使用新映射的内存区域（因为 mm::Pmm::alloc_frame 会清零新分配的帧）
     uint32_t mapped_pdes = 0;
     for (uint32_t pde = start_pde; pde < end_pde; pde++) {
         // 检查页目录项是否已存在
@@ -351,19 +351,19 @@ void vmm_init(void) {
         }
         
         // 分配页表
-        // 注意：pmm_alloc_frame 会清零新分配的帧，需要确保帧在已映射范围内
-        paddr_t table_phys = pmm_alloc_frame();
+        // 注意：mm::Pmm::alloc_frame 会清零新分配的帧，需要确保帧在已映射范围内
+        paddr_t table_phys = mm::Pmm::alloc_frame();
         if (table_phys == PADDR_INVALID) {
             LOG_WARN_MSG("VMM: Failed to allocate page table for PDE %u\n", pde);
             break;  // 分配失败，停止扩展
         }
         
         // 安全检查：确保页表帧在已映射范围内（引导时映射了前 16MB）
-        // 如果帧超出范围，pmm_alloc_frame 内部的 memset 就会失败
+        // 如果帧超出范围，mm::Pmm::alloc_frame 内部的 memset 就会失败
         // 但由于 PMM 优先分配低地址帧，这种情况不应该发生
         if (table_phys >= 0x1000000) {  // >= 16MB
             LOG_ERROR_MSG("VMM: Page table frame 0x%llx exceeds boot mapping! This is a bug.\n", (unsigned long long)table_phys);
-            pmm_free_frame(table_phys);
+            mm::Pmm::free_frame(table_phys);
             break;
         }
         
@@ -387,8 +387,8 @@ void vmm_init(void) {
         current_dir->entries[pde] = (uint32_t)table_phys | PAGE_PRESENT | PAGE_WRITE;
         
         // 立即刷新 TLB，使新映射生效
-        // 这样下一次 pmm_alloc_frame 就可以安全地访问更高地址的内存了
-        vmm_flush_tlb(0);
+        // 这样下一次 mm::Pmm::alloc_frame 就可以安全地访问更高地址的内存了
+        mm::Vmm::flush_tlb(0);
         mapped_pdes++;
     }
     
@@ -410,7 +410,7 @@ void vmm_init(void) {
  * @param addr 缺页地址
  * @return 是否成功处理
  */
-bool vmm_handle_kernel_page_fault(uintptr_t addr) {
+bool mm::Vmm::handle_kernel_page_fault(uintptr_t addr) {
 #if defined(ARCH_X86_64)
     // x86_64: 引导时已映射所有内核空间，不需要同步
     (void)addr;
@@ -432,7 +432,7 @@ bool vmm_handle_kernel_page_fault(uintptr_t addr) {
         // 虽然 Intel 手册说修改 PDE 后需要刷新 TLB，但有些实现可能缓存了 PDE
         // 对于缺页处理，invlpg 通常足够，但这里我们修改了 PDE，安全起见可以刷新整个 TLB
         // 不过针对特定地址的 invlpg 应该也足以让 CPU 重新遍历页表结构
-        vmm_flush_tlb(addr);
+        mm::Vmm::flush_tlb(addr);
         
         return true;
     }
@@ -460,7 +460,7 @@ bool vmm_handle_kernel_page_fault(uintptr_t addr) {
  * 
  * @see Requirements 4.1
  */
-bool vmm_handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
+bool mm::Vmm::handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
     /* 统一的 COW 处理逻辑，使用 HAL 接口实现架构无关 */
     
     // error_code bit 1: 写入导致的异常
@@ -500,7 +500,7 @@ bool vmm_handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
         return false;
     }
     
-    uint32_t refcount = pmm_frame_get_refcount(old_frame);
+    uint32_t refcount = mm::Pmm::frame_get_refcount(old_frame);
     
     LOG_INFO_MSG("COW: Handling page fault - addr=0x%lx, old_frame=0x%llx, refcount=%u\n", 
                 (unsigned long)addr, (unsigned long long)old_frame, refcount);
@@ -528,7 +528,7 @@ bool vmm_handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
     }
     
     // 多个进程共享（refcount > 1），需要复制页面
-    paddr_t new_frame = pmm_alloc_frame();
+    paddr_t new_frame = mm::Pmm::alloc_frame();
     if (new_frame == PADDR_INVALID) {
         vmm_lock.unlock_irqrestore(irq_state);
         LOG_ERROR_MSG("COW: Failed to allocate frame for COW copy (out of memory)\n");
@@ -554,7 +554,7 @@ bool vmm_handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
     hal_mmu_flush_tlb((vaddr_t)addr);
     
     // 减少旧页面的引用计数
-    pmm_frame_ref_dec(old_frame);
+    mm::Pmm::frame_ref_dec(old_frame);
     
     vmm_lock.unlock_irqrestore(irq_state);
     
@@ -612,7 +612,7 @@ static uint32_t hal_flags_to_vmm(uint32_t hal_flags) {
  * @param hal_err HAL 错误码
  * @return 对应的 VMM 错误码
  */
-vmm_error_t vmm_error_from_hal(hal_error_t hal_err) {
+vmm_error_t mm::Vmm::error_from_hal(hal_error_t hal_err) {
     switch (hal_err) {
         case HAL_OK:
             return VMM_OK;
@@ -638,7 +638,7 @@ vmm_error_t vmm_error_from_hal(hal_error_t hal_err) {
  * @param vmm_err VMM 错误码
  * @return 对应的 HAL 错误码
  */
-hal_error_t vmm_error_to_hal(vmm_error_t vmm_err) {
+hal_error_t mm::Vmm::error_to_hal(vmm_error_t vmm_err) {
     switch (vmm_err) {
         case VMM_OK:
             return HAL_OK;
@@ -666,7 +666,7 @@ hal_error_t vmm_error_to_hal(vmm_error_t vmm_err) {
  * @param err VMM 错误码
  * @return 错误描述字符串
  */
-const char *vmm_error_string(vmm_error_t err) {
+const char *mm::Vmm::error_string(vmm_error_t err) {
     switch (err) {
         case VMM_OK:                return "Success";
         case VMM_ERR_INVALID_PARAM: return "Invalid parameter";
@@ -689,7 +689,7 @@ const char *vmm_error_string(vmm_error_t err) {
  * 
  * 使用 HAL MMU 接口实现跨架构页面映射
  */
-bool vmm_map_page(uintptr_t virt, uintptr_t phys, uint32_t flags) {
+bool mm::Vmm::map_page(uintptr_t virt, uintptr_t phys, uint32_t flags) {
     // 检查页对齐
     if ((virt | phys) & (PAGE_SIZE-1)) return false;
     
@@ -727,7 +727,7 @@ bool vmm_map_page(uintptr_t virt, uintptr_t phys, uint32_t flags) {
  * 
  * 使用 HAL MMU 接口实现跨架构页面取消映射
  */
-void vmm_unmap_page(uintptr_t virt) {
+void mm::Vmm::unmap_page(uintptr_t virt) {
     // 检查页对齐
     if (virt & (PAGE_SIZE-1)) return;
     
@@ -747,7 +747,7 @@ void vmm_unmap_page(uintptr_t virt) {
  * 当修改页表后需要刷新TLB以确保CPU使用最新的页表项
  * 通过 HAL 接口调用架构特定的 TLB 刷新操作
  */
-void vmm_flush_tlb(uintptr_t virt) {
+void mm::Vmm::flush_tlb(uintptr_t virt) {
     if (virt == 0) {
         // 刷新整个TLB
         hal_mmu_flush_tlb_all();
@@ -761,7 +761,7 @@ void vmm_flush_tlb(uintptr_t virt) {
  * @brief 获取当前页目录的物理地址
  * @return 页目录的物理地址
  */
-uintptr_t vmm_get_page_directory(void) {
+uintptr_t mm::Vmm::get_page_directory() {
     return current_dir_phys;
 }
 
@@ -771,7 +771,7 @@ uintptr_t vmm_get_page_directory(void) {
  * 
  * 使用 HAL MMU 接口实现跨架构地址空间创建
  */
-uintptr_t vmm_create_page_directory(void) {
+uintptr_t mm::Vmm::create_page_directory() {
     bool irq_state;
     vmm_lock.lock_irqsave(irq_state);
     
@@ -802,11 +802,11 @@ uintptr_t vmm_create_page_directory(void) {
  * 实现 Copy-on-Write (COW) 语义：
  * - 父子进程共享物理页，但页表是独立的
  * - 共享的可写页面被标记为只读 + COW
- * - 首次写入时触发 page fault，由 vmm_handle_cow_page_fault 处理
+ * - 首次写入时触发 page fault，由 mm::Vmm::handle_cow_page_fault 处理
  * 
  * 使用 HAL MMU 接口实现跨架构地址空间克隆
  */
-uintptr_t vmm_clone_page_directory(uintptr_t src_dir_phys) {
+uintptr_t mm::Vmm::clone_page_directory(uintptr_t src_dir_phys) {
 #if defined(ARCH_X86_64) || defined(ARCH_ARM64)
     // x86_64/ARM64: 使用 HAL 接口克隆地址空间
     // 
@@ -831,18 +831,18 @@ uintptr_t vmm_clone_page_directory(uintptr_t src_dir_phys) {
 #else
     // 【安全检查】验证源页目录地址有效
     if (!src_dir_phys || src_dir_phys >= 0x80000000) {
-        LOG_ERROR_MSG("vmm_clone_page_directory: Invalid src_dir_phys 0x%lx\n", (unsigned long)src_dir_phys);
+        LOG_ERROR_MSG("mm::Vmm::clone_page_directory: Invalid src_dir_phys 0x%lx\n", (unsigned long)src_dir_phys);
         return 0;
     }
     
     // 分配新页目录
-    paddr_t new_dir_phys = pmm_alloc_frame();
+    paddr_t new_dir_phys = mm::Pmm::alloc_frame();
     if (new_dir_phys == PADDR_INVALID) return 0;
     
     // 【安全检查】确保新分配的帧不与源相同
     if (new_dir_phys == (paddr_t)src_dir_phys) {
-        LOG_ERROR_MSG("vmm_clone_page_directory: CRITICAL! PMM returned same frame as source 0x%lx!\n", (unsigned long)src_dir_phys);
-        pmm_free_frame(new_dir_phys);
+        LOG_ERROR_MSG("mm::Vmm::clone_page_directory: CRITICAL! PMM returned same frame as source 0x%lx!\n", (unsigned long)src_dir_phys);
+        mm::Pmm::free_frame(new_dir_phys);
         return 0;
     }
     
@@ -894,7 +894,7 @@ uintptr_t vmm_clone_page_directory(uintptr_t src_dir_phys) {
             page_table_t *src_table = (page_table_t*)PHYS_TO_VIRT((uintptr_t)src_table_phys);
             
             // COW策略关键修复：为子进程创建新的页表副本，而不是共享页表
-            paddr_t new_table_phys = pmm_alloc_frame();
+            paddr_t new_table_phys = mm::Pmm::alloc_frame();
             if (new_table_phys == PADDR_INVALID) {
                 LOG_ERROR_MSG("vmm_clone_cow: Failed to allocate page table for PDE %u\n", i);
                 clone_failed = true;
@@ -930,7 +930,7 @@ uintptr_t vmm_clone_page_directory(uintptr_t src_dir_phys) {
                     new_table->entries[j] = (uint32_t)src_frame | flags;
                     
                     // 增加物理页的引用计数（父子进程共享物理页）
-                    pmm_frame_ref_inc(src_frame);
+                    mm::Pmm::frame_ref_inc(src_frame);
                 } else {
                     // 空页表项
                     new_table->entries[j] = 0;
@@ -952,7 +952,7 @@ uintptr_t vmm_clone_page_directory(uintptr_t src_dir_phys) {
     // 刷新父进程的TLB（因为我们修改了页表项的权限）
     // 移到循环外面，只刷新一次
     if (src_dir_phys == current_dir_phys && last_successful_pde > 0) {
-        vmm_flush_tlb(0);  // 刷新整个 TLB
+        mm::Vmm::flush_tlb(0);  // 刷新整个 TLB
     }
     
     // 【调试检查】验证克隆后源页目录的完整性
@@ -972,12 +972,12 @@ uintptr_t vmm_clone_page_directory(uintptr_t src_dir_phys) {
                     last_successful_pde);
         
         // 注意：此时源页表的 COW 标记已经设置，但这不会造成问题
-        // 因为 vmm_handle_cow_page_fault 会正确处理 refcount == 1 的情况
+        // 因为 mm::Vmm::handle_cow_page_fault 会正确处理 refcount == 1 的情况
         // （直接恢复写权限，无需复制）
         
         // 释放已分配的新页目录资源
         vmm_lock.unlock_irqrestore(irq_state);
-        vmm_free_page_directory(new_dir_phys);
+        mm::Vmm::free_page_directory(new_dir_phys);
         return 0;
     }
     
@@ -1021,7 +1021,7 @@ static bool is_page_directory_in_use(uintptr_t dir_phys) {
  * 
  * 使用 HAL MMU 接口实现跨架构地址空间销毁
  */
-void vmm_free_page_directory(uintptr_t dir_phys) {
+void mm::Vmm::free_page_directory(uintptr_t dir_phys) {
     if (!dir_phys) return;
     
 #if defined(ARCH_X86_64)
@@ -1029,7 +1029,7 @@ void vmm_free_page_directory(uintptr_t dir_phys) {
     
     // 【安全检查】防止释放当前正在使用的页目录
     if (dir_phys == current_dir_phys) {
-        LOG_ERROR_MSG("vmm_free_page_directory: BLOCKED! Attempting to free current page directory 0x%llx!\n", 
+        LOG_ERROR_MSG("mm::Vmm::free_page_directory: BLOCKED! Attempting to free current page directory 0x%llx!\n", 
                      (unsigned long long)dir_phys);
         return;
     }
@@ -1042,30 +1042,30 @@ void vmm_free_page_directory(uintptr_t dir_phys) {
     vmm_lock.unlock_irqrestore(irq_state);
     return;
 #else
-    LOG_INFO_MSG("vmm_free_page_directory: Attempting to free page directory 0x%lx\n", (unsigned long)dir_phys);
+    LOG_INFO_MSG("mm::Vmm::free_page_directory: Attempting to free page directory 0x%lx\n", (unsigned long)dir_phys);
     
     // 【安全检查】防止释放当前正在使用的页目录
     if (dir_phys == current_dir_phys) {
-        LOG_ERROR_MSG("vmm_free_page_directory: BLOCKED! Attempting to free current page directory 0x%lx!\n", (unsigned long)dir_phys);
+        LOG_ERROR_MSG("mm::Vmm::free_page_directory: BLOCKED! Attempting to free current page directory 0x%lx!\n", (unsigned long)dir_phys);
         return;
     }
     
     // 【安全检查】防止释放主内核页目录
     uintptr_t boot_dir_phys = VIRT_TO_PHYS((uintptr_t)boot_page_directory);
     if (dir_phys == boot_dir_phys) {
-        LOG_ERROR_MSG("vmm_free_page_directory: BLOCKED! Attempting to free boot page directory 0x%lx!\n", (unsigned long)dir_phys);
+        LOG_ERROR_MSG("mm::Vmm::free_page_directory: BLOCKED! Attempting to free boot page directory 0x%lx!\n", (unsigned long)dir_phys);
         return;
     }
     
     // 【关键修复】检查页目录是否仍被其他任务使用
     if (is_page_directory_in_use(dir_phys)) {
-        LOG_ERROR_MSG("vmm_free_page_directory: BLOCKED! Page directory 0x%lx is still in use by a task!\n", (unsigned long)dir_phys);
+        LOG_ERROR_MSG("mm::Vmm::free_page_directory: BLOCKED! Page directory 0x%lx is still in use by a task!\n", (unsigned long)dir_phys);
         return;
     }
     
     // 【新增检查】验证这个页目录是否在活动列表中
     if (!is_active_page_directory(dir_phys)) {
-        LOG_ERROR_MSG("vmm_free_page_directory: WARNING! Page directory 0x%lx is not in active list!\n", (unsigned long)dir_phys);
+        LOG_ERROR_MSG("mm::Vmm::free_page_directory: WARNING! Page directory 0x%lx is not in active list!\n", (unsigned long)dir_phys);
         LOG_ERROR_MSG("  This might be a double-free or invalid pointer. Proceeding cautiously...\n");
     }
     
@@ -1078,9 +1078,9 @@ void vmm_free_page_directory(uintptr_t dir_phys) {
     uint32_t freed_tables = 0;
     
     // 获取当前的内存使用量
-    pmm_info_t info_start = pmm_get_info();
+    mm::PmmInfo info_start = mm::Pmm::get_info();
     
-    // LOG_DEBUG_MSG("vmm_free_page_directory: dir_phys=0x%x\n", dir_phys);
+    // LOG_DEBUG_MSG("mm::Vmm::free_page_directory: dir_phys=0x%x\n", dir_phys);
     
     // 只释放用户空间页表（0-511）
     // 内核空间页表（512-1023）是共享的，不释放
@@ -1089,7 +1089,7 @@ void vmm_free_page_directory(uintptr_t dir_phys) {
         if (is_present(dir->entries[i])) {
             paddr_t table_phys = get_frame(dir->entries[i]);
             if (table_phys == 0) {
-                LOG_ERROR_MSG("vmm_free_page_directory: PDE %u has zero frame, skipping\n", i);
+                LOG_ERROR_MSG("mm::Vmm::free_page_directory: PDE %u has zero frame, skipping\n", i);
                 dir->entries[i] = 0;
                 continue;
             }
@@ -1097,7 +1097,7 @@ void vmm_free_page_directory(uintptr_t dir_phys) {
             page_table_t *table = (page_table_t*)PHYS_TO_VIRT((uintptr_t)table_phys);
             uint32_t pages_in_table = 0;
             
-            // 释放页表中的所有物理页（pmm_free_frame 自动处理引用计数）
+            // 释放页表中的所有物理页（mm::Pmm::free_frame 自动处理引用计数）
             for (uint32_t j = 0; j < 1024; j++) {
                 if (is_present(table->entries[j])) {
                     paddr_t frame = get_frame(table->entries[j]);
@@ -1110,23 +1110,23 @@ void vmm_free_page_directory(uintptr_t dir_phys) {
                         continue;
                     }
                     
-                    // pmm_free_frame 会自动处理引用计数：
+                    // mm::Pmm::free_frame 会自动处理引用计数：
                     // - 如果 refcount > 1，只递减，不释放
                     // - 如果 refcount == 1，递减后释放
-                    pmm_free_frame(frame);
+                    mm::Pmm::free_frame(frame);
                     freed_pages++;
                     pages_in_table++;
                 }
             }
             
-            // 释放页表本身（同样由 pmm_free_frame 处理引用计数）
+            // 释放页表本身（同样由 mm::Pmm::free_frame 处理引用计数）
             unprotect_phys_frame(table_phys);
-            pmm_free_frame(table_phys);
+            mm::Pmm::free_frame(table_phys);
             freed_tables++;
             
             // 打印栈区域的详细信息
             if (i >= 510) {
-                LOG_INFO_MSG("vmm_free_page_directory: PDE %u has %u pages\n", i, pages_in_table);
+                LOG_INFO_MSG("mm::Vmm::free_page_directory: PDE %u has %u pages\n", i, pages_in_table);
             }
             
             dir->entries[i] = 0;
@@ -1140,16 +1140,16 @@ void vmm_free_page_directory(uintptr_t dir_phys) {
     if (is_active_page_directory(dir_phys)) {
         unregister_page_directory(dir_phys);
     } else {
-        LOG_WARN_MSG("vmm_free_page_directory: dir 0x%lx was not registered\n", (unsigned long)dir_phys);
+        LOG_WARN_MSG("mm::Vmm::free_page_directory: dir 0x%lx was not registered\n", (unsigned long)dir_phys);
     }
     
     // 释放页目录本身
-    LOG_DEBUG_MSG("vmm_free_page_directory: freeing page directory at phys 0x%lx (virt 0x%lx)\n", 
+    LOG_DEBUG_MSG("mm::Vmm::free_page_directory: freeing page directory at phys 0x%lx (virt 0x%lx)\n", 
                   (unsigned long)dir_phys, (unsigned long)dir);
-    pmm_free_frame((paddr_t)dir_phys);
+    mm::Pmm::free_frame((paddr_t)dir_phys);
     
-    pmm_info_t info_end = pmm_get_info();
-    LOG_INFO_MSG("vmm_free_page_directory: freed %u pages (PMM: %llu -> %llu, diff %d), %u tables, 1 directory\n", 
+    mm::PmmInfo info_end = mm::Pmm::get_info();
+    LOG_INFO_MSG("mm::Vmm::free_page_directory: freed %u pages (PMM: %llu -> %llu, diff %d), %u tables, 1 directory\n", 
                   freed_pages, (unsigned long long)info_start.used_frames, (unsigned long long)info_end.used_frames, 
                   (int)(info_start.used_frames - info_end.used_frames), freed_tables);
     
@@ -1164,7 +1164,7 @@ void vmm_free_page_directory(uintptr_t dir_phys) {
  * 仅更新内部状态变量，不修改 CR3 寄存器
  * 用于在 task_switch_context 已经切换 CR3 后同步状态
  */
-void vmm_sync_current_dir(uintptr_t dir_phys) {
+void mm::Vmm::sync_current_dir(uintptr_t dir_phys) {
     if (!dir_phys) return;
     
     sync::SpinlockIrqGuard guard(vmm_lock);
@@ -1179,7 +1179,7 @@ void vmm_sync_current_dir(uintptr_t dir_phys) {
  * 
  * 通过 HAL 接口切换地址空间
  */
-void vmm_switch_page_directory(uintptr_t dir_phys) {
+void mm::Vmm::switch_page_directory(uintptr_t dir_phys) {
     if (!dir_phys) return;
     
     sync::SpinlockIrqGuard guard(vmm_lock);
@@ -1201,7 +1201,7 @@ void vmm_switch_page_directory(uintptr_t dir_phys) {
  * 
  * 使用 HAL MMU 接口实现跨架构页面映射
  */
-bool vmm_map_page_in_directory(uintptr_t dir_phys, uintptr_t virt, 
+bool mm::Vmm::map_page_in_directory(uintptr_t dir_phys, uintptr_t virt, 
                                 uintptr_t phys, uint32_t flags) {
     // 检查页对齐
     if ((virt | phys) & (PAGE_SIZE-1)) return false;
@@ -1228,7 +1228,7 @@ bool vmm_map_page_in_directory(uintptr_t dir_phys, uintptr_t virt,
     return result;
 }
 
-uintptr_t vmm_unmap_page_in_directory(uintptr_t dir_phys, uintptr_t virt) {
+uintptr_t mm::Vmm::unmap_page_in_directory(uintptr_t dir_phys, uintptr_t virt) {
     if (virt & (PAGE_SIZE - 1)) {
         return 0;
     }
@@ -1268,7 +1268,7 @@ uintptr_t vmm_unmap_page_in_directory(uintptr_t dir_phys, uintptr_t virt) {
  * 检查指定虚拟地址范围内的页表，如果页表为空（所有条目都未映射），
  * 则释放该页表并清除对应的页目录项。
  */
-void vmm_cleanup_empty_page_tables(uintptr_t dir_phys, uintptr_t start_virt, uintptr_t end_virt) {
+void mm::Vmm::cleanup_empty_page_tables(uintptr_t dir_phys, uintptr_t start_virt, uintptr_t end_virt) {
     if (!dir_phys || start_virt >= end_virt) {
         return;
     }
@@ -1317,7 +1317,7 @@ void vmm_cleanup_empty_page_tables(uintptr_t dir_phys, uintptr_t start_virt, uin
         // If page table is empty, free it and clear the PDE
         if (is_empty) {
             dir->entries[pd] = 0;
-            pmm_free_frame((paddr_t)table_phys);
+            mm::Pmm::free_frame((paddr_t)table_phys);
         }
     }
 #endif
@@ -1351,7 +1351,7 @@ static bool pat_initialized = false;
  * 
  * 使用 HAL MMU 接口实现跨架构 MMIO 映射
  */
-uintptr_t vmm_map_mmio(uintptr_t phys_addr, size_t size) {
+uintptr_t mm::Vmm::map_mmio(uintptr_t phys_addr, size_t size) {
     if (size == 0) {
         return 0;
     }
@@ -1366,7 +1366,7 @@ uintptr_t vmm_map_mmio(uintptr_t phys_addr, size_t size) {
     // 分配虚拟地址空间
     uintptr_t virt_start = mmio_next_virt;
     if (virt_start + num_pages * PAGE_SIZE > MMIO_VIRT_END) {
-        LOG_ERROR_MSG("vmm_map_mmio: No more MMIO virtual address space\n");
+        LOG_ERROR_MSG("mm::Vmm::map_mmio: No more MMIO virtual address space\n");
         return 0;
     }
     
@@ -1395,7 +1395,7 @@ uintptr_t vmm_map_mmio(uintptr_t phys_addr, size_t size) {
     uintptr_t offset = phys_addr - phys_start;
     uintptr_t result = virt_start + offset;
     
-    LOG_INFO_MSG("vmm_map_mmio: mapped phys 0x%lx size 0x%lx -> virt 0x%lx\n", 
+    LOG_INFO_MSG("mm::Vmm::map_mmio: mapped phys 0x%lx size 0x%lx -> virt 0x%lx\n", 
                  (unsigned long)phys_addr, (unsigned long)size, (unsigned long)result);
     
     return result;
@@ -1408,7 +1408,7 @@ uintptr_t vmm_map_mmio(uintptr_t phys_addr, size_t size) {
  * 
  * 使用 HAL MMU 接口实现跨架构 MMIO 取消映射
  */
-void vmm_unmap_mmio(uintptr_t virt_addr, size_t size) {
+void mm::Vmm::unmap_mmio(uintptr_t virt_addr, size_t size) {
     if (size == 0 || virt_addr < MMIO_VIRT_BASE || virt_addr >= MMIO_VIRT_END) {
         return;
     }
@@ -1423,7 +1423,7 @@ void vmm_unmap_mmio(uintptr_t virt_addr, size_t size) {
         hal_mmu_flush_tlb((vaddr_t)virt);
     }
     
-    LOG_INFO_MSG("vmm_unmap_mmio: unmapped virt 0x%lx size 0x%lx\n", (unsigned long)virt_addr, (unsigned long)size);
+    LOG_INFO_MSG("mm::Vmm::unmap_mmio: unmapped virt 0x%lx size 0x%lx\n", (unsigned long)virt_addr, (unsigned long)size);
 }
 
 /**
@@ -1433,7 +1433,7 @@ void vmm_unmap_mmio(uintptr_t virt_addr, size_t size) {
  * 
  * 使用 HAL MMU 接口实现跨架构地址转换
  */
-uintptr_t vmm_virt_to_phys(uintptr_t virt) {
+uintptr_t mm::Vmm::virt_to_phys(uintptr_t virt) {
     sync::SpinlockIrqGuard guard(vmm_lock);
     
     paddr_t phys;
@@ -1513,7 +1513,7 @@ static bool cpu_has_pat(void) {
  * - PAT=1, PCD=1, PWT=0 -> PAT[6] = UC-
  * - PAT=1, PCD=1, PWT=1 -> PAT[7] = WC  <-- 用于帧缓冲
  */
-void vmm_init_pat(void) {
+void mm::Vmm::init_pat() {
 #if defined(ARCH_I686) || defined(ARCH_X86_64)
     if (!cpu_has_pat()) {
         LOG_WARN_MSG("vmm: PAT not supported by CPU, framebuffer will use UC mode\n");
@@ -1554,7 +1554,7 @@ void vmm_init_pat(void) {
  * 
  * 使用 HAL MMU 接口实现跨架构帧缓冲映射
  */
-uintptr_t vmm_map_framebuffer(uintptr_t phys_addr, size_t size) {
+uintptr_t mm::Vmm::map_framebuffer(uintptr_t phys_addr, size_t size) {
     if (size == 0) {
         return 0;
     }
@@ -1569,7 +1569,7 @@ uintptr_t vmm_map_framebuffer(uintptr_t phys_addr, size_t size) {
     // 分配虚拟地址空间
     uintptr_t virt_start = mmio_next_virt;
     if (virt_start + num_pages * PAGE_SIZE > MMIO_VIRT_END) {
-        LOG_ERROR_MSG("vmm_map_framebuffer: No more MMIO virtual address space\n");
+        LOG_ERROR_MSG("mm::Vmm::map_framebuffer: No more MMIO virtual address space\n");
         return 0;
     }
     
@@ -1578,11 +1578,11 @@ uintptr_t vmm_map_framebuffer(uintptr_t phys_addr, size_t size) {
     if (pat_initialized) {
         // Write-Combining 模式
         hal_flags = HAL_PAGE_PRESENT | HAL_PAGE_WRITE | HAL_PAGE_WRITECOMB;
-        LOG_INFO_MSG("vmm_map_framebuffer: using Write-Combining mode\n");
+        LOG_INFO_MSG("mm::Vmm::map_framebuffer: using Write-Combining mode\n");
     } else {
         // 回退到 UC 模式
         hal_flags = HAL_PAGE_PRESENT | HAL_PAGE_WRITE | HAL_PAGE_NOCACHE;
-        LOG_WARN_MSG("vmm_map_framebuffer: PAT not available, using UC mode\n");
+        LOG_WARN_MSG("mm::Vmm::map_framebuffer: PAT not available, using UC mode\n");
     }
     
     for (uint32_t i = 0; i < num_pages; i++) {
@@ -1607,7 +1607,7 @@ uintptr_t vmm_map_framebuffer(uintptr_t phys_addr, size_t size) {
     uintptr_t offset = phys_addr - phys_start;
     uintptr_t result = virt_start + offset;
     
-    LOG_INFO_MSG("vmm_map_framebuffer: mapped phys 0x%lx size 0x%lx -> virt 0x%lx\n", 
+    LOG_INFO_MSG("mm::Vmm::map_framebuffer: mapped phys 0x%lx size 0x%lx -> virt 0x%lx\n", 
                  (unsigned long)phys_addr, (unsigned long)size, (unsigned long)result);
     
     return result;
@@ -1642,7 +1642,7 @@ static void flags_to_string(uint32_t flags, char *buf, size_t buf_size) {
  * @param start_virt 起始虚拟地址
  * @param end_virt 结束虚拟地址
  */
-void vmm_dump_page_tables(uintptr_t dir_phys, uintptr_t start_virt, uintptr_t end_virt) {
+void mm::Vmm::dump_page_tables(uintptr_t dir_phys, uintptr_t start_virt, uintptr_t end_virt) {
     if (dir_phys == 0) {
         dir_phys = current_dir_phys;
     }
@@ -1688,7 +1688,7 @@ void vmm_dump_page_tables(uintptr_t dir_phys, uintptr_t start_virt, uintptr_t en
         
         paddr_t phys = get_frame64(pt->entries[pt_i]);
         uint32_t flags = (uint32_t)(pt->entries[pt_i] & 0xFFF);
-        uint32_t refcount = pmm_frame_get_refcount(phys);
+        uint32_t refcount = mm::Pmm::frame_get_refcount(phys);
         
         char flags_str[16];
         flags_to_string(flags, flags_str, sizeof(flags_str));
@@ -1723,7 +1723,7 @@ void vmm_dump_page_tables(uintptr_t dir_phys, uintptr_t start_virt, uintptr_t en
         
         paddr_t phys = get_frame(table->entries[pt_i]);
         uint32_t flags = table->entries[pt_i] & 0xFFF;
-        uint32_t refcount = pmm_frame_get_refcount(phys);
+        uint32_t refcount = mm::Pmm::frame_get_refcount(phys);
         
         char flags_str[16];
         flags_to_string(flags, flags_str, sizeof(flags_str));
@@ -1753,21 +1753,21 @@ void vmm_dump_page_tables(uintptr_t dir_phys, uintptr_t start_virt, uintptr_t en
 /**
  * @brief 转储当前页目录的用户空间映射
  */
-void vmm_dump_user_mappings(void) {
-    vmm_dump_page_tables(0, 0x00000000, KERNEL_VIRTUAL_BASE);
+void mm::Vmm::dump_user_mappings() {
+    mm::Vmm::dump_page_tables(0, 0x00000000, KERNEL_VIRTUAL_BASE);
 }
 
 /**
  * @brief 转储当前页目录的内核空间映射
  */
-void vmm_dump_kernel_mappings(void) {
+void mm::Vmm::dump_kernel_mappings() {
 #if defined(ARCH_X86_64)
     // x86_64: 内核空间从 0xFFFF800000000000 开始
     // 只转储前 1GB 以避免输出过多
-    vmm_dump_page_tables(0, KERNEL_VIRTUAL_BASE, KERNEL_VIRTUAL_BASE + 0x40000000ULL);
+    mm::Vmm::dump_page_tables(0, KERNEL_VIRTUAL_BASE, KERNEL_VIRTUAL_BASE + 0x40000000ULL);
 #else
     // i686: 内核空间从 0x80000000 开始
     // 只转储前 256MB 以避免输出过多
-    vmm_dump_page_tables(0, KERNEL_VIRTUAL_BASE, KERNEL_VIRTUAL_BASE + 0x10000000);
+    mm::Vmm::dump_page_tables(0, KERNEL_VIRTUAL_BASE, KERNEL_VIRTUAL_BASE + 0x10000000);
 #endif
 }

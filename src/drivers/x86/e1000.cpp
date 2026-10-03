@@ -132,7 +132,7 @@ static int e1000_init_rx_ring(e1000_device_t *dev) {
     memset(dev->rx_descs, 0, desc_size);
     
     /* 获取物理地址 - 必须通过页表查询，因为堆内存不是恒等映射 */
-    dev->rx_descs_phys = vmm_virt_to_phys((uint32_t)(uintptr_t)dev->rx_descs);
+    dev->rx_descs_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)dev->rx_descs);
     if (!dev->rx_descs_phys) {
         LOG_ERROR_MSG("e1000: Failed to get physical address for RX descriptors\n");
         return -1;
@@ -147,7 +147,7 @@ static int e1000_init_rx_ring(e1000_device_t *dev) {
         }
         
         /* 设置描述符 - 必须通过页表查询获取真正的物理地址 */
-        uint32_t buf_phys = vmm_virt_to_phys((uint32_t)(uintptr_t)dev->rx_buffers[i]);
+        uint32_t buf_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)dev->rx_buffers[i]);
         if (!buf_phys) {
             LOG_ERROR_MSG("e1000: Failed to get physical address for RX buffer %d\n", i);
             return -1;
@@ -185,7 +185,7 @@ static int e1000_init_tx_ring(e1000_device_t *dev) {
     memset(dev->tx_descs, 0, desc_size);
     
     /* 获取物理地址 - 必须通过页表查询，因为堆内存不是恒等映射 */
-    dev->tx_descs_phys = vmm_virt_to_phys((uint32_t)(uintptr_t)dev->tx_descs);
+    dev->tx_descs_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)dev->tx_descs);
     if (!dev->tx_descs_phys) {
         LOG_ERROR_MSG("e1000: Failed to get physical address for TX descriptors\n");
         return -1;
@@ -200,7 +200,7 @@ static int e1000_init_tx_ring(e1000_device_t *dev) {
         }
         
         /* 设置描述符 - 必须通过页表查询获取真正的物理地址 */
-        uint32_t buf_phys = vmm_virt_to_phys((uint32_t)(uintptr_t)dev->tx_buffers[i]);
+        uint32_t buf_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)dev->tx_buffers[i]);
         if (!buf_phys) {
             LOG_ERROR_MSG("e1000: Failed to get physical address for TX buffer %d\n", i);
             return -1;
@@ -574,7 +574,7 @@ static int e1000_init_device(pci_device_t *pci_dev) {
     
     /* 映射 MMIO 空间 */
     dev->mmio_size = 0x20000;  // 128KB
-    uint32_t mmio_virt = vmm_map_mmio(bar0, dev->mmio_size);
+    uint32_t mmio_virt = mm::Vmm::map_mmio(bar0, dev->mmio_size);
     if (!mmio_virt) {
         LOG_ERROR_MSG("e1000: Failed to map MMIO\n");
         return -1;

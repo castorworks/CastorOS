@@ -106,7 +106,7 @@ bool load_user_shell(void) {
 #else
     // x86: 使用 VMM 接口创建页目录
     LOG_DEBUG_MSG("Shell: Creating page directory...\n");
-    uintptr_t page_dir_phys = vmm_create_page_directory();
+    uintptr_t page_dir_phys = mm::Vmm::create_page_directory();
     if (!page_dir_phys) {
         LOG_ERROR_MSG("Failed to create page directory\n");
         kfree(elf_data);
@@ -124,7 +124,7 @@ bool load_user_shell(void) {
     uintptr_t program_end;
     if (!elf_load(elf_data, shell_size, page_dir, &entry_point, &program_end)) {
         LOG_ERROR_MSG("Failed to load ELF\n");
-        vmm_free_page_directory(page_dir_phys);
+        mm::Vmm::free_page_directory(page_dir_phys);
         kfree(elf_data);
         return false;
     }
@@ -138,7 +138,7 @@ bool load_user_shell(void) {
     uint32_t pid = task_create_user_process("shell", entry_point, page_dir, program_end);
     if (pid == 0) {
         LOG_ERROR_MSG("Failed to create shell process\n");
-        vmm_free_page_directory(page_dir_phys);
+        mm::Vmm::free_page_directory(page_dir_phys);
         return false;
     }
 #endif

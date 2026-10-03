@@ -83,7 +83,7 @@ uint32_t sys_fork(uintptr_t *frame) {
     // 需要：1个页目录 + 页表（最多512个） + 其他开销
     // 注意：由于使用 COW，不需要预留用户栈的全部 2048 页
     // 但需要预留足够的页表和页目录
-    pmm_info_t mem_info = pmm_get_info();
+    mm::PmmInfo mem_info = mm::Pmm::get_info();
     uint32_t min_required_frames = 64;  // 页目录 + 页表 + 内核栈 + 其他
     if (mem_info.free_frames < min_required_frames) {
         LOG_ERROR_MSG("sys_fork: Insufficient memory (free=%llu, required>=%u)\n",
@@ -201,7 +201,7 @@ uint32_t sys_fork(uintptr_t *frame) {
     child->time_slice = DEFAULT_TIME_SLICE;
     
     // 克隆页目录（深拷贝，完全复制物理页）
-    child->page_dir_phys = vmm_clone_page_directory(parent->page_dir_phys);
+    child->page_dir_phys = mm::Vmm::clone_page_directory(parent->page_dir_phys);
     if (!child->page_dir_phys) {
         LOG_ERROR_MSG("sys_fork: Failed to clone page directory\n");
         task_free(child);
@@ -214,7 +214,7 @@ uint32_t sys_fork(uintptr_t *frame) {
     child->kernel_stack_base = (uintptr_t)kmalloc(KERNEL_STACK_SIZE);
     if (!child->kernel_stack_base) {
         LOG_ERROR_MSG("sys_fork: Failed to allocate kernel stack\n");
-        vmm_free_page_directory(child->page_dir_phys);
+        mm::Vmm::free_page_directory(child->page_dir_phys);
         task_free(child);
         interrupts_restore(prev_state);
         return (uint32_t)-12;
@@ -304,7 +304,7 @@ uint32_t sys_fork(uintptr_t *frame) {
         if (!child->fd_table) {
             LOG_ERROR_MSG("sys_fork: Failed to allocate fd_table\n");
             kfree((void*)child->kernel_stack_base);
-            vmm_free_page_directory(child->page_dir_phys);
+            mm::Vmm::free_page_directory(child->page_dir_phys);
             task_free(child);
             interrupts_restore(prev_state);
             return (uint32_t)-12;
@@ -317,7 +317,7 @@ uint32_t sys_fork(uintptr_t *frame) {
             LOG_ERROR_MSG("sys_fork: failed to copy fd_table\n");
             kfree(child->fd_table);
             kfree((void*)child->kernel_stack_base);
-            vmm_free_page_directory(child->page_dir_phys);
+            mm::Vmm::free_page_directory(child->page_dir_phys);
             task_free(child);
             interrupts_restore(prev_state);
             return (uint32_t)-1;
@@ -419,7 +419,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     // 2. 失败时无法回滚
     // ============================================================================
     
-    uintptr_t new_dir_phys = vmm_create_page_directory();
+    uintptr_t new_dir_phys = mm::Vmm::create_page_directory();
     if (!new_dir_phys) {
         LOG_ERROR_MSG("sys_execve: failed to create new page directory\n");
         kfree(elf_data);
@@ -441,7 +441,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     uintptr_t program_end;
     if (!elf_load(elf_data, file_size, new_dir, &entry_point, &program_end)) {
         LOG_ERROR_MSG("sys_execve: failed to load ELF '%s'\n", path);
-        vmm_free_page_directory(new_dir_phys);
+        mm::Vmm::free_page_directory(new_dir_phys);
         kfree(elf_data);
         return (uint32_t)-1;
     }
@@ -456,14 +456,14 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     // 【内存安全检查】在分配用户栈前检查是否有足够内存
     // USER_STACK_SIZE / PAGE_SIZE = 需要的页数，再加一些页表开销
     uint32_t stack_pages_needed = (USER_STACK_SIZE / PAGE_SIZE) + 4;  // +4 用于页表
-    pmm_info_t execve_mem_info = pmm_get_info();
+    mm::PmmInfo execve_mem_info = mm::Pmm::get_info();
     if (execve_mem_info.free_frames < stack_pages_needed) {
         LOG_ERROR_MSG("sys_execve: Insufficient memory for user stack (free=%llu, required=%u)\n",
                      (unsigned long long)execve_mem_info.free_frames, stack_pages_needed);
         // 回滚
         current->page_dir = old_dir;
         current->page_dir_phys = old_dir_phys;
-        vmm_free_page_directory(new_dir_phys);
+        mm::Vmm::free_page_directory(new_dir_phys);
         return (uint32_t)-1;  // ENOMEM
     }
     
@@ -473,7 +473,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
         // 回滚
         current->page_dir = old_dir;
         current->page_dir_phys = old_dir_phys;
-        vmm_free_page_directory(new_dir_phys);
+        mm::Vmm::free_page_directory(new_dir_phys);
         return (uint32_t)-1;
     }
     
@@ -493,11 +493,11 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     // 切换到新地址空间
     // ============================================================================
     
-    vmm_switch_page_directory(new_dir_phys);
+    mm::Vmm::switch_page_directory(new_dir_phys);
     
     // 释放旧页目录及其映射的所有用户空间物理页
     // 这解决了 exec 覆盖映射导致的内存泄露问题
-    vmm_free_page_directory(old_dir_phys);
+    mm::Vmm::free_page_directory(old_dir_phys);
     
     // 初始化标准文件描述符（如果还没有初始化）
     // 这对于 fork + exec 模式很重要：

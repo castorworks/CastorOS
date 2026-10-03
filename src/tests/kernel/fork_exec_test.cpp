@@ -69,14 +69,14 @@ TEST_CASE(test_fork_cow_shares_physical_pages) {
     hal_addr_space_t current = hal_mmu_current_space();
     
     // Allocate and map a test page
-    paddr_t frame = pmm_alloc_frame();
+    paddr_t frame = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame, PADDR_INVALID);
     
     vaddr_t test_vaddr = FORK_TEST_VADDR_BASE;
     
     // Skip if already mapped
     if (hal_mmu_query(current, test_vaddr, NULL, NULL)) {
-        pmm_free_frame(frame);
+        mm::Pmm::free_frame(frame);
         return;
     }
     
@@ -87,7 +87,7 @@ TEST_CASE(test_fork_cow_shares_physical_pages) {
     hal_mmu_flush_tlb(test_vaddr);
     
     // Get initial reference count
-    uint32_t initial_refcount = pmm_frame_get_refcount(frame);
+    uint32_t initial_refcount = mm::Pmm::frame_get_refcount(frame);
     
     // Clone the address space
     hal_addr_space_t cloned = hal_mmu_clone_space(current);
@@ -109,7 +109,7 @@ TEST_CASE(test_fork_cow_shares_physical_pages) {
     ASSERT_EQ_U(parent_phys, frame);
     
     // Property: Reference count must have increased
-    uint32_t new_refcount = pmm_frame_get_refcount(frame);
+    uint32_t new_refcount = mm::Pmm::frame_get_refcount(frame);
     ASSERT_TRUE(new_refcount > initial_refcount);
     
     // Property: Both must have COW flag set
@@ -124,7 +124,7 @@ TEST_CASE(test_fork_cow_shares_physical_pages) {
     hal_mmu_destroy_space(cloned);
     hal_mmu_unmap(current, test_vaddr);
     hal_mmu_flush_tlb(test_vaddr);
-    pmm_free_frame(frame);
+    mm::Pmm::free_frame(frame);
 }
 
 /**
@@ -137,13 +137,13 @@ TEST_CASE(test_fork_cow_reference_counting) {
     hal_addr_space_t current = hal_mmu_current_space();
     
     // Allocate and map a test page
-    paddr_t frame = pmm_alloc_frame();
+    paddr_t frame = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame, PADDR_INVALID);
     
     vaddr_t test_vaddr = FORK_TEST_VADDR_BASE + PAGE_SIZE;
     
     if (hal_mmu_query(current, test_vaddr, NULL, NULL)) {
-        pmm_free_frame(frame);
+        mm::Pmm::free_frame(frame);
         return;
     }
     
@@ -152,37 +152,37 @@ TEST_CASE(test_fork_cow_reference_counting) {
     hal_mmu_flush_tlb(test_vaddr);
     
     // Initial refcount should be 1
-    uint32_t refcount1 = pmm_frame_get_refcount(frame);
+    uint32_t refcount1 = mm::Pmm::frame_get_refcount(frame);
     ASSERT_EQ_U(refcount1, 1);
     
     // Clone once - refcount should be 2
     hal_addr_space_t clone1 = hal_mmu_clone_space(current);
     ASSERT_NE_U(clone1, HAL_ADDR_SPACE_INVALID);
     
-    uint32_t refcount2 = pmm_frame_get_refcount(frame);
+    uint32_t refcount2 = mm::Pmm::frame_get_refcount(frame);
     ASSERT_EQ_U(refcount2, 2);
     
     // Clone again - refcount should be 3
     hal_addr_space_t clone2 = hal_mmu_clone_space(current);
     ASSERT_NE_U(clone2, HAL_ADDR_SPACE_INVALID);
     
-    uint32_t refcount3 = pmm_frame_get_refcount(frame);
+    uint32_t refcount3 = mm::Pmm::frame_get_refcount(frame);
     ASSERT_EQ_U(refcount3, 3);
     
     // Destroy one clone - refcount should be 2
     hal_mmu_destroy_space(clone2);
-    uint32_t refcount4 = pmm_frame_get_refcount(frame);
+    uint32_t refcount4 = mm::Pmm::frame_get_refcount(frame);
     ASSERT_EQ_U(refcount4, 2);
     
     // Destroy other clone - refcount should be 1
     hal_mmu_destroy_space(clone1);
-    uint32_t refcount5 = pmm_frame_get_refcount(frame);
+    uint32_t refcount5 = mm::Pmm::frame_get_refcount(frame);
     ASSERT_EQ_U(refcount5, 1);
     
     // Clean up
     hal_mmu_unmap(current, test_vaddr);
     hal_mmu_flush_tlb(test_vaddr);
-    pmm_free_frame(frame);
+    mm::Pmm::free_frame(frame);
 }
 
 /**
@@ -199,7 +199,7 @@ TEST_CASE(test_fork_cow_multiple_pages) {
     
     // Allocate and map multiple pages
     for (uint32_t i = 0; i < FORK_TEST_PAGE_COUNT; i++) {
-        frames[i] = pmm_alloc_frame();
+        frames[i] = mm::Pmm::alloc_frame();
         if (frames[i] == PADDR_INVALID) {
             break;
         }
@@ -207,7 +207,7 @@ TEST_CASE(test_fork_cow_multiple_pages) {
         vaddrs[i] = FORK_TEST_VADDR_BASE + (i + 2) * PAGE_SIZE;
         
         if (hal_mmu_query(current, vaddrs[i], NULL, NULL)) {
-            pmm_free_frame(frames[i]);
+            mm::Pmm::free_frame(frames[i]);
             continue;
         }
         
@@ -216,7 +216,7 @@ TEST_CASE(test_fork_cow_multiple_pages) {
             hal_mmu_flush_tlb(vaddrs[i]);
             mapped_count++;
         } else {
-            pmm_free_frame(frames[i]);
+            mm::Pmm::free_frame(frames[i]);
         }
     }
     
@@ -247,7 +247,7 @@ TEST_CASE(test_fork_cow_multiple_pages) {
         ASSERT_TRUE((child_flags & HAL_PAGE_COW) != 0);
         
         // Property: Reference count is 2
-        uint32_t refcount = pmm_frame_get_refcount(frames[i]);
+        uint32_t refcount = mm::Pmm::frame_get_refcount(frames[i]);
         ASSERT_EQ_U(refcount, 2);
     }
     
@@ -257,7 +257,7 @@ TEST_CASE(test_fork_cow_multiple_pages) {
     for (uint32_t i = 0; i < mapped_count; i++) {
         hal_mmu_unmap(current, vaddrs[i]);
         hal_mmu_flush_tlb(vaddrs[i]);
-        pmm_free_frame(frames[i]);
+        mm::Pmm::free_frame(frames[i]);
     }
 }
 
@@ -299,37 +299,37 @@ TEST_CASE(test_fork_kernel_space_shared) {
 }
 
 /**
- * Test: vmm_clone_page_directory wrapper works correctly
+ * Test: mm::Vmm::clone_page_directory wrapper works correctly
  * 
  * Tests the VMM-level clone function that wraps hal_mmu_clone_space.
  */
 TEST_CASE(test_fork_vmm_clone_page_directory) {
     // Create a new page directory
-    uintptr_t src_dir = vmm_create_page_directory();
+    uintptr_t src_dir = mm::Vmm::create_page_directory();
     ASSERT_NE_U(src_dir, 0);
     
     // Map a page in the source directory
-    paddr_t frame = pmm_alloc_frame();
+    paddr_t frame = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame, PADDR_INVALID);
     
     vaddr_t test_vaddr = FORK_TEST_VADDR_BASE + 0x10000;
     
-    bool map_ok = vmm_map_page_in_directory(src_dir, test_vaddr, (uintptr_t)frame,
+    bool map_ok = mm::Vmm::map_page_in_directory(src_dir, test_vaddr, (uintptr_t)frame,
                                             PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
     ASSERT_TRUE(map_ok);
     
     // Clone the page directory
-    uintptr_t clone_dir = vmm_clone_page_directory(src_dir);
+    uintptr_t clone_dir = mm::Vmm::clone_page_directory(src_dir);
     ASSERT_NE_U(clone_dir, 0);
     ASSERT_NE_U(clone_dir, src_dir);
     
     // Verify COW sharing via reference count
-    uint32_t refcount = pmm_frame_get_refcount(frame);
+    uint32_t refcount = mm::Pmm::frame_get_refcount(frame);
     ASSERT_EQ_U(refcount, 2);
     
     // Clean up
-    vmm_free_page_directory(clone_dir);
-    vmm_free_page_directory(src_dir);
+    mm::Vmm::free_page_directory(clone_dir);
+    mm::Vmm::free_page_directory(src_dir);
 }
 
 // ============================================================================
@@ -437,12 +437,12 @@ TEST_CASE(test_exec_context_init_user_mode) {
 /**
  * Test: Page directory creation for new process
  * 
- * Verifies that vmm_create_page_directory creates a valid
+ * Verifies that mm::Vmm::create_page_directory creates a valid
  * page directory suitable for a new process.
  */
 TEST_CASE(test_exec_page_directory_creation) {
     // Create a new page directory (as exec would do)
-    uintptr_t new_dir = vmm_create_page_directory();
+    uintptr_t new_dir = mm::Vmm::create_page_directory();
     ASSERT_NE_U(new_dir, 0);
     
     // Property: Must be page-aligned
@@ -458,7 +458,7 @@ TEST_CASE(test_exec_page_directory_creation) {
     ASSERT_NE_U(phys, 0);
     
     // Clean up
-    vmm_free_page_directory(new_dir);
+    mm::Vmm::free_page_directory(new_dir);
 }
 
 /**
@@ -469,17 +469,17 @@ TEST_CASE(test_exec_page_directory_creation) {
  */
 TEST_CASE(test_exec_user_stack_setup) {
     // Create a new page directory
-    uintptr_t new_dir = vmm_create_page_directory();
+    uintptr_t new_dir = mm::Vmm::create_page_directory();
     ASSERT_NE_U(new_dir, 0);
     
     // Allocate a page for user stack
-    paddr_t stack_frame = pmm_alloc_frame();
+    paddr_t stack_frame = mm::Pmm::alloc_frame();
     ASSERT_NE_U(stack_frame, PADDR_INVALID);
     
     // Map at typical user stack location
     vaddr_t stack_vaddr = 0x7FFFE000;  // Near top of user space
     
-    bool map_ok = vmm_map_page_in_directory(new_dir, stack_vaddr, (uintptr_t)stack_frame,
+    bool map_ok = mm::Vmm::map_page_in_directory(new_dir, stack_vaddr, (uintptr_t)stack_frame,
                                             PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
     ASSERT_TRUE(map_ok);
     
@@ -499,7 +499,7 @@ TEST_CASE(test_exec_user_stack_setup) {
     ASSERT_TRUE((queried_flags & HAL_PAGE_USER) != 0);
     
     // Clean up
-    vmm_free_page_directory(new_dir);
+    mm::Vmm::free_page_directory(new_dir);
 }
 
 /**
@@ -510,18 +510,18 @@ TEST_CASE(test_exec_user_stack_setup) {
  */
 TEST_CASE(test_exec_program_code_mapping) {
     // Create a new page directory
-    uintptr_t new_dir = vmm_create_page_directory();
+    uintptr_t new_dir = mm::Vmm::create_page_directory();
     ASSERT_NE_U(new_dir, 0);
     
     // Allocate pages for program code
-    paddr_t code_frame = pmm_alloc_frame();
+    paddr_t code_frame = mm::Pmm::alloc_frame();
     ASSERT_NE_U(code_frame, PADDR_INVALID);
     
     // Map at typical program load address
     vaddr_t code_vaddr = 0x08048000;  // Typical ELF load address
     
     // Code should be readable and executable, but not writable
-    bool map_ok = vmm_map_page_in_directory(new_dir, code_vaddr, (uintptr_t)code_frame,
+    bool map_ok = mm::Vmm::map_page_in_directory(new_dir, code_vaddr, (uintptr_t)code_frame,
                                             PAGE_PRESENT | PAGE_USER);
     ASSERT_TRUE(map_ok);
     
@@ -541,7 +541,7 @@ TEST_CASE(test_exec_program_code_mapping) {
     ASSERT_TRUE((queried_flags & HAL_PAGE_USER) != 0);
     
     // Clean up
-    vmm_free_page_directory(new_dir);
+    mm::Vmm::free_page_directory(new_dir);
 }
 
 // ============================================================================

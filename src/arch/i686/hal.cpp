@@ -205,7 +205,7 @@ void hal_mmu_init(void) {
     
     /* Initialize VMM (Virtual Memory Manager)
      * This sets up paging with the boot page directory */
-    vmm_init();
+    mm::Vmm::init();
     
     g_hal_mmu_initialized = true;
     LOG_INFO_MSG("HAL: i686 MMU initialization complete\n");

@@ -44,7 +44,7 @@
  */
 TEST_CASE(test_cow_flag_set_query) {
     // Allocate a physical frame for testing
-    paddr_t frame = pmm_alloc_frame();
+    paddr_t frame = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame, PADDR_INVALID);
     
     // Use a test virtual address in user space
@@ -81,7 +81,7 @@ TEST_CASE(test_cow_flag_set_query) {
     // Clean up
     hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, test_vaddr);
     hal_mmu_flush_tlb(test_vaddr);
-    pmm_free_frame(frame);
+    mm::Pmm::free_frame(frame);
 }
 
 /**
@@ -94,7 +94,7 @@ TEST_CASE(test_cow_flag_set_query) {
  */
 TEST_CASE(test_cow_flag_clear) {
     // Allocate a physical frame for testing
-    paddr_t frame = pmm_alloc_frame();
+    paddr_t frame = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame, PADDR_INVALID);
     
     // Use a test virtual address
@@ -133,7 +133,7 @@ TEST_CASE(test_cow_flag_clear) {
     // Clean up
     hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, test_vaddr);
     hal_mmu_flush_tlb(test_vaddr);
-    pmm_free_frame(frame);
+    mm::Pmm::free_frame(frame);
 }
 
 /**
@@ -146,7 +146,7 @@ TEST_CASE(test_cow_flag_clear) {
  */
 TEST_CASE(test_cow_write_mutual_exclusion) {
     // Allocate a physical frame for testing
-    paddr_t frame = pmm_alloc_frame();
+    paddr_t frame = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame, PADDR_INVALID);
     
     // Use a test virtual address
@@ -177,7 +177,7 @@ TEST_CASE(test_cow_write_mutual_exclusion) {
     // Clean up
     hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, test_vaddr);
     hal_mmu_flush_tlb(test_vaddr);
-    pmm_free_frame(frame);
+    mm::Pmm::free_frame(frame);
 }
 
 /**
@@ -244,7 +244,7 @@ TEST_CASE(test_cow_multiple_pages) {
     
     // Allocate frames and set up virtual addresses
     for (int i = 0; i < NUM_TEST_PAGES; i++) {
-        frames[i] = pmm_alloc_frame();
+        frames[i] = mm::Pmm::alloc_frame();
         ASSERT_NE_U(frames[i], PADDR_INVALID);
         vaddrs[i] = 0x10010000 + (i * PAGE_SIZE);
     }
@@ -292,7 +292,7 @@ TEST_CASE(test_cow_multiple_pages) {
     for (int i = 0; i < NUM_TEST_PAGES; i++) {
         hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, vaddrs[i]);
         hal_mmu_flush_tlb(vaddrs[i]);
-        pmm_free_frame(frames[i]);
+        mm::Pmm::free_frame(frames[i]);
     }
     
     #undef NUM_TEST_PAGES
@@ -313,77 +313,77 @@ TEST_CASE(test_cow_multiple_pages) {
  */
 TEST_CASE(test_cow_refcount_initial) {
     // Allocate a frame
-    paddr_t frame = pmm_alloc_frame();
+    paddr_t frame = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame, PADDR_INVALID);
     
     // Initial reference count should be 1
-    uint32_t refcount = pmm_frame_get_refcount(frame);
+    uint32_t refcount = mm::Pmm::frame_get_refcount(frame);
     ASSERT_EQ_U(refcount, 1);
     
     // Clean up
-    pmm_free_frame(frame);
+    mm::Pmm::free_frame(frame);
 }
 
 /**
  * Test: Reference count increment
  * 
- * pmm_frame_ref_inc() SHALL increase reference count by 1.
+ * mm::Pmm::frame_ref_inc() SHALL increase reference count by 1.
  * 
  * _Requirements: 3.4_
  */
 TEST_CASE(test_cow_refcount_increment) {
     // Allocate a frame
-    paddr_t frame = pmm_alloc_frame();
+    paddr_t frame = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame, PADDR_INVALID);
     
     // Initial count is 1
-    ASSERT_EQ_U(pmm_frame_get_refcount(frame), 1);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frame), 1);
     
     // Increment reference count (simulating COW clone)
-    uint32_t new_count = pmm_frame_ref_inc(frame);
+    uint32_t new_count = mm::Pmm::frame_ref_inc(frame);
     ASSERT_EQ_U(new_count, 2);
-    ASSERT_EQ_U(pmm_frame_get_refcount(frame), 2);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frame), 2);
     
     // Increment again
-    new_count = pmm_frame_ref_inc(frame);
+    new_count = mm::Pmm::frame_ref_inc(frame);
     ASSERT_EQ_U(new_count, 3);
-    ASSERT_EQ_U(pmm_frame_get_refcount(frame), 3);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frame), 3);
     
     // Clean up - need to decrement back to 1 before freeing
-    pmm_frame_ref_dec(frame);
-    pmm_frame_ref_dec(frame);
-    pmm_free_frame(frame);
+    mm::Pmm::frame_ref_dec(frame);
+    mm::Pmm::frame_ref_dec(frame);
+    mm::Pmm::free_frame(frame);
 }
 
 /**
  * Test: Reference count decrement
  * 
- * pmm_frame_ref_dec() SHALL decrease reference count by 1.
+ * mm::Pmm::frame_ref_dec() SHALL decrease reference count by 1.
  * 
  * _Requirements: 3.4_
  */
 TEST_CASE(test_cow_refcount_decrement) {
     // Allocate a frame
-    paddr_t frame = pmm_alloc_frame();
+    paddr_t frame = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame, PADDR_INVALID);
     
     // Increment to 3
-    pmm_frame_ref_inc(frame);
-    pmm_frame_ref_inc(frame);
-    ASSERT_EQ_U(pmm_frame_get_refcount(frame), 3);
+    mm::Pmm::frame_ref_inc(frame);
+    mm::Pmm::frame_ref_inc(frame);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frame), 3);
     
     // Decrement
-    uint32_t new_count = pmm_frame_ref_dec(frame);
+    uint32_t new_count = mm::Pmm::frame_ref_dec(frame);
     ASSERT_EQ_U(new_count, 2);
-    ASSERT_EQ_U(pmm_frame_get_refcount(frame), 2);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frame), 2);
     
     // Decrement again
-    new_count = pmm_frame_ref_dec(frame);
+    new_count = mm::Pmm::frame_ref_dec(frame);
     ASSERT_EQ_U(new_count, 1);
-    ASSERT_EQ_U(pmm_frame_get_refcount(frame), 1);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frame), 1);
     
     // Clean up
-    pmm_free_frame(frame);
+    mm::Pmm::free_frame(frame);
 }
 
 /**
@@ -396,33 +396,33 @@ TEST_CASE(test_cow_refcount_decrement) {
  */
 TEST_CASE(test_cow_refcount_consistency) {
     // Allocate a frame
-    paddr_t frame = pmm_alloc_frame();
+    paddr_t frame = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame, PADDR_INVALID);
     
     // Initial count is 1
-    ASSERT_EQ_U(pmm_frame_get_refcount(frame), 1);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frame), 1);
     
     // Perform multiple increments
     #define NUM_INCREMENTS 5
     for (int i = 0; i < NUM_INCREMENTS; i++) {
-        pmm_frame_ref_inc(frame);
+        mm::Pmm::frame_ref_inc(frame);
     }
     // Count should be 1 + NUM_INCREMENTS = 6
-    ASSERT_EQ_U(pmm_frame_get_refcount(frame), 1 + NUM_INCREMENTS);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frame), 1 + NUM_INCREMENTS);
     
     // Perform some decrements
     #define NUM_DECREMENTS 3
     for (int i = 0; i < NUM_DECREMENTS; i++) {
-        pmm_frame_ref_dec(frame);
+        mm::Pmm::frame_ref_dec(frame);
     }
     // Count should be 1 + NUM_INCREMENTS - NUM_DECREMENTS = 3
-    ASSERT_EQ_U(pmm_frame_get_refcount(frame), 1 + NUM_INCREMENTS - NUM_DECREMENTS);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frame), 1 + NUM_INCREMENTS - NUM_DECREMENTS);
     
     // Clean up - decrement remaining and free
     for (int i = 0; i < (NUM_INCREMENTS - NUM_DECREMENTS); i++) {
-        pmm_frame_ref_dec(frame);
+        mm::Pmm::frame_ref_dec(frame);
     }
-    pmm_free_frame(frame);
+    mm::Pmm::free_frame(frame);
     
     #undef NUM_INCREMENTS
     #undef NUM_DECREMENTS
@@ -441,7 +441,7 @@ TEST_CASE(test_cow_refcount_independence) {
     
     // Allocate frames
     for (int i = 0; i < NUM_FRAMES; i++) {
-        frames[i] = pmm_alloc_frame();
+        frames[i] = mm::Pmm::alloc_frame();
         ASSERT_NE_U(frames[i], PADDR_INVALID);
     }
     
@@ -449,26 +449,26 @@ TEST_CASE(test_cow_refcount_independence) {
     // Frame 0: count = 1 (initial)
     // Frame 1: count = 2
     // Frame 2: count = 3
-    pmm_frame_ref_inc(frames[1]);
-    pmm_frame_ref_inc(frames[2]);
-    pmm_frame_ref_inc(frames[2]);
+    mm::Pmm::frame_ref_inc(frames[1]);
+    mm::Pmm::frame_ref_inc(frames[2]);
+    mm::Pmm::frame_ref_inc(frames[2]);
     
     // Verify independence
-    ASSERT_EQ_U(pmm_frame_get_refcount(frames[0]), 1);
-    ASSERT_EQ_U(pmm_frame_get_refcount(frames[1]), 2);
-    ASSERT_EQ_U(pmm_frame_get_refcount(frames[2]), 3);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frames[0]), 1);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frames[1]), 2);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frames[2]), 3);
     
     // Modify one frame's count and verify others unchanged
-    pmm_frame_ref_dec(frames[2]);
-    ASSERT_EQ_U(pmm_frame_get_refcount(frames[0]), 1);
-    ASSERT_EQ_U(pmm_frame_get_refcount(frames[1]), 2);
-    ASSERT_EQ_U(pmm_frame_get_refcount(frames[2]), 2);
+    mm::Pmm::frame_ref_dec(frames[2]);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frames[0]), 1);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frames[1]), 2);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frames[2]), 2);
     
     // Clean up
-    pmm_frame_ref_dec(frames[1]);
-    pmm_frame_ref_dec(frames[2]);
+    mm::Pmm::frame_ref_dec(frames[1]);
+    mm::Pmm::frame_ref_dec(frames[2]);
     for (int i = 0; i < NUM_FRAMES; i++) {
-        pmm_free_frame(frames[i]);
+        mm::Pmm::free_frame(frames[i]);
     }
     
     #undef NUM_FRAMES
@@ -484,17 +484,17 @@ TEST_CASE(test_cow_refcount_independence) {
  */
 TEST_CASE(test_cow_refcount_after_free) {
     // Allocate a frame
-    paddr_t frame = pmm_alloc_frame();
+    paddr_t frame = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame, PADDR_INVALID);
     
     // Verify initial count
-    ASSERT_EQ_U(pmm_frame_get_refcount(frame), 1);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frame), 1);
     
     // Free the frame
-    pmm_free_frame(frame);
+    mm::Pmm::free_frame(frame);
     
     // Reference count should be 0 after free
-    ASSERT_EQ_U(pmm_frame_get_refcount(frame), 0);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frame), 0);
 }
 
 /**
@@ -507,24 +507,24 @@ TEST_CASE(test_cow_refcount_after_free) {
  */
 TEST_CASE(test_cow_refcount_shared_free) {
     // Allocate a frame
-    paddr_t frame = pmm_alloc_frame();
+    paddr_t frame = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame, PADDR_INVALID);
     
     // Simulate COW sharing by incrementing refcount
-    pmm_frame_ref_inc(frame);
-    ASSERT_EQ_U(pmm_frame_get_refcount(frame), 2);
+    mm::Pmm::frame_ref_inc(frame);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frame), 2);
     
     // Free once (simulating one process exiting)
-    pmm_free_frame(frame);
+    mm::Pmm::free_frame(frame);
     
     // Frame should still exist with refcount = 1
-    ASSERT_EQ_U(pmm_frame_get_refcount(frame), 1);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frame), 1);
     
     // Free again (last reference)
-    pmm_free_frame(frame);
+    mm::Pmm::free_frame(frame);
     
     // Now refcount should be 0
-    ASSERT_EQ_U(pmm_frame_get_refcount(frame), 0);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frame), 0);
 }
 
 // ============================================================================

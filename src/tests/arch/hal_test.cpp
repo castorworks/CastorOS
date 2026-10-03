@@ -321,7 +321,7 @@ TEST_CASE(hal_mmio_write_ordering) {
 TEST_CASE(hal_mmu_map_query_roundtrip_single) {
 #if defined(ARCH_I686)
     /* Allocate a physical frame */
-    paddr_t phys = pmm_alloc_frame();
+    paddr_t phys = mm::Pmm::alloc_frame();
     ASSERT_NE_U(phys, PADDR_INVALID);
     
     vaddr_t virt = HAL_TEST_VIRT_BASE;
@@ -351,7 +351,7 @@ TEST_CASE(hal_mmu_map_query_roundtrip_single) {
     /* Clean up */
     hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, virt);
     hal_mmu_flush_tlb(virt);
-    pmm_free_frame(phys);
+    mm::Pmm::free_frame(phys);
 #else
     /* Skip on non-i686 architectures for now */
     ASSERT_TRUE(true);
@@ -376,7 +376,7 @@ TEST_CASE(hal_mmu_map_query_roundtrip_multiple) {
     
     /* Allocate and map multiple pages */
     for (uint32_t i = 0; i < PBT_MAP_QUERY_ITERATIONS; i++) {
-        frames[i] = pmm_alloc_frame();
+        frames[i] = mm::Pmm::alloc_frame();
         if (frames[i] == PADDR_INVALID) {
             break;
         }
@@ -419,7 +419,7 @@ TEST_CASE(hal_mmu_map_query_roundtrip_multiple) {
     /* Clean up */
     for (uint32_t i = 0; i < allocated; i++) {
         hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, virts[i]);
-        pmm_free_frame(frames[i]);
+        mm::Pmm::free_frame(frames[i]);
     }
     hal_mmu_flush_tlb_all();
 #else

@@ -51,8 +51,8 @@ void task_enter_usermode(uintptr_t entry_point, uintptr_t user_stack)
     tss_set_kernel_stack(current->kernel_stack);
 
     /* Switch to task's page directory if different from current */
-    if (current->page_dir_phys != vmm_get_page_directory()) {
-        vmm_switch_page_directory(current->page_dir_phys);
+    if (current->page_dir_phys != mm::Vmm::get_page_directory()) {
+        mm::Vmm::switch_page_directory(current->page_dir_phys);
     }
 
 #if defined(ARCH_I686)

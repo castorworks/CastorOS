@@ -66,7 +66,7 @@ static int uhci_init_td_pool(uhci_controller_t *hc) {
     }
     memset(hc->td_pool, 0, size);
     
-    hc->td_pool_phys = vmm_virt_to_phys((uint32_t)(uintptr_t)hc->td_pool);
+    hc->td_pool_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)hc->td_pool);
     
     hc->free_tds = NULL;
     for (int i = UHCI_TD_POOL_SIZE - 1; i >= 0; i--) {
@@ -90,7 +90,7 @@ static int uhci_init_qh_pool(uhci_controller_t *hc) {
     }
     memset(hc->qh_pool, 0, size);
     
-    hc->qh_pool_phys = vmm_virt_to_phys((uint32_t)(uintptr_t)hc->qh_pool);
+    hc->qh_pool_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)hc->qh_pool);
     
     hc->free_qhs = NULL;
     for (int i = UHCI_QH_POOL_SIZE - 1; i >= 0; i--) {
@@ -171,7 +171,7 @@ static int uhci_init_frame_list(uhci_controller_t *hc) {
         return -1;
     }
     
-    hc->frame_list_phys = vmm_virt_to_phys((uint32_t)(uintptr_t)hc->frame_list);
+    hc->frame_list_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)hc->frame_list);
     
     /* 分配 QH 池 */
     if (uhci_init_qh_pool(hc) < 0) {
@@ -491,12 +491,12 @@ static int uhci_submit_control(uhci_controller_t *hc, usb_urb_t *urb) {
         return -1;
     }
     memcpy(setup_buf, &urb->setup, 8);
-    uint32_t setup_phys = vmm_virt_to_phys((uint32_t)(uintptr_t)setup_buf);
+    uint32_t setup_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)setup_buf);
     
     /* 数据缓冲区物理地址 */
     uint32_t data_phys = 0;
     if (urb->buffer && urb->buffer_length > 0) {
-        data_phys = vmm_virt_to_phys((uint32_t)(uintptr_t)urb->buffer);
+        data_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)urb->buffer);
     }
     
     /* 确定数据方向 */
@@ -651,7 +651,7 @@ static int uhci_submit_bulk(uhci_controller_t *hc, usb_urb_t *urb) {
     uint16_t max_pkt = urb->endpoint->max_packet_size;
     
     /* 数据缓冲区物理地址 */
-    uint32_t data_phys = vmm_virt_to_phys((uint32_t)(uintptr_t)urb->buffer);
+    uint32_t data_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)urb->buffer);
     
     /* 创建 TDs */
     uhci_td_t *first_td = NULL;

@@ -122,16 +122,16 @@ static bool elf_load_impl(const void *elf_data, uint32_t size, page_directory_t 
         if (vaddr_end > max_vaddr) max_vaddr = vaddr_end;
         for (uint32_t pg = 0; pg < num_pages; pg++) {
             uintptr_t vaddr = vaddr_start + pg * PAGE_SIZE;
-            paddr_t phys = pmm_alloc_frame();
+            paddr_t phys = mm::Pmm::alloc_frame();
             if (phys == PADDR_INVALID) {
                 LOG_ERROR_MSG("ELF: Failed to allocate page\n");
                 return false;
             }
             uint8_t *phys_ptr = (uint8_t *)PHYS_TO_VIRT(phys);
             memset(phys_ptr, 0, PAGE_SIZE);
-            if (!vmm_map_page_in_directory(page_dir_phys, vaddr, (uintptr_t)phys, flags)) {
+            if (!mm::Vmm::map_page_in_directory(page_dir_phys, vaddr, (uintptr_t)phys, flags)) {
                 LOG_ERROR_MSG("ELF: Failed to map page\n");
-                pmm_free_frame(phys);
+                mm::Pmm::free_frame(phys);
                 return false;
             }
             uint64_t pg_off = (vaddr >= ph->p_vaddr) ? 0 : (ph->p_vaddr - vaddr);
@@ -215,7 +215,7 @@ static bool elf_load_impl(const void *elf_data, uint32_t size, page_directory_t 
             uintptr_t vaddr = vaddr_start + pg * PAGE_SIZE;
             
             /* Allocate physical frame */
-            paddr_t phys = pmm_alloc_frame();
+            paddr_t phys = mm::Pmm::alloc_frame();
             if (phys == PADDR_INVALID) {
                 LOG_ERROR_MSG("ELF: Failed to allocate page for vaddr 0x%llx\n",
                              (unsigned long long)vaddr);
@@ -230,7 +230,7 @@ static bool elf_load_impl(const void *elf_data, uint32_t size, page_directory_t 
             if (!hal_mmu_map(addr_space, vaddr, phys, flags)) {
                 LOG_ERROR_MSG("ELF: Failed to map page vaddr=0x%llx phys=0x%llx\n",
                              (unsigned long long)vaddr, (unsigned long long)phys);
-                pmm_free_frame(phys);
+                mm::Pmm::free_frame(phys);
                 return false;
             }
             
@@ -285,16 +285,16 @@ static bool elf_load_impl(const void *elf_data, uint32_t size, page_directory_t 
         if (vaddr_end > max_vaddr) max_vaddr = vaddr_end;
         for (uint32_t pg = 0; pg < num_pages; pg++) {
             uint32_t vaddr = vaddr_start + pg * PAGE_SIZE;
-            paddr_t phys = pmm_alloc_frame();
+            paddr_t phys = mm::Pmm::alloc_frame();
             if (phys == PADDR_INVALID) {
                 LOG_ERROR_MSG("ELF: Failed to allocate page\n");
                 return false;
             }
             uint8_t *phys_ptr = (uint8_t *)PHYS_TO_VIRT((uintptr_t)phys);
             memset(phys_ptr, 0, PAGE_SIZE);
-            if (!vmm_map_page_in_directory(page_dir_phys, vaddr, (uintptr_t)phys, flags)) {
+            if (!mm::Vmm::map_page_in_directory(page_dir_phys, vaddr, (uintptr_t)phys, flags)) {
                 LOG_ERROR_MSG("ELF: Failed to map page\n");
-                pmm_free_frame(phys);
+                mm::Pmm::free_frame(phys);
                 return false;
             }
             uint32_t pg_off = (vaddr >= ph->p_vaddr) ? 0 : (ph->p_vaddr - vaddr);

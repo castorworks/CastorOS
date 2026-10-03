@@ -61,7 +61,7 @@ static uint32_t procfs_meminfo_read(fs_node_t *node, uint32_t offset, uint32_t s
         return 0;
     }
     
-    pmm_info_t pmm_info = pmm_get_info();
+    mm::PmmInfo pmm_info = mm::Pmm::get_info();
     uint32_t total_kb = (pmm_info.total_frames * PAGE_SIZE) / 1024;
     uint32_t free_kb = (pmm_info.free_frames * PAGE_SIZE) / 1024;
     uint32_t used_kb = (pmm_info.used_frames * PAGE_SIZE) / 1024;
@@ -70,8 +70,8 @@ static uint32_t procfs_meminfo_read(fs_node_t *node, uint32_t offset, uint32_t s
     uint32_t bitmap_kb = (pmm_info.bitmap_frames * PAGE_SIZE) / 1024;
     
     // 获取堆统计信息
-    heap_info_t heap_info;
-    int heap_ret = heap_get_info(&heap_info);
+    mm::HeapInfo heap_info;
+    int heap_ret = mm::Heap::get_info(&heap_info);
     uint32_t heap_total_kb = 0;
     uint32_t heap_used_kb = 0;
     uint32_t heap_free_kb = 0;

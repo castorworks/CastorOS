@@ -222,8 +222,8 @@ int fb_init(multiboot_info_t *mbi) {
     size_t fb_size = (size_t)fb_info.pitch * fb_info.height;
     
     // 映射帧缓冲到虚拟地址空间
-    // 使用 vmm_map_framebuffer 进行映射，启用 Write-Combining 模式以提升性能
-    uintptr_t fb_virt = vmm_map_framebuffer(fb_info.address, fb_size);
+    // 使用 mm::Vmm::map_framebuffer 进行映射，启用 Write-Combining 模式以提升性能
+    uintptr_t fb_virt = mm::Vmm::map_framebuffer(fb_info.address, fb_size);
     if (!fb_virt) {
         LOG_ERROR_MSG("fb: Failed to map framebuffer\n");
         return -3;

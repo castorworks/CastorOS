@@ -424,7 +424,7 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_map_query_roundtrip) {
         }
         
         /* Allocate a physical frame */
-        paddr_t phys = pmm_alloc_frame();
+        paddr_t phys = mm::Pmm::alloc_frame();
         if (phys == PADDR_INVALID) {
             /* Out of memory, skip this iteration */
             skip_count++;
@@ -440,7 +440,7 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_map_query_roundtrip) {
         bool map_result = hal_mmu_map(space, virt, phys, flags);
         if (!map_result) {
             /* Mapping failed (possibly out of memory for page tables) */
-            pmm_free_frame(phys);
+            mm::Pmm::free_frame(phys);
             skip_count++;
             continue;
         }
@@ -470,7 +470,7 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_map_query_roundtrip) {
         ASSERT_TRUE(unmapped_phys == phys);
         
         hal_mmu_flush_tlb(virt);
-        pmm_free_frame(phys);
+        mm::Pmm::free_frame(phys);
         
         success_count++;
     }
@@ -505,7 +505,7 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_protect) {
         }
         
         /* Allocate a physical frame */
-        paddr_t phys = pmm_alloc_frame();
+        paddr_t phys = mm::Pmm::alloc_frame();
         if (phys == PADDR_INVALID) {
             continue;
         }
@@ -513,7 +513,7 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_protect) {
         /* Map with write permission */
         uint32_t initial_flags = HAL_PAGE_PRESENT | HAL_PAGE_USER | HAL_PAGE_WRITE;
         if (!hal_mmu_map(space, virt, phys, initial_flags)) {
-            pmm_free_frame(phys);
+            mm::Pmm::free_frame(phys);
             continue;
         }
         
@@ -547,7 +547,7 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_protect) {
         /* Clean up */
         hal_mmu_unmap(space, virt);
         hal_mmu_flush_tlb(virt);
-        pmm_free_frame(phys);
+        mm::Pmm::free_frame(phys);
         
         success_count++;
     }
@@ -578,13 +578,13 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_unmap_returns_phys) {
             continue;
         }
         
-        paddr_t phys = pmm_alloc_frame();
+        paddr_t phys = mm::Pmm::alloc_frame();
         if (phys == PADDR_INVALID) {
             continue;
         }
         
         if (!hal_mmu_map(space, virt, phys, HAL_PAGE_PRESENT | HAL_PAGE_USER)) {
-            pmm_free_frame(phys);
+            mm::Pmm::free_frame(phys);
             continue;
         }
         
@@ -601,7 +601,7 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_unmap_returns_phys) {
         /* Property: After unmap, query should fail */
         ASSERT_FALSE(hal_mmu_query(space, virt, NULL, NULL));
         
-        pmm_free_frame(phys);
+        mm::Pmm::free_frame(phys);
         success_count++;
     }
     
@@ -688,7 +688,7 @@ TEST_CASE(test_pbt_x86_64_cow_clone_shares_physical_pages) {
         }
         
         /* Allocate a physical frame */
-        paddr_t phys = pmm_alloc_frame();
+        paddr_t phys = mm::Pmm::alloc_frame();
         if (phys == PADDR_INVALID) {
             continue;
         }
@@ -696,21 +696,21 @@ TEST_CASE(test_pbt_x86_64_cow_clone_shares_physical_pages) {
         /* Map with write permission in current space */
         uint32_t flags = HAL_PAGE_PRESENT | HAL_PAGE_USER | HAL_PAGE_WRITE;
         if (!hal_mmu_map(current_space, virt, phys, flags)) {
-            pmm_free_frame(phys);
+            mm::Pmm::free_frame(phys);
             continue;
         }
         
         hal_mmu_flush_tlb(virt);
         
         /* Get initial reference count */
-        uint32_t initial_refcount = pmm_frame_get_refcount(phys);
+        uint32_t initial_refcount = mm::Pmm::frame_get_refcount(phys);
         
         /* Clone the address space */
         hal_addr_space_t cloned_space = hal_mmu_clone_space(current_space);
         if (cloned_space == HAL_ADDR_SPACE_INVALID) {
             hal_mmu_unmap(current_space, virt);
             hal_mmu_flush_tlb(virt);
-            pmm_free_frame(phys);
+            mm::Pmm::free_frame(phys);
             continue;
         }
         
@@ -731,7 +731,7 @@ TEST_CASE(test_pbt_x86_64_cow_clone_shares_physical_pages) {
         ASSERT_TRUE(parent_phys == phys);
         
         /* Property: Reference count should have increased */
-        uint32_t new_refcount = pmm_frame_get_refcount(phys);
+        uint32_t new_refcount = mm::Pmm::frame_get_refcount(phys);
         ASSERT_TRUE(new_refcount > initial_refcount);
         
         /* Property: Both should have COW flag set (write removed) */
@@ -748,7 +748,7 @@ TEST_CASE(test_pbt_x86_64_cow_clone_shares_physical_pages) {
         hal_mmu_flush_tlb(virt);
         
         /* Free the physical frame (refcount should be back to allowing free) */
-        pmm_free_frame(phys);
+        mm::Pmm::free_frame(phys);
         
         success_count++;
     }
@@ -780,7 +780,7 @@ TEST_CASE(test_pbt_x86_64_cow_removes_write_permission) {
             continue;
         }
         
-        paddr_t phys = pmm_alloc_frame();
+        paddr_t phys = mm::Pmm::alloc_frame();
         if (phys == PADDR_INVALID) {
             continue;
         }
@@ -788,7 +788,7 @@ TEST_CASE(test_pbt_x86_64_cow_removes_write_permission) {
         /* Map with write permission */
         uint32_t flags = HAL_PAGE_PRESENT | HAL_PAGE_USER | HAL_PAGE_WRITE;
         if (!hal_mmu_map(current_space, virt, phys, flags)) {
-            pmm_free_frame(phys);
+            mm::Pmm::free_frame(phys);
             continue;
         }
         
@@ -804,7 +804,7 @@ TEST_CASE(test_pbt_x86_64_cow_removes_write_permission) {
         if (cloned_space == HAL_ADDR_SPACE_INVALID) {
             hal_mmu_unmap(current_space, virt);
             hal_mmu_flush_tlb(virt);
-            pmm_free_frame(phys);
+            mm::Pmm::free_frame(phys);
             continue;
         }
         
@@ -821,7 +821,7 @@ TEST_CASE(test_pbt_x86_64_cow_removes_write_permission) {
         hal_mmu_destroy_space(cloned_space);
         hal_mmu_unmap(current_space, virt);
         hal_mmu_flush_tlb(virt);
-        pmm_free_frame(phys);
+        mm::Pmm::free_frame(phys);
         
         success_count++;
     }
@@ -852,7 +852,7 @@ TEST_CASE(test_pbt_x86_64_destroy_space_frees_memory) {
     
     for (uint32_t i = 0; i < DESTROY_SPACE_ITERATIONS; i++) {
         /* Record initial free frame count */
-        pmm_info_t info_before = pmm_get_info();
+        mm::PmmInfo info_before = mm::Pmm::get_info();
         
         /* Create a new address space */
         hal_addr_space_t new_space = hal_mmu_create_space();
@@ -871,7 +871,7 @@ TEST_CASE(test_pbt_x86_64_destroy_space_frees_memory) {
                 continue;
             }
             
-            paddr_t phys = pmm_alloc_frame();
+            paddr_t phys = mm::Pmm::alloc_frame();
             if (phys == PADDR_INVALID) {
                 continue;
             }
@@ -880,12 +880,12 @@ TEST_CASE(test_pbt_x86_64_destroy_space_frees_memory) {
                            HAL_PAGE_PRESENT | HAL_PAGE_USER | HAL_PAGE_WRITE)) {
                 pages_mapped++;
             } else {
-                pmm_free_frame(phys);
+                mm::Pmm::free_frame(phys);
             }
         }
         
         /* Record free frame count after mapping */
-        pmm_info_t info_after_map = pmm_get_info();
+        mm::PmmInfo info_after_map = mm::Pmm::get_info();
         
         /* Property: Mapping should have consumed frames */
         /* At minimum: 1 for PML4 + some for page tables + mapped pages */
@@ -895,7 +895,7 @@ TEST_CASE(test_pbt_x86_64_destroy_space_frees_memory) {
         hal_mmu_destroy_space(new_space);
         
         /* Record free frame count after destruction */
-        pmm_info_t info_after_destroy = pmm_get_info();
+        mm::PmmInfo info_after_destroy = mm::Pmm::get_info();
         
         /* Property 15: Free frame count should increase after destruction */
         /* The increase should be at least the number of mapped pages + page tables */
@@ -936,40 +936,40 @@ TEST_CASE(test_pbt_x86_64_destroy_cloned_space_decrements_refcount) {
             continue;
         }
         
-        paddr_t phys = pmm_alloc_frame();
+        paddr_t phys = mm::Pmm::alloc_frame();
         if (phys == PADDR_INVALID) {
             continue;
         }
         
         if (!hal_mmu_map(current_space, virt, phys, 
                         HAL_PAGE_PRESENT | HAL_PAGE_USER | HAL_PAGE_WRITE)) {
-            pmm_free_frame(phys);
+            mm::Pmm::free_frame(phys);
             continue;
         }
         
         hal_mmu_flush_tlb(virt);
         
         /* Get initial reference count */
-        uint32_t initial_refcount = pmm_frame_get_refcount(phys);
+        uint32_t initial_refcount = mm::Pmm::frame_get_refcount(phys);
         
         /* Clone the address space */
         hal_addr_space_t cloned_space = hal_mmu_clone_space(current_space);
         if (cloned_space == HAL_ADDR_SPACE_INVALID) {
             hal_mmu_unmap(current_space, virt);
             hal_mmu_flush_tlb(virt);
-            pmm_free_frame(phys);
+            mm::Pmm::free_frame(phys);
             continue;
         }
         
         /* Reference count should have increased */
-        uint32_t after_clone_refcount = pmm_frame_get_refcount(phys);
+        uint32_t after_clone_refcount = mm::Pmm::frame_get_refcount(phys);
         ASSERT_TRUE(after_clone_refcount > initial_refcount);
         
         /* Destroy the cloned space */
         hal_mmu_destroy_space(cloned_space);
         
         /* Property 15: Reference count should decrease after destruction */
-        uint32_t after_destroy_refcount = pmm_frame_get_refcount(phys);
+        uint32_t after_destroy_refcount = mm::Pmm::frame_get_refcount(phys);
         ASSERT_TRUE(after_destroy_refcount < after_clone_refcount);
         
         /* Property: Reference count should be back to initial (or close) */
@@ -979,7 +979,7 @@ TEST_CASE(test_pbt_x86_64_destroy_cloned_space_decrements_refcount) {
         /* Clean up */
         hal_mmu_unmap(current_space, virt);
         hal_mmu_flush_tlb(virt);
-        pmm_free_frame(phys);
+        mm::Pmm::free_frame(phys);
         
         success_count++;
     }

@@ -7,10 +7,10 @@
 // 描述: 测试 PMM (Physical Memory Manager) 的功能
 //
 // 功能覆盖:
-//   - 页帧分配 (pmm_alloc_frame)
-//   - 页帧释放 (pmm_free_frame)
-//   - 信息查询 (pmm_get_info)
-//   - 引用计数 (pmm_frame_ref_inc, pmm_frame_ref_dec)
+//   - 页帧分配 (mm::Pmm::alloc_frame)
+//   - 页帧释放 (mm::Pmm::free_frame)
+//   - 信息查询 (mm::Pmm::get_info)
+//   - 引用计数 (mm::Pmm::frame_ref_inc, mm::Pmm::frame_ref_dec)
 //   - 压力测试
 //
 // **Feature: test-refactor**
@@ -29,19 +29,19 @@
 // 测试套件 1: pmm_alloc_tests - 页帧分配测试
 // ============================================================================
 // 
-// 测试 pmm_alloc_frame() 函数的基本功能
+// 测试 mm::Pmm::alloc_frame() 函数的基本功能
 // **Validates: Requirements 3.1** - PMM 分配页帧应返回页对齐且唯一的地址
 // ============================================================================
 
 /**
  * @brief 测试基本页帧分配
  * 
- * 验证 pmm_alloc_frame() 返回有效的页对齐地址
+ * 验证 mm::Pmm::alloc_frame() 返回有效的页对齐地址
  * _Requirements: 3.1_
  */
 TEST_CASE(test_pmm_alloc_frame_basic) {
     // 分配一个页帧
-    paddr_t frame = pmm_alloc_frame();
+    paddr_t frame = mm::Pmm::alloc_frame();
     
     // 应该返回有效地址
     ASSERT_NE_U(frame, PADDR_INVALID);
@@ -51,7 +51,7 @@ TEST_CASE(test_pmm_alloc_frame_basic) {
     ASSERT_TRUE(IS_PADDR_ALIGNED(frame));
     
     // 释放页帧
-    pmm_free_frame(frame);
+    mm::Pmm::free_frame(frame);
 }
 
 /**
@@ -62,9 +62,9 @@ TEST_CASE(test_pmm_alloc_frame_basic) {
  */
 TEST_CASE(test_pmm_alloc_multiple_frames) {
     // 分配多个页帧
-    paddr_t frame1 = pmm_alloc_frame();
-    paddr_t frame2 = pmm_alloc_frame();
-    paddr_t frame3 = pmm_alloc_frame();
+    paddr_t frame1 = mm::Pmm::alloc_frame();
+    paddr_t frame2 = mm::Pmm::alloc_frame();
+    paddr_t frame3 = mm::Pmm::alloc_frame();
     
     // 应该都有效
     ASSERT_NE_U(frame1, PADDR_INVALID);
@@ -77,9 +77,9 @@ TEST_CASE(test_pmm_alloc_multiple_frames) {
     ASSERT_NE_U(frame1, frame3);
     
     // 释放页帧
-    pmm_free_frame(frame1);
-    pmm_free_frame(frame2);
-    pmm_free_frame(frame3);
+    mm::Pmm::free_frame(frame1);
+    mm::Pmm::free_frame(frame2);
+    mm::Pmm::free_frame(frame3);
 }
 
 /**
@@ -91,10 +91,10 @@ TEST_CASE(test_pmm_alloc_multiple_frames) {
 TEST_CASE(test_pmm_alloc_frame_alignment) {
     // 分配10个页帧，检查对齐
     for (int i = 0; i < 10; i++) {
-        paddr_t frame = pmm_alloc_frame();
+        paddr_t frame = mm::Pmm::alloc_frame();
         ASSERT_NE_U(frame, PADDR_INVALID);
         ASSERT_TRUE(IS_PADDR_ALIGNED(frame));
-        pmm_free_frame(frame);
+        mm::Pmm::free_frame(frame);
     }
 }
 
@@ -102,7 +102,7 @@ TEST_CASE(test_pmm_alloc_frame_alignment) {
 // 测试套件 2: pmm_free_tests - 页帧释放测试
 // ============================================================================
 // 
-// 测试 pmm_free_frame() 函数的功能和边界情况
+// 测试 mm::Pmm::free_frame() 函数的功能和边界情况
 // **Validates: Requirements 3.1, 3.5** - 页帧释放和内存泄漏检测
 // ============================================================================
 
@@ -113,20 +113,20 @@ TEST_CASE(test_pmm_alloc_frame_alignment) {
  * _Requirements: 3.1, 3.5_
  */
 TEST_CASE(test_pmm_free_frame_basic) {
-    pmm_info_t info_before = pmm_get_info();
+    mm::PmmInfo info_before = mm::Pmm::get_info();
     
     // 分配一个页帧
-    paddr_t frame = pmm_alloc_frame();
+    paddr_t frame = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame, PADDR_INVALID);
     
-    pmm_info_t info_after_alloc = pmm_get_info();
+    mm::PmmInfo info_after_alloc = mm::Pmm::get_info();
     // 空闲页帧应该减少1
     ASSERT_EQ_U(info_after_alloc.free_frames, info_before.free_frames - 1);
     
     // 释放页帧
-    pmm_free_frame(frame);
+    mm::Pmm::free_frame(frame);
     
-    pmm_info_t info_after_free = pmm_get_info();
+    mm::PmmInfo info_after_free = mm::Pmm::get_info();
     // 空闲页帧应该恢复
     ASSERT_EQ_U(info_after_free.free_frames, info_before.free_frames);
 }
@@ -139,17 +139,17 @@ TEST_CASE(test_pmm_free_frame_basic) {
  */
 TEST_CASE(test_pmm_free_frame_reuse) {
     // 分配并释放一个页帧
-    paddr_t frame1 = pmm_alloc_frame();
+    paddr_t frame1 = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame1, PADDR_INVALID);
-    pmm_free_frame(frame1);
+    mm::Pmm::free_frame(frame1);
     
     // 再次分配，应该能够复用刚释放的页帧
-    paddr_t frame2 = pmm_alloc_frame();
+    paddr_t frame2 = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame2, PADDR_INVALID);
     
     // 可能（但不一定）是同一个页帧
     // 至少应该能成功分配
-    pmm_free_frame(frame2);
+    mm::Pmm::free_frame(frame2);
 }
 
 /**
@@ -159,12 +159,12 @@ TEST_CASE(test_pmm_free_frame_reuse) {
  * _Requirements: 3.1_
  */
 TEST_CASE(test_pmm_free_invalid_frame) {
-    pmm_info_t info_before = pmm_get_info();
+    mm::PmmInfo info_before = mm::Pmm::get_info();
     
     // 尝试释放非对齐地址（应该被忽略）
-    pmm_free_frame(0x12345);
+    mm::Pmm::free_frame(0x12345);
     
-    pmm_info_t info_after = pmm_get_info();
+    mm::PmmInfo info_after = mm::Pmm::get_info();
     // 信息应该不变
     ASSERT_EQ_U(info_after.free_frames, info_before.free_frames);
 }
@@ -177,16 +177,16 @@ TEST_CASE(test_pmm_free_invalid_frame) {
  */
 TEST_CASE(test_pmm_free_double_free) {    
     // 分配一个页帧
-    paddr_t frame = pmm_alloc_frame();
+    paddr_t frame = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame, PADDR_INVALID);
     
     // 第一次释放
-    pmm_free_frame(frame);
-    pmm_info_t info_after_first_free = pmm_get_info();
+    mm::Pmm::free_frame(frame);
+    mm::PmmInfo info_after_first_free = mm::Pmm::get_info();
     
     // 第二次释放相同页帧（double free，应该被忽略）
-    pmm_free_frame(frame);
-    pmm_info_t info_after_second_free = pmm_get_info();
+    mm::Pmm::free_frame(frame);
+    mm::PmmInfo info_after_second_free = mm::Pmm::get_info();
     
     // 第二次释放不应该改变状态
     ASSERT_EQ_U(info_after_second_free.free_frames, info_after_first_free.free_frames);
@@ -200,12 +200,12 @@ TEST_CASE(test_pmm_free_double_free) {
  * _Requirements: 3.1_
  */
 TEST_CASE(test_pmm_free_out_of_bounds) {
-    pmm_info_t info_before = pmm_get_info();
+    mm::PmmInfo info_before = mm::Pmm::get_info();
     
     // 尝试释放超出范围的页帧（应该被忽略）
-    pmm_free_frame(0x7FFFF000);  // 接近2GB边界
+    mm::Pmm::free_frame(0x7FFFF000);  // 接近2GB边界
     
-    pmm_info_t info_after = pmm_get_info();
+    mm::PmmInfo info_after = mm::Pmm::get_info();
     // 信息应该不变
     ASSERT_EQ_U(info_after.free_frames, info_before.free_frames);
 }
@@ -222,11 +222,11 @@ TEST_CASE(test_pmm_alloc_until_low_memory) {
     paddr_t frames[LARGE_ALLOC_COUNT];
     int allocated = 0;
     
-    pmm_info_t info_before = pmm_get_info();
+    mm::PmmInfo info_before = mm::Pmm::get_info();
     
     // 分配大量页帧
     for (int i = 0; i < LARGE_ALLOC_COUNT; i++) {
-        frames[i] = pmm_alloc_frame();
+        frames[i] = mm::Pmm::alloc_frame();
         if (frames[i] == PADDR_INVALID) {
             // 如果分配失败，记录已分配的数量
             break;
@@ -237,16 +237,16 @@ TEST_CASE(test_pmm_alloc_until_low_memory) {
     // 应该至少能分配一些页帧
     ASSERT_TRUE(allocated > 0);
     
-    pmm_info_t info_after_alloc = pmm_get_info();
+    mm::PmmInfo info_after_alloc = mm::Pmm::get_info();
     // 空闲页帧应该减少
     ASSERT_TRUE(info_after_alloc.free_frames < info_before.free_frames);
     
     // 释放所有分配的页帧
     for (int i = 0; i < allocated; i++) {
-        pmm_free_frame(frames[i]);
+        mm::Pmm::free_frame(frames[i]);
     }
     
-    pmm_info_t info_after_free = pmm_get_info();
+    mm::PmmInfo info_after_free = mm::Pmm::get_info();
     // 应该恢复到接近原始状态
     int64_t diff = (int64_t)info_after_free.free_frames - (int64_t)info_before.free_frames;
     
@@ -263,18 +263,18 @@ TEST_CASE(test_pmm_alloc_until_low_memory) {
 // 测试套件 3: pmm_info_tests - 信息查询测试
 // ============================================================================
 // 
-// 测试 pmm_get_info() 和 pmm_get_bitmap_end() 函数
+// 测试 mm::Pmm::get_info() 和 mm::Pmm::get_bitmap_end() 函数
 // **Validates: Requirements 3.1** - PMM 信息查询正确性
 // ============================================================================
 
 /**
  * @brief 测试基本信息查询
  * 
- * 验证 pmm_get_info() 返回一致的内存统计信息
+ * 验证 mm::Pmm::get_info() 返回一致的内存统计信息
  * _Requirements: 3.1_
  */
 TEST_CASE(test_pmm_get_info_basic) {
-    pmm_info_t info = pmm_get_info();
+    mm::PmmInfo info = mm::Pmm::get_info();
     
     // 总页帧数应该非零
     ASSERT_NE_U(info.total_frames, 0);
@@ -286,12 +286,12 @@ TEST_CASE(test_pmm_get_info_basic) {
 /**
  * @brief 测试位图结束地址
  * 
- * 验证 pmm_get_bitmap_end() 返回有效的内核空间地址
+ * 验证 mm::Pmm::get_bitmap_end() 返回有效的内核空间地址
  * _Requirements: 3.1_
  */
 TEST_CASE(test_pmm_get_bitmap_end) {
     // 获取位图结束地址
-    uintptr_t bitmap_end = pmm_get_bitmap_end();
+    uintptr_t bitmap_end = mm::Pmm::get_bitmap_end();
     
     // 应该非零
     ASSERT_NE_U(bitmap_end, 0);
@@ -306,20 +306,20 @@ TEST_CASE(test_pmm_get_bitmap_end) {
 /**
  * @brief 测试操作后的信息一致性
  * 
- * 验证分配和释放操作后 pmm_get_info() 返回正确的统计
+ * 验证分配和释放操作后 mm::Pmm::get_info() 返回正确的统计
  * _Requirements: 3.1, 3.5_
  */
 TEST_CASE(test_pmm_get_info_after_operations) {
-    pmm_info_t info_before = pmm_get_info();
+    mm::PmmInfo info_before = mm::Pmm::get_info();
     
     // 分配3个页帧
     paddr_t frames[3];
     for (int i = 0; i < 3; i++) {
-        frames[i] = pmm_alloc_frame();
+        frames[i] = mm::Pmm::alloc_frame();
         ASSERT_NE_U(frames[i], PADDR_INVALID);
     }
     
-    pmm_info_t info_after_alloc = pmm_get_info();
+    mm::PmmInfo info_after_alloc = mm::Pmm::get_info();
     // 空闲页帧应该减少3
     ASSERT_EQ_U(info_after_alloc.free_frames, info_before.free_frames - 3);
     // 已使用页帧应该增加3
@@ -327,10 +327,10 @@ TEST_CASE(test_pmm_get_info_after_operations) {
     
     // 释放3个页帧
     for (int i = 0; i < 3; i++) {
-        pmm_free_frame(frames[i]);
+        mm::Pmm::free_frame(frames[i]);
     }
     
-    pmm_info_t info_after_free = pmm_get_info();
+    mm::PmmInfo info_after_free = mm::Pmm::get_info();
     // 应该恢复原状
     ASSERT_EQ_U(info_after_free.free_frames, info_before.free_frames);
     ASSERT_EQ_U(info_after_free.used_frames, info_before.used_frames);
@@ -355,23 +355,23 @@ TEST_CASE(test_pmm_stress_alloc_free) {
     #define STRESS_COUNT 100
     paddr_t frames[STRESS_COUNT];
     
-    pmm_info_t info_before = pmm_get_info();
+    mm::PmmInfo info_before = mm::Pmm::get_info();
     
     // 分配
     for (int i = 0; i < STRESS_COUNT; i++) {
-        frames[i] = pmm_alloc_frame();
+        frames[i] = mm::Pmm::alloc_frame();
         ASSERT_NE_U(frames[i], PADDR_INVALID);
     }
     
-    pmm_info_t info_after_alloc = pmm_get_info();
+    mm::PmmInfo info_after_alloc = mm::Pmm::get_info();
     ASSERT_TRUE(info_after_alloc.free_frames <= info_before.free_frames - STRESS_COUNT);
     
     // 释放
     for (int i = 0; i < STRESS_COUNT; i++) {
-        pmm_free_frame(frames[i]);
+        mm::Pmm::free_frame(frames[i]);
     }
     
-    pmm_info_t info_after_free = pmm_get_info();
+    mm::PmmInfo info_after_free = mm::Pmm::get_info();
     int64_t diff = (int64_t)info_after_free.free_frames - (int64_t)info_before.free_frames;
     ASSERT_TRUE(diff >= -100 && diff <= 100);
 }
@@ -384,19 +384,19 @@ TEST_CASE(test_pmm_stress_alloc_free) {
  */
 TEST_CASE(test_pmm_interleaved_alloc_free) {
     // 交替分配和释放
-    paddr_t frame1 = pmm_alloc_frame();
+    paddr_t frame1 = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame1, PADDR_INVALID);
     
-    paddr_t frame2 = pmm_alloc_frame();
+    paddr_t frame2 = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame2, PADDR_INVALID);
     
-    pmm_free_frame(frame1);
+    mm::Pmm::free_frame(frame1);
     
-    paddr_t frame3 = pmm_alloc_frame();
+    paddr_t frame3 = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame3, PADDR_INVALID);
     
-    pmm_free_frame(frame2);
-    pmm_free_frame(frame3);
+    mm::Pmm::free_frame(frame2);
+    mm::Pmm::free_frame(frame3);
 }
 
 // ============================================================================
@@ -441,7 +441,7 @@ TEST_SUITE(pmm_stress_tests) {
 /**
  * @brief 属性测试：所有分配的页帧都是页对齐的
  * 
- * *For any* successful call to pmm_alloc_frame(), the returned address 
+ * *For any* successful call to mm::Pmm::alloc_frame(), the returned address 
  * SHALL be page-aligned (divisible by PAGE_SIZE).
  * 
  * **Feature: test-refactor, Property 4: PMM Allocation Alignment and Uniqueness**
@@ -455,7 +455,7 @@ TEST_CASE(test_pbt_pmm_page_alignment) {
     
     // Allocate frames
     for (uint32_t i = 0; i < PBT_PMM_ITERATIONS; i++) {
-        frames[i] = pmm_alloc_frame();
+        frames[i] = mm::Pmm::alloc_frame();
         if (frames[i] == PADDR_INVALID) {
             // Out of memory, stop allocating
             break;
@@ -474,7 +474,7 @@ TEST_CASE(test_pbt_pmm_page_alignment) {
     
     // Cleanup: free all allocated frames
     for (uint32_t i = 0; i < allocated; i++) {
-        pmm_free_frame(frames[i]);
+        mm::Pmm::free_frame(frames[i]);
     }
 }
 
@@ -495,7 +495,7 @@ TEST_CASE(test_pbt_pmm_frame_uniqueness) {
     
     // Allocate frames
     for (uint32_t i = 0; i < PBT_UNIQUE_ITERATIONS; i++) {
-        frames[i] = pmm_alloc_frame();
+        frames[i] = mm::Pmm::alloc_frame();
         if (frames[i] == PADDR_INVALID) {
             break;
         }
@@ -511,7 +511,7 @@ TEST_CASE(test_pbt_pmm_frame_uniqueness) {
     
     // Cleanup
     for (uint32_t i = 0; i < allocated; i++) {
-        pmm_free_frame(frames[i]);
+        mm::Pmm::free_frame(frames[i]);
     }
 }
 
@@ -527,14 +527,14 @@ TEST_CASE(test_pbt_pmm_frame_uniqueness) {
 TEST_CASE(test_pbt_pmm_alloc_free_roundtrip) {
     #define PBT_ROUNDTRIP_ITERATIONS 30
     
-    pmm_info_t info_before = pmm_get_info();
+    mm::PmmInfo info_before = mm::Pmm::get_info();
     
     paddr_t frames[PBT_ROUNDTRIP_ITERATIONS];
     uint32_t allocated = 0;
     
     // Allocate frames
     for (uint32_t i = 0; i < PBT_ROUNDTRIP_ITERATIONS; i++) {
-        frames[i] = pmm_alloc_frame();
+        frames[i] = mm::Pmm::alloc_frame();
         if (frames[i] == PADDR_INVALID) {
             break;
         }
@@ -543,10 +543,10 @@ TEST_CASE(test_pbt_pmm_alloc_free_roundtrip) {
     
     // Free all frames
     for (uint32_t i = 0; i < allocated; i++) {
-        pmm_free_frame(frames[i]);
+        mm::Pmm::free_frame(frames[i]);
     }
     
-    pmm_info_t info_after = pmm_get_info();
+    mm::PmmInfo info_after = mm::Pmm::get_info();
     
     // Property: free frame count should be restored
     ASSERT_EQ_U(info_after.free_frames, info_before.free_frames);
@@ -565,8 +565,8 @@ TEST_CASE(test_pbt_pmm_alloc_free_roundtrip) {
 /**
  * @brief 属性测试：引用计数一致性
  * 
- * *For any* allocated frame, after n calls to pmm_frame_ref_inc() and 
- * m calls to pmm_frame_ref_dec() where n >= m, pmm_frame_get_refcount() 
+ * *For any* allocated frame, after n calls to mm::Pmm::frame_ref_inc() and 
+ * m calls to mm::Pmm::frame_ref_dec() where n >= m, mm::Pmm::frame_get_refcount() 
  * SHALL return 1 + n - m.
  * 
  * **Feature: test-refactor, Property 7: COW Reference Count Consistency**
@@ -576,74 +576,74 @@ TEST_CASE(test_pbt_pmm_refcount_consistency) {
     #define PBT_REFCOUNT_ITERATIONS 20
     
     // Allocate a frame
-    paddr_t frame = pmm_alloc_frame();
+    paddr_t frame = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame, PADDR_INVALID);
     
     // Initial refcount should be 1
-    uint32_t initial_count = pmm_frame_get_refcount(frame);
+    uint32_t initial_count = mm::Pmm::frame_get_refcount(frame);
     ASSERT_EQ_U(initial_count, 1);
     
     // Increment refcount multiple times
     for (uint32_t i = 0; i < PBT_REFCOUNT_ITERATIONS; i++) {
-        uint32_t new_count = pmm_frame_ref_inc(frame);
+        uint32_t new_count = mm::Pmm::frame_ref_inc(frame);
         // Property: refcount should be 1 + (i + 1) = 2 + i
         ASSERT_EQ_U(new_count, 2 + i);
-        ASSERT_EQ_U(pmm_frame_get_refcount(frame), 2 + i);
+        ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frame), 2 + i);
     }
     
     // Decrement refcount back to 1
     for (uint32_t i = 0; i < PBT_REFCOUNT_ITERATIONS; i++) {
-        uint32_t new_count = pmm_frame_ref_dec(frame);
+        uint32_t new_count = mm::Pmm::frame_ref_dec(frame);
         // Property: refcount should be (1 + PBT_REFCOUNT_ITERATIONS) - (i + 1)
         uint32_t expected = (1 + PBT_REFCOUNT_ITERATIONS) - (i + 1);
         ASSERT_EQ_U(new_count, expected);
-        ASSERT_EQ_U(pmm_frame_get_refcount(frame), expected);
+        ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frame), expected);
     }
     
     // Final refcount should be 1
-    ASSERT_EQ_U(pmm_frame_get_refcount(frame), 1);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frame), 1);
     
     // Cleanup
-    pmm_free_frame(frame);
+    mm::Pmm::free_frame(frame);
 }
 
 /**
  * @brief 属性测试：引用计数防止过早释放
  * 
- * *For any* frame with refcount > 1, calling pmm_free_frame() SHALL 
+ * *For any* frame with refcount > 1, calling mm::Pmm::free_frame() SHALL 
  * only decrement the refcount without actually freeing the frame.
  * 
  * **Feature: test-refactor, Property 7: COW Reference Count Consistency**
  * **Validates: Requirements 3.4**
  */
 TEST_CASE(test_pbt_pmm_refcount_prevents_free) {
-    pmm_info_t info_before = pmm_get_info();
+    mm::PmmInfo info_before = mm::Pmm::get_info();
     
     // Allocate a frame
-    paddr_t frame = pmm_alloc_frame();
+    paddr_t frame = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame, PADDR_INVALID);
     
     // Increment refcount to 2
-    pmm_frame_ref_inc(frame);
-    ASSERT_EQ_U(pmm_frame_get_refcount(frame), 2);
+    mm::Pmm::frame_ref_inc(frame);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frame), 2);
     
-    pmm_info_t info_after_alloc = pmm_get_info();
+    mm::PmmInfo info_after_alloc = mm::Pmm::get_info();
     
     // Try to free - should only decrement refcount, not actually free
-    pmm_free_frame(frame);
+    mm::Pmm::free_frame(frame);
     
-    pmm_info_t info_after_first_free = pmm_get_info();
+    mm::PmmInfo info_after_first_free = mm::Pmm::get_info();
     
     // Property: frame should still be allocated (free count unchanged)
     ASSERT_EQ_U(info_after_first_free.free_frames, info_after_alloc.free_frames);
     
     // Refcount should now be 1
-    ASSERT_EQ_U(pmm_frame_get_refcount(frame), 1);
+    ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frame), 1);
     
     // Second free should actually free the frame
-    pmm_free_frame(frame);
+    mm::Pmm::free_frame(frame);
     
-    pmm_info_t info_after_second_free = pmm_get_info();
+    mm::PmmInfo info_after_second_free = mm::Pmm::get_info();
     
     // Property: frame should now be freed
     ASSERT_EQ_U(info_after_second_free.free_frames, info_before.free_frames);
@@ -665,34 +665,34 @@ TEST_CASE(test_pbt_pmm_independent_refcounts) {
     
     // Allocate frames
     for (int i = 0; i < PBT_INDEPENDENT_FRAMES; i++) {
-        frames[i] = pmm_alloc_frame();
+        frames[i] = mm::Pmm::alloc_frame();
         ASSERT_NE_U(frames[i], PADDR_INVALID);
-        ASSERT_EQ_U(pmm_frame_get_refcount(frames[i]), 1);
+        ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frames[i]), 1);
     }
     
     // Increment refcount of each frame by different amounts
     for (int i = 0; i < PBT_INDEPENDENT_FRAMES; i++) {
         for (int j = 0; j < i + 1; j++) {
-            pmm_frame_ref_inc(frames[i]);
+            mm::Pmm::frame_ref_inc(frames[i]);
         }
         // Property: refcount should be 1 + (i + 1) = 2 + i
-        ASSERT_EQ_U(pmm_frame_get_refcount(frames[i]), (uint32_t)(2 + i));
+        ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frames[i]), (uint32_t)(2 + i));
     }
     
     // Verify each frame's refcount is independent
     for (int i = 0; i < PBT_INDEPENDENT_FRAMES; i++) {
-        ASSERT_EQ_U(pmm_frame_get_refcount(frames[i]), (uint32_t)(2 + i));
+        ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frames[i]), (uint32_t)(2 + i));
     }
     
     // Cleanup: decrement refcounts and free
     for (int i = 0; i < PBT_INDEPENDENT_FRAMES; i++) {
         // Decrement the extra refs we added
         for (int j = 0; j < i + 1; j++) {
-            pmm_frame_ref_dec(frames[i]);
+            mm::Pmm::frame_ref_dec(frames[i]);
         }
         // Now free the frame (refcount should be 1)
-        ASSERT_EQ_U(pmm_frame_get_refcount(frames[i]), 1);
-        pmm_free_frame(frames[i]);
+        ASSERT_EQ_U(mm::Pmm::frame_get_refcount(frames[i]), 1);
+        mm::Pmm::free_frame(frames[i]);
     }
 }
 

@@ -25,13 +25,13 @@ bool task_should_fail_stack_page(uint32_t page_index) {
 static void init_dummy_task(task_t *task) {
     memset(task, 0, sizeof(task_t));
     task->is_user_process = true;
-    task->page_dir_phys = vmm_create_page_directory();
+    task->page_dir_phys = mm::Vmm::create_page_directory();
     task->page_dir = (page_directory_t*)PHYS_TO_VIRT(task->page_dir_phys);
 }
 
 static void cleanup_dummy_task(task_t *task) {
     if (task->page_dir_phys) {
-        vmm_free_page_directory(task->page_dir_phys);
+        mm::Vmm::free_page_directory(task->page_dir_phys);
         task->page_dir_phys = 0;
     }
 }

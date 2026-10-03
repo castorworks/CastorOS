@@ -63,7 +63,7 @@ static int shmfs_alloc_pages(shmfs_file_t *file, uint32_t new_size) {
     
     // 分配新的物理页
     for (uint32_t i = old_pages; i < new_pages; i++) {
-        paddr_t phys = pmm_alloc_frame();
+        paddr_t phys = mm::Pmm::alloc_frame();
         if (phys == PADDR_INVALID) {
             LOG_ERROR_MSG("shmfs: out of physical memory\n");
             return -1;
@@ -71,7 +71,7 @@ static int shmfs_alloc_pages(shmfs_file_t *file, uint32_t new_size) {
         
         shmfs_page_t *page = (shmfs_page_t *)kmalloc(sizeof(shmfs_page_t));
         if (!page) {
-            pmm_free_frame(phys);
+            mm::Pmm::free_frame(phys);
             return -1;
         }
         
@@ -97,7 +97,7 @@ static void shmfs_free_pages(shmfs_file_t *file) {
     shmfs_page_t *page = file->pages;
     while (page) {
         shmfs_page_t *next = page->next;
-        pmm_free_frame(page->phys_addr);
+        mm::Pmm::free_frame(page->phys_addr);
         kfree(page);
         page = next;
     }
@@ -275,7 +275,7 @@ static int shmfs_truncate(fs_node_t *node, uint32_t new_size) {
                 
                 while (page) {
                     shmfs_page_t *next = page->next;
-                    pmm_free_frame(page->phys_addr);
+                    mm::Pmm::free_frame(page->phys_addr);
                     kfree(page);
                     file->num_pages--;
                     page = next;

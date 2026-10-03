@@ -433,7 +433,7 @@ static uint64_t* get_l0_table(hal_addr_space_t space) {
  * @return 物理地址，失败返回 PADDR_INVALID
  */
 static paddr_t alloc_page_table(void) {
-    paddr_t frame = pmm_alloc_frame();
+    paddr_t frame = mm::Pmm::alloc_frame();
     if (frame == PADDR_INVALID) {
         return PADDR_INVALID;
     }
@@ -1012,7 +1012,7 @@ hal_addr_space_t hal_mmu_create_space(void) {
         paddr_t new_l1_phys = alloc_page_table();
         if (new_l1_phys == PADDR_INVALID) {
             LOG_ERROR_MSG("hal_mmu_create_space: Failed to allocate L1 table\n");
-            pmm_free_frame(l0_phys);
+            mm::Pmm::free_frame(l0_phys);
             return HAL_ADDR_SPACE_INVALID;
         }
         
@@ -1040,8 +1040,8 @@ hal_addr_space_t hal_mmu_create_space(void) {
         paddr_t new_l2_phys = alloc_page_table();
         if (new_l2_phys == PADDR_INVALID) {
             LOG_ERROR_MSG("hal_mmu_create_space: Failed to allocate L2 table\n");
-            pmm_free_frame(new_l1_phys);
-            pmm_free_frame(l0_phys);
+            mm::Pmm::free_frame(new_l1_phys);
+            mm::Pmm::free_frame(l0_phys);
             return HAL_ADDR_SPACE_INVALID;
         }
         
@@ -1143,9 +1143,9 @@ static void free_page_table_recursive(paddr_t table_phys, int level) {
         if (level == 1) {
             /* Level 3 (L3): entries point to physical pages */
             /* Decrement reference count for shared pages (COW) */
-            uint32_t refcount = pmm_frame_get_refcount(frame);
+            uint32_t refcount = mm::Pmm::frame_get_refcount(frame);
             if (refcount > 0) {
-                pmm_frame_ref_dec(frame);
+                mm::Pmm::frame_ref_dec(frame);
                 if (refcount == 1) {
                     LOG_DEBUG_MSG("free_page_table_recursive: Freed physical page 0x%llx\n",
                                   (unsigned long long)frame);
@@ -1153,9 +1153,9 @@ static void free_page_table_recursive(paddr_t table_phys, int level) {
             }
         } else if (desc_is_block(entry)) {
             /* Block descriptor (1GB or 2MB) - decrement refcount */
-            uint32_t refcount = pmm_frame_get_refcount(frame);
+            uint32_t refcount = mm::Pmm::frame_get_refcount(frame);
             if (refcount > 0) {
-                pmm_frame_ref_dec(frame);
+                mm::Pmm::frame_ref_dec(frame);
             }
         } else if (desc_is_table(entry)) {
             /* Table descriptor, recurse into child table */
@@ -1164,7 +1164,7 @@ static void free_page_table_recursive(paddr_t table_phys, int level) {
     }
     
     /* Free this page table itself */
-    pmm_free_frame(table_phys);
+    mm::Pmm::free_frame(table_phys);
 }
 
 /**
@@ -1212,7 +1212,7 @@ void hal_mmu_destroy_space(hal_addr_space_t space) {
     }
     
     /* Free the L0 table itself */
-    pmm_free_frame(space);
+    mm::Pmm::free_frame(space);
     
     LOG_DEBUG_MSG("hal_mmu_destroy_space: Address space destroyed\n");
 }
@@ -1271,7 +1271,7 @@ static bool clone_page_table_recursive(paddr_t src_table_phys, int level,
             }
             
             /* Increment reference count for shared physical page */
-            pmm_frame_ref_inc(frame);
+            mm::Pmm::frame_ref_inc(frame);
             
             /* Copy entry to destination */
             dst_table[i] = frame | flags;
@@ -1286,7 +1286,7 @@ static bool clone_page_table_recursive(paddr_t src_table_phys, int level,
                 src_table[i] = frame | flags;
             }
             
-            pmm_frame_ref_inc(frame);
+            mm::Pmm::frame_ref_inc(frame);
             dst_table[i] = frame | flags;
             
         } else if (desc_is_table(entry)) {
@@ -1300,11 +1300,11 @@ static bool clone_page_table_recursive(paddr_t src_table_phys, int level,
                         if (desc_is_table(dst_table[j])) {
                             free_page_table_recursive(child_phys, level - 1);
                         } else {
-                            pmm_frame_ref_dec(child_phys);
+                            mm::Pmm::frame_ref_dec(child_phys);
                         }
                     }
                 }
-                pmm_free_frame(new_table_phys);
+                mm::Pmm::free_frame(new_table_phys);
                 return false;
             }
             
@@ -1387,7 +1387,7 @@ hal_addr_space_t hal_mmu_clone_space(hal_addr_space_t src) {
                     free_page_table_recursive(l1_phys, 3);
                 }
             }
-            pmm_free_frame(new_l0_phys);
+            mm::Pmm::free_frame(new_l0_phys);
             return HAL_ADDR_SPACE_INVALID;
         }
         

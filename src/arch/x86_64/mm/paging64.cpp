@@ -453,7 +453,7 @@ static pte64_t* get_pml4(hal_addr_space_t space) {
  * @return 物理地址，失败返回 PADDR_INVALID
  */
 static paddr_t alloc_page_table(void) {
-    paddr_t frame = pmm_alloc_frame();
+    paddr_t frame = mm::Pmm::alloc_frame();
     if (frame == PADDR_INVALID) {
         return PADDR_INVALID;
     }
@@ -1234,10 +1234,10 @@ static void free_page_table_recursive(paddr_t table_phys, int level, bool is_use
         if (level == 1) {
             /* Level 1 (PT): entries point to physical pages */
             /* Decrement reference count for shared pages (COW) */
-            uint32_t refcount = pmm_frame_get_refcount(frame);
+            uint32_t refcount = mm::Pmm::frame_get_refcount(frame);
             if (refcount > 0) {
-                pmm_frame_ref_dec(frame);
-                /* If refcount becomes 0, the frame is freed by pmm_frame_ref_dec */
+                mm::Pmm::frame_ref_dec(frame);
+                /* If refcount becomes 0, the frame is freed by mm::Pmm::frame_ref_dec */
                 if (refcount == 1) {
                     /* This was the last reference, frame is now free */
                     LOG_DEBUG_MSG("free_page_table_recursive: Freed physical page 0x%llx\n",
@@ -1249,15 +1249,15 @@ static void free_page_table_recursive(paddr_t table_phys, int level, bool is_use
             free_page_table_recursive(frame, level - 1, is_user);
         } else {
             /* Huge page (2MB or 1GB) - decrement refcount */
-            uint32_t refcount = pmm_frame_get_refcount(frame);
+            uint32_t refcount = mm::Pmm::frame_get_refcount(frame);
             if (refcount > 0) {
-                pmm_frame_ref_dec(frame);
+                mm::Pmm::frame_ref_dec(frame);
             }
         }
     }
     
     /* Free this page table itself */
-    pmm_free_frame(table_phys);
+    mm::Pmm::free_frame(table_phys);
 }
 
 /**
@@ -1305,7 +1305,7 @@ void hal_mmu_destroy_space(hal_addr_space_t space) {
     }
     
     /* Free the PML4 itself */
-    pmm_free_frame(space);
+    mm::Pmm::free_frame(space);
     
     LOG_DEBUG_MSG("hal_mmu_destroy_space: Address space destroyed\n");
 }
@@ -1361,7 +1361,7 @@ static bool clone_page_table_recursive(paddr_t src_table_phys, int level,
             }
             
             /* Increment reference count for shared physical page */
-            pmm_frame_ref_inc(frame);
+            mm::Pmm::frame_ref_inc(frame);
             
             /* Copy entry to destination */
             dst_table[i] = frame | flags;
@@ -1374,7 +1374,7 @@ static bool clone_page_table_recursive(paddr_t src_table_phys, int level,
                 src_table[i] = frame | flags;
             }
             
-            pmm_frame_ref_inc(frame);
+            mm::Pmm::frame_ref_inc(frame);
             dst_table[i] = frame | flags;
             
         } else {
@@ -1389,11 +1389,11 @@ static bool clone_page_table_recursive(paddr_t src_table_phys, int level,
                         if (level > 2 || !pte64_is_huge(dst_table[j])) {
                             free_page_table_recursive(child_phys, level - 1, true);
                         } else {
-                            pmm_frame_ref_dec(child_phys);
+                            mm::Pmm::frame_ref_dec(child_phys);
                         }
                     }
                 }
-                pmm_free_frame(new_table_phys);
+                mm::Pmm::free_frame(new_table_phys);
                 return false;
             }
             
@@ -1467,7 +1467,7 @@ hal_addr_space_t hal_mmu_clone_space(hal_addr_space_t src) {
                     free_page_table_recursive(pdpt_phys, 3, true);
                 }
             }
-            pmm_free_frame(new_pml4_phys);
+            mm::Pmm::free_frame(new_pml4_phys);
             return HAL_ADDR_SPACE_INVALID;
         }
         

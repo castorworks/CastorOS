@@ -689,7 +689,7 @@ static int cmd_free(int argc, char **argv) {
     (void)argv;
     
     // 获取物理内存信息
-    pmm_info_t pmm_info = pmm_get_info();
+    mm::PmmInfo pmm_info = mm::Pmm::get_info();
     uint32_t total_mem = pmm_info.total_frames * PAGE_SIZE;
     uint32_t used_mem = pmm_info.used_frames * PAGE_SIZE;
     uint32_t free_mem = pmm_info.free_frames * PAGE_SIZE;

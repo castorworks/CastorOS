@@ -271,7 +271,7 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
                  * **Validates: Requirements 2.3**
                  */
                 if (!is_user && far >= KERNEL_VIRTUAL_BASE) {
-                    if (vmm_handle_kernel_page_fault((uintptr_t)far)) {
+                    if (mm::Vmm::handle_kernel_page_fault((uintptr_t)far)) {
                         /* Kernel page fault handled, return to faulting instruction */
                         return;
                     }
@@ -323,7 +323,7 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
                 /* Check for COW fault first (permission fault + write) */
                 if (arm64_is_cow_fault(esr)) {
                     /* 
-                     * Convert ARM64 fault info to x86-compatible error code for vmm_handle_cow_page_fault:
+                     * Convert ARM64 fault info to x86-compatible error code for mm::Vmm::handle_cow_page_fault:
                      * Bit 0 (P): 1 = page present (permission fault means page exists)
                      * Bit 1 (W): 1 = write operation
                      * Bit 2 (U): 1 = user mode
@@ -333,7 +333,7 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
                         error_code |= 0x4;  /* User mode */
                     }
                     
-                    if (vmm_handle_cow_page_fault((uintptr_t)far, error_code)) {
+                    if (mm::Vmm::handle_cow_page_fault((uintptr_t)far, error_code)) {
                         /* COW fault handled successfully, return to faulting instruction */
                         return;
                     }
@@ -341,7 +341,7 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
                 
                 /* Check for kernel page fault (might need page table sync) */
                 if (!is_user && far >= KERNEL_VIRTUAL_BASE) {
-                    if (vmm_handle_kernel_page_fault((uintptr_t)far)) {
+                    if (mm::Vmm::handle_kernel_page_fault((uintptr_t)far)) {
                         /* Kernel page fault handled, return to faulting instruction */
                         return;
                     }

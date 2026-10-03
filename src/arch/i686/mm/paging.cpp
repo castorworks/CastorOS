@@ -410,8 +410,7 @@ hal_addr_space_t hal_mmu_clone_space(hal_addr_space_t src) {
                        : src;
     
     /* Use VMM's clone function which already implements COW */
-    extern uintptr_t vmm_clone_page_directory(uintptr_t src_dir_phys);
-    uintptr_t new_dir_phys = vmm_clone_page_directory((uintptr_t)src_phys);
+    uintptr_t new_dir_phys = mm::Vmm::clone_page_directory((uintptr_t)src_phys);
     
     if (new_dir_phys == 0) {
         return HAL_ADDR_SPACE_INVALID;
@@ -506,7 +505,7 @@ void hal_mmu_parse_fault_with_error(hal_page_fault_info_t *info, uint32_t error_
  */
 hal_addr_space_t hal_mmu_create_space(void) {
     /* Allocate a new page directory */
-    paddr_t dir_phys = pmm_alloc_frame();
+    paddr_t dir_phys = mm::Pmm::alloc_frame();
     if (dir_phys == PADDR_INVALID) {
         return HAL_ADDR_SPACE_INVALID;
     }
@@ -553,8 +552,7 @@ void hal_mmu_destroy_space(hal_addr_space_t space) {
         return;
     }
     
-    extern void vmm_free_page_directory(uintptr_t dir_phys);
-    vmm_free_page_directory((uintptr_t)space);
+    mm::Vmm::free_page_directory((uintptr_t)space);
 }
 
 /**
@@ -593,7 +591,7 @@ bool hal_mmu_map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t fl
     
     if (!i686_is_present(*pde)) {
         /* Allocate new page table */
-        paddr_t table_phys = pmm_alloc_frame();
+        paddr_t table_phys = mm::Pmm::alloc_frame();
         if (table_phys == PADDR_INVALID) {
             return false;
         }

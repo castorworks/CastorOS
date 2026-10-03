@@ -27,13 +27,6 @@ typedef struct heap_block {
 #define HEAP_MAGIC 0xDEADBEEF
 
 /**
- * @brief 初始化堆内存管理器
- * @param start 堆起始地址
- * @param size 堆最大大小（字节）
- */
-void heap_init(uintptr_t start, uint32_t size);
-
-/**
  * @brief 分配内存
  * @param size 要分配的字节数
  * @return 成功返回分配的内存地址，失败返回 NULL
@@ -76,28 +69,45 @@ void* kmalloc_aligned(size_t size, size_t alignment);
  */
 void kfree_aligned(void* ptr);
 
+namespace mm {
+
 /**
  * @brief 堆统计信息结构体
  */
-typedef struct {
+struct HeapInfo {
     size_t total;       ///< 堆总大小（字节）
     size_t used;        ///< 已使用大小（字节）
     size_t free;        ///< 空闲大小（字节）
     size_t max;         ///< 堆最大大小（字节）
     uint32_t block_count;  ///< 总块数
     uint32_t free_block_count;  ///< 空闲块数
-} heap_info_t;
+};
 
 /**
- * @brief 获取堆使用统计信息
- * @param info 输出参数，用于存储堆统计信息
- * @return 成功返回 0，失败返回 -1
+ * @brief 内核堆管理（kmalloc/kfree 的后端；分配接口见上方的 kmalloc 系列函数）
  */
-int heap_get_info(heap_info_t *info);
+class Heap {
+public:
+    /**
+     * @brief 初始化堆内存管理器
+     * @param start 堆起始地址
+     * @param size 堆最大大小（字节）
+     */
+    static void init(uintptr_t start, uint32_t size);
 
-/**
- * @brief 打印堆使用信息
- */
-void heap_print_info(void);
+    /**
+     * @brief 获取堆使用统计信息
+     * @param info 输出参数，用于存储堆统计信息
+     * @return 成功返回 0，失败返回 -1
+     */
+    static int get_info(HeapInfo *info);
+
+    /**
+     * @brief 打印堆使用信息
+     */
+    static void print_info();
+};
+
+} // namespace mm
 
 #endif // _MM_HEAP_H_
