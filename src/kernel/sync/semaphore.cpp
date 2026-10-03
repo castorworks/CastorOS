@@ -25,14 +25,14 @@ task_t *current = kernel::Scheduler::get_current();
     }
 
     while (1) {
-        bool irq_state = interrupts_disable();
+        bool irq_state = kernel::Interrupts::disable();
 
         lock_.lock();
         
         // 尝试获取信号量
         if (try_consume()) {
             lock_.unlock();
-            interrupts_restore(irq_state);
+            kernel::Interrupts::restore(irq_state);
             return;
         }
 
@@ -45,26 +45,26 @@ task_t *current = kernel::Scheduler::get_current();
         // 现在可以安全地调度到其他任务了
         kernel::Scheduler::schedule();
         
-        interrupts_restore(irq_state);
+        kernel::Interrupts::restore(irq_state);
         
         // 被唤醒后重新尝试
     }
 }
 
 bool Semaphore::try_wait() {
-bool irq_state = interrupts_disable();
+bool irq_state = kernel::Interrupts::disable();
     bool acquired = false;
 
     lock_.lock();
     acquired = try_consume();
     lock_.unlock();
 
-    interrupts_restore(irq_state);
+    kernel::Interrupts::restore(irq_state);
     return acquired;
 }
 
 void Semaphore::signal() {
-bool irq_state = interrupts_disable();
+bool irq_state = kernel::Interrupts::disable();
 
     lock_.lock();
     
@@ -76,15 +76,15 @@ bool irq_state = interrupts_disable();
     lock_.unlock();
 
     kernel::Scheduler::wakeup(this);
-    interrupts_restore(irq_state);
+    kernel::Interrupts::restore(irq_state);
 }
 
 int32_t Semaphore::value() {
-bool irq_state = interrupts_disable();
+bool irq_state = kernel::Interrupts::disable();
     lock_.lock();
     int32_t value = count_;
     lock_.unlock();
-    interrupts_restore(irq_state);
+    kernel::Interrupts::restore(irq_state);
     return value;
 }
 

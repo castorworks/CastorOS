@@ -32,15 +32,15 @@ static inline uint32_t get_frame(uint32_t pde) { return pde & 0xFFFFF000; }
 #define DEFAULT_TIME_SLICE 10
 
 /**
- * sys_exit - 退出当前进程
+ * syscall::Process::exit - 退出当前进程
  */
-void sys_exit(uint32_t code) {
-    LOG_DEBUG_MSG("sys_exit: exit_code=%u\n", code);
+void syscall::Process::exit(uint32_t code) {
+    LOG_DEBUG_MSG("syscall::Process::exit: exit_code=%u\n", code);
     
     task_t *current = kernel::Scheduler::get_current();
     if (current) {
         current->exit_code = code;
-        LOG_DEBUG_MSG("sys_exit: process %u (%s) exiting with code %u\n", 
+        LOG_DEBUG_MSG("syscall::Process::exit: process %u (%s) exiting with code %u\n", 
                       current->pid, current->name, code);
     }
     
@@ -54,28 +54,28 @@ void sys_exit(uint32_t code) {
 }
 
 /**
- * sys_fork - 创建子进程（简化包装器）
+ * syscall::Process::fork - 创建子进程（简化包装器）
  * 
  * 注意：这个函数实际上不会被直接调用
  * 系统调用包装器会调用 sys_fork_with_frame
  */
-uint32_t sys_fork(uintptr_t *frame) {
+uint32_t syscall::Process::fork(uintptr_t *frame) {
     // 禁用中断，保证 fork 过程的原子性
-    bool prev_state = interrupts_disable();
+    bool prev_state = kernel::Interrupts::disable();
     
     task_t *parent = kernel::Scheduler::get_current();
     if (!parent) {
-        LOG_ERROR_MSG("sys_fork: No current task\n");
-        interrupts_restore(prev_state);
+        LOG_ERROR_MSG("syscall::Process::fork: No current task\n");
+        kernel::Interrupts::restore(prev_state);
         return (uint32_t)-1;
     }
     
-    LOG_INFO_MSG("sys_fork: Parent PID %u\n", parent->pid);
+    LOG_INFO_MSG("syscall::Process::fork: Parent PID %u\n", parent->pid);
     
     // 只有用户进程才能 fork
     if (!parent->is_user_process) {
-        LOG_ERROR_MSG("sys_fork: Cannot fork kernel thread\n");
-        interrupts_restore(prev_state);
+        LOG_ERROR_MSG("syscall::Process::fork: Cannot fork kernel thread\n");
+        kernel::Interrupts::restore(prev_state);
         return (uint32_t)-1;
     }
     
@@ -86,9 +86,9 @@ uint32_t sys_fork(uintptr_t *frame) {
     mm::PmmInfo mem_info = mm::Pmm::get_info();
     uint32_t min_required_frames = 64;  // 页目录 + 页表 + 内核栈 + 其他
     if (mem_info.free_frames < min_required_frames) {
-        LOG_ERROR_MSG("sys_fork: Insufficient memory (free=%llu, required>=%u)\n",
+        LOG_ERROR_MSG("syscall::Process::fork: Insufficient memory (free=%llu, required>=%u)\n",
                      (unsigned long long)mem_info.free_frames, min_required_frames);
-        interrupts_restore(prev_state);
+        kernel::Interrupts::restore(prev_state);
         return (uint32_t)-12;  // ENOMEM
     }
     
@@ -106,7 +106,7 @@ uint32_t sys_fork(uintptr_t *frame) {
     uintptr_t user_pc     = frame[32];  // ELR_EL1 (user PC)
     uintptr_t user_pstate = frame[33];  // SPSR_EL1 (user PSTATE)
     
-    LOG_DEBUG_MSG("sys_fork: Captured ARM64 user context:\n");
+    LOG_DEBUG_MSG("syscall::Process::fork: Captured ARM64 user context:\n");
     LOG_DEBUG_MSG("  PC=0x%lx SP=0x%lx PSTATE=0x%lx\n", 
                   (unsigned long)user_pc, (unsigned long)user_sp, (unsigned long)user_pstate);
     LOG_DEBUG_MSG("  X0=0x%lx X1=0x%lx X8=0x%lx X30=0x%lx\n",
@@ -135,7 +135,7 @@ uint32_t sys_fork(uintptr_t *frame) {
     
     (void)user_eax;  // 系统调用号，不需要复制
     
-    LOG_DEBUG_MSG("sys_fork: Captured user context:\n");
+    LOG_DEBUG_MSG("syscall::Process::fork: Captured user context:\n");
     LOG_DEBUG_MSG("  EIP=0x%lx ESP=0x%lx EBP=0x%lx\n", (unsigned long)user_eip, (unsigned long)user_esp, (unsigned long)user_ebp);
     LOG_DEBUG_MSG("  CS=0x%lx SS=0x%lx DS=0x%lx EFLAGS=0x%lx\n", 
                   (unsigned long)user_cs, (unsigned long)user_ss, (unsigned long)user_ds, (unsigned long)user_eflags);
@@ -157,7 +157,7 @@ uint32_t sys_fork(uintptr_t *frame) {
     
     (void)user_eax;  // 系统调用号，不需要复制
     
-    LOG_DEBUG_MSG("sys_fork: Captured user context:\n");
+    LOG_DEBUG_MSG("syscall::Process::fork: Captured user context:\n");
     LOG_DEBUG_MSG("  EIP=0x%lx ESP=0x%lx EBP=0x%lx\n", (unsigned long)user_eip, (unsigned long)user_esp, (unsigned long)user_ebp);
     LOG_DEBUG_MSG("  CS=0x%lx SS=0x%lx DS=0x%lx EFLAGS=0x%lx\n", 
                   (unsigned long)user_cs, (unsigned long)user_ss, (unsigned long)user_ds, (unsigned long)user_eflags);
@@ -171,7 +171,7 @@ uint32_t sys_fork(uintptr_t *frame) {
         if (is_present(parent_dir->entries[i])) {
             uint32_t phys = get_frame(parent_dir->entries[i]);
             if (phys == 0 || phys >= 0x80000000) {
-                LOG_ERROR_MSG("sys_fork: Parent PDE[%u] corrupted: 0x%x (phys=0x%x)\n", 
+                LOG_ERROR_MSG("syscall::Process::fork: Parent PDE[%u] corrupted: 0x%x (phys=0x%x)\n", 
                              i, parent_dir->entries[i], phys);
                 LOG_ERROR_MSG("  Parent: PID=%u, name=%s, page_dir=%p, page_dir_phys=0x%x\n",
                              parent->pid, parent->name, parent_dir, parent->page_dir_phys);
@@ -179,7 +179,7 @@ uint32_t sys_fork(uintptr_t *frame) {
                 LOG_ERROR_MSG("  PDE[0]=0x%x, PDE[1]=0x%x, PDE[2]=0x%x, PDE[3]=0x%x\n",
                              parent_dir->entries[0], parent_dir->entries[1],
                              parent_dir->entries[2], parent_dir->entries[3]);
-                interrupts_restore(prev_state);
+                kernel::Interrupts::restore(prev_state);
                 return (uint32_t)-1;
             }
         }
@@ -189,8 +189,8 @@ uint32_t sys_fork(uintptr_t *frame) {
     // 分配子进程 PCB
     task_t *child = kernel::Scheduler::alloc();
     if (!child) {
-        LOG_ERROR_MSG("sys_fork: Failed to allocate PCB\n");
-        interrupts_restore(prev_state);
+        LOG_ERROR_MSG("syscall::Process::fork: Failed to allocate PCB\n");
+        kernel::Interrupts::restore(prev_state);
         return (uint32_t)-12;
     }
     
@@ -203,9 +203,9 @@ uint32_t sys_fork(uintptr_t *frame) {
     // 克隆页目录（深拷贝，完全复制物理页）
     child->page_dir_phys = mm::Vmm::clone_page_directory(parent->page_dir_phys);
     if (!child->page_dir_phys) {
-        LOG_ERROR_MSG("sys_fork: Failed to clone page directory\n");
+        LOG_ERROR_MSG("syscall::Process::fork: Failed to clone page directory\n");
         kernel::Scheduler::free(child);
-        interrupts_restore(prev_state);
+        kernel::Interrupts::restore(prev_state);
         return (uint32_t)-12;
     }
     child->page_dir = (page_directory_t*)PHYS_TO_VIRT(child->page_dir_phys);
@@ -213,10 +213,10 @@ uint32_t sys_fork(uintptr_t *frame) {
     // 分配内核栈
     child->kernel_stack_base = (uintptr_t)kmalloc(KERNEL_STACK_SIZE);
     if (!child->kernel_stack_base) {
-        LOG_ERROR_MSG("sys_fork: Failed to allocate kernel stack\n");
+        LOG_ERROR_MSG("syscall::Process::fork: Failed to allocate kernel stack\n");
         mm::Vmm::free_page_directory(child->page_dir_phys);
         kernel::Scheduler::free(child);
-        interrupts_restore(prev_state);
+        kernel::Interrupts::restore(prev_state);
         return (uint32_t)-12;
     }
     child->kernel_stack = child->kernel_stack_base + KERNEL_STACK_SIZE;
@@ -251,7 +251,7 @@ uint32_t sys_fork(uintptr_t *frame) {
     child->context.pstate = ARM64_PSTATE_EL0t;  // 用户模式，中断使能
     child->context.ttbr0 = child->page_dir_phys;
     
-    LOG_DEBUG_MSG("sys_fork: Child ARM64 context:\n");
+    LOG_DEBUG_MSG("syscall::Process::fork: Child ARM64 context:\n");
     LOG_DEBUG_MSG("  PC=0x%llx SP=0x%llx PSTATE=0x%llx TTBR0=0x%llx\n",
                   (unsigned long long)child->context.pc, 
                   (unsigned long long)child->context.sp,
@@ -302,11 +302,11 @@ uint32_t sys_fork(uintptr_t *frame) {
     if (parent->fd_table) {
         child->fd_table = (kernel::FdTable*)kmalloc(sizeof(kernel::FdTable));
         if (!child->fd_table) {
-            LOG_ERROR_MSG("sys_fork: Failed to allocate fd_table\n");
+            LOG_ERROR_MSG("syscall::Process::fork: Failed to allocate fd_table\n");
             kfree((void*)child->kernel_stack_base);
             mm::Vmm::free_page_directory(child->page_dir_phys);
             kernel::Scheduler::free(child);
-            interrupts_restore(prev_state);
+            kernel::Interrupts::restore(prev_state);
             return (uint32_t)-12;
         }
         
@@ -314,12 +314,12 @@ uint32_t sys_fork(uintptr_t *frame) {
         kernel::FdTable::init(child->fd_table);
         
         if (kernel::FdTable::copy(parent->fd_table, child->fd_table) != 0) {
-            LOG_ERROR_MSG("sys_fork: failed to copy fd_table\n");
+            LOG_ERROR_MSG("syscall::Process::fork: failed to copy fd_table\n");
             kfree(child->fd_table);
             kfree((void*)child->kernel_stack_base);
             mm::Vmm::free_page_directory(child->page_dir_phys);
             kernel::Scheduler::free(child);
-            interrupts_restore(prev_state);
+            kernel::Interrupts::restore(prev_state);
             return (uint32_t)-1;
         }
     }
@@ -334,40 +334,40 @@ uint32_t sys_fork(uintptr_t *frame) {
     child->state = TASK_READY;
     kernel::Scheduler::ready_queue_add(child);
     
-    LOG_INFO_MSG("sys_fork: Created child PID %u\n", child->pid);
+    LOG_INFO_MSG("syscall::Process::fork: Created child PID %u\n", child->pid);
     
     // 恢复中断状态
-    interrupts_restore(prev_state);
+    kernel::Interrupts::restore(prev_state);
     
     // 父进程返回子进程 PID
     return child->pid;
 }
 
 /**
- * sys_execve - 执行新程序（替换当前进程）
+ * syscall::Process::execve - 执行新程序（替换当前进程）
  * 
  * @param frame 系统调用栈帧指针（架构相关大小）
  * @param path  程序路径
  * @return 成功则不返回，失败返回 -1
  */
-uint32_t sys_execve(uintptr_t *frame, const char *path) {
+uint32_t syscall::Process::execve(uintptr_t *frame, const char *path) {
     if (!path) {
-        LOG_ERROR_MSG("sys_execve: path is NULL\n");
+        LOG_ERROR_MSG("syscall::Process::execve: path is NULL\n");
         return (uint32_t)-1;
     }
     
     task_t *current = kernel::Scheduler::get_current();
     if (!current) {
-        LOG_ERROR_MSG("sys_execve: no current task\n");
+        LOG_ERROR_MSG("syscall::Process::execve: no current task\n");
         return (uint32_t)-1;
     }
     
-    LOG_DEBUG_MSG("sys_execve: loading '%s' for PID %u\n", path, current->pid);
+    LOG_DEBUG_MSG("syscall::Process::execve: loading '%s' for PID %u\n", path, current->pid);
     
     // 打开 ELF 文件
     fs_node_t *file = fs::Vfs::path_to_node(path);
     if (!file) {
-        LOG_ERROR_MSG("sys_execve: file '%s' not found\n", path);
+        LOG_ERROR_MSG("syscall::Process::execve: file '%s' not found\n", path);
         return (uint32_t)-1;
     }
     
@@ -375,7 +375,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     uint32_t file_size = file->size;
     void *elf_data = kmalloc(file_size);
     if (!elf_data) {
-        LOG_ERROR_MSG("sys_execve: failed to allocate memory for ELF file\n");
+        LOG_ERROR_MSG("syscall::Process::execve: failed to allocate memory for ELF file\n");
         fs::Vfs::release_node(file);  // 释放节点
         return (uint32_t)-1;
     }
@@ -385,7 +385,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     fs::Vfs::close(file);
     
     if (bytes_read != file_size) {
-        LOG_ERROR_MSG("sys_execve: failed to read ELF file (read %u, expected %u)\n", 
+        LOG_ERROR_MSG("syscall::Process::execve: failed to read ELF file (read %u, expected %u)\n", 
                       bytes_read, file_size);
         kfree(elf_data);
         fs::Vfs::release_node(file);  // 释放节点
@@ -394,7 +394,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     
     // 验证 ELF 文件头
     if (!kernel::Elf::validate_header(elf_data)) {
-        LOG_ERROR_MSG("sys_execve: invalid ELF file '%s'\n", path);
+        LOG_ERROR_MSG("syscall::Process::execve: invalid ELF file '%s'\n", path);
         kfree(elf_data);
         fs::Vfs::release_node(file);  // 释放节点
         return (uint32_t)-1;
@@ -403,7 +403,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     // 获取入口点
     uintptr_t entry_point = kernel::Elf::get_entry(elf_data);
     if (entry_point == 0) {
-        LOG_ERROR_MSG("sys_execve: failed to get entry point from '%s'\n", path);
+        LOG_ERROR_MSG("syscall::Process::execve: failed to get entry point from '%s'\n", path);
         kfree(elf_data);
         fs::Vfs::release_node(file);  // 释放节点
         return (uint32_t)-1;
@@ -421,7 +421,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     
     uintptr_t new_dir_phys = mm::Vmm::create_page_directory();
     if (!new_dir_phys) {
-        LOG_ERROR_MSG("sys_execve: failed to create new page directory\n");
+        LOG_ERROR_MSG("syscall::Process::execve: failed to create new page directory\n");
         kfree(elf_data);
         return (uint32_t)-1;
     }
@@ -440,7 +440,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     // 加载 ELF 到新页目录
     uintptr_t program_end;
     if (!kernel::Elf::load(elf_data, file_size, new_dir, &entry_point, &program_end)) {
-        LOG_ERROR_MSG("sys_execve: failed to load ELF '%s'\n", path);
+        LOG_ERROR_MSG("syscall::Process::execve: failed to load ELF '%s'\n", path);
         mm::Vmm::free_page_directory(new_dir_phys);
         kfree(elf_data);
         return (uint32_t)-1;
@@ -458,7 +458,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     uint32_t stack_pages_needed = (USER_STACK_SIZE / PAGE_SIZE) + 4;  // +4 用于页表
     mm::PmmInfo execve_mem_info = mm::Pmm::get_info();
     if (execve_mem_info.free_frames < stack_pages_needed) {
-        LOG_ERROR_MSG("sys_execve: Insufficient memory for user stack (free=%llu, required=%u)\n",
+        LOG_ERROR_MSG("syscall::Process::execve: Insufficient memory for user stack (free=%llu, required=%u)\n",
                      (unsigned long long)execve_mem_info.free_frames, stack_pages_needed);
         // 回滚
         current->page_dir = old_dir;
@@ -469,7 +469,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     
     // 在新页目录中设置用户栈
     if (!kernel::Scheduler::setup_user_stack(current)) {
-        LOG_ERROR_MSG("sys_execve: failed to setup user stack\n");
+        LOG_ERROR_MSG("syscall::Process::execve: failed to setup user stack\n");
         // 回滚
         current->page_dir = old_dir;
         current->page_dir_phys = old_dir_phys;
@@ -484,7 +484,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     // 堆最大值：留出 8MB 给栈
     current->heap_max = current->user_stack_base - (8 * 1024 * 1024);
     
-    LOG_DEBUG_MSG("sys_execve: heap: start=0x%llx, end=0x%llx, max=0x%llx\n", 
+    LOG_DEBUG_MSG("syscall::Process::execve: heap: start=0x%llx, end=0x%llx, max=0x%llx\n", 
                  (unsigned long long)current->heap_start, 
                  (unsigned long long)current->heap_end, 
                  (unsigned long long)current->heap_max);
@@ -516,19 +516,19 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
                 // 分配 fd 0 (stdin)
                 int32_t fd = kernel::FdTable::alloc(current->fd_table, console, O_RDONLY);
                 if (fd != 0) {
-                    LOG_WARN_MSG("sys_execve: failed to assign STDIN (fd=%d)\n", fd);
+                    LOG_WARN_MSG("syscall::Process::execve: failed to assign STDIN (fd=%d)\n", fd);
                 }
                 
                 // 分配 fd 1 (stdout) - kernel::FdTable::alloc 会增加引用计数
                 fd = kernel::FdTable::alloc(current->fd_table, console, O_WRONLY);
                 if (fd != 1) {
-                    LOG_WARN_MSG("sys_execve: failed to assign STDOUT (fd=%d)\n", fd);
+                    LOG_WARN_MSG("syscall::Process::execve: failed to assign STDOUT (fd=%d)\n", fd);
                 }
                 
                 // 分配 fd 2 (stderr) - kernel::FdTable::alloc 会增加引用计数
                 fd = kernel::FdTable::alloc(current->fd_table, console, O_WRONLY);
                 if (fd != 2) {
-                    LOG_WARN_MSG("sys_execve: failed to assign STDERR (fd=%d)\n", fd);
+                    LOG_WARN_MSG("syscall::Process::execve: failed to assign STDERR (fd=%d)\n", fd);
                 }
                 
                 // 关键修复：释放 fs::Vfs::path_to_node 的初始引用
@@ -538,7 +538,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
                 
                 // 当所有 fd 关闭时，引用计数会降到 0，节点才会被释放
             } else {
-                LOG_WARN_MSG("sys_execve: /dev/console not available, stdio not initialized\n");
+                LOG_WARN_MSG("syscall::Process::execve: /dev/console not available, stdio not initialized\n");
             }
         }
     }
@@ -557,7 +557,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     strncpy(current->name, filename, sizeof(current->name) - 1);
     current->name[sizeof(current->name) - 1] = '\0';
     
-    LOG_DEBUG_MSG("sys_execve: loaded '%s' at entry 0x%llx for PID %u\n", 
+    LOG_DEBUG_MSG("syscall::Process::execve: loaded '%s' at entry 0x%llx for PID %u\n", 
                   path, (unsigned long long)entry_point, current->pid);
     
     // 设置用户态上下文
@@ -637,7 +637,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
         frame[32] = entry_point;           // ELR_EL1 = 新程序入口点
         frame[33] = ARM64_PSTATE_EL0t;     // SPSR_EL1 = 用户模式，中断使能
         
-        LOG_DEBUG_MSG("sys_execve: modified ARM64 syscall frame:\n");
+        LOG_DEBUG_MSG("syscall::Process::execve: modified ARM64 syscall frame:\n");
         LOG_DEBUG_MSG("  ELR_EL1 (PC) = 0x%llx\n", (unsigned long long)entry_point);
         LOG_DEBUG_MSG("  SP_EL0 = 0x%llx\n", (unsigned long long)current->user_stack);
         LOG_DEBUG_MSG("  SPSR_EL1 = 0x%llx\n", (unsigned long long)ARM64_PSTATE_EL0t);
@@ -651,7 +651,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
         frame[4]  = 0x202;                 // R11 = RFLAGS（中断使能）
         frame[15] = current->user_stack;   // user RSP = 用户栈顶
         
-        LOG_DEBUG_MSG("sys_execve: modified syscall frame to return to 0x%lx\n", (unsigned long)entry_point);
+        LOG_DEBUG_MSG("syscall::Process::execve: modified syscall frame to return to 0x%lx\n", (unsigned long)entry_point);
 #else
         // i686: 修改 IRET 栈帧
         // 修改用户段寄存器（syscall_handler 会在返回前恢复这些）
@@ -664,11 +664,11 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
         frame[11] = current->user_stack;  // ESP = 用户栈顶
         frame[12] = 0x23;              // SS = 用户栈段 (Ring 3)
         
-        LOG_DEBUG_MSG("sys_execve: modified syscall frame to return to 0x%lx\n", (unsigned long)entry_point);
+        LOG_DEBUG_MSG("syscall::Process::execve: modified syscall frame to return to 0x%lx\n", (unsigned long)entry_point);
 #endif
     } else {
         // 如果没有 frame（不应该发生），使用原来的方法
-        LOG_WARN_MSG("sys_execve: no frame provided, using fallback method\n");
+        LOG_WARN_MSG("syscall::Process::execve: no frame provided, using fallback method\n");
         task_enter_usermode(entry_point, current->user_stack);
     }
     
@@ -677,45 +677,45 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
 }
 
 /**
- * sys_getpid - 获取当前进程 PID
+ * syscall::Process::getpid - 获取当前进程 PID
  */
-uint32_t sys_getpid(void) {
+uint32_t syscall::Process::getpid() {
     task_t *current = kernel::Scheduler::get_current();
     if (!current) {
-        LOG_ERROR_MSG("sys_getpid: no current task\n");
+        LOG_ERROR_MSG("syscall::Process::getpid: no current task\n");
         return (uint32_t)-1;
     }
     
-    LOG_DEBUG_MSG("sys_getpid: returning PID %u\n", current->pid);
+    LOG_DEBUG_MSG("syscall::Process::getpid: returning PID %u\n", current->pid);
     return current->pid;
 }
 
 /**
- * sys_getppid - 获取父进程 PID
+ * syscall::Process::getppid - 获取父进程 PID
  * @return 父进程 PID，如果没有父进程返回 0
  */
-uint32_t sys_getppid(void) {
+uint32_t syscall::Process::getppid() {
     task_t *current = kernel::Scheduler::get_current();
     if (!current) {
-        LOG_ERROR_MSG("sys_getppid: no current task\n");
+        LOG_ERROR_MSG("syscall::Process::getppid: no current task\n");
         return 0;
     }
     
     if (current->parent && current->parent->state != TASK_UNUSED) {
-        LOG_DEBUG_MSG("sys_getppid: returning PPID %u\n", current->parent->pid);
+        LOG_DEBUG_MSG("syscall::Process::getppid: returning PPID %u\n", current->parent->pid);
         return current->parent->pid;
     }
     
     // 没有父进程（如 init 进程或孤儿进程）
-    LOG_DEBUG_MSG("sys_getppid: no parent, returning 0\n");
+    LOG_DEBUG_MSG("syscall::Process::getppid: no parent, returning 0\n");
     return 0;
 }
 
 /**
- * sys_yield - 主动让出 CPU
+ * syscall::Process::yield - 主动让出 CPU
  */
-uint32_t sys_yield(void) {
-    LOG_DEBUG_MSG("sys_yield: yielding CPU\n");
+uint32_t syscall::Process::yield() {
+    LOG_DEBUG_MSG("syscall::Process::yield: yielding CPU\n");
     
     // 调用任务管理器的让出函数
     kernel::Scheduler::yield();
@@ -724,16 +724,16 @@ uint32_t sys_yield(void) {
 }
 
 /**
- * sys_nanosleep - 睡眠指定时间
+ * syscall::Process::nanosleep - 睡眠指定时间
  */
-uint32_t sys_nanosleep(const struct timespec *req, struct timespec *rem) {
+uint32_t syscall::Process::nanosleep(const struct timespec *req, struct timespec *rem) {
     if (!req) {
-        LOG_ERROR_MSG("sys_nanosleep: req is NULL\n");
+        LOG_ERROR_MSG("syscall::Process::nanosleep: req is NULL\n");
         return (uint32_t)-1;
     }
 
     if (req->tv_nsec >= 1000000000u) {
-        LOG_ERROR_MSG("sys_nanosleep: invalid tv_nsec=%u\n", req->tv_nsec);
+        LOG_ERROR_MSG("syscall::Process::nanosleep: invalid tv_nsec=%u\n", req->tv_nsec);
         return (uint32_t)-1;
     }
 
@@ -761,44 +761,44 @@ uint32_t sys_nanosleep(const struct timespec *req, struct timespec *rem) {
 }
 
 /**
- * sys_kill - 向进程发送信号
+ * syscall::Process::kill - 向进程发送信号
  * 
  * 简化实现：目前所有信号都直接终止目标进程
  * 未来可以扩展为支持信号处理和不同的信号行为
  */
-uint32_t sys_kill(uint32_t pid, uint32_t signal) {
+uint32_t syscall::Process::kill(uint32_t pid, uint32_t signal) {
     task_t *current = kernel::Scheduler::get_current();
     if (!current) {
-        LOG_ERROR_MSG("sys_kill: no current task\n");
+        LOG_ERROR_MSG("syscall::Process::kill: no current task\n");
         return (uint32_t)-1;
     }
     
-    LOG_DEBUG_MSG("sys_kill: PID %u sending signal %u to PID %u\n", 
+    LOG_DEBUG_MSG("syscall::Process::kill: PID %u sending signal %u to PID %u\n", 
                   current->pid, signal, pid);
     
     // 不能杀死 idle 进程（PID 0）
     if (pid == 0) {
-        LOG_WARN_MSG("sys_kill: cannot kill idle process (PID 0)\n");
+        LOG_WARN_MSG("syscall::Process::kill: cannot kill idle process (PID 0)\n");
         return (uint32_t)-1;
     }
     
     // 查找目标进程
     task_t *target = kernel::Scheduler::get_by_pid(pid);
     if (!target) {
-        LOG_WARN_MSG("sys_kill: process %u not found\n", pid);
+        LOG_WARN_MSG("syscall::Process::kill: process %u not found\n", pid);
         return (uint32_t)-1;
     }
     
     // 检查进程状态
     if (target->state == TASK_UNUSED || target->state == TASK_TERMINATED) {
-        LOG_WARN_MSG("sys_kill: process %u is already terminated\n", pid);
+        LOG_WARN_MSG("syscall::Process::kill: process %u is already terminated\n", pid);
         return (uint32_t)-1;
     }
     
     // 如果进程已经是僵尸状态，说明它已经退出了，不需要再 kill
     // 只是返回成功（kill 一个已经死亡的进程被认为是成功的）
     if (target->state == TASK_ZOMBIE) {
-        LOG_DEBUG_MSG("sys_kill: process %u is already zombie\n", pid);
+        LOG_DEBUG_MSG("syscall::Process::kill: process %u is already zombie\n", pid);
         return 0;
     }
     
@@ -811,19 +811,19 @@ uint32_t sys_kill(uint32_t pid, uint32_t signal) {
     
     // 安全地访问进程名称（避免在日志中访问可能无效的内存）
     const char *proc_name = (target->name[0] != '\0') ? target->name : "unknown";
-    LOG_DEBUG_MSG("sys_kill: terminating process %u (%s) with signal %u\n", 
+    LOG_DEBUG_MSG("syscall::Process::kill: terminating process %u (%s) with signal %u\n", 
                   pid, proc_name, signal);
     
     // 设置进程为终止状态
     // 注意：不能直接调用 task_exit，因为那是给当前进程用的
     // 我们需要直接修改目标进程的状态
     // 但是要小心：如果目标进程正在运行，我们需要确保安全地修改它
-    bool prev_state = interrupts_disable();
+    bool prev_state = kernel::Interrupts::disable();
     
     // 再次检查进程状态（在禁用中断后，状态可能已经改变）
     if (target->state == TASK_UNUSED || target->state == TASK_TERMINATED) {
-        interrupts_restore(prev_state);
-        LOG_DEBUG_MSG("sys_kill: process %u already terminated\n", pid);
+        kernel::Interrupts::restore(prev_state);
+        LOG_DEBUG_MSG("syscall::Process::kill: process %u already terminated\n", pid);
         return 0;  // 已经终止，返回成功
     }
     
@@ -844,13 +844,13 @@ uint32_t sys_kill(uint32_t pid, uint32_t signal) {
         if (task->parent == target) {
             if (task->state == TASK_ZOMBIE) {
                 // 僵尸子进程：直接清理（没有父进程来回收了）
-                LOG_DEBUG_MSG("sys_kill: cleaning up zombie child %u of process %u\n", 
+                LOG_DEBUG_MSG("syscall::Process::kill: cleaning up zombie child %u of process %u\n", 
                              task->pid, target->pid);
                 // 直接释放资源，因为僵尸进程不在就绪队列中
                 kernel::Scheduler::free(task);
             } else {
                 // 运行中的子进程：变成孤儿进程
-                LOG_DEBUG_MSG("sys_kill: orphaning child %u of process %u\n", 
+                LOG_DEBUG_MSG("syscall::Process::kill: orphaning child %u of process %u\n", 
                              task->pid, target->pid);
                 task->parent = NULL;
             }
@@ -860,7 +860,7 @@ uint32_t sys_kill(uint32_t pid, uint32_t signal) {
     // 如果目标进程在就绪队列中，需要移除它
     if (target->state == TASK_READY) {
         kernel::Scheduler::ready_queue_remove(target);
-        LOG_DEBUG_MSG("sys_kill: removed process %u from ready queue\n", pid);
+        LOG_DEBUG_MSG("syscall::Process::kill: removed process %u from ready queue\n", pid);
     }
     
     // 根据是否有父进程，决定进程状态
@@ -869,39 +869,39 @@ uint32_t sys_kill(uint32_t pid, uint32_t signal) {
     
     // 调试日志：显示父进程信息
     if (target->parent) {
-        LOG_DEBUG_MSG("sys_kill: process %u has parent PID %u (state=%d)\n", 
+        LOG_DEBUG_MSG("syscall::Process::kill: process %u has parent PID %u (state=%d)\n", 
                      target->pid, target->parent->pid, target->parent->state);
     } else {
-        LOG_DEBUG_MSG("sys_kill: process %u has NO parent\n", target->pid);
+        LOG_DEBUG_MSG("syscall::Process::kill: process %u has NO parent\n", target->pid);
     }
     
     if (target->parent && target->parent->state != TASK_UNUSED) {
         target->state = TASK_ZOMBIE;
-        LOG_DEBUG_MSG("sys_kill: process %u becomes zombie, waiting for parent %u\n", 
+        LOG_DEBUG_MSG("syscall::Process::kill: process %u becomes zombie, waiting for parent %u\n", 
                      target->pid, target->parent->pid);
         
-        interrupts_restore(prev_state);
-        LOG_DEBUG_MSG("sys_kill: process %u marked as zombie\n", pid);
+        kernel::Interrupts::restore(prev_state);
+        LOG_DEBUG_MSG("syscall::Process::kill: process %u marked as zombie\n", pid);
     } else {
         // 没有父进程的进程，直接清理
         // 注意：如果目标进程是当前进程（自己 kill 自己），不能立即清理
         // 但这种情况很少见，应该使用 exit() 而不是 kill(自己)
         if (target->parent) {
-            LOG_WARN_MSG("sys_kill: process %u parent is UNUSED, treating as orphan\n", pid);
+            LOG_WARN_MSG("syscall::Process::kill: process %u parent is UNUSED, treating as orphan\n", pid);
         }
         
         if (target == current) {
             // 进程 kill 自己，标记为 TERMINATED，让调度器清理
             target->state = TASK_TERMINATED;
-            interrupts_restore(prev_state);
-            LOG_DEBUG_MSG("sys_kill: process %u killed itself\n", pid);
+            kernel::Interrupts::restore(prev_state);
+            LOG_DEBUG_MSG("syscall::Process::kill: process %u killed itself\n", pid);
         } else {
             // kill 其他没有父进程的进程，可以安全地立即清理
-            LOG_DEBUG_MSG("sys_kill: process %u has no valid parent, freeing immediately\n", 
+            LOG_DEBUG_MSG("syscall::Process::kill: process %u has no valid parent, freeing immediately\n", 
                          target->pid);
             kernel::Scheduler::free(target);
-            interrupts_restore(prev_state);
-            LOG_DEBUG_MSG("sys_kill: process %u freed\n", pid);
+            kernel::Interrupts::restore(prev_state);
+            LOG_DEBUG_MSG("syscall::Process::kill: process %u freed\n", pid);
         }
     }
     
@@ -909,28 +909,28 @@ uint32_t sys_kill(uint32_t pid, uint32_t signal) {
 }
 
 /**
- * sys_waitpid - 等待子进程退出
+ * syscall::Process::waitpid - 等待子进程退出
  * 
  * @param pid     要等待的进程 PID（-1 表示任意子进程，>0 表示特定进程）
  * @param wstatus 退出状态存储地址（可为 NULL）
  * @param options 等待选项（WNOHANG = 非阻塞）
  * @return 成功返回子进程 PID，没有子进程返回 (uint32_t)-1，WNOHANG 时无退出子进程返回 0
  */
-uint32_t sys_waitpid(int32_t pid, uint32_t *wstatus, uint32_t options) {
+uint32_t syscall::Process::waitpid(int32_t pid, uint32_t *wstatus, uint32_t options) {
     task_t *current = kernel::Scheduler::get_current();
     if (!current) {
-        LOG_ERROR_MSG("sys_waitpid: no current task\n");
+        LOG_ERROR_MSG("syscall::Process::waitpid: no current task\n");
         return (uint32_t)-1;
     }
     
     bool non_blocking = (options & WNOHANG) != 0;
     
-    LOG_DEBUG_MSG("sys_waitpid: PID %u waiting for child PID %d (options=%u)\n", 
+    LOG_DEBUG_MSG("syscall::Process::waitpid: PID %u waiting for child PID %d (options=%u)\n", 
                   current->pid, pid, options);
     
     // 循环等待，直到找到退出的子进程
     while (true) {
-        bool prev_state = interrupts_disable();
+        bool prev_state = kernel::Interrupts::disable();
         
         // 查找符合条件的子进程
         task_t *found_child = NULL;
@@ -984,31 +984,31 @@ uint32_t sys_waitpid(int32_t pid, uint32_t *wstatus, uint32_t options) {
                 *wstatus = status;
             }
             
-            LOG_DEBUG_MSG("sys_waitpid: found zombie child PID %u, status=%u\n", 
+            LOG_DEBUG_MSG("syscall::Process::waitpid: found zombie child PID %u, status=%u\n", 
                          child_pid, status);
             
             // 回收子进程资源
             kernel::Scheduler::free(found_child);
             
-            interrupts_restore(prev_state);
+            kernel::Interrupts::restore(prev_state);
             return child_pid;
         }
         
-        interrupts_restore(prev_state);
+        kernel::Interrupts::restore(prev_state);
         
         // 如果没有符合条件的子进程（指定的进程不存在或不是子进程），返回错误
         if (!has_waited_child) {
             if (pid == -1) {
-                LOG_DEBUG_MSG("sys_waitpid: no child processes\n");
+                LOG_DEBUG_MSG("syscall::Process::waitpid: no child processes\n");
             } else {
-                LOG_DEBUG_MSG("sys_waitpid: child PID %d not found or not a child\n", pid);
+                LOG_DEBUG_MSG("syscall::Process::waitpid: child PID %d not found or not a child\n", pid);
             }
             return (uint32_t)-1;
         }
         
         // 如果是非阻塞模式且没有退出的子进程，返回 0
         if (non_blocking) {
-            LOG_DEBUG_MSG("sys_waitpid: WNOHANG and no exited children\n");
+            LOG_DEBUG_MSG("syscall::Process::waitpid: WNOHANG and no exited children\n");
             return 0;
         }
         

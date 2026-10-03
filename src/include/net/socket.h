@@ -114,148 +114,157 @@ typedef uint32_t socklen_t;
 #define INADDR_BROADCAST    0xFFFFFFFF  ///< 广播地址
 #define INADDR_LOOPBACK     0x7F000001  ///< 回环地址 (127.0.0.1)
 
-/**
- * @brief 初始化 socket 子系统
- */
-void socket_init(void);
-
-/* ============================================================================
- * 内核 Socket API（供系统调用使用）
- * ============================================================================ */
+namespace net {
 
 /**
- * @brief 创建 socket
- * @param domain 地址族（AF_INET）
- * @param type socket 类型（SOCK_STREAM/SOCK_DGRAM）
- * @param protocol 协议（通常为 0）
- * @return socket 描述符，-1 失败
+ * @brief BSD Socket 层
  */
-int sys_socket(int domain, int type, int protocol);
+class Socket {
+public:
+    /**
+     * @brief 初始化 socket 子系统
+     */
+    static void init();
 
-/**
- * @brief 绑定地址
- * @param sockfd socket 描述符
- * @param addr 地址
- * @param addrlen 地址长度
- * @return 0 成功，-1 失败
- */
-int sys_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+    /* ============================================================================
+     * 内核 Socket API（供系统调用使用）
+     * ============================================================================ */
 
-/**
- * @brief 监听连接
- * @param sockfd socket 描述符
- * @param backlog 等待队列长度
- * @return 0 成功，-1 失败
- */
-int sys_listen(int sockfd, int backlog);
+    /**
+     * @brief 创建 socket
+     * @param domain 地址族（AF_INET）
+     * @param type socket 类型（SOCK_STREAM/SOCK_DGRAM）
+     * @param protocol 协议（通常为 0）
+     * @return socket 描述符，-1 失败
+     */
+    static int socket(int domain, int type, int protocol);
 
-/**
- * @brief 接受连接
- * @param sockfd socket 描述符
- * @param addr 客户端地址（输出）
- * @param addrlen 地址长度（输入/输出）
- * @return 新 socket 描述符，-1 失败
- */
-int sys_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+    /**
+     * @brief 绑定地址
+     * @param sockfd socket 描述符
+     * @param addr 地址
+     * @param addrlen 地址长度
+     * @return 0 成功，-1 失败
+     */
+    static int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
 
-/**
- * @brief 发起连接
- * @param sockfd socket 描述符
- * @param addr 服务端地址
- * @param addrlen 地址长度
- * @return 0 成功，-1 失败
- */
-int sys_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+    /**
+     * @brief 监听连接
+     * @param sockfd socket 描述符
+     * @param backlog 等待队列长度
+     * @return 0 成功，-1 失败
+     */
+    static int listen(int sockfd, int backlog);
 
-/**
- * @brief 发送数据
- * @param sockfd socket 描述符
- * @param buf 数据缓冲区
- * @param len 数据长度
- * @param flags 标志
- * @return 发送的字节数，-1 失败
- */
-ssize_t sys_send(int sockfd, const void *buf, size_t len, int flags);
+    /**
+     * @brief 接受连接
+     * @param sockfd socket 描述符
+     * @param addr 客户端地址（输出）
+     * @param addrlen 地址长度（输入/输出）
+     * @return 新 socket 描述符，-1 失败
+     */
+    static int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
 
-/**
- * @brief 发送数据到指定地址
- */
-ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
-                   const struct sockaddr *dest_addr, socklen_t addrlen);
+    /**
+     * @brief 发起连接
+     * @param sockfd socket 描述符
+     * @param addr 服务端地址
+     * @param addrlen 地址长度
+     * @return 0 成功，-1 失败
+     */
+    static int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
 
-/**
- * @brief 接收数据
- * @param sockfd socket 描述符
- * @param buf 数据缓冲区
- * @param len 缓冲区大小
- * @param flags 标志
- * @return 接收的字节数，0 连接关闭，-1 失败
- */
-ssize_t sys_recv(int sockfd, void *buf, size_t len, int flags);
+    /**
+     * @brief 发送数据
+     * @param sockfd socket 描述符
+     * @param buf 数据缓冲区
+     * @param len 数据长度
+     * @param flags 标志
+     * @return 发送的字节数，-1 失败
+     */
+    static ssize_t send(int sockfd, const void *buf, size_t len, int flags);
 
-/**
- * @brief 接收数据并获取源地址
- */
-ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
-                     struct sockaddr *src_addr, socklen_t *addrlen);
+    /**
+     * @brief 发送数据到指定地址
+     */
+    static ssize_t sendto(int sockfd, const void *buf, size_t len, int flags,
+                       const struct sockaddr *dest_addr, socklen_t addrlen);
 
-/**
- * @brief 关闭 socket
- * @param sockfd socket 描述符
- * @return 0 成功，-1 失败
- */
-int sys_closesocket(int sockfd);
+    /**
+     * @brief 接收数据
+     * @param sockfd socket 描述符
+     * @param buf 数据缓冲区
+     * @param len 缓冲区大小
+     * @param flags 标志
+     * @return 接收的字节数，0 连接关闭，-1 失败
+     */
+    static ssize_t recv(int sockfd, void *buf, size_t len, int flags);
 
-/**
- * @brief 部分关闭 socket
- * @param sockfd socket 描述符
- * @param how 关闭方式（SHUT_RD/SHUT_WR/SHUT_RDWR）
- * @return 0 成功，-1 失败
- */
-int sys_shutdown(int sockfd, int how);
+    /**
+     * @brief 接收数据并获取源地址
+     */
+    static ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags,
+                         struct sockaddr *src_addr, socklen_t *addrlen);
 
-/**
- * @brief 设置 socket 选项
- */
-int sys_setsockopt(int sockfd, int level, int optname, 
-                   const void *optval, socklen_t optlen);
+    /**
+     * @brief 关闭 socket
+     * @param sockfd socket 描述符
+     * @return 0 成功，-1 失败
+     */
+    static int closesocket(int sockfd);
 
-/**
- * @brief 获取 socket 选项
- */
-int sys_getsockopt(int sockfd, int level, int optname, 
-                   void *optval, socklen_t *optlen);
+    /**
+     * @brief 部分关闭 socket
+     * @param sockfd socket 描述符
+     * @param how 关闭方式（SHUT_RD/SHUT_WR/SHUT_RDWR）
+     * @return 0 成功，-1 失败
+     */
+    static int shutdown(int sockfd, int how);
 
-/**
- * @brief 获取本地地址
- */
-int sys_getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+    /**
+     * @brief 设置 socket 选项
+     */
+    static int setsockopt(int sockfd, int level, int optname, 
+                       const void *optval, socklen_t optlen);
 
-/**
- * @brief 获取对端地址
- */
-int sys_getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+    /**
+     * @brief 获取 socket 选项
+     */
+    static int getsockopt(int sockfd, int level, int optname, 
+                       void *optval, socklen_t *optlen);
 
-/**
- * @brief 控制 socket 属性
- * @param sockfd socket 描述符
- * @param cmd 命令（F_GETFL/F_SETFL）
- * @param arg 参数
- * @return 成功返回值依赖于命令，-1 失败
- */
-int sys_fcntl(int sockfd, int cmd, int arg);
+    /**
+     * @brief 获取本地地址
+     */
+    static int getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
 
-/**
- * @brief 多路复用 I/O
- * @param nfds 最大文件描述符 + 1
- * @param readfds 读集合（输入/输出）
- * @param writefds 写集合（输入/输出）
- * @param exceptfds 异常集合（输入/输出）
- * @param timeout 超时时间（NULL 表示无限等待）
- * @return 就绪的描述符数量，0 超时，-1 错误
- */
-int sys_select(int nfds, fd_set *readfds, fd_set *writefds,
-               fd_set *exceptfds, struct timeval *timeout);
+    /**
+     * @brief 获取对端地址
+     */
+    static int getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+
+    /**
+     * @brief 控制 socket 属性
+     * @param sockfd socket 描述符
+     * @param cmd 命令（F_GETFL/F_SETFL）
+     * @param arg 参数
+     * @return 成功返回值依赖于命令，-1 失败
+     */
+    static int fcntl(int sockfd, int cmd, int arg);
+
+    /**
+     * @brief 多路复用 I/O
+     * @param nfds 最大文件描述符 + 1
+     * @param readfds 读集合（输入/输出）
+     * @param writefds 写集合（输入/输出）
+     * @param exceptfds 异常集合（输入/输出）
+     * @param timeout 超时时间（NULL 表示无限等待）
+     * @return 就绪的描述符数量，0 超时，-1 错误
+     */
+    static int select(int nfds, fd_set *readfds, fd_set *writefds,
+                   fd_set *exceptfds, struct timeval *timeout);
+};
+
+} // namespace net
 
 #endif // _NET_SOCKET_H_
-

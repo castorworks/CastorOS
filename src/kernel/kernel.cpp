@@ -666,11 +666,11 @@ void kernel_main(multiboot_info_t* mbi) {
         LOG_ERROR_MSG("Failed to load user shell, trying to initialize kernel shell...\n");
 
         // 初始化 Shell
-        kernel_shell_init();
+        kernel::Shell::init();
         LOG_INFO_MSG("  [6.2] Kernel shell initialized\n");
         
         // 将 Shell 作为内核线程运行，这样它会出现在进程列表中
-        kernel::Scheduler::create_kernel_thread(kernel_shell_run, "kernel_shell");
+        kernel::Scheduler::create_kernel_thread(kernel::Shell::run, "kernel_shell");
     }
     
     // 主线程进入空闲循环（让调度器接管）

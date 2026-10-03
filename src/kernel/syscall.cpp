@@ -60,7 +60,7 @@ static syscall_arg_t sys_exit_wrapper(syscall_arg_t *frame, syscall_arg_t exit_c
                                       syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame;
     (void)p2; (void)p3; (void)p4; (void)p5;
-    sys_exit((uint32_t)exit_code);
+    syscall::Process::exit((uint32_t)exit_code);
     return 0;  // 永远不会返回
 }
 
@@ -71,7 +71,7 @@ static syscall_arg_t sys_fork_wrapper(syscall_arg_t *frame, syscall_arg_t p1, sy
                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
     
-    return sys_fork(frame);
+    return syscall::Process::fork(frame);
 }
 
 /**
@@ -99,8 +99,8 @@ static syscall_arg_t sys_execve_wrapper(syscall_arg_t *frame, syscall_arg_t path
     }
     path[sizeof(path) - 1] = '\0';
     
-    // 传递 frame 指针给 sys_execve
-    return sys_execve(frame, path);
+    // 传递 frame 指针给 syscall::Process::execve
+    return syscall::Process::execve(frame, path);
 }
 
 /**
@@ -114,131 +114,134 @@ static syscall_arg_t sys_execve_wrapper(syscall_arg_t *frame, syscall_arg_t path
 static syscall_arg_t sys_open_wrapper(syscall_arg_t *frame, syscall_arg_t path, syscall_arg_t flags, 
                                       syscall_arg_t mode, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
-    return sys_open((const char *)(uintptr_t)path, (int32_t)flags, (uint32_t)mode);
+    return syscall::Fs::open((const char *)(uintptr_t)path, (int32_t)flags, (uint32_t)mode);
 }
 
 static syscall_arg_t sys_close_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t p2, 
                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
     // Sign-extend the 32-bit result to 64-bit for proper error handling
-    return (syscall_arg_t)(int32_t)sys_close((int32_t)fd);
+    return (syscall_arg_t)(int32_t)syscall::Fs::close((int32_t)fd);
 }
 
 static syscall_arg_t sys_read_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t buffer, 
                                       syscall_arg_t size, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
-    return sys_read((int32_t)fd, (void *)(uintptr_t)buffer, (size_t)size);
+    return syscall::Fs::read((int32_t)fd, (void *)(uintptr_t)buffer, (size_t)size);
 }
 
 static syscall_arg_t sys_write_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t buffer, 
                                        syscall_arg_t size, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
-    return sys_write((int32_t)fd, (const void *)(uintptr_t)buffer, (size_t)size);
+    return syscall::Fs::write((int32_t)fd, (const void *)(uintptr_t)buffer, (size_t)size);
 }
 
 static syscall_arg_t sys_lseek_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t offset, 
                                        syscall_arg_t whence, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
-    return sys_lseek((int32_t)fd, (int32_t)offset, (int32_t)whence);
+    return syscall::Fs::lseek((int32_t)fd, (int32_t)offset, (int32_t)whence);
 }
 
 static syscall_arg_t sys_mkdir_wrapper(syscall_arg_t *frame, syscall_arg_t path, syscall_arg_t mode, 
                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    return sys_mkdir((const char *)(uintptr_t)path, (uint32_t)mode);
+    return syscall::Fs::mkdir((const char *)(uintptr_t)path, (uint32_t)mode);
 }
 
 static syscall_arg_t sys_unlink_wrapper(syscall_arg_t *frame, syscall_arg_t path, syscall_arg_t p2, 
                                         syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
-    return sys_unlink((const char *)(uintptr_t)path);
+    return syscall::Fs::unlink((const char *)(uintptr_t)path);
 }
 
 static syscall_arg_t sys_chdir_wrapper(syscall_arg_t *frame, syscall_arg_t path, syscall_arg_t p2, 
                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
-    return sys_chdir((const char *)(uintptr_t)path);
+    return syscall::Fs::chdir((const char *)(uintptr_t)path);
 }
 
 static syscall_arg_t sys_getcwd_wrapper(syscall_arg_t *frame, syscall_arg_t buffer, syscall_arg_t size, 
                                         syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    return sys_getcwd((char *)(uintptr_t)buffer, (size_t)size);
+    return syscall::Fs::getcwd((char *)(uintptr_t)buffer, (size_t)size);
 }
 
 static syscall_arg_t sys_getdents_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t index, 
                                           syscall_arg_t dirent, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
-    return sys_getdents((int32_t)fd, (uint32_t)index, (void *)(uintptr_t)dirent);
+    return syscall::Fs::getdents((int32_t)fd, (uint32_t)index, (void *)(uintptr_t)dirent);
 }
 
 static syscall_arg_t sys_stat_wrapper(syscall_arg_t *frame, syscall_arg_t path, syscall_arg_t buf, 
                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    return sys_stat((const char *)(uintptr_t)path, (struct stat *)(uintptr_t)buf);
+    return syscall::Fs::stat((const char *)(uintptr_t)path, (struct stat *)(uintptr_t)buf);
 }
 
 static syscall_arg_t sys_fstat_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t buf, 
                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    return sys_fstat((int32_t)fd, (struct stat *)(uintptr_t)buf);
+    return syscall::Fs::fstat((int32_t)fd, (struct stat *)(uintptr_t)buf);
 }
 
 static syscall_arg_t sys_ftruncate_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t length, 
                                            syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    return sys_ftruncate((int32_t)fd, (uint32_t)length);
+    return syscall::Fs::ftruncate((int32_t)fd, (uint32_t)length);
 }
 
 static syscall_arg_t sys_pipe_wrapper(syscall_arg_t *frame, syscall_arg_t fds, syscall_arg_t p2, 
                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
-    return sys_pipe((int32_t *)(uintptr_t)fds);
+    return syscall::Fs::pipe((int32_t *)(uintptr_t)fds);
 }
 
 static syscall_arg_t sys_dup_wrapper(syscall_arg_t *frame, syscall_arg_t oldfd, syscall_arg_t p2, 
                                      syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
-    return sys_dup((int32_t)oldfd);
+    return syscall::Fs::dup((int32_t)oldfd);
 }
 
 static syscall_arg_t sys_dup2_wrapper(syscall_arg_t *frame, syscall_arg_t oldfd, syscall_arg_t newfd, 
                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    return sys_dup2((int32_t)oldfd, (int32_t)newfd);
+    return syscall::Fs::dup2((int32_t)oldfd, (int32_t)newfd);
 }
 
 #if defined(ARCH_ARM64)
-/* ARM64: stub for sys_ioctl (network ioctl not supported yet) */
+/* ARM64: stub for syscall::Net::ioctl (network ioctl not supported yet) */
 static int32_t sys_ioctl_stub(int32_t fd, uint32_t request, void *argp) {
     (void)fd; (void)request; (void)argp;
     return -38;  /* -ENOSYS */
 }
-#define sys_ioctl sys_ioctl_stub
 #endif
 
 static syscall_arg_t sys_ioctl_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t request, 
                                        syscall_arg_t argp, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
-    return sys_ioctl((int32_t)fd, (uint32_t)request, (void *)(uintptr_t)argp);
+#if defined(ARCH_ARM64)
+    return sys_ioctl_stub((int32_t)fd, (uint32_t)request, (void *)(uintptr_t)argp);
+#else
+    return syscall::Net::ioctl((int32_t)fd, (uint32_t)request, (void *)(uintptr_t)argp);
+#endif
 }
 
 static syscall_arg_t sys_getpid_wrapper(syscall_arg_t *frame, syscall_arg_t p1, syscall_arg_t p2, 
                                         syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
-    return sys_getpid();
+    return syscall::Process::getpid();
 }
 
 static syscall_arg_t sys_getppid_wrapper(syscall_arg_t *frame, syscall_arg_t p1, syscall_arg_t p2, 
                                          syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
-    return sys_getppid();
+    return syscall::Process::getppid();
 }
 
 static syscall_arg_t sys_yield_wrapper(syscall_arg_t *frame, syscall_arg_t p1, syscall_arg_t p2, 
                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
-    return sys_yield();
+    return syscall::Process::yield();
 }
 
 static syscall_arg_t sys_nanosleep_wrapper(syscall_arg_t *frame, syscall_arg_t req_ptr, 
@@ -247,45 +250,45 @@ static syscall_arg_t sys_nanosleep_wrapper(syscall_arg_t *frame, syscall_arg_t r
     (void)frame; (void)p3; (void)p4; (void)p5;
     const struct timespec *req = (const struct timespec *)(uintptr_t)req_ptr;
     struct timespec *rem = (struct timespec *)(uintptr_t)rem_ptr;
-    return sys_nanosleep(req, rem);
+    return syscall::Process::nanosleep(req, rem);
 }
 
 static syscall_arg_t sys_time_wrapper(syscall_arg_t *frame, syscall_arg_t p1, syscall_arg_t p2, 
                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
-    return sys_time();
+    return syscall::Time::time();
 }
 
 static syscall_arg_t sys_reboot_wrapper(syscall_arg_t *frame, syscall_arg_t p1, syscall_arg_t p2, 
                                         syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
-    sys_reboot();
+    syscall::System::reboot();
     return 0;
 }
 
 static syscall_arg_t sys_poweroff_wrapper(syscall_arg_t *frame, syscall_arg_t p1, syscall_arg_t p2, 
                                           syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
-    sys_poweroff();
+    syscall::System::poweroff();
     return 0;
 }
 
 static syscall_arg_t sys_kill_wrapper(syscall_arg_t *frame, syscall_arg_t pid, syscall_arg_t signal,
                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    return sys_kill((uint32_t)pid, (uint32_t)signal);
+    return syscall::Process::kill((uint32_t)pid, (uint32_t)signal);
 }
 
 static syscall_arg_t sys_waitpid_wrapper(syscall_arg_t *frame, syscall_arg_t pid, syscall_arg_t wstatus_ptr,
                                          syscall_arg_t options, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
-    return sys_waitpid((int32_t)pid, (uint32_t *)(uintptr_t)wstatus_ptr, (uint32_t)options);
+    return syscall::Process::waitpid((int32_t)pid, (uint32_t *)(uintptr_t)wstatus_ptr, (uint32_t)options);
 }
 
 static syscall_arg_t sys_brk_wrapper(syscall_arg_t *frame, syscall_arg_t addr, syscall_arg_t p2,
                                      syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
-    return sys_brk((uintptr_t)addr);
+    return syscall::Mm::brk((uintptr_t)addr);
 }
 
 static syscall_arg_t sys_mmap_wrapper(syscall_arg_t *frame, syscall_arg_t addr, syscall_arg_t length,
@@ -293,26 +296,26 @@ static syscall_arg_t sys_mmap_wrapper(syscall_arg_t *frame, syscall_arg_t addr, 
     // frame[7] 是用户态传递的 ebp/rbp，我们用它作为第 6 个参数 (offset)
     // 用户态需要在调用 int 0x80/syscall 前将 offset 放入 ebp/rbp
     syscall_arg_t offset = frame[7];
-    return sys_mmap((uintptr_t)addr, (size_t)length, (uint32_t)prot, (uint32_t)flags, 
+    return syscall::Mm::mmap((uintptr_t)addr, (size_t)length, (uint32_t)prot, (uint32_t)flags, 
                     (int32_t)fd, (uint32_t)offset);
 }
 
 static syscall_arg_t sys_munmap_wrapper(syscall_arg_t *frame, syscall_arg_t addr, syscall_arg_t length,
                                         syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    return sys_munmap((uintptr_t)addr, (size_t)length);
+    return syscall::Mm::munmap((uintptr_t)addr, (size_t)length);
 }
 
 static syscall_arg_t sys_uname_wrapper(syscall_arg_t *frame, syscall_arg_t buf, syscall_arg_t p2,
                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
-    return sys_uname((struct utsname *)(uintptr_t)buf);
+    return syscall::System::uname((struct utsname *)(uintptr_t)buf);
 }
 
 static syscall_arg_t sys_rename_wrapper(syscall_arg_t *frame, syscall_arg_t oldpath, syscall_arg_t newpath,
                                         syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    return sys_rename((const char *)(uintptr_t)oldpath, (const char *)(uintptr_t)newpath);
+    return syscall::Fs::rename((const char *)(uintptr_t)oldpath, (const char *)(uintptr_t)newpath);
 }
 
 /* ============================================================================
@@ -325,14 +328,14 @@ static syscall_arg_t sys_socket_wrapper(syscall_arg_t *frame, syscall_arg_t doma
                                         syscall_arg_t type, syscall_arg_t protocol, 
                                         syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
-    return (syscall_arg_t)sys_socket((int)domain, (int)type, (int)protocol);
+    return (syscall_arg_t)net::Socket::socket((int)domain, (int)type, (int)protocol);
 }
 
 static syscall_arg_t sys_bind_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
                                       syscall_arg_t addr, syscall_arg_t addrlen, 
                                       syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
-    return (syscall_arg_t)sys_bind((int)sockfd, (const struct sockaddr *)(uintptr_t)addr, 
+    return (syscall_arg_t)net::Socket::bind((int)sockfd, (const struct sockaddr *)(uintptr_t)addr, 
                                    (socklen_t)addrlen);
 }
 
@@ -340,14 +343,14 @@ static syscall_arg_t sys_listen_wrapper(syscall_arg_t *frame, syscall_arg_t sock
                                         syscall_arg_t backlog, syscall_arg_t p3, 
                                         syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    return (syscall_arg_t)sys_listen((int)sockfd, (int)backlog);
+    return (syscall_arg_t)net::Socket::listen((int)sockfd, (int)backlog);
 }
 
 static syscall_arg_t sys_accept_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
                                         syscall_arg_t addr, syscall_arg_t addrlen, 
                                         syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
-    return (syscall_arg_t)sys_accept((int)sockfd, (struct sockaddr *)(uintptr_t)addr, 
+    return (syscall_arg_t)net::Socket::accept((int)sockfd, (struct sockaddr *)(uintptr_t)addr, 
                                      (socklen_t *)(uintptr_t)addrlen);
 }
 
@@ -355,7 +358,7 @@ static syscall_arg_t sys_connect_wrapper(syscall_arg_t *frame, syscall_arg_t soc
                                          syscall_arg_t addr, syscall_arg_t addrlen, 
                                          syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
-    return (syscall_arg_t)sys_connect((int)sockfd, (const struct sockaddr *)(uintptr_t)addr, 
+    return (syscall_arg_t)net::Socket::connect((int)sockfd, (const struct sockaddr *)(uintptr_t)addr, 
                                       (socklen_t)addrlen);
 }
 
@@ -363,7 +366,7 @@ static syscall_arg_t sys_send_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd
                                       syscall_arg_t buf, syscall_arg_t len, 
                                       syscall_arg_t flags, syscall_arg_t p5) {
     (void)frame; (void)p5;
-    return (syscall_arg_t)sys_send((int)sockfd, (const void *)(uintptr_t)buf, 
+    return (syscall_arg_t)net::Socket::send((int)sockfd, (const void *)(uintptr_t)buf, 
                                    (size_t)len, (int)flags);
 }
 
@@ -372,7 +375,7 @@ static syscall_arg_t sys_sendto_wrapper(syscall_arg_t *frame, syscall_arg_t sock
                                         syscall_arg_t flags, syscall_arg_t dest_addr) {
     // 第 6 个参数 addrlen 通过 frame[7] 传递
     syscall_arg_t addrlen = frame[7];
-    return (syscall_arg_t)sys_sendto((int)sockfd, (const void *)(uintptr_t)buf, 
+    return (syscall_arg_t)net::Socket::sendto((int)sockfd, (const void *)(uintptr_t)buf, 
                                      (size_t)len, (int)flags,
                                      (const struct sockaddr *)(uintptr_t)dest_addr, 
                                      (socklen_t)addrlen);
@@ -382,7 +385,7 @@ static syscall_arg_t sys_recv_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd
                                       syscall_arg_t buf, syscall_arg_t len, 
                                       syscall_arg_t flags, syscall_arg_t p5) {
     (void)frame; (void)p5;
-    return (syscall_arg_t)sys_recv((int)sockfd, (void *)(uintptr_t)buf, 
+    return (syscall_arg_t)net::Socket::recv((int)sockfd, (void *)(uintptr_t)buf, 
                                    (size_t)len, (int)flags);
 }
 
@@ -391,7 +394,7 @@ static syscall_arg_t sys_recvfrom_wrapper(syscall_arg_t *frame, syscall_arg_t so
                                           syscall_arg_t flags, syscall_arg_t src_addr) {
     // 第 6 个参数 addrlen 指针通过 frame[7] 传递
     socklen_t *addrlen = (socklen_t *)(uintptr_t)frame[7];
-    return (syscall_arg_t)sys_recvfrom((int)sockfd, (void *)(uintptr_t)buf, 
+    return (syscall_arg_t)net::Socket::recvfrom((int)sockfd, (void *)(uintptr_t)buf, 
                                        (size_t)len, (int)flags,
                                        (struct sockaddr *)(uintptr_t)src_addr, addrlen);
 }
@@ -400,14 +403,14 @@ static syscall_arg_t sys_shutdown_wrapper(syscall_arg_t *frame, syscall_arg_t so
                                           syscall_arg_t how, syscall_arg_t p3, 
                                           syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    return (syscall_arg_t)sys_shutdown((int)sockfd, (int)how);
+    return (syscall_arg_t)net::Socket::shutdown((int)sockfd, (int)how);
 }
 
 static syscall_arg_t sys_setsockopt_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
                                             syscall_arg_t level, syscall_arg_t optname, 
                                             syscall_arg_t optval, syscall_arg_t optlen) {
     (void)frame;
-    return (syscall_arg_t)sys_setsockopt((int)sockfd, (int)level, (int)optname,
+    return (syscall_arg_t)net::Socket::setsockopt((int)sockfd, (int)level, (int)optname,
                                          (const void *)(uintptr_t)optval, (socklen_t)optlen);
 }
 
@@ -415,7 +418,7 @@ static syscall_arg_t sys_getsockopt_wrapper(syscall_arg_t *frame, syscall_arg_t 
                                             syscall_arg_t level, syscall_arg_t optname, 
                                             syscall_arg_t optval, syscall_arg_t optlen) {
     (void)frame;
-    return (syscall_arg_t)sys_getsockopt((int)sockfd, (int)level, (int)optname,
+    return (syscall_arg_t)net::Socket::getsockopt((int)sockfd, (int)level, (int)optname,
                                          (void *)(uintptr_t)optval, 
                                          (socklen_t *)(uintptr_t)optlen);
 }
@@ -424,7 +427,7 @@ static syscall_arg_t sys_getsockname_wrapper(syscall_arg_t *frame, syscall_arg_t
                                              syscall_arg_t addr, syscall_arg_t addrlen, 
                                              syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
-    return (syscall_arg_t)sys_getsockname((int)sockfd, (struct sockaddr *)(uintptr_t)addr, 
+    return (syscall_arg_t)net::Socket::getsockname((int)sockfd, (struct sockaddr *)(uintptr_t)addr, 
                                           (socklen_t *)(uintptr_t)addrlen);
 }
 
@@ -432,7 +435,7 @@ static syscall_arg_t sys_getpeername_wrapper(syscall_arg_t *frame, syscall_arg_t
                                              syscall_arg_t addr, syscall_arg_t addrlen, 
                                              syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
-    return (syscall_arg_t)sys_getpeername((int)sockfd, (struct sockaddr *)(uintptr_t)addr, 
+    return (syscall_arg_t)net::Socket::getpeername((int)sockfd, (struct sockaddr *)(uintptr_t)addr, 
                                           (socklen_t *)(uintptr_t)addrlen);
 }
 
@@ -440,7 +443,7 @@ static syscall_arg_t sys_select_wrapper(syscall_arg_t *frame, syscall_arg_t nfds
                                         syscall_arg_t readfds, syscall_arg_t writefds, 
                                         syscall_arg_t exceptfds, syscall_arg_t timeout) {
     (void)frame;
-    return (syscall_arg_t)sys_select((int)nfds, (fd_set *)(uintptr_t)readfds, 
+    return (syscall_arg_t)net::Socket::select((int)nfds, (fd_set *)(uintptr_t)readfds, 
                                      (fd_set *)(uintptr_t)writefds,
                                      (fd_set *)(uintptr_t)exceptfds, 
                                      (struct timeval *)(uintptr_t)timeout);
@@ -450,7 +453,7 @@ static syscall_arg_t sys_fcntl_wrapper(syscall_arg_t *frame, syscall_arg_t sockf
                                        syscall_arg_t cmd, syscall_arg_t arg, 
                                        syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
-    return (syscall_arg_t)sys_fcntl((int)sockfd, (int)cmd, (int)arg);
+    return (syscall_arg_t)net::Socket::fcntl((int)sockfd, (int)cmd, (int)arg);
 }
 #endif /* !ARCH_ARM64 */
 

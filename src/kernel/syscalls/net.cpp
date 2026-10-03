@@ -286,7 +286,7 @@ static int32_t ping_ioctl(struct ping_req *req) {
 /**
  * @brief ioctl 系统调用实现
  */
-int32_t sys_ioctl(int32_t fd, uint32_t request, void *argp) {
+int32_t syscall::Net::ioctl(int32_t fd, uint32_t request, void *argp) {
     (void)fd;  // 暂时不使用 fd，直接根据 request 类型处理
     
     // 网络接口 ioctl

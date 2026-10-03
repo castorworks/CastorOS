@@ -44,7 +44,7 @@ void net::Stack::init() {
     net::Tcp::init();
     
     // 8. 初始化 Socket 子系统
-    socket_init();
+    net::Socket::init();
     
     // 9. 注册 TCP 定时器（每 100ms 调用一次）
     tcp_timer_id = drivers::Timer::register_callback(net_tcp_timer_callback, NULL, 100, true);

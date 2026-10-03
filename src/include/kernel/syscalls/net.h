@@ -167,17 +167,27 @@ typedef struct {
     uint8_t padding;
 } arp_entry_info_t;
 
-/* ============================================================================
- * 系统调用函数声明
- * ============================================================================ */
+namespace syscall {
 
 /**
- * @brief 通用 ioctl 系统调用
- * @param fd 文件描述符（socket fd 或特殊设备）
- * @param request ioctl 请求码
- * @param argp 请求相关的参数
- * @return 0 成功，-1 失败
+ * @brief 网络相关系统调用
  */
-int32_t sys_ioctl(int32_t fd, uint32_t request, void *argp);
+class Net {
+public:
+    /* ============================================================================
+     * 系统调用函数声明
+     * ============================================================================ */
+
+    /**
+     * @brief 通用 ioctl 系统调用
+     * @param fd 文件描述符（socket fd 或特殊设备）
+     * @param request ioctl 请求码
+     * @param argp 请求相关的参数
+     * @return 0 成功，-1 失败
+     */
+    static int32_t ioctl(int32_t fd, uint32_t request, void *argp);
+};
+
+} // namespace syscall
 
 #endif // _KERNEL_SYSCALLS_NET_H_

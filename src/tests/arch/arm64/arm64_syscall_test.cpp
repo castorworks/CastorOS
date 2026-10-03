@@ -127,7 +127,7 @@ TEST_CASE(test_arm64_syscall_write_dispatch) {
      * 1. Negative value (properly sign-extended error)
      * 2. 0xFFFFFFFF (32-bit error not sign-extended on 64-bit)
      * 
-     * Note: During early boot without a current task, sys_write returns
+     * Note: During early boot without a current task, syscall::Fs::write returns
      * (uint32_t)-1 which is 0xFFFFFFFF. This is a valid error indication.
      */
     intptr_t signed_result = (intptr_t)result;

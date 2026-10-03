@@ -71,20 +71,20 @@ static void fill_stat_from_node(fs_node_t *node, struct stat *buf) {
 }
 
 /**
- * sys_stat - 获取文件状态信息
+ * syscall::Fs::stat - 获取文件状态信息
  */
-uint32_t sys_stat(const char *path, struct stat *buf) {
+uint32_t syscall::Fs::stat(const char *path, struct stat *buf) {
     if (!path || !buf) {
-        LOG_ERROR_MSG("sys_stat: invalid arguments (path=%p, buf=%p)\n", path, buf);
+        LOG_ERROR_MSG("syscall::Fs::stat: invalid arguments (path=%p, buf=%p)\n", path, buf);
         return (uint32_t)-1;
     }
     
-    LOG_DEBUG_MSG("sys_stat: path='%s'\n", path);
+    LOG_DEBUG_MSG("syscall::Fs::stat: path='%s'\n", path);
     
     // 查找文件节点
     fs_node_t *node = fs::Vfs::path_to_node(path);
     if (!node) {
-        LOG_ERROR_MSG("sys_stat: file '%s' not found\n", path);
+        LOG_ERROR_MSG("syscall::Fs::stat: file '%s' not found\n", path);
         return (uint32_t)-1;
     }
     
@@ -98,26 +98,26 @@ uint32_t sys_stat(const char *path, struct stat *buf) {
 }
 
 /**
- * sys_fstat - 获取文件描述符状态信息
+ * syscall::Fs::fstat - 获取文件描述符状态信息
  */
-uint32_t sys_fstat(int32_t fd, struct stat *buf) {
+uint32_t syscall::Fs::fstat(int32_t fd, struct stat *buf) {
     if (!buf) {
-        LOG_ERROR_MSG("sys_fstat: buf is NULL\n");
+        LOG_ERROR_MSG("syscall::Fs::fstat: buf is NULL\n");
         return (uint32_t)-1;
     }
     
     task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
-        LOG_ERROR_MSG("sys_fstat: no current task or fd_table\n");
+        LOG_ERROR_MSG("syscall::Fs::fstat: no current task or fd_table\n");
         return (uint32_t)-1;
     }
     
-    LOG_DEBUG_MSG("sys_fstat: fd=%d\n", fd);
+    LOG_DEBUG_MSG("syscall::Fs::fstat: fd=%d\n", fd);
     
     // 获取文件描述符表项
     kernel::FdEntry *entry = kernel::FdTable::get(current->fd_table, fd);
     if (!entry || !entry->node) {
-        LOG_ERROR_MSG("sys_fstat: invalid fd %d\n", fd);
+        LOG_ERROR_MSG("syscall::Fs::fstat: invalid fd %d\n", fd);
         return (uint32_t)-1;
     }
     
@@ -128,18 +128,18 @@ uint32_t sys_fstat(int32_t fd, struct stat *buf) {
 }
 
 /**
- * sys_open - 打开或创建文件
+ * syscall::Fs::open - 打开或创建文件
  */
-uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
+uint32_t syscall::Fs::open(const char *path, int32_t flags, uint32_t mode) {
     (void)mode;
     if (!path) {
-        LOG_ERROR_MSG("sys_open: path is NULL\n");
+        LOG_ERROR_MSG("syscall::Fs::open: path is NULL\n");
         return (uint32_t)-1;
     }
     
     task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
-        LOG_ERROR_MSG("sys_open: no current task or fd_table\n");
+        LOG_ERROR_MSG("syscall::Fs::open: no current task or fd_table\n");
         return (uint32_t)-1;
     }
     
@@ -149,20 +149,20 @@ uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
     // 如果文件不存在且指定了 O_CREAT，创建文件
     if (!node && (flags & O_CREAT)) {
         if (fs::Vfs::create(path) != 0) {
-            LOG_ERROR_MSG("sys_open: failed to create file '%s'\n", path);
+            LOG_ERROR_MSG("syscall::Fs::open: failed to create file '%s'\n", path);
             return (uint32_t)-1;
         }
         node = fs::Vfs::path_to_node(path);
     }
     
     if (!node) {
-        LOG_ERROR_MSG("sys_open: file '%s' not found\n", path);
+        LOG_ERROR_MSG("syscall::Fs::open: file '%s' not found\n", path);
         return (uint32_t)-1;
     }
     
     // 检查 O_EXCL 标志
     if ((flags & O_CREAT) && (flags & O_EXCL)) {
-        LOG_ERROR_MSG("sys_open: file '%s' exists but O_EXCL specified\n", path);
+        LOG_ERROR_MSG("syscall::Fs::open: file '%s' exists but O_EXCL specified\n", path);
         fs::Vfs::release_node(node);  // 释放节点，修复内存泄漏
         return (uint32_t)-1;
     }
@@ -171,7 +171,7 @@ uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
     if ((flags & O_TRUNC) && (flags & (O_WRONLY | O_RDWR))) {
         if (node->type == FS_FILE) {
             if (fs::Vfs::truncate(node, 0) != 0) {
-                LOG_WARN_MSG("sys_open: failed to truncate file '%s'\n", path);
+                LOG_WARN_MSG("syscall::Fs::open: failed to truncate file '%s'\n", path);
                 // 继续，不视为致命错误
             }
         }
@@ -183,7 +183,7 @@ uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
     // 分配文件描述符
     int32_t fd = kernel::FdTable::alloc(current->fd_table, node, flags);
     if (fd < 0) {
-        LOG_ERROR_MSG("sys_open: failed to allocate fd for '%s'\n", path);
+        LOG_ERROR_MSG("syscall::Fs::open: failed to allocate fd for '%s'\n", path);
         fs::Vfs::close(node);
         fs::Vfs::release_node(node);  // 释放节点
         return (uint32_t)-1;
@@ -205,21 +205,21 @@ uint32_t sys_open(const char *path, int32_t flags, uint32_t mode) {
 }
 
 /**
- * sys_close - 关闭文件描述符
+ * syscall::Fs::close - 关闭文件描述符
  * 
  * 注意：fs::Vfs::close() 和 fs::Vfs::release_node() 由 kernel::FdTable::free() 统一处理
  * 避免双重 close 问题
  */
-uint32_t sys_close(int32_t fd) {
+uint32_t syscall::Fs::close(int32_t fd) {
     task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
-        LOG_ERROR_MSG("sys_close: no current task or fd_table\n");
+        LOG_ERROR_MSG("syscall::Fs::close: no current task or fd_table\n");
         return (uint32_t)-1;
     }
     
     // 释放文件描述符（kernel::FdTable::free 会处理 fs::Vfs::close 和 fs::Vfs::release_node）
     if (kernel::FdTable::free(current->fd_table, fd) != 0) {
-        LOG_ERROR_MSG("sys_close: failed to free fd %d\n", fd);
+        LOG_ERROR_MSG("syscall::Fs::close: failed to free fd %d\n", fd);
         return (uint32_t)-1;
     }
     
@@ -227,30 +227,30 @@ uint32_t sys_close(int32_t fd) {
 }
 
 /**
- * sys_read - 从文件描述符读取数据
+ * syscall::Fs::read - 从文件描述符读取数据
  */
-uint32_t sys_read(int32_t fd, void *buf, uint32_t count) {
+uint32_t syscall::Fs::read(int32_t fd, void *buf, uint32_t count) {
     if (!buf) {
-        LOG_ERROR_MSG("sys_read: buffer is NULL\n");
+        LOG_ERROR_MSG("syscall::Fs::read: buffer is NULL\n");
         return (uint32_t)-1;
     }
     
     task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
-        LOG_ERROR_MSG("sys_read: no current task or fd_table\n");
+        LOG_ERROR_MSG("syscall::Fs::read: no current task or fd_table\n");
         return (uint32_t)-1;
     }
     
     // 获取文件描述符表项
     kernel::FdEntry *entry = kernel::FdTable::get(current->fd_table, fd);
     if (!entry || !entry->node) {
-        LOG_ERROR_MSG("sys_read: invalid fd %d\n", fd);
+        LOG_ERROR_MSG("syscall::Fs::read: invalid fd %d\n", fd);
         return (uint32_t)-1;
     }
     
     // 检查读权限
     if ((entry->flags & O_WRONLY) && !(entry->flags & O_RDWR)) {
-        LOG_ERROR_MSG("sys_read: fd %d is write-only\n", fd);
+        LOG_ERROR_MSG("syscall::Fs::read: fd %d is write-only\n", fd);
         return (uint32_t)-1;
     }
     
@@ -264,30 +264,30 @@ uint32_t sys_read(int32_t fd, void *buf, uint32_t count) {
 }
 
 /**
- * sys_write - 向文件描述符写入数据
+ * syscall::Fs::write - 向文件描述符写入数据
  */
-uint32_t sys_write(int32_t fd, const void *buf, uint32_t count) {
+uint32_t syscall::Fs::write(int32_t fd, const void *buf, uint32_t count) {
     if (!buf) {
-        LOG_ERROR_MSG("sys_write: buffer is NULL\n");
+        LOG_ERROR_MSG("syscall::Fs::write: buffer is NULL\n");
         return (uint32_t)-1;
     }
     
     task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
-        LOG_ERROR_MSG("sys_write: no current task or fd_table\n");
+        LOG_ERROR_MSG("syscall::Fs::write: no current task or fd_table\n");
         return (uint32_t)-1;
     }
     
     // 获取文件描述符表项
     kernel::FdEntry *entry = kernel::FdTable::get(current->fd_table, fd);
     if (!entry || !entry->node) {
-        LOG_ERROR_MSG("sys_write: invalid fd %d\n", fd);
+        LOG_ERROR_MSG("syscall::Fs::write: invalid fd %d\n", fd);
         return (uint32_t)-1;
     }
     
     // 检查写权限
     if ((entry->flags & O_RDONLY) && !(entry->flags & O_RDWR)) {
-        LOG_ERROR_MSG("sys_write: fd %d is read-only\n", fd);
+        LOG_ERROR_MSG("syscall::Fs::write: fd %d is read-only\n", fd);
         return (uint32_t)-1;
     }
     
@@ -321,7 +321,7 @@ uint32_t sys_write(int32_t fd, const void *buf, uint32_t count) {
         uint32_t bytes_written = fs::Vfs::write(entry->node, entry->offset, chunk_size, kernel_buf);
         
         if (bytes_written == 0) {
-            LOG_WARN_MSG("sys_write: fs::Vfs::write returned 0, breaking\n");
+            LOG_WARN_MSG("syscall::Fs::write: fs::Vfs::write returned 0, breaking\n");
             break;  // 写入失败或已满
         }
         
@@ -330,7 +330,7 @@ uint32_t sys_write(int32_t fd, const void *buf, uint32_t count) {
         total_written += bytes_written;
         
         if (bytes_written < chunk_size) {
-            LOG_WARN_MSG("sys_write: partial write %u/%u, breaking\n", bytes_written, chunk_size);
+            LOG_WARN_MSG("syscall::Fs::write: partial write %u/%u, breaking\n", bytes_written, chunk_size);
             break;  // 部分写入，停止
         }
     }
@@ -339,19 +339,19 @@ uint32_t sys_write(int32_t fd, const void *buf, uint32_t count) {
 }
 
 /**
- * sys_lseek - 移动文件指针
+ * syscall::Fs::lseek - 移动文件指针
  */
-uint32_t sys_lseek(int32_t fd, int32_t offset, int32_t whence) {
+uint32_t syscall::Fs::lseek(int32_t fd, int32_t offset, int32_t whence) {
     task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
-        LOG_ERROR_MSG("sys_lseek: no current task or fd_table\n");
+        LOG_ERROR_MSG("syscall::Fs::lseek: no current task or fd_table\n");
         return (uint32_t)-1;
     }
     
     // 获取文件描述符表项
     kernel::FdEntry *entry = kernel::FdTable::get(current->fd_table, fd);
     if (!entry || !entry->node) {
-        LOG_ERROR_MSG("sys_lseek: invalid fd %d\n", fd);
+        LOG_ERROR_MSG("syscall::Fs::lseek: invalid fd %d\n", fd);
         return (uint32_t)-1;
     }
     
@@ -368,13 +368,13 @@ uint32_t sys_lseek(int32_t fd, int32_t offset, int32_t whence) {
             new_offset = entry->node->size + offset;
             break;
         default:
-            LOG_ERROR_MSG("sys_lseek: invalid whence %d\n", whence);
+            LOG_ERROR_MSG("syscall::Fs::lseek: invalid whence %d\n", whence);
             return (uint32_t)-1;
     }
     
     // 检查新位置是否有效（不能为负）
     if ((int32_t)new_offset < 0) {
-        LOG_ERROR_MSG("sys_lseek: negative offset %d\n", (int32_t)new_offset);
+        LOG_ERROR_MSG("syscall::Fs::lseek: negative offset %d\n", (int32_t)new_offset);
         return (uint32_t)-1;
     }
     
@@ -384,17 +384,17 @@ uint32_t sys_lseek(int32_t fd, int32_t offset, int32_t whence) {
 }
 
 /**
- * sys_mkdir - 创建目录
+ * syscall::Fs::mkdir - 创建目录
  */
-uint32_t sys_mkdir(const char *path, uint32_t mode) {
+uint32_t syscall::Fs::mkdir(const char *path, uint32_t mode) {
     if (!path) {
-        LOG_ERROR_MSG("sys_mkdir: path is NULL\n");
+        LOG_ERROR_MSG("syscall::Fs::mkdir: path is NULL\n");
         return (uint32_t)-1;
     }
     
     // 创建目录
     if (fs::Vfs::mkdir(path, mode) != 0) {
-        LOG_ERROR_MSG("sys_mkdir: failed to create directory '%s'\n", path);
+        LOG_ERROR_MSG("syscall::Fs::mkdir: failed to create directory '%s'\n", path);
         return (uint32_t)-1;
     }
     
@@ -402,17 +402,17 @@ uint32_t sys_mkdir(const char *path, uint32_t mode) {
 }
 
 /**
- * sys_unlink - 删除文件或目录
+ * syscall::Fs::unlink - 删除文件或目录
  */
-uint32_t sys_unlink(const char *path) {
+uint32_t syscall::Fs::unlink(const char *path) {
     if (!path) {
-        LOG_ERROR_MSG("sys_unlink: path is NULL\n");
+        LOG_ERROR_MSG("syscall::Fs::unlink: path is NULL\n");
         return (uint32_t)-1;
     }
     
     // 删除文件或目录
     if (fs::Vfs::unlink(path) != 0) {
-        LOG_ERROR_MSG("sys_unlink: failed to unlink '%s'\n", path);
+        LOG_ERROR_MSG("syscall::Fs::unlink: failed to unlink '%s'\n", path);
         return (uint32_t)-1;
     }
     
@@ -525,28 +525,28 @@ static int normalize_path(const char *path, char *normalized, size_t size) {
 }
 
 /**
- * sys_chdir - 切换当前工作目录
+ * syscall::Fs::chdir - 切换当前工作目录
  */
-uint32_t sys_chdir(const char *path) {
+uint32_t syscall::Fs::chdir(const char *path) {
     if (!path) {
-        LOG_ERROR_MSG("sys_chdir: path is NULL\n");
+        LOG_ERROR_MSG("syscall::Fs::chdir: path is NULL\n");
         return (uint32_t)-1;
     }
     
     task_t *current = kernel::Scheduler::get_current();
     if (!current) {
-        LOG_ERROR_MSG("sys_chdir: no current task\n");
+        LOG_ERROR_MSG("syscall::Fs::chdir: no current task\n");
         return (uint32_t)-1;
     }
     
-    LOG_DEBUG_MSG("sys_chdir: path='%s'\n", path);
+    LOG_DEBUG_MSG("syscall::Fs::chdir: path='%s'\n", path);
     
     // 构建绝对路径：如果是相对路径，则相对于当前工作目录
     char abs_path[512];
     if (path[0] == '/') {
         // 绝对路径，直接使用
         if (strlen(path) >= sizeof(abs_path)) {
-            LOG_ERROR_MSG("sys_chdir: path too long\n");
+            LOG_ERROR_MSG("syscall::Fs::chdir: path too long\n");
             return (uint32_t)-1;
         }
         strcpy(abs_path, path);
@@ -556,7 +556,7 @@ uint32_t sys_chdir(const char *path) {
         uint32_t path_len = strlen(path);
         
         if (cwd_len + 1 + path_len >= sizeof(abs_path)) {
-            LOG_ERROR_MSG("sys_chdir: path too long\n");
+            LOG_ERROR_MSG("syscall::Fs::chdir: path too long\n");
             return (uint32_t)-1;
         }
         
@@ -569,17 +569,17 @@ uint32_t sys_chdir(const char *path) {
         strcat(abs_path, path);
     }
     
-    LOG_DEBUG_MSG("sys_chdir: resolved path='%s'\n", abs_path);
+    LOG_DEBUG_MSG("syscall::Fs::chdir: resolved path='%s'\n", abs_path);
     
     // 验证目标路径存在且为目录
     fs_node_t *node = fs::Vfs::path_to_node(abs_path);
     if (!node) {
-        LOG_ERROR_MSG("sys_chdir: path '%s' not found\n", abs_path);
+        LOG_ERROR_MSG("syscall::Fs::chdir: path '%s' not found\n", abs_path);
         return (uint32_t)-1;
     }
     
     if (node->type != FS_DIRECTORY) {
-        LOG_ERROR_MSG("sys_chdir: '%s' is not a directory\n", abs_path);
+        LOG_ERROR_MSG("syscall::Fs::chdir: '%s' is not a directory\n", abs_path);
         fs::Vfs::release_node(node);  // 释放节点
         return (uint32_t)-1;
     }
@@ -590,123 +590,123 @@ uint32_t sys_chdir(const char *path) {
     // 规范化路径，移除 . 和 .. 组件
     char normalized_path[512];
     if (normalize_path(abs_path, normalized_path, sizeof(normalized_path)) != 0) {
-        LOG_ERROR_MSG("sys_chdir: failed to normalize path\n");
+        LOG_ERROR_MSG("syscall::Fs::chdir: failed to normalize path\n");
         return (uint32_t)-1;
     }
     
     // 检查规范化后的路径长度
     uint32_t normalized_len = strlen(normalized_path);
     if (normalized_len >= sizeof(current->cwd)) {
-        LOG_ERROR_MSG("sys_chdir: normalized path too long (%u >= %u)\n", normalized_len, (uint32_t)sizeof(current->cwd));
+        LOG_ERROR_MSG("syscall::Fs::chdir: normalized path too long (%u >= %u)\n", normalized_len, (uint32_t)sizeof(current->cwd));
         return (uint32_t)-1;
     }
     
     // 更新当前工作目录（使用规范化后的路径）
     strcpy(current->cwd, normalized_path);
     
-    LOG_DEBUG_MSG("sys_chdir: changed to '%s'\n", normalized_path);
+    LOG_DEBUG_MSG("syscall::Fs::chdir: changed to '%s'\n", normalized_path);
     return 0;
 }
 
 /**
- * sys_getcwd - 获取当前工作目录
+ * syscall::Fs::getcwd - 获取当前工作目录
  */
-uintptr_t sys_getcwd(char *buffer, size_t size) {
+uintptr_t syscall::Fs::getcwd(char *buffer, size_t size) {
     if (!buffer) {
-        LOG_ERROR_MSG("sys_getcwd: buffer is NULL\n");
+        LOG_ERROR_MSG("syscall::Fs::getcwd: buffer is NULL\n");
         return (uintptr_t)-1;
     }
     
     task_t *current = kernel::Scheduler::get_current();
     if (!current) {
-        LOG_ERROR_MSG("sys_getcwd: no current task\n");
+        LOG_ERROR_MSG("syscall::Fs::getcwd: no current task\n");
         return (uintptr_t)-1;
     }
     
-    LOG_DEBUG_MSG("sys_getcwd: size=%zu\n", size);
+    LOG_DEBUG_MSG("syscall::Fs::getcwd: size=%zu\n", size);
     
     size_t cwd_len = strlen(current->cwd);
     
     // 检查缓冲区大小
     if (size <= cwd_len) {
-        LOG_ERROR_MSG("sys_getcwd: buffer too small (%zu <= %zu)\n", size, cwd_len);
+        LOG_ERROR_MSG("syscall::Fs::getcwd: buffer too small (%zu <= %zu)\n", size, cwd_len);
         return (uintptr_t)-1;
     }
     
     // 复制当前工作目录到用户缓冲区
     strcpy(buffer, current->cwd);
     
-    LOG_DEBUG_MSG("sys_getcwd: returned '%s'\n", current->cwd);
+    LOG_DEBUG_MSG("syscall::Fs::getcwd: returned '%s'\n", current->cwd);
     return (uintptr_t)buffer;
 }
 
 /**
- * sys_ftruncate - 截断文件到指定大小
+ * syscall::Fs::ftruncate - 截断文件到指定大小
  */
-uint32_t sys_ftruncate(int32_t fd, uint32_t length) {
+uint32_t syscall::Fs::ftruncate(int32_t fd, uint32_t length) {
     task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
-        LOG_ERROR_MSG("sys_ftruncate: no current task or fd_table\n");
+        LOG_ERROR_MSG("syscall::Fs::ftruncate: no current task or fd_table\n");
         return (uint32_t)-1;
     }
     
     // 获取文件描述符表项
     kernel::FdEntry *entry = kernel::FdTable::get(current->fd_table, fd);
     if (!entry || !entry->node) {
-        LOG_ERROR_MSG("sys_ftruncate: invalid fd %d\n", fd);
+        LOG_ERROR_MSG("syscall::Fs::ftruncate: invalid fd %d\n", fd);
         return (uint32_t)-1;
     }
     
     // 检查是否为文件
     if (entry->node->type != FS_FILE) {
-        LOG_ERROR_MSG("sys_ftruncate: fd %d is not a regular file\n", fd);
+        LOG_ERROR_MSG("syscall::Fs::ftruncate: fd %d is not a regular file\n", fd);
         return (uint32_t)-1;
     }
     
     // 检查写权限
     if ((entry->flags & O_RDONLY) && !(entry->flags & O_RDWR)) {
-        LOG_ERROR_MSG("sys_ftruncate: fd %d is read-only\n", fd);
+        LOG_ERROR_MSG("syscall::Fs::ftruncate: fd %d is read-only\n", fd);
         return (uint32_t)-1;
     }
     
     // 调用 VFS truncate
     if (fs::Vfs::truncate(entry->node, length) != 0) {
-        LOG_ERROR_MSG("sys_ftruncate: failed to truncate fd %d to %u bytes\n", fd, length);
+        LOG_ERROR_MSG("syscall::Fs::ftruncate: failed to truncate fd %d to %u bytes\n", fd, length);
         return (uint32_t)-1;
     }
     
-    LOG_DEBUG_MSG("sys_ftruncate: fd %d truncated to %u bytes\n", fd, length);
+    LOG_DEBUG_MSG("syscall::Fs::ftruncate: fd %d truncated to %u bytes\n", fd, length);
     return 0;
 }
 
 /**
- * sys_getdents - 读取目录项（简化版本）
+ * syscall::Fs::getdents - 读取目录项（简化版本）
  * 
  * 注意：这是简化版本，与 Linux 标准 getdents 接口不同。
  * Linux 的 getdents 是批量读取多个目录项到缓冲区，而这里按索引读取单个目录项。
  */
-uint32_t sys_getdents(int32_t fd, uint32_t index, void *dirent) {
+uint32_t syscall::Fs::getdents(int32_t fd, uint32_t index, void *dirent) {
     if (!dirent) {
-        LOG_ERROR_MSG("sys_getdents: dirent is NULL\n");
+        LOG_ERROR_MSG("syscall::Fs::getdents: dirent is NULL\n");
         return (uint32_t)-1;
     }
     
     task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
-        LOG_ERROR_MSG("sys_getdents: no current task or fd_table\n");
+        LOG_ERROR_MSG("syscall::Fs::getdents: no current task or fd_table\n");
         return (uint32_t)-1;
     }
         
     // 获取文件描述符表项
     kernel::FdEntry *entry = kernel::FdTable::get(current->fd_table, fd);
     if (!entry || !entry->node) {
-        LOG_ERROR_MSG("sys_getdents: invalid fd %d\n", fd);
+        LOG_ERROR_MSG("syscall::Fs::getdents: invalid fd %d\n", fd);
         return (uint32_t)-1;
     }
     
     // 检查是否为目录
     if (entry->node->type != FS_DIRECTORY) {
-        LOG_ERROR_MSG("sys_getdents: fd %d is not a directory\n", fd);
+        LOG_ERROR_MSG("syscall::Fs::getdents: fd %d is not a directory\n", fd);
         return (uint32_t)-1;
     }
     
@@ -728,18 +728,18 @@ uint32_t sys_getdents(int32_t fd, uint32_t index, void *dirent) {
  * ============================================================================ */
 
 /**
- * sys_pipe - 创建管道
+ * syscall::Fs::pipe - 创建管道
  * @fds: 用户空间数组，fds[0] 为读端，fds[1] 为写端
  */
-uint32_t sys_pipe(int32_t *fds) {
+uint32_t syscall::Fs::pipe(int32_t *fds) {
     if (!fds) {
-        LOG_ERROR_MSG("sys_pipe: fds is NULL\n");
+        LOG_ERROR_MSG("syscall::Fs::pipe: fds is NULL\n");
         return (uint32_t)-1;
     }
     
     task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
-        LOG_ERROR_MSG("sys_pipe: no current task or fd_table\n");
+        LOG_ERROR_MSG("syscall::Fs::pipe: no current task or fd_table\n");
         return (uint32_t)-1;
     }
     
@@ -748,14 +748,14 @@ uint32_t sys_pipe(int32_t *fds) {
     fs_node_t *write_node = NULL;
     
     if (fs::Pipe::create(&read_node, &write_node) != 0) {
-        LOG_ERROR_MSG("sys_pipe: failed to create pipe\n");
+        LOG_ERROR_MSG("syscall::Fs::pipe: failed to create pipe\n");
         return (uint32_t)-1;
     }
     
     // 分配读端文件描述符
     int32_t read_fd = kernel::FdTable::alloc(current->fd_table, read_node, O_RDONLY);
     if (read_fd < 0) {
-        LOG_ERROR_MSG("sys_pipe: failed to allocate read fd\n");
+        LOG_ERROR_MSG("syscall::Fs::pipe: failed to allocate read fd\n");
         fs::Vfs::release_node(read_node);
         fs::Vfs::release_node(write_node);
         return (uint32_t)-1;
@@ -767,7 +767,7 @@ uint32_t sys_pipe(int32_t *fds) {
     // 分配写端文件描述符
     int32_t write_fd = kernel::FdTable::alloc(current->fd_table, write_node, O_WRONLY);
     if (write_fd < 0) {
-        LOG_ERROR_MSG("sys_pipe: failed to allocate write fd\n");
+        LOG_ERROR_MSG("syscall::Fs::pipe: failed to allocate write fd\n");
         kernel::FdTable::free(current->fd_table, read_fd);
         fs::Vfs::release_node(write_node);
         return (uint32_t)-1;
@@ -780,7 +780,7 @@ uint32_t sys_pipe(int32_t *fds) {
     fds[0] = read_fd;
     fds[1] = write_fd;
     
-    LOG_DEBUG_MSG("sys_pipe: created pipe (read_fd=%d, write_fd=%d)\n", read_fd, write_fd);
+    LOG_DEBUG_MSG("syscall::Fs::pipe: created pipe (read_fd=%d, write_fd=%d)\n", read_fd, write_fd);
     
     return 0;
 }
@@ -790,27 +790,27 @@ uint32_t sys_pipe(int32_t *fds) {
  * ============================================================================ */
 
 /**
- * sys_dup - 复制文件描述符
+ * syscall::Fs::dup - 复制文件描述符
  * @oldfd: 要复制的文件描述符
  */
-uint32_t sys_dup(int32_t oldfd) {
+uint32_t syscall::Fs::dup(int32_t oldfd) {
     task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
-        LOG_ERROR_MSG("sys_dup: no current task or fd_table\n");
+        LOG_ERROR_MSG("syscall::Fs::dup: no current task or fd_table\n");
         return (uint32_t)-1;
     }
     
     // 获取旧的文件描述符表项
     kernel::FdEntry *old_entry = kernel::FdTable::get(current->fd_table, oldfd);
     if (!old_entry || !old_entry->node) {
-        LOG_ERROR_MSG("sys_dup: invalid fd %d\n", oldfd);
+        LOG_ERROR_MSG("syscall::Fs::dup: invalid fd %d\n", oldfd);
         return (uint32_t)-1;
     }
     
     // 分配新的文件描述符（kernel::FdTable::alloc 会自动增加引用计数）
     int32_t newfd = kernel::FdTable::alloc(current->fd_table, old_entry->node, old_entry->flags);
     if (newfd < 0) {
-        LOG_ERROR_MSG("sys_dup: failed to allocate new fd\n");
+        LOG_ERROR_MSG("syscall::Fs::dup: failed to allocate new fd\n");
         return (uint32_t)-1;
     }
     
@@ -825,17 +825,17 @@ uint32_t sys_dup(int32_t oldfd) {
         new_entry->offset = old_entry->offset;
     }
     
-    LOG_DEBUG_MSG("sys_dup: duplicated fd %d -> %d\n", oldfd, newfd);
+    LOG_DEBUG_MSG("syscall::Fs::dup: duplicated fd %d -> %d\n", oldfd, newfd);
     
     return (uint32_t)newfd;
 }
 
 /**
- * sys_dup2 - 复制文件描述符到指定编号
+ * syscall::Fs::dup2 - 复制文件描述符到指定编号
  * @oldfd: 要复制的文件描述符
  * @newfd: 目标文件描述符编号
  */
-uint32_t sys_dup2(int32_t oldfd, int32_t newfd) {
+uint32_t syscall::Fs::dup2(int32_t oldfd, int32_t newfd) {
     // 如果 oldfd 和 newfd 相同，直接返回
     if (oldfd == newfd) {
         // 验证 oldfd 有效
@@ -852,20 +852,20 @@ uint32_t sys_dup2(int32_t oldfd, int32_t newfd) {
     
     task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
-        LOG_ERROR_MSG("sys_dup2: no current task or fd_table\n");
+        LOG_ERROR_MSG("syscall::Fs::dup2: no current task or fd_table\n");
         return (uint32_t)-1;
     }
     
     // 检查 newfd 范围
     if (newfd < 0 || newfd >= MAX_FDS) {
-        LOG_ERROR_MSG("sys_dup2: newfd %d out of range\n", newfd);
+        LOG_ERROR_MSG("syscall::Fs::dup2: newfd %d out of range\n", newfd);
         return (uint32_t)-1;
     }
     
     // 获取旧的文件描述符表项
     kernel::FdEntry *old_entry = kernel::FdTable::get(current->fd_table, oldfd);
     if (!old_entry || !old_entry->node) {
-        LOG_ERROR_MSG("sys_dup2: invalid oldfd %d\n", oldfd);
+        LOG_ERROR_MSG("syscall::Fs::dup2: invalid oldfd %d\n", oldfd);
         return (uint32_t)-1;
     }
     
@@ -893,7 +893,7 @@ uint32_t sys_dup2(int32_t oldfd, int32_t newfd) {
     
     current->fd_table->lock.unlock();
     
-    LOG_DEBUG_MSG("sys_dup2: duplicated fd %d -> %d\n", oldfd, newfd);
+    LOG_DEBUG_MSG("syscall::Fs::dup2: duplicated fd %d -> %d\n", oldfd, newfd);
     
     return (uint32_t)newfd;
 }
@@ -903,22 +903,22 @@ uint32_t sys_dup2(int32_t oldfd, int32_t newfd) {
  * ============================================================================ */
 
 /**
- * sys_rename - 重命名文件或目录
+ * syscall::Fs::rename - 重命名文件或目录
  * @oldpath: 原路径
  * @newpath: 新路径
  */
-uint32_t sys_rename(const char *oldpath, const char *newpath) {
+uint32_t syscall::Fs::rename(const char *oldpath, const char *newpath) {
     if (!oldpath || !newpath) {
-        LOG_ERROR_MSG("sys_rename: invalid arguments (oldpath=%p, newpath=%p)\n", 
+        LOG_ERROR_MSG("syscall::Fs::rename: invalid arguments (oldpath=%p, newpath=%p)\n", 
                       oldpath, newpath);
         return (uint32_t)-1;
     }
     
-    LOG_DEBUG_MSG("sys_rename: '%s' -> '%s'\n", oldpath, newpath);
+    LOG_DEBUG_MSG("syscall::Fs::rename: '%s' -> '%s'\n", oldpath, newpath);
     
     // 调用 VFS 层的重命名函数
     if (fs::Vfs::rename(oldpath, newpath) != 0) {
-        LOG_ERROR_MSG("sys_rename: failed to rename '%s' to '%s'\n", oldpath, newpath);
+        LOG_ERROR_MSG("syscall::Fs::rename: failed to rename '%s' to '%s'\n", oldpath, newpath);
         return (uint32_t)-1;
     }
     

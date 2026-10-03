@@ -45,55 +45,65 @@ typedef struct {
     bool running;                               // Shell 是否运行中
 } shell_state_t;
 
-/**
- * 初始化内核 Shell
- */
-void kernel_shell_init(void);
+namespace kernel {
 
 /**
- * 启动 Shell 主循环
- * 该函数会阻塞，直到用户输入 "exit" 或系统关闭
+ * @brief 内核调试 Shell
  */
-void kernel_shell_run(void);
+class Shell {
+public:
+    /**
+     * 初始化内核 Shell
+     */
+    static void init();
 
-/**
- * 显示提示符
- */
-void shell_print_prompt(void);
+    /**
+     * 启动 Shell 主循环
+     * 该函数会阻塞，直到用户输入 "exit" 或系统关闭
+     */
+    static void run();
 
-/**
- * 解析命令行
- * @param line 输入行
- * @param argc 输出：参数个数
- * @param argv 输出：参数数组
- * @return 0 成功，-1 失败
- */
-int shell_parse_command(char *line, int *argc, char **argv);
+    /**
+     * 显示提示符
+     */
+    static void print_prompt();
 
-/**
- * 执行命令
- * @param argc 参数个数
- * @param argv 参数数组
- * @return 命令返回值
- */
-int shell_execute_command(int argc, char **argv);
+    /**
+     * 解析命令行
+     * @param line 输入行
+     * @param argc 输出：参数个数
+     * @param argv 输出：参数数组
+     * @return 0 成功，-1 失败
+     */
+    static int parse_command(char *line, int *argc, char **argv);
 
-/**
- * 查找命令
- * @param name 命令名
- * @return 命令结构指针，未找到返回 NULL
- */
-const shell_command_t *shell_find_command(const char *name);
+    /**
+     * 执行命令
+     * @param argc 参数个数
+     * @param argv 参数数组
+     * @return 命令返回值
+     */
+    static int execute_command(int argc, char **argv);
 
-/**
- * 添加历史记录
- * @param line 命令行
- */
-void shell_add_history(const char *line);
+    /**
+     * 查找命令
+     * @param name 命令名
+     * @return 命令结构指针，未找到返回 NULL
+     */
+    static const shell_command_t *find_command(const char *name);
 
-/**
- * 清空输入缓冲区
- */
-void shell_clear_input(void);
+    /**
+     * 添加历史记录
+     * @param line 命令行
+     */
+    static void add_history(const char *line);
+
+    /**
+     * 清空输入缓冲区
+     */
+    static void clear_input();
+};
+
+} // namespace kernel
 
 #endif // _KERNEL_SHELL_H_

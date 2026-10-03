@@ -23,38 +23,38 @@
 #define MMAP_REGION_END     0x70000000  /* 1.75GB 结束 */
 
 /**
- * sys_brk - 调整堆边界
+ * syscall::Mm::brk - 调整堆边界
  * @param addr 新的堆结束地址（0 表示查询当前值）
  * @return 成功返回新的堆结束地址，失败返回 (uint32_t)-1
  */
-uint32_t sys_brk(uint32_t addr) {
+uint32_t syscall::Mm::brk(uint32_t addr) {
     task_t *current = kernel::Scheduler::get_current();
     if (!current) {
-        LOG_ERROR_MSG("sys_brk: no current task\n");
+        LOG_ERROR_MSG("syscall::Mm::brk: no current task\n");
         return (uint32_t)-1;
     }
     
     // 如果不是用户进程，返回错误
     if (!current->is_user_process) {
-        LOG_ERROR_MSG("sys_brk: not a user process\n");
+        LOG_ERROR_MSG("syscall::Mm::brk: not a user process\n");
         return (uint32_t)-1;
     }
     
     // 如果 addr 为 0，返回当前堆结束地址
     if (addr == 0) {
-        LOG_DEBUG_MSG("sys_brk: returning current heap_end=0x%x\n", current->heap_end);
+        LOG_DEBUG_MSG("syscall::Mm::brk: returning current heap_end=0x%x\n", current->heap_end);
         return current->heap_end;
     }
     
     // 验证地址范围
     if (addr < current->heap_start) {
-        LOG_ERROR_MSG("sys_brk: addr 0x%x below heap_start 0x%x\n", 
+        LOG_ERROR_MSG("syscall::Mm::brk: addr 0x%x below heap_start 0x%x\n", 
                       addr, current->heap_start);
         return (uint32_t)-1;
     }
     
     if (addr > current->heap_max) {
-        LOG_ERROR_MSG("sys_brk: addr 0x%x exceeds heap_max 0x%x\n", 
+        LOG_ERROR_MSG("syscall::Mm::brk: addr 0x%x exceeds heap_max 0x%x\n", 
                       addr, current->heap_max);
         return (uint32_t)-1;
     }
@@ -63,19 +63,19 @@ uint32_t sys_brk(uint32_t addr) {
     uint32_t old_end_aligned = PAGE_ALIGN_UP(old_end);
     uint32_t new_end_aligned = PAGE_ALIGN_UP(addr);
     
-    LOG_DEBUG_MSG("sys_brk: old_end=0x%x (aligned 0x%x), new_end=0x%x (aligned 0x%x)\n",
+    LOG_DEBUG_MSG("syscall::Mm::brk: old_end=0x%x (aligned 0x%x), new_end=0x%x (aligned 0x%x)\n",
                   old_end, old_end_aligned, addr, new_end_aligned);
     
     if (new_end_aligned > old_end_aligned) {
         // 扩展堆：分配并映射新页面
-        LOG_DEBUG_MSG("sys_brk: expanding heap from 0x%x to 0x%x\n", 
+        LOG_DEBUG_MSG("syscall::Mm::brk: expanding heap from 0x%x to 0x%x\n", 
                       old_end_aligned, new_end_aligned);
         
         for (uint32_t page = old_end_aligned; page < new_end_aligned; page += PAGE_SIZE) {
             // 分配物理页
             paddr_t phys = mm::Pmm::alloc_frame();
             if (phys == PADDR_INVALID) {
-                LOG_ERROR_MSG("sys_brk: out of memory at page 0x%x\n", page);
+                LOG_ERROR_MSG("syscall::Mm::brk: out of memory at page 0x%x\n", page);
                 // 不回滚，保持已分配的页面
                 // 返回实际达到的地址
                 current->heap_end = page;
@@ -89,31 +89,31 @@ uint32_t sys_brk(uint32_t addr) {
             if (!mm::Vmm::map_page_in_directory(current->page_dir_phys, page, (uintptr_t)phys,
                                            PAGE_PRESENT | PAGE_WRITE | PAGE_USER)) {
                 mm::Pmm::free_frame(phys);
-                LOG_ERROR_MSG("sys_brk: failed to map page 0x%x\n", page);
+                LOG_ERROR_MSG("syscall::Mm::brk: failed to map page 0x%x\n", page);
                 // 返回实际达到的地址
                 current->heap_end = page;
                 return current->heap_end;
             }
             
-            LOG_DEBUG_MSG("sys_brk: mapped page 0x%x -> phys 0x%llx\n", page, (unsigned long long)phys);
+            LOG_DEBUG_MSG("syscall::Mm::brk: mapped page 0x%x -> phys 0x%llx\n", page, (unsigned long long)phys);
         }
     } else if (new_end_aligned < old_end_aligned) {
         // 收缩堆：取消映射并释放页面
-        LOG_DEBUG_MSG("sys_brk: shrinking heap from 0x%x to 0x%x\n", 
+        LOG_DEBUG_MSG("syscall::Mm::brk: shrinking heap from 0x%x to 0x%x\n", 
                       old_end_aligned, new_end_aligned);
         
         for (uint32_t page = new_end_aligned; page < old_end_aligned; page += PAGE_SIZE) {
             uint32_t phys = mm::Vmm::unmap_page_in_directory(current->page_dir_phys, page);
             if (phys) {
                 mm::Pmm::free_frame(phys);
-                LOG_DEBUG_MSG("sys_brk: unmapped page 0x%x (phys 0x%x)\n", page, phys);
+                LOG_DEBUG_MSG("syscall::Mm::brk: unmapped page 0x%x (phys 0x%x)\n", page, phys);
             }
         }
     }
     
     current->heap_end = addr;
     
-    LOG_DEBUG_MSG("sys_brk: heap extended to 0x%x\n", addr);
+    LOG_DEBUG_MSG("syscall::Mm::brk: heap extended to 0x%x\n", addr);
     
     return addr;
 }
@@ -196,7 +196,7 @@ static uint32_t do_mmap_anonymous(task_t *current, uint32_t vaddr, uint32_t leng
         // 分配物理页
         paddr_t phys = mm::Pmm::alloc_frame();
         if (phys == PADDR_INVALID) {
-            LOG_ERROR_MSG("sys_mmap: out of memory at page 0x%x\n", page);
+            LOG_ERROR_MSG("syscall::Mm::mmap: out of memory at page 0x%x\n", page);
             // 回滚已分配的页面
             for (uint32_t p = vaddr; p < page; p += PAGE_SIZE) {
                 uintptr_t pf = mm::Vmm::unmap_page_in_directory(current->page_dir_phys, p);
@@ -214,7 +214,7 @@ static uint32_t do_mmap_anonymous(task_t *current, uint32_t vaddr, uint32_t leng
         // 映射到用户空间
         if (!mm::Vmm::map_page_in_directory(current->page_dir_phys, page, (uintptr_t)phys, page_flags)) {
             mm::Pmm::free_frame(phys);
-            LOG_ERROR_MSG("sys_mmap: failed to map page 0x%x\n", page);
+            LOG_ERROR_MSG("syscall::Mm::mmap: failed to map page 0x%x\n", page);
             // 回滚已分配的页面
             for (uint32_t p = vaddr; p < page; p += PAGE_SIZE) {
                 uintptr_t pf = mm::Vmm::unmap_page_in_directory(current->page_dir_phys, p);
@@ -228,7 +228,7 @@ static uint32_t do_mmap_anonymous(task_t *current, uint32_t vaddr, uint32_t leng
         pages_allocated++;
     }
     
-    LOG_DEBUG_MSG("sys_mmap: anonymous mapped 0x%x bytes at 0x%x (%u pages)\n", 
+    LOG_DEBUG_MSG("syscall::Mm::mmap: anonymous mapped 0x%x bytes at 0x%x (%u pages)\n", 
                   length, vaddr, pages_allocated);
     
     return vaddr;
@@ -258,7 +258,7 @@ static uint32_t do_mmap_file(task_t *current, uint32_t vaddr, uint32_t length,
         // 分配物理页
         paddr_t phys = mm::Pmm::alloc_frame();
         if (phys == PADDR_INVALID) {
-            LOG_ERROR_MSG("sys_mmap: out of memory at page 0x%x\n", page);
+            LOG_ERROR_MSG("syscall::Mm::mmap: out of memory at page 0x%x\n", page);
             // 回滚
             for (uint32_t p = vaddr; p < page; p += PAGE_SIZE) {
                 uintptr_t pf = mm::Vmm::unmap_page_in_directory(current->page_dir_phys, p);
@@ -285,10 +285,10 @@ static uint32_t do_mmap_file(task_t *current, uint32_t vaddr, uint32_t length,
             // 使用 VFS 读取文件内容
             uint32_t bytes_read = fs::Vfs::read(node, file_offset, read_size, kernel_ptr);
             if (bytes_read == 0 && read_size > 0) {
-                LOG_WARN_MSG("sys_mmap: failed to read file at offset 0x%x\n", file_offset);
+                LOG_WARN_MSG("syscall::Mm::mmap: failed to read file at offset 0x%x\n", file_offset);
             }
             
-            LOG_DEBUG_MSG("sys_mmap: read %u bytes from file offset 0x%x to page 0x%x\n",
+            LOG_DEBUG_MSG("syscall::Mm::mmap: read %u bytes from file offset 0x%x to page 0x%x\n",
                           bytes_read, file_offset, page);
         }
         // 超出文件大小的部分保持为 0
@@ -296,7 +296,7 @@ static uint32_t do_mmap_file(task_t *current, uint32_t vaddr, uint32_t length,
         // 映射到用户空间（在填充数据之后）
         if (!mm::Vmm::map_page_in_directory(current->page_dir_phys, page, (uintptr_t)phys, page_flags)) {
             mm::Pmm::free_frame(phys);
-            LOG_ERROR_MSG("sys_mmap: failed to map page 0x%x\n", page);
+            LOG_ERROR_MSG("syscall::Mm::mmap: failed to map page 0x%x\n", page);
             // 回滚
             for (uint32_t p = vaddr; p < page; p += PAGE_SIZE) {
                 uintptr_t pf = mm::Vmm::unmap_page_in_directory(current->page_dir_phys, p);
@@ -311,14 +311,14 @@ static uint32_t do_mmap_file(task_t *current, uint32_t vaddr, uint32_t length,
         pages_allocated++;
     }
     
-    LOG_DEBUG_MSG("sys_mmap: file mapped 0x%x bytes at 0x%x (%u pages)\n", 
+    LOG_DEBUG_MSG("syscall::Mm::mmap: file mapped 0x%x bytes at 0x%x (%u pages)\n", 
                   length, vaddr, pages_allocated);
     
     return vaddr;
 }
 
 /**
- * sys_mmap - 内存映射（支持匿名映射和文件映射）
+ * syscall::Mm::mmap - 内存映射（支持匿名映射和文件映射）
  * @param addr 建议的映射地址（0 表示由内核选择）
  * @param length 映射长度
  * @param prot 保护标志
@@ -327,57 +327,57 @@ static uint32_t do_mmap_file(task_t *current, uint32_t vaddr, uint32_t length,
  * @param offset 文件偏移（匿名映射时忽略）
  * @return 成功返回映射的虚拟地址，失败返回 (uint32_t)-1
  */
-uint32_t sys_mmap(uint32_t addr, uint32_t length, uint32_t prot,
+uint32_t syscall::Mm::mmap(uint32_t addr, uint32_t length, uint32_t prot,
                   uint32_t flags, int32_t fd, uint32_t offset) {
     task_t *current = kernel::Scheduler::get_current();
     if (!current) {
-        LOG_ERROR_MSG("sys_mmap: no current task\n");
+        LOG_ERROR_MSG("syscall::Mm::mmap: no current task\n");
         return (uint32_t)-1;
     }
     
     // 检查是否为用户进程
     if (!current->is_user_process) {
-        LOG_ERROR_MSG("sys_mmap: not a user process\n");
+        LOG_ERROR_MSG("syscall::Mm::mmap: not a user process\n");
         return (uint32_t)-1;
     }
     
     // 对齐长度
     length = PAGE_ALIGN_UP(length);
     if (length == 0) {
-        LOG_ERROR_MSG("sys_mmap: invalid length 0\n");
+        LOG_ERROR_MSG("syscall::Mm::mmap: invalid length 0\n");
         return (uint32_t)-1;
     }
     
     // 检查长度是否超出限制
     if (length > MMAP_REGION_END - MMAP_REGION_START) {
-        LOG_ERROR_MSG("sys_mmap: length 0x%x too large\n", length);
+        LOG_ERROR_MSG("syscall::Mm::mmap: length 0x%x too large\n", length);
         return (uint32_t)-1;
     }
     
     // 检查 offset 是否页对齐
     if (offset & (PAGE_SIZE - 1)) {
-        LOG_ERROR_MSG("sys_mmap: offset 0x%x not page aligned\n", offset);
+        LOG_ERROR_MSG("syscall::Mm::mmap: offset 0x%x not page aligned\n", offset);
         return (uint32_t)-1;
     }
     
     bool is_anonymous = (flags & MAP_ANONYMOUS) != 0;
     bool is_private = (flags & MAP_PRIVATE) != 0;
     
-    LOG_DEBUG_MSG("sys_mmap: addr=0x%x, length=0x%x, prot=0x%x, flags=0x%x, fd=%d, offset=0x%x\n",
+    LOG_DEBUG_MSG("syscall::Mm::mmap: addr=0x%x, length=0x%x, prot=0x%x, flags=0x%x, fd=%d, offset=0x%x\n",
                   addr, length, prot, flags, fd, offset);
     
     // 文件映射需要有效的 fd
     fs_node_t *file_node = NULL;
     if (!is_anonymous) {
         if (fd < 0) {
-            LOG_ERROR_MSG("sys_mmap: file mapping requires valid fd (got %d)\n", fd);
+            LOG_ERROR_MSG("syscall::Mm::mmap: file mapping requires valid fd (got %d)\n", fd);
             return (uint32_t)-1;
         }
         
         // 获取文件节点
         kernel::FdEntry *entry = kernel::FdTable::get(current->fd_table, fd);
         if (!entry || !entry->node) {
-            LOG_ERROR_MSG("sys_mmap: invalid fd %d\n", fd);
+            LOG_ERROR_MSG("syscall::Mm::mmap: invalid fd %d\n", fd);
             return (uint32_t)-1;
         }
         
@@ -385,7 +385,7 @@ uint32_t sys_mmap(uint32_t addr, uint32_t length, uint32_t prot,
         
         // 检查文件类型（只能映射普通文件）
         if (file_node->type != FS_FILE) {
-            LOG_ERROR_MSG("sys_mmap: can only map regular files (type=%d)\n", file_node->type);
+            LOG_ERROR_MSG("syscall::Mm::mmap: can only map regular files (type=%d)\n", file_node->type);
             return (uint32_t)-1;
         }
         
@@ -396,13 +396,13 @@ uint32_t sys_mmap(uint32_t addr, uint32_t length, uint32_t prot,
         bool can_write = (access_mode == O_WRONLY) || (access_mode == O_RDWR);
         
         if ((prot & PROT_READ) && !can_read) {
-            LOG_ERROR_MSG("sys_mmap: file not opened for reading\n");
+            LOG_ERROR_MSG("syscall::Mm::mmap: file not opened for reading\n");
             return (uint32_t)-1;
         }
         
         if ((prot & PROT_WRITE) && !is_private && !can_write) {
             // 共享可写映射需要文件以写模式打开
-            LOG_ERROR_MSG("sys_mmap: shared writable mapping requires write access\n");
+            LOG_ERROR_MSG("syscall::Mm::mmap: shared writable mapping requires write access\n");
             return (uint32_t)-1;
         }
     }
@@ -410,7 +410,7 @@ uint32_t sys_mmap(uint32_t addr, uint32_t length, uint32_t prot,
     // 查找空闲虚拟地址空间
     uint32_t vaddr = find_free_vaddr(current, addr, length);
     if (vaddr == 0) {
-        LOG_ERROR_MSG("sys_mmap: no free virtual address space for length 0x%x\n", length);
+        LOG_ERROR_MSG("syscall::Mm::mmap: no free virtual address space for length 0x%x\n", length);
         return (uint32_t)-1;
     }
     
@@ -429,21 +429,21 @@ uint32_t sys_mmap(uint32_t addr, uint32_t length, uint32_t prot,
 }
 
 /**
- * sys_munmap - 取消内存映射
+ * syscall::Mm::munmap - 取消内存映射
  * @param addr 映射起始地址
  * @param length 取消映射的长度
  * @return 成功返回 0，失败返回 (uint32_t)-1
  */
-uint32_t sys_munmap(uint32_t addr, uint32_t length) {
+uint32_t syscall::Mm::munmap(uint32_t addr, uint32_t length) {
     task_t *current = kernel::Scheduler::get_current();
     if (!current) {
-        LOG_ERROR_MSG("sys_munmap: no current task\n");
+        LOG_ERROR_MSG("syscall::Mm::munmap: no current task\n");
         return (uint32_t)-1;
     }
     
     // 检查是否为用户进程
     if (!current->is_user_process) {
-        LOG_ERROR_MSG("sys_munmap: not a user process\n");
+        LOG_ERROR_MSG("syscall::Mm::munmap: not a user process\n");
         return (uint32_t)-1;
     }
     
@@ -457,11 +457,11 @@ uint32_t sys_munmap(uint32_t addr, uint32_t length) {
     
     // 检查地址范围是否有效（在用户空间内）
     if (aligned_addr >= USER_SPACE_END || aligned_addr + length > USER_SPACE_END) {
-        LOG_ERROR_MSG("sys_munmap: address 0x%x out of user space\n", aligned_addr);
+        LOG_ERROR_MSG("syscall::Mm::munmap: address 0x%x out of user space\n", aligned_addr);
         return (uint32_t)-1;
     }
     
-    LOG_DEBUG_MSG("sys_munmap: addr=0x%x, length=0x%x\n", aligned_addr, length);
+    LOG_DEBUG_MSG("syscall::Mm::munmap: addr=0x%x, length=0x%x\n", aligned_addr, length);
     
     // 取消映射并释放物理页
     uint32_t pages_freed = 0;
@@ -473,7 +473,7 @@ uint32_t sys_munmap(uint32_t addr, uint32_t length) {
         }
     }
     
-    LOG_DEBUG_MSG("sys_munmap: unmapped %u pages\n", pages_freed);
+    LOG_DEBUG_MSG("syscall::Mm::munmap: unmapped %u pages\n", pages_freed);
     
     return 0;
 }

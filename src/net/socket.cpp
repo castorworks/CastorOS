@@ -99,14 +99,14 @@ static socket_t *socket_get(int fd) {
     return sock;
 }
 
-void socket_init(void) {
+void net::Socket::init() {
     socket_lock.init();
     memset(socket_table, 0, sizeof(socket_table));
     
     LOG_INFO_MSG("socket: Socket subsystem initialized\n");
 }
 
-int sys_socket(int domain, int type, int protocol) {
+int net::Socket::socket(int domain, int type, int protocol) {
     // 只支持 AF_INET
     if (domain != AF_INET) {
         LOG_WARN_MSG("socket: Unsupported domain %d\n", domain);
@@ -171,7 +171,7 @@ int sys_socket(int domain, int type, int protocol) {
     return fd;
 }
 
-int sys_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
+int net::Socket::bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     socket_t *sock = socket_get(sockfd);
     if (!sock || !addr) {
         return -1;
@@ -204,7 +204,7 @@ int sys_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     return ret;
 }
 
-int sys_listen(int sockfd, int backlog) {
+int net::Socket::listen(int sockfd, int backlog) {
     socket_t *sock = socket_get(sockfd);
     if (!sock) {
         return -1;
@@ -226,7 +226,7 @@ int sys_listen(int sockfd, int backlog) {
     return ret;
 }
 
-int sys_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
+int net::Socket::accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
     socket_t *sock = socket_get(sockfd);
     if (!sock) {
         return -1;
@@ -287,7 +287,7 @@ int sys_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
     return new_fd;
 }
 
-int sys_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
+int net::Socket::connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     socket_t *sock = socket_get(sockfd);
     if (!sock || !addr) {
         return -1;
@@ -320,7 +320,7 @@ int sys_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     return ret;
 }
 
-ssize_t sys_send(int sockfd, const void *buf, size_t len, int flags) {
+ssize_t net::Socket::send(int sockfd, const void *buf, size_t len, int flags) {
     (void)flags;  // 暂不使用
     
     socket_t *sock = socket_get(sockfd);
@@ -354,7 +354,7 @@ ssize_t sys_send(int sockfd, const void *buf, size_t len, int flags) {
     }
 }
 
-ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
+ssize_t net::Socket::sendto(int sockfd, const void *buf, size_t len, int flags,
                    const struct sockaddr *dest_addr, socklen_t addrlen) {
     (void)flags;
     
@@ -368,7 +368,7 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         if (dest_addr) {
             return -1;
         }
-        return sys_send(sockfd, buf, len, flags);
+        return net::Socket::send(sockfd, buf, len, flags);
     }
     
     // UDP
@@ -398,7 +398,7 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
     return len;
 }
 
-ssize_t sys_recv(int sockfd, void *buf, size_t len, int flags) {
+ssize_t net::Socket::recv(int sockfd, void *buf, size_t len, int flags) {
     socket_t *sock = socket_get(sockfd);
     if (!sock || !buf) {
         return -1;
@@ -441,7 +441,7 @@ ssize_t sys_recv(int sockfd, void *buf, size_t len, int flags) {
     }
 }
 
-ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
+ssize_t net::Socket::recvfrom(int sockfd, void *buf, size_t len, int flags,
                      struct sockaddr *src_addr, socklen_t *addrlen) {
     socket_t *sock = socket_get(sockfd);
     if (!sock || !buf) {
@@ -452,7 +452,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
     
     // TCP 不支持 recvfrom
     if (sock->type == SOCK_STREAM) {
-        return sys_recv(sockfd, buf, len, flags);
+        return net::Socket::recv(sockfd, buf, len, flags);
     }
     
     // UDP
@@ -482,7 +482,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
     return copy_len;
 }
 
-int sys_closesocket(int sockfd) {
+int net::Socket::closesocket(int sockfd) {
     socket_t *sock = socket_get(sockfd);
     if (!sock) {
         return -1;
@@ -506,7 +506,7 @@ int sys_closesocket(int sockfd) {
     return 0;
 }
 
-int sys_shutdown(int sockfd, int how) {
+int net::Socket::shutdown(int sockfd, int how) {
     socket_t *sock = socket_get(sockfd);
     if (!sock) {
         return -1;
@@ -521,7 +521,7 @@ int sys_shutdown(int sockfd, int how) {
     return 0;
 }
 
-int sys_setsockopt(int sockfd, int level, int optname, 
+int net::Socket::setsockopt(int sockfd, int level, int optname, 
                    const void *optval, socklen_t optlen) {
     socket_t *sock = socket_get(sockfd);
     if (!sock || !optval) {
@@ -554,7 +554,7 @@ int sys_setsockopt(int sockfd, int level, int optname,
     return -1;
 }
 
-int sys_getsockopt(int sockfd, int level, int optname, 
+int net::Socket::getsockopt(int sockfd, int level, int optname, 
                    void *optval, socklen_t *optlen) {
     socket_t *sock = socket_get(sockfd);
     if (!sock || !optval || !optlen) {
@@ -584,7 +584,7 @@ int sys_getsockopt(int sockfd, int level, int optname,
     return -1;
 }
 
-int sys_getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
+int net::Socket::getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
     socket_t *sock = socket_get(sockfd);
     if (!sock || !addr || !addrlen) {
         return -1;
@@ -599,7 +599,7 @@ int sys_getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
     return -1;
 }
 
-int sys_getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
+int net::Socket::getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
     socket_t *sock = socket_get(sockfd);
     if (!sock || !addr || !addrlen) {
         return -1;
@@ -618,7 +618,7 @@ int sys_getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
     return -1;
 }
 
-int sys_fcntl(int sockfd, int cmd, int arg) {
+int net::Socket::fcntl(int sockfd, int cmd, int arg) {
     socket_t *sock = socket_get(sockfd);
     if (!sock) {
         return -1;
@@ -637,7 +637,7 @@ int sys_fcntl(int sockfd, int cmd, int arg) {
     }
 }
 
-int sys_select(int nfds, fd_set *readfds, fd_set *writefds,
+int net::Socket::select(int nfds, fd_set *readfds, fd_set *writefds,
                fd_set *exceptfds, struct timeval *timeout) {
     fd_set read_result, write_result, except_result;
     FD_ZERO(&read_result);

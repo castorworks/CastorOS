@@ -17,7 +17,7 @@ lock_.init();
 }
 
 bool Mutex::try_lock() {
-bool irq_state = interrupts_disable();
+bool irq_state = kernel::Interrupts::disable();
     task_t *current = mutex_current_task();
     bool acquired = false;
 
@@ -34,7 +34,7 @@ bool irq_state = interrupts_disable();
     }
 
     lock_.unlock();
-    interrupts_restore(irq_state);
+    kernel::Interrupts::restore(irq_state);
 
     return acquired;
 }
@@ -46,7 +46,7 @@ task_t *current = mutex_current_task();
     }
 
     while (1) {
-        bool irq_state = interrupts_disable();
+        bool irq_state = kernel::Interrupts::disable();
 
         lock_.lock();
 
@@ -56,7 +56,7 @@ task_t *current = mutex_current_task();
             owner_pid_ = current->pid;
             recursion_ = 1;
             lock_.unlock();
-            interrupts_restore(irq_state);
+            kernel::Interrupts::restore(irq_state);
             return;
         }
 
@@ -64,7 +64,7 @@ task_t *current = mutex_current_task();
         if (owner_pid_ == current->pid) {
             recursion_++;
             lock_.unlock();
-            interrupts_restore(irq_state);
+            kernel::Interrupts::restore(irq_state);
             return;
         }
 
@@ -77,7 +77,7 @@ task_t *current = mutex_current_task();
         // 现在可以安全地调度到其他任务了
         kernel::Scheduler::schedule();
         
-        interrupts_restore(irq_state);
+        kernel::Interrupts::restore(irq_state);
         
         // 被唤醒后重新尝试
     }
@@ -90,7 +90,7 @@ task_t *current = mutex_current_task();
         return;
     }
 
-    bool irq_state = interrupts_disable();
+    bool irq_state = kernel::Interrupts::disable();
     bool should_wakeup = false;
 
     lock_.lock();
@@ -114,7 +114,7 @@ task_t *current = mutex_current_task();
         kernel::Scheduler::wakeup(this);
     }
 
-    interrupts_restore(irq_state);
+    kernel::Interrupts::restore(irq_state);
 }
 
 bool Mutex::is_locked() const {

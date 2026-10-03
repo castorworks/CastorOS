@@ -922,7 +922,7 @@ void kernel::Scheduler::schedule() {
         return;
     }
     
-    bool prev_state = interrupts_disable();
+    bool prev_state = kernel::Interrupts::disable();
     
     // 【关键修复】先清理上一次延迟的 terminated 任务
     // 现在我们已经在新任务的栈上了，可以安全地释放旧任务的资源
@@ -1091,7 +1091,7 @@ void kernel::Scheduler::schedule() {
         // 下一次进入这个函数时，已经是在新任务的上下文中了
     }
     
-    interrupts_restore(prev_state);
+    kernel::Interrupts::restore(prev_state);
 }
 
 /**
@@ -1166,11 +1166,11 @@ void kernel::Scheduler::timer_tick() {
  * @brief 任务退出
  */
 void task_exit(uint32_t exit_code) {
-    bool prev_state = interrupts_disable();
+    bool prev_state = kernel::Interrupts::disable();
     
     if (!current_task) {
         LOG_ERROR_MSG("task_exit: No current task\n");
-        interrupts_restore(prev_state);
+        kernel::Interrupts::restore(prev_state);
         // 无限循环，因为函数标记为 noreturn
         while (1) {
             hal::Cpu::halt();
@@ -1264,7 +1264,7 @@ void kernel::Scheduler::sleep(uint32_t ms) {
         return;
     }
     
-    bool prev_state = interrupts_disable();
+    bool prev_state = kernel::Interrupts::disable();
     
     // 计算唤醒时间
     uint64_t wake_time = drivers::Timer::get_uptime_ms() + ms;
@@ -1274,7 +1274,7 @@ void kernel::Scheduler::sleep(uint32_t ms) {
     // 切换到其他任务
     kernel::Scheduler::schedule();
     
-    interrupts_restore(prev_state);
+    kernel::Interrupts::restore(prev_state);
 }
 
 /**
@@ -1289,7 +1289,7 @@ void kernel::Scheduler::block(void *wait_object) {
         return;
     }
     
-    bool prev_state = interrupts_disable();
+    bool prev_state = kernel::Interrupts::disable();
     
     current_task->state = TASK_BLOCKED;
     
@@ -1299,7 +1299,7 @@ void kernel::Scheduler::block(void *wait_object) {
     // 触发调度，切换到其他任务
     kernel::Scheduler::schedule();
     
-    interrupts_restore(prev_state);
+    kernel::Interrupts::restore(prev_state);
 }
 
 /**

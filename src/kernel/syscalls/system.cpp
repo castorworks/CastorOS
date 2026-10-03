@@ -5,24 +5,24 @@
 #include <lib/string.h>
 #include <lib/klog.h>
 
-uint32_t sys_reboot(void) {
+uint32_t syscall::System::reboot() {
     kernel::System::reboot();
     return 0;
 }
 
-uint32_t sys_poweroff(void) {
+uint32_t syscall::System::poweroff() {
     kernel::System::poweroff();
     return 0;
 }
 
 /**
- * sys_uname - 获取系统信息
+ * syscall::System::uname - 获取系统信息
  * @param buf 用户空间 utsname 结构体指针
  * @return 0 成功，(uint32_t)-1 失败
  */
-uint32_t sys_uname(struct utsname *buf) {
+uint32_t syscall::System::uname(struct utsname *buf) {
     if (!buf) {
-        LOG_ERROR_MSG("sys_uname: buf is NULL\n");
+        LOG_ERROR_MSG("syscall::System::uname: buf is NULL\n");
         return (uint32_t)-1;
     }
     
@@ -43,7 +43,7 @@ uint32_t sys_uname(struct utsname *buf) {
     
     strcpy(buf->machine, "i386");               // 硬件类型
     
-    LOG_DEBUG_MSG("sys_uname: sysname=%s, release=%s, machine=%s\n",
+    LOG_DEBUG_MSG("syscall::System::uname: sysname=%s, release=%s, machine=%s\n",
                   buf->sysname, buf->release, buf->machine);
     
     return 0;

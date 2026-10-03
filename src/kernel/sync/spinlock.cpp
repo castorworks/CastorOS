@@ -65,13 +65,13 @@ bool Spinlock::is_locked() const {
 }
 
 void Spinlock::lock_irqsave(bool &irq_state) {
-    irq_state = interrupts_disable();
+    irq_state = kernel::Interrupts::disable();
     lock();
 }
 
 void Spinlock::unlock_irqrestore(bool irq_state) {
     unlock();
-    interrupts_restore(irq_state);
+    kernel::Interrupts::restore(irq_state);
 }
 
 } // namespace sync

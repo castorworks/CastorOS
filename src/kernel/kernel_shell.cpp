@@ -371,7 +371,7 @@ static int shell_resolve_path(const char *path, char *abs_path, size_t size) {
 /**
  * 初始化内核 Shell
  */
-void kernel_shell_init(void) {
+void kernel::Shell::init() {
     memset(&shell_state, 0, sizeof(shell_state_t));
     shell_state.running = false;
     strcpy(shell_state.cwd, "/");  // 初始化当前工作目录为根目录
@@ -403,7 +403,7 @@ static void shell_print_welcome(void) {
 /**
  * 显示提示符
  */
-void shell_print_prompt(void) {
+void kernel::Shell::print_prompt() {
     shell_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     kprintf(SHELL_PROMPT);
     shell_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
@@ -412,7 +412,7 @@ void shell_print_prompt(void) {
 /**
  * 清空输入缓冲区
  */
-void shell_clear_input(void) {
+void kernel::Shell::clear_input() {
     memset(shell_state.input_buffer, 0, SHELL_MAX_INPUT_LENGTH);
     shell_state.input_len = 0;
     shell_state.cursor_pos = 0;
@@ -421,7 +421,7 @@ void shell_clear_input(void) {
 /**
  * 解析命令行
  */
-int shell_parse_command(char *line, int *argc, char **argv) {
+int kernel::Shell::parse_command(char *line, int *argc, char **argv) {
     *argc = 0;
     
     // 跳过前导空格
@@ -467,7 +467,7 @@ int shell_parse_command(char *line, int *argc, char **argv) {
 /**
  * 查找命令
  */
-const shell_command_t *shell_find_command(const char *name) {
+const shell_command_t *kernel::Shell::find_command(const char *name) {
     for (int i = 0; commands[i].name != NULL; i++) {
         if (strcmp(commands[i].name, name) == 0) {
             return &commands[i];
@@ -479,12 +479,12 @@ const shell_command_t *shell_find_command(const char *name) {
 /**
  * 执行命令
  */
-int shell_execute_command(int argc, char **argv) {
+int kernel::Shell::execute_command(int argc, char **argv) {
     if (argc == 0) {
         return 0;
     }
     
-    const shell_command_t *cmd = shell_find_command(argv[0]);
+    const shell_command_t *cmd = kernel::Shell::find_command(argv[0]);
     if (cmd == NULL) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: Unknown command '%s'\n", argv[0]);
@@ -499,7 +499,7 @@ int shell_execute_command(int argc, char **argv) {
 /**
  * 添加历史记录
  */
-void shell_add_history(const char *line) {
+void kernel::Shell::add_history(const char *line) {
     // 如果历史记录已满，移除最旧的
     if (shell_state.history_count >= SHELL_HISTORY_SIZE) {
         for (int i = 0; i < SHELL_HISTORY_SIZE - 1; i++) {
@@ -548,7 +548,7 @@ static size_t shell_read_line(char *buffer, size_t size) {
 /**
  * Shell 主循环
  */
-void kernel_shell_run(void) {
+void kernel::Shell::run() {
     shell_state.running = true;
     
     // 显示欢迎信息
@@ -557,27 +557,27 @@ void kernel_shell_run(void) {
     // 主循环
     while (shell_state.running) {
         // 显示提示符
-        shell_print_prompt();
+        kernel::Shell::print_prompt();
         
         // 清空输入缓冲区
-        shell_clear_input();
+        kernel::Shell::clear_input();
         
         // 读取一行输入（带回显）
         shell_read_line(shell_state.input_buffer, SHELL_MAX_INPUT_LENGTH);
         
         // 解析命令
-        if (shell_parse_command(shell_state.input_buffer, 
+        if (kernel::Shell::parse_command(shell_state.input_buffer, 
                                 &shell_state.argc, 
                                 shell_state.argv) == 0) {
             // 如果不是空命令，添加到历史记录
             if (shell_state.argc > 0) {
                 // 不将 exit 命令加入历史
                 if (strcmp(shell_state.argv[0], "exit") != 0) {
-                    shell_add_history(shell_state.input_buffer);
+                    kernel::Shell::add_history(shell_state.input_buffer);
                 }
                 
                 // 执行命令
-                shell_execute_command(shell_state.argc, shell_state.argv);
+                kernel::Shell::execute_command(shell_state.argc, shell_state.argv);
             }
         }
     }
@@ -608,7 +608,7 @@ static int cmd_help(int argc, char **argv) {
         shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     } else {
         // 显示特定命令的帮助
-        const shell_command_t *cmd = shell_find_command(argv[1]);
+        const shell_command_t *cmd = kernel::Shell::find_command(argv[1]);
         if (cmd == NULL) {
             shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             kprintf("Error: Unknown command '%s'\n", argv[1]);
