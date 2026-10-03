@@ -23,12 +23,14 @@
 #define NETBUF_HEADROOM     128     // 预留头部空间（用于协议头）
 
 // 前向声明
-struct netdev;
+namespace net { struct Netdev; }
+
+namespace net {
 
 /**
  * @brief 网络缓冲区结构
  */
-typedef struct netbuf {
+struct Netbuf {
     uint8_t *head;          ///< 缓冲区起始地址
     uint8_t *data;          ///< 数据起始地址
     uint8_t *tail;          ///< 数据结束地址
@@ -43,78 +45,79 @@ typedef struct netbuf {
     void *transport_header; ///< 传输层头部
     
     // 接收信息
-    struct netdev *dev;     ///< 接收数据包的网络设备
+    net::Netdev *dev;     ///< 接收数据包的网络设备
     
     // 源地址信息（用于 recvfrom）
     uint32_t src_ip;        ///< 源 IP 地址（网络字节序）
     uint16_t src_port;      ///< 源端口（主机字节序）
     
-    struct netbuf *next;    ///< 链表指针（用于队列）
-} netbuf_t;
+    Netbuf *next;    ///< 链表指针（用于队列）
 
-/**
- * @brief 分配网络缓冲区
- * @param size 数据区大小
- * @return 新分配的缓冲区，失败返回 NULL
- */
-netbuf_t *netbuf_alloc(uint32_t size);
+    /**
+     * @brief 分配网络缓冲区
+     * @param size 数据区大小
+     * @return 新分配的缓冲区，失败返回 NULL
+     */
+    static Netbuf *alloc(uint32_t size);
 
-/**
- * @brief 释放网络缓冲区
- * @param buf 缓冲区
- */
-void netbuf_free(netbuf_t *buf);
+    /**
+     * @brief 释放网络缓冲区
+     * @param buf 缓冲区
+     */
+    static void free(Netbuf *buf);
 
-/**
- * @brief 在数据前添加空间（用于添加协议头）
- * @param buf 缓冲区
- * @param len 要添加的长度
- * @return 新的 data 指针，失败返回 NULL
- */
-uint8_t *netbuf_push(netbuf_t *buf, uint32_t len);
+    /**
+     * @brief 在数据前添加空间（用于添加协议头）
+     * @param buf 缓冲区
+     * @param len 要添加的长度
+     * @return 新的 data 指针，失败返回 NULL
+     */
+    static uint8_t *push(Netbuf *buf, uint32_t len);
 
-/**
- * @brief 从数据前移除空间（用于剥离协议头）
- * @param buf 缓冲区
- * @param len 要移除的长度
- * @return 新的 data 指针，失败返回 NULL
- */
-uint8_t *netbuf_pull(netbuf_t *buf, uint32_t len);
+    /**
+     * @brief 从数据前移除空间（用于剥离协议头）
+     * @param buf 缓冲区
+     * @param len 要移除的长度
+     * @return 新的 data 指针，失败返回 NULL
+     */
+    static uint8_t *pull(Netbuf *buf, uint32_t len);
 
-/**
- * @brief 在数据后添加空间
- * @param buf 缓冲区
- * @param len 要添加的长度
- * @return 旧的 tail 指针，失败返回 NULL
- */
-uint8_t *netbuf_put(netbuf_t *buf, uint32_t len);
+    /**
+     * @brief 在数据后添加空间
+     * @param buf 缓冲区
+     * @param len 要添加的长度
+     * @return 旧的 tail 指针，失败返回 NULL
+     */
+    static uint8_t *put(Netbuf *buf, uint32_t len);
 
-/**
- * @brief 复制缓冲区
- * @param buf 源缓冲区
- * @return 新缓冲区的副本，失败返回 NULL
- */
-netbuf_t *netbuf_clone(netbuf_t *buf);
+    /**
+     * @brief 复制缓冲区
+     * @param buf 源缓冲区
+     * @return 新缓冲区的副本，失败返回 NULL
+     */
+    static Netbuf *clone(Netbuf *buf);
 
-/**
- * @brief 重置缓冲区为初始状态
- * @param buf 缓冲区
- */
-void netbuf_reset(netbuf_t *buf);
+    /**
+     * @brief 重置缓冲区为初始状态
+     * @param buf 缓冲区
+     */
+    static void reset(Netbuf *buf);
 
-/**
- * @brief 获取缓冲区剩余的头部空间
- * @param buf 缓冲区
- * @return 头部剩余空间字节数
- */
-uint32_t netbuf_headroom(netbuf_t *buf);
+    /**
+     * @brief 获取缓冲区剩余的头部空间
+     * @param buf 缓冲区
+     * @return 头部剩余空间字节数
+     */
+    static uint32_t headroom(Netbuf *buf);
 
-/**
- * @brief 获取缓冲区剩余的尾部空间
- * @param buf 缓冲区
- * @return 尾部剩余空间字节数
- */
-uint32_t netbuf_tailroom(netbuf_t *buf);
+    /**
+     * @brief 获取缓冲区剩余的尾部空间
+     * @param buf 缓冲区
+     * @return 尾部剩余空间字节数
+     */
+    static uint32_t tailroom(Netbuf *buf);
+};
+
+} // namespace net
 
 #endif // _NET_NETBUF_H_
-

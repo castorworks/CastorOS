@@ -76,7 +76,7 @@ typedef struct arp_entry {
     uint32_t    timestamp;      ///< 上次更新时间
     arp_state_t state;          ///< 条目状态
     uint8_t     retries;        ///< 重试次数
-    netbuf_t    *pending_queue; ///< 等待发送的数据包队列
+    net::Netbuf    *pending_queue; ///< 等待发送的数据包队列
 } arp_entry_t;
 
 namespace net {
@@ -96,7 +96,7 @@ public:
      * @param dev 网络设备
      * @param buf 接收缓冲区
      */
-    static void input(netdev_t *dev, netbuf_t *buf);
+    static void input(net::Netdev *dev, net::Netbuf *buf);
 
     /**
      * @brief 解析 IP 地址对应的 MAC 地址
@@ -105,7 +105,7 @@ public:
      * @param mac 输出 MAC 地址（6字节）
      * @return 0 成功（mac 已填充），-1 正在解析中，-2 失败
      */
-    static int resolve(netdev_t *dev, uint32_t ip, uint8_t *mac);
+    static int resolve(net::Netdev *dev, uint32_t ip, uint8_t *mac);
 
     /**
      * @brief 发送 ARP 请求
@@ -113,7 +113,7 @@ public:
      * @param target_ip 目标 IP 地址（网络字节序）
      * @return 0 成功，-1 失败
      */
-    static int request(netdev_t *dev, uint32_t target_ip);
+    static int request(net::Netdev *dev, uint32_t target_ip);
 
     /**
      * @brief 发送 ARP 应答
@@ -122,7 +122,7 @@ public:
      * @param target_mac 目标 MAC 地址
      * @return 0 成功，-1 失败
      */
-    static int reply(netdev_t *dev, uint32_t target_ip, const uint8_t *target_mac);
+    static int reply(net::Netdev *dev, uint32_t target_ip, const uint8_t *target_mac);
 
     /**
      * @brief 添加或更新 ARP 缓存条目
@@ -191,7 +191,7 @@ public:
      * @param buf 数据包
      * @return 0 成功，-1 失败
      */
-    static int queue_packet(uint32_t ip, netbuf_t *buf);
+    static int queue_packet(uint32_t ip, net::Netbuf *buf);
 };
 
 } // namespace net

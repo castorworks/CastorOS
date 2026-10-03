@@ -344,7 +344,7 @@ static void e1000_update_link_status(e1000_device_t *dev) {
 /**
  * @brief 打开设备
  */
-static int e1000_netdev_open(netdev_t *netdev) {
+static int e1000_netdev_open(net::Netdev *netdev) {
     e1000_device_t *dev = (e1000_device_t *)netdev->priv;
     
     /* 设置链路启用 */
@@ -364,7 +364,7 @@ static int e1000_netdev_open(netdev_t *netdev) {
 /**
  * @brief 关闭设备
  */
-static int e1000_netdev_close(netdev_t *netdev) {
+static int e1000_netdev_close(net::Netdev *netdev) {
     e1000_device_t *dev = (e1000_device_t *)netdev->priv;
     
     /* 禁用中断 */
@@ -380,7 +380,7 @@ static int e1000_netdev_close(netdev_t *netdev) {
 /**
  * @brief 发送数据包
  */
-static int e1000_netdev_transmit(netdev_t *netdev, netbuf_t *buf) {
+static int e1000_netdev_transmit(net::Netdev *netdev, net::Netbuf *buf) {
     e1000_device_t *dev = (e1000_device_t *)netdev->priv;
     
     if (!buf || buf->len == 0 || buf->len > 1518) {
@@ -427,7 +427,7 @@ static int e1000_netdev_transmit(netdev_t *netdev, netbuf_t *buf) {
 /**
  * @brief 设置 MAC 地址
  */
-static int e1000_netdev_set_mac(netdev_t *netdev, uint8_t *mac) {
+static int e1000_netdev_set_mac(net::Netdev *netdev, uint8_t *mac) {
     e1000_device_t *dev = (e1000_device_t *)netdev->priv;
     
     /* 复制 MAC 地址 */
@@ -475,10 +475,10 @@ void e1000_receive(e1000_device_t *dev) {
             
             if (len > 0 && len <= E1000_RX_BUFFER_SIZE) {
                 /* 分配网络缓冲区 */
-                netbuf_t *buf = netbuf_alloc(len);
+                net::Netbuf *buf = net::Netbuf::alloc(len);
                 if (buf) {
                     /* 复制数据 */
-                    memcpy(netbuf_put(buf, len), dev->rx_buffers[cur], len);
+                    memcpy(net::Netbuf::put(buf, len), dev->rx_buffers[cur], len);
                     buf->dev = &dev->netdev;
                     
                     /* 更新统计 */
@@ -486,7 +486,7 @@ void e1000_receive(e1000_device_t *dev) {
                     dev->rx_bytes += len;
                     
                     /* 传递给网络栈 */
-                    netdev_receive(&dev->netdev, buf);
+                    net::Netdev::receive(&dev->netdev, buf);
                 }
             }
         }
@@ -640,7 +640,7 @@ static int e1000_init_device(pci_device_t *pci_dev) {
     dev->netdev.lock.init();
     
     /* 注册网络设备 */
-    if (netdev_register(&dev->netdev) < 0) {
+    if (net::Netdev::register_device(&dev->netdev) < 0) {
         LOG_ERROR_MSG("e1000: Failed to register netdev\n");
         return -1;
     }
@@ -710,7 +710,7 @@ e1000_device_t *e1000_get_device(int index) {
 }
 
 int e1000_send(e1000_device_t *dev, void *data, uint32_t len) {
-    netbuf_t buf;
+    net::Netbuf buf;
     buf.data = (uint8_t *)data;
     buf.len = len;
     buf.head = buf.data;

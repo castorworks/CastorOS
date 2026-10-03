@@ -447,7 +447,7 @@ TEST_CASE(test_ip_same_subnet_edge_masks) {
  */
 TEST_CASE(test_ip_get_next_hop_same_subnet) {
     // 模拟网络设备
-    netdev_t dev;
+    net::Netdev dev;
     memset(&dev, 0, sizeof(dev));
     dev.ip_addr = IP_ADDR(192, 168, 1, 100);
     dev.netmask = IP_ADDR(255, 255, 255, 0);
@@ -465,7 +465,7 @@ TEST_CASE(test_ip_get_next_hop_same_subnet) {
  * 不同子网且有网关时应返回网关地址
  */
 TEST_CASE(test_ip_get_next_hop_different_subnet_with_gw) {
-    netdev_t dev;
+    net::Netdev dev;
     memset(&dev, 0, sizeof(dev));
     dev.ip_addr = IP_ADDR(192, 168, 1, 100);
     dev.netmask = IP_ADDR(255, 255, 255, 0);
@@ -483,7 +483,7 @@ TEST_CASE(test_ip_get_next_hop_different_subnet_with_gw) {
  * 不同子网且无网关时应返回目的地址
  */
 TEST_CASE(test_ip_get_next_hop_different_subnet_no_gw) {
-    netdev_t dev;
+    net::Netdev dev;
     memset(&dev, 0, sizeof(dev));
     dev.ip_addr = IP_ADDR(192, 168, 1, 100);
     dev.netmask = IP_ADDR(255, 255, 255, 0);

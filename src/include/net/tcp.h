@@ -235,7 +235,7 @@ public:
      * @param src_ip 源 IP 地址（网络字节序）
      * @param dst_ip 目的 IP 地址（网络字节序）
      */
-    static void input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip);
+    static void input(net::Netdev *dev, net::Netbuf *buf, uint32_t src_ip, uint32_t dst_ip);
 
     /**
      * @brief 创建新的 TCP PCB

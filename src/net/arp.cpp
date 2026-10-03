@@ -65,10 +65,10 @@ static arp_entry_t *arp_cache_find(uint32_t ip) {
 /**
  * @brief 发送等待队列中的数据包
  */
-static void arp_send_pending(arp_entry_t *entry, netdev_t *dev) {
-    netbuf_t *buf = entry->pending_queue;
+static void arp_send_pending(arp_entry_t *entry, net::Netdev *dev) {
+    net::Netbuf *buf = entry->pending_queue;
     while (buf) {
-        netbuf_t *next = buf->next;
+        net::Netbuf *next = buf->next;
         buf->next = NULL;
         
         // 发送数据包（通过以太网层）
@@ -76,7 +76,7 @@ static void arp_send_pending(arp_entry_t *entry, netdev_t *dev) {
         // 如果失败，需要我们释放
         int ret = net::Ethernet::output(dev, buf, entry->mac_addr, ETH_TYPE_IP);
         if (ret < 0) {
-            netbuf_free(buf);
+            net::Netbuf::free(buf);
         }
         
         buf = next;
@@ -88,10 +88,10 @@ static void arp_send_pending(arp_entry_t *entry, netdev_t *dev) {
  * @brief 释放等待队列中的数据包
  */
 static void arp_free_pending(arp_entry_t *entry) {
-    netbuf_t *buf = entry->pending_queue;
+    net::Netbuf *buf = entry->pending_queue;
     while (buf) {
-        netbuf_t *next = buf->next;
-        netbuf_free(buf);
+        net::Netbuf *next = buf->next;
+        net::Netbuf::free(buf);
         buf = next;
     }
     entry->pending_queue = NULL;
@@ -104,7 +104,7 @@ void net::Arp::init() {
     LOG_INFO_MSG("arp: ARP protocol initialized\n");
 }
 
-void net::Arp::input(netdev_t *dev, netbuf_t *buf) {
+void net::Arp::input(net::Netdev *dev, net::Netbuf *buf) {
     if (!dev || !buf) {
         return;
     }
@@ -112,7 +112,7 @@ void net::Arp::input(netdev_t *dev, netbuf_t *buf) {
     // 检查报文长度
     if (buf->len < sizeof(arp_header_t)) {
         LOG_WARN_MSG("arp: Packet too short (%u bytes)\n", buf->len);
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return;
     }
     
@@ -124,7 +124,7 @@ void net::Arp::input(netdev_t *dev, netbuf_t *buf) {
         arp->hardware_len != 6 ||
         arp->protocol_len != 4) {
         LOG_WARN_MSG("arp: Invalid ARP packet\n");
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return;
     }
     
@@ -135,7 +135,7 @@ void net::Arp::input(netdev_t *dev, netbuf_t *buf) {
     
     // 检查目标 IP 是否是我们的 IP
     if (arp->target_ip != dev->ip_addr) {
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return;
     }
     
@@ -164,10 +164,10 @@ void net::Arp::input(netdev_t *dev, netbuf_t *buf) {
             break;
     }
     
-    netbuf_free(buf);
+    net::Netbuf::free(buf);
 }
 
-int net::Arp::resolve(netdev_t *dev, uint32_t ip, uint8_t *mac) {
+int net::Arp::resolve(net::Netdev *dev, uint32_t ip, uint8_t *mac) {
     if (!dev || !mac) {
         return -2;
     }
@@ -216,20 +216,20 @@ int net::Arp::resolve(netdev_t *dev, uint32_t ip, uint8_t *mac) {
     return -1;  // 正在解析
 }
 
-int net::Arp::request(netdev_t *dev, uint32_t target_ip) {
+int net::Arp::request(net::Netdev *dev, uint32_t target_ip) {
     if (!dev) {
         return -1;
     }
     
     // 分配缓冲区
-    netbuf_t *buf = netbuf_alloc(sizeof(arp_header_t));
+    net::Netbuf *buf = net::Netbuf::alloc(sizeof(arp_header_t));
     if (!buf) {
         LOG_ERROR_MSG("arp: Failed to allocate buffer\n");
         return -1;
     }
     
     // 填充 ARP 请求
-    uint8_t *data = netbuf_put(buf, sizeof(arp_header_t));
+    uint8_t *data = net::Netbuf::put(buf, sizeof(arp_header_t));
     arp_header_t *arp = (arp_header_t *)data;
     
     arp->hardware_type = arp_htons(ARP_HARDWARE_ETHERNET);
@@ -246,26 +246,26 @@ int net::Arp::request(netdev_t *dev, uint32_t target_ip) {
     // 发送 ARP 请求（广播）
     int ret = net::Ethernet::output(dev, buf, ETH_BROADCAST_ADDR, ETH_TYPE_ARP);
     if (ret < 0) {
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
     }
     
     return ret;
 }
 
-int net::Arp::reply(netdev_t *dev, uint32_t target_ip, const uint8_t *target_mac) {
+int net::Arp::reply(net::Netdev *dev, uint32_t target_ip, const uint8_t *target_mac) {
     if (!dev || !target_mac) {
         return -1;
     }
     
     // 分配缓冲区
-    netbuf_t *buf = netbuf_alloc(sizeof(arp_header_t));
+    net::Netbuf *buf = net::Netbuf::alloc(sizeof(arp_header_t));
     if (!buf) {
         LOG_ERROR_MSG("arp: Failed to allocate buffer\n");
         return -1;
     }
     
     // 填充 ARP 应答
-    uint8_t *data = netbuf_put(buf, sizeof(arp_header_t));
+    uint8_t *data = net::Netbuf::put(buf, sizeof(arp_header_t));
     arp_header_t *arp = (arp_header_t *)data;
     
     arp->hardware_type = arp_htons(ARP_HARDWARE_ETHERNET);
@@ -282,7 +282,7 @@ int net::Arp::reply(netdev_t *dev, uint32_t target_ip, const uint8_t *target_mac
     // 发送 ARP 应答（单播）
     int ret = net::Ethernet::output(dev, buf, target_mac, ETH_TYPE_ARP);
     if (ret < 0) {
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
     }
     
     return ret;
@@ -310,7 +310,7 @@ void net::Arp::cache_update(uint32_t ip, const uint8_t *mac) {
     
     // 如果有等待发送的数据包，发送它们
     bool had_pending = (entry->state == ARP_STATE_PENDING && entry->pending_queue);
-    netdev_t *dev = netdev_get_default();
+    net::Netdev *dev = net::Netdev::get_default();
     
     // 更新条目
     memcpy(entry->mac_addr, mac, 6);
@@ -464,7 +464,7 @@ int net::Arp::cache_get_entry(int index, uint32_t *ip, uint8_t *mac, uint8_t *st
     return 0;
 }
 
-int net::Arp::queue_packet(uint32_t ip, netbuf_t *buf) {
+int net::Arp::queue_packet(uint32_t ip, net::Netbuf *buf) {
     if (!buf) {
         return -1;
     }
@@ -479,7 +479,7 @@ int net::Arp::queue_packet(uint32_t ip, netbuf_t *buf) {
         if (!entry->pending_queue) {
             entry->pending_queue = buf;
         } else {
-            netbuf_t *tail = entry->pending_queue;
+            net::Netbuf *tail = entry->pending_queue;
             while (tail->next) {
                 tail = tail->next;
             }

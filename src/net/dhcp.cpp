@@ -34,7 +34,7 @@ static sync::Spinlock dhcp_lock;
 /**
  * @brief 查找设备对应的 DHCP 客户端
  */
-static dhcp_client_t *dhcp_find_client(netdev_t *dev) {
+static dhcp_client_t *dhcp_find_client(net::Netdev *dev) {
     for (int i = 0; i < DHCP_MAX_CLIENTS; i++) {
         if (dhcp_clients[i].dev == dev) {
             return &dhcp_clients[i];
@@ -46,7 +46,7 @@ static dhcp_client_t *dhcp_find_client(netdev_t *dev) {
 /**
  * @brief 分配新的 DHCP 客户端
  */
-static dhcp_client_t *dhcp_alloc_client(netdev_t *dev) {
+static dhcp_client_t *dhcp_alloc_client(net::Netdev *dev) {
     for (int i = 0; i < DHCP_MAX_CLIENTS; i++) {
         if (dhcp_clients[i].dev == NULL) {
             memset(&dhcp_clients[i], 0, sizeof(dhcp_client_t));
@@ -208,19 +208,19 @@ static int dhcp_send_discover(dhcp_client_t *client) {
     
     net::Udp::bind(pcb, 0, DHCP_CLIENT_PORT);
     
-    netbuf_t *buf = netbuf_alloc(pkt_len);
+    net::Netbuf *buf = net::Netbuf::alloc(pkt_len);
     if (!buf) {
         net::Udp::pcb_free(pcb);
         return -1;
     }
     
-    uint8_t *data = netbuf_put(buf, pkt_len);
+    uint8_t *data = net::Netbuf::put(buf, pkt_len);
     memcpy(data, &pkt, pkt_len);
     
     // 发送到广播地址
     int ret = net::Udp::sendto(pcb, buf, 0xFFFFFFFF, DHCP_SERVER_PORT);
     
-    netbuf_free(buf);
+    net::Netbuf::free(buf);
     net::Udp::pcb_free(pcb);
     
     if (ret < 0) {
@@ -285,13 +285,13 @@ static int dhcp_send_request(dhcp_client_t *client) {
     
     net::Udp::bind(pcb, 0, DHCP_CLIENT_PORT);
     
-    netbuf_t *buf = netbuf_alloc(pkt_len);
+    net::Netbuf *buf = net::Netbuf::alloc(pkt_len);
     if (!buf) {
         net::Udp::pcb_free(pcb);
         return -1;
     }
     
-    uint8_t *data = netbuf_put(buf, pkt_len);
+    uint8_t *data = net::Netbuf::put(buf, pkt_len);
     memcpy(data, &pkt, pkt_len);
     
     // 目的地址
@@ -304,7 +304,7 @@ static int dhcp_send_request(dhcp_client_t *client) {
     
     int ret = net::Udp::sendto(pcb, buf, dst_ip, DHCP_SERVER_PORT);
     
-    netbuf_free(buf);
+    net::Netbuf::free(buf);
     net::Udp::pcb_free(pcb);
     
     if (ret < 0) {
@@ -345,18 +345,18 @@ static int dhcp_send_release(dhcp_client_t *client) {
     
     net::Udp::bind(pcb, client->info.ip_addr, DHCP_CLIENT_PORT);
     
-    netbuf_t *buf = netbuf_alloc(pkt_len);
+    net::Netbuf *buf = net::Netbuf::alloc(pkt_len);
     if (!buf) {
         net::Udp::pcb_free(pcb);
         return -1;
     }
     
-    uint8_t *data = netbuf_put(buf, pkt_len);
+    uint8_t *data = net::Netbuf::put(buf, pkt_len);
     memcpy(data, &pkt, pkt_len);
     
     int ret = net::Udp::sendto(pcb, buf, client->info.server_ip, DHCP_SERVER_PORT);
     
-    netbuf_free(buf);
+    net::Netbuf::free(buf);
     net::Udp::pcb_free(pcb);
     
     return ret;
@@ -429,9 +429,9 @@ static void dhcp_handle_ack(dhcp_client_t *client, dhcp_packet_t *pkt,
     client->info.lease_start = (uint32_t)timer_get_uptime_ms();
     
     // 配置网络接口
-    netdev_set_ipaddr(client->dev, client->info.ip_addr);
-    netdev_set_netmask(client->dev, client->info.netmask);
-    netdev_set_gateway(client->dev, client->info.gateway);
+    net::Netdev::set_ipaddr(client->dev, client->info.ip_addr);
+    net::Netdev::set_netmask(client->dev, client->info.netmask);
+    net::Netdev::set_gateway(client->dev, client->info.gateway);
     
     // 添加默认路由
     net::Ip::route_add(0, 0, client->info.gateway, client->dev, 1);
@@ -459,7 +459,7 @@ static void dhcp_handle_nak(dhcp_client_t *client) {
     client->retries = 0;
     
     // 清除配置
-    netdev_set_ipaddr(client->dev, 0);
+    net::Netdev::set_ipaddr(client->dev, 0);
     
     // 重新发送 DISCOVER
     client->state = DHCP_STATE_SELECTING;
@@ -469,7 +469,7 @@ static void dhcp_handle_nak(dhcp_client_t *client) {
 /**
  * @brief 处理收到的 DHCP 数据包
  */
-void net::Dhcp::input(netdev_t *dev, uint8_t *data, uint32_t len) {
+void net::Dhcp::input(net::Netdev *dev, uint8_t *data, uint32_t len) {
     if (len < sizeof(dhcp_packet_t) - 312) {  // 最小长度（无选项）
         return;
     }
@@ -530,7 +530,7 @@ void net::Dhcp::input(netdev_t *dev, uint8_t *data, uint32_t len) {
 /**
  * @brief 启动 DHCP 客户端
  */
-int net::Dhcp::start(netdev_t *dev) {
+int net::Dhcp::start(net::Netdev *dev) {
     if (!dev) return -1;
     
     bool irq_state;
@@ -557,7 +557,7 @@ int net::Dhcp::start(netdev_t *dev) {
     client->retries = 0;
     
     // 清除当前 IP 配置
-    netdev_set_ipaddr(dev, 0);
+    net::Netdev::set_ipaddr(dev, 0);
     
     // 开始发现过程
     client->state = DHCP_STATE_SELECTING;
@@ -571,7 +571,7 @@ int net::Dhcp::start(netdev_t *dev) {
 /**
  * @brief 停止 DHCP 客户端
  */
-void net::Dhcp::stop(netdev_t *dev) {
+void net::Dhcp::stop(net::Netdev *dev) {
     if (!dev) return;
     
     sync::SpinlockIrqGuard guard(dhcp_lock);
@@ -586,7 +586,7 @@ void net::Dhcp::stop(netdev_t *dev) {
 /**
  * @brief 释放 DHCP 租约
  */
-int net::Dhcp::release(netdev_t *dev) {
+int net::Dhcp::release(net::Netdev *dev) {
     if (!dev) return -1;
     
     bool irq_state;
@@ -602,7 +602,7 @@ int net::Dhcp::release(netdev_t *dev) {
     dhcp_send_release(client);
     
     // 清除配置
-    netdev_set_ipaddr(dev, 0);
+    net::Netdev::set_ipaddr(dev, 0);
     client->state = DHCP_STATE_INIT;
     
     dhcp_lock.unlock_irqrestore(irq_state);
@@ -614,7 +614,7 @@ int net::Dhcp::release(netdev_t *dev) {
 /**
  * @brief 获取 DHCP 状态
  */
-dhcp_state_t net::Dhcp::get_status(netdev_t *dev, dhcp_info_t *info) {
+dhcp_state_t net::Dhcp::get_status(net::Netdev *dev, dhcp_info_t *info) {
     if (!dev) return DHCP_STATE_ERROR;
     
     sync::SpinlockIrqGuard guard(dhcp_lock);
@@ -678,7 +678,7 @@ void net::Dhcp::timer() {
                 if (elapsed >= client->info.lease_time) {
                     // 租约过期
                     LOG_WARN_MSG("dhcp: Lease expired\n");
-                    netdev_set_ipaddr(client->dev, 0);
+                    net::Netdev::set_ipaddr(client->dev, 0);
                     client->state = DHCP_STATE_INIT;
                     // 重新开始
                     client->xid = dhcp_generate_xid();

@@ -26,11 +26,11 @@ static int32_t netif_ioctl(uint32_t request, struct ifreq *ifr) {
     }
     
     // 查找网络设备
-    netdev_t *dev = NULL;
+    net::Netdev *dev = NULL;
     if (ifr->ifr_name[0] != '\0') {
-        dev = netdev_get_by_name(ifr->ifr_name);
+        dev = net::Netdev::get_by_name(ifr->ifr_name);
     } else {
-        dev = netdev_get_default();
+        dev = net::Netdev::get_default();
     }
     
     if (!dev && request != SIOCGIFCONF) {
@@ -46,7 +46,7 @@ static int32_t netif_ioctl(uint32_t request, struct ifreq *ifr) {
             
         case SIOCSIFADDR:
             // 设置 IP 地址
-            netdev_set_ipaddr(dev, ifr->ifr_addr.sin_addr);
+            net::Netdev::set_ipaddr(dev, ifr->ifr_addr.sin_addr);
             return 0;
             
         case SIOCGIFNETMASK:
@@ -57,7 +57,7 @@ static int32_t netif_ioctl(uint32_t request, struct ifreq *ifr) {
             
         case SIOCSIFNETMASK:
             // 设置子网掩码
-            netdev_set_netmask(dev, ifr->ifr_netmask.sin_addr);
+            net::Netdev::set_netmask(dev, ifr->ifr_netmask.sin_addr);
             return 0;
             
         case SIOCGIFGATEWAY:
@@ -68,7 +68,7 @@ static int32_t netif_ioctl(uint32_t request, struct ifreq *ifr) {
             
         case SIOCSIFGATEWAY:
             // 设置网关地址
-            netdev_set_gateway(dev, ifr->ifr_gateway.sin_addr);
+            net::Netdev::set_gateway(dev, ifr->ifr_gateway.sin_addr);
             return 0;
             
         case SIOCGIFFLAGS:
@@ -83,9 +83,9 @@ static int32_t netif_ioctl(uint32_t request, struct ifreq *ifr) {
         case SIOCSIFFLAGS:
             // 设置接口标志
             if (ifr->ifr_flags & IFF_UP) {
-                return netdev_up(dev);
+                return net::Netdev::up(dev);
             } else {
-                return netdev_down(dev);
+                return net::Netdev::down(dev);
             }
             
         case SIOCGIFHWADDR:
@@ -153,11 +153,11 @@ static int32_t ifstats_ioctl(struct ifstats *stats) {
     }
     
     // 查找网络设备
-    netdev_t *dev = NULL;
+    net::Netdev *dev = NULL;
     if (stats->ifr_name[0] != '\0') {
-        dev = netdev_get_by_name(stats->ifr_name);
+        dev = net::Netdev::get_by_name(stats->ifr_name);
     } else {
-        dev = netdev_get_default();
+        dev = net::Netdev::get_default();
     }
     
     if (!dev) {
@@ -184,7 +184,7 @@ static int32_t ping_ioctl(struct ping_req *req) {
     }
     
     // 检查是否有网络设备
-    netdev_t *dev = netdev_get_default();
+    net::Netdev *dev = net::Netdev::get_default();
     if (!dev) {
         LOG_WARN_MSG("ping: No network device available\n");
         return -1;
@@ -326,11 +326,11 @@ int32_t netif_get_info(const char *name, netif_info_t *info) {
         return -1;
     }
     
-    netdev_t *dev = NULL;
+    net::Netdev *dev = NULL;
     if (name && name[0] != '\0') {
-        dev = netdev_get_by_name(name);
+        dev = net::Netdev::get_by_name(name);
     } else {
-        dev = netdev_get_default();
+        dev = net::Netdev::get_default();
     }
     
     if (!dev) {
@@ -357,20 +357,20 @@ int32_t netif_get_info(const char *name, netif_info_t *info) {
  * @brief 设置网络接口配置（供内核 shell 使用）
  */
 int32_t netif_set_config(const char *name, uint32_t ip, uint32_t netmask, uint32_t gateway) {
-    netdev_t *dev = NULL;
+    net::Netdev *dev = NULL;
     if (name && name[0] != '\0') {
-        dev = netdev_get_by_name(name);
+        dev = net::Netdev::get_by_name(name);
     } else {
-        dev = netdev_get_default();
+        dev = net::Netdev::get_default();
     }
     
     if (!dev) {
         return -1;
     }
     
-    netdev_set_ipaddr(dev, ip);
-    netdev_set_netmask(dev, netmask);
-    netdev_set_gateway(dev, gateway);
+    net::Netdev::set_ipaddr(dev, ip);
+    net::Netdev::set_netmask(dev, netmask);
+    net::Netdev::set_gateway(dev, gateway);
     return 0;
 }
 
@@ -378,18 +378,18 @@ int32_t netif_set_config(const char *name, uint32_t ip, uint32_t netmask, uint32
  * @brief 启用/禁用网络接口（供内核 shell 使用）
  */
 int32_t netif_set_state(const char *name, bool up) {
-    netdev_t *dev = NULL;
+    net::Netdev *dev = NULL;
     if (name && name[0] != '\0') {
-        dev = netdev_get_by_name(name);
+        dev = net::Netdev::get_by_name(name);
     } else {
-        dev = netdev_get_default();
+        dev = net::Netdev::get_default();
     }
     
     if (!dev) {
         return -1;
     }
     
-    return up ? netdev_up(dev) : netdev_down(dev);
+    return up ? net::Netdev::up(dev) : net::Netdev::down(dev);
 }
 
 /**

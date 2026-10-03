@@ -1364,27 +1364,27 @@ static int cmd_write(int argc, char **argv) {
 static int cmd_ifconfig(int argc, char **argv) {
     if (argc == 1) {
         // 显示所有接口
-        netdev_print_all();
+        net::Netdev::print_all();
         return 0;
     }
     
     if (argc == 2) {
         // 显示特定接口
-        netdev_t *dev = netdev_get_by_name(argv[1]);
+        net::Netdev *dev = net::Netdev::get_by_name(argv[1]);
         if (!dev) {
             shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             kprintf("Error: Interface '%s' not found\n", argv[1]);
             shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
             return -1;
         }
-        netdev_print_info(dev);
+        net::Netdev::print_info(dev);
         return 0;
     }
     
     // 配置接口 IP 地址
     // ifconfig eth0 192.168.1.100 255.255.255.0 192.168.1.1
     if (argc >= 5) {
-        netdev_t *dev = netdev_get_by_name(argv[1]);
+        net::Netdev *dev = net::Netdev::get_by_name(argv[1]);
         if (!dev) {
             shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             kprintf("Error: Interface '%s' not found\n", argv[1]);
@@ -1402,7 +1402,7 @@ static int cmd_ifconfig(int argc, char **argv) {
     
     // 启用/禁用接口
     if (argc == 3) {
-        netdev_t *dev = netdev_get_by_name(argv[1]);
+        net::Netdev *dev = net::Netdev::get_by_name(argv[1]);
         if (!dev) {
             shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             kprintf("Error: Interface '%s' not found\n", argv[1]);
@@ -1411,11 +1411,11 @@ static int cmd_ifconfig(int argc, char **argv) {
         }
         
         if (strcmp(argv[2], "up") == 0) {
-            netdev_up(dev);
+            net::Netdev::up(dev);
             kprintf("Interface %s is up\n", argv[1]);
             return 0;
         } else if (strcmp(argv[2], "down") == 0) {
-            netdev_down(dev);
+            net::Netdev::down(dev);
             kprintf("Interface %s is down\n", argv[1]);
             return 0;
         }
@@ -1460,7 +1460,7 @@ static int cmd_ping(int argc, char **argv) {
     }
     
     // 检查是否有网络设备
-    netdev_t *dev = netdev_get_default();
+    net::Netdev *dev = net::Netdev::get_default();
     if (!dev) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: No network device available\n");
@@ -1600,7 +1600,7 @@ static int cmd_route(int argc, char **argv) {
             return -1;
         }
         
-        netdev_t *dev = netdev_get_default();
+        net::Netdev *dev = net::Netdev::get_default();
         if (!dev) {
             shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             kprintf("Error: No network device available\n");
@@ -1660,7 +1660,7 @@ static int cmd_route(int argc, char **argv) {
  * dhcp 命令 - DHCP 客户端控制
  */
 static int cmd_dhcp(int argc, char **argv) {
-    netdev_t *dev = netdev_get_default();
+    net::Netdev *dev = net::Netdev::get_default();
     if (!dev) {
         shell_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         kprintf("Error: No network device available\n");

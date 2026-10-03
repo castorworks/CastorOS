@@ -83,7 +83,7 @@ void net::Udp::init() {
     LOG_INFO_MSG("udp: UDP protocol initialized\n");
 }
 
-void net::Udp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
+void net::Udp::input(net::Netdev *dev, net::Netbuf *buf, uint32_t src_ip, uint32_t dst_ip) {
     if (!dev || !buf) {
         return;
     }
@@ -91,7 +91,7 @@ void net::Udp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst
     // 检查报文长度
     if (buf->len < UDP_HEADER_LEN) {
         LOG_WARN_MSG("udp: Packet too short (%u bytes)\n", buf->len);
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return;
     }
     
@@ -105,7 +105,7 @@ void net::Udp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst
     // 验证长度
     if (udp_len < UDP_HEADER_LEN || udp_len > buf->len) {
         LOG_WARN_MSG("udp: Invalid length %u\n", udp_len);
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return;
     }
     
@@ -117,7 +117,7 @@ void net::Udp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst
         
         if (calc_checksum != orig_checksum) {
             LOG_WARN_MSG("udp: Invalid checksum\n");
-            netbuf_free(buf);
+            net::Netbuf::free(buf);
             return;
         }
         udp->checksum = orig_checksum;
@@ -131,7 +131,7 @@ void net::Udp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst
     
     if (pcb) {
         // 剥离 UDP 头部
-        netbuf_pull(buf, UDP_HEADER_LEN);
+        net::Netbuf::pull(buf, UDP_HEADER_LEN);
         
         // 保存源地址信息到缓冲区（用于 recvfrom）
         buf->src_ip = src_ip;
@@ -149,7 +149,7 @@ void net::Udp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst
         if (!pcb->recv_queue) {
             pcb->recv_queue = buf;
         } else {
-            netbuf_t *tail = pcb->recv_queue;
+            net::Netbuf *tail = pcb->recv_queue;
             while (tail->next) {
                 tail = tail->next;
             }
@@ -170,12 +170,12 @@ void net::Udp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst
     ip_header_t *orig_ip = (ip_header_t *)buf->network_header;
     net::Icmp::send_dest_unreachable(src_ip, ICMP_PORT_UNREACHABLE, orig_ip, udp);
     
-    netbuf_free(buf);
+    net::Netbuf::free(buf);
 }
 
 int net::Udp::output(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
                uint8_t *data, uint32_t len) {
-    netdev_t *dev = netdev_get_default();
+    net::Netdev *dev = net::Netdev::get_default();
     if (!dev) {
         LOG_ERROR_MSG("udp: No network device available\n");
         return -1;
@@ -185,14 +185,14 @@ int net::Udp::output(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
     uint32_t udp_len = UDP_HEADER_LEN + len;
     
     // 分配缓冲区
-    netbuf_t *buf = netbuf_alloc(udp_len);
+    net::Netbuf *buf = net::Netbuf::alloc(udp_len);
     if (!buf) {
         LOG_ERROR_MSG("udp: Failed to allocate buffer\n");
         return -1;
     }
     
     // 填充 UDP 数据报
-    uint8_t *pkt = netbuf_put(buf, udp_len);
+    uint8_t *pkt = net::Netbuf::put(buf, udp_len);
     udp_header_t *udp = (udp_header_t *)pkt;
     
     udp->src_port = htons(src_port);
@@ -211,7 +211,7 @@ int net::Udp::output(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
     // 发送
     int ret = net::Ip::output(dev, buf, dst_ip, IP_PROTO_UDP);
     if (ret < 0) {
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
     }
     
     return ret;
@@ -257,10 +257,10 @@ void net::Udp::pcb_free(udp_pcb_t *pcb) {
     udp_lock.unlock_irqrestore(irq_state);
     
     // 释放接收队列
-    netbuf_t *buf = pcb->recv_queue;
+    net::Netbuf *buf = pcb->recv_queue;
     while (buf) {
-        netbuf_t *next = buf->next;
-        netbuf_free(buf);
+        net::Netbuf *next = buf->next;
+        net::Netbuf::free(buf);
         buf = next;
     }
     
@@ -318,7 +318,7 @@ void net::Udp::disconnect(udp_pcb_t *pcb) {
     }
 }
 
-int net::Udp::send(udp_pcb_t *pcb, netbuf_t *buf) {
+int net::Udp::send(udp_pcb_t *pcb, net::Netbuf *buf) {
     if (!pcb || !buf) {
         return -1;
     }
@@ -330,12 +330,12 @@ int net::Udp::send(udp_pcb_t *pcb, netbuf_t *buf) {
     return net::Udp::sendto(pcb, buf, pcb->remote_ip, pcb->remote_port);
 }
 
-int net::Udp::sendto(udp_pcb_t *pcb, netbuf_t *buf, uint32_t dst_ip, uint16_t dst_port) {
+int net::Udp::sendto(udp_pcb_t *pcb, net::Netbuf *buf, uint32_t dst_ip, uint16_t dst_port) {
     if (!pcb || !buf) {
         return -1;
     }
     
-    netdev_t *dev = netdev_get_default();
+    net::Netdev *dev = net::Netdev::get_default();
     if (!dev) {
         return -1;
     }
@@ -349,7 +349,7 @@ int net::Udp::sendto(udp_pcb_t *pcb, netbuf_t *buf, uint32_t dst_ip, uint16_t ds
     }
     
     // 添加 UDP 头部
-    uint8_t *header_ptr = netbuf_push(buf, UDP_HEADER_LEN);
+    uint8_t *header_ptr = net::Netbuf::push(buf, UDP_HEADER_LEN);
     if (!header_ptr) {
         return -1;
     }
@@ -371,7 +371,7 @@ int net::Udp::sendto(udp_pcb_t *pcb, netbuf_t *buf, uint32_t dst_ip, uint16_t ds
 }
 
 void net::Udp::recv(udp_pcb_t *pcb,
-              void (*callback)(udp_pcb_t *pcb, netbuf_t *buf,
+              void (*callback)(udp_pcb_t *pcb, net::Netbuf *buf,
                               uint32_t src_ip, uint16_t src_port),
               void *arg) {
     if (pcb) {
@@ -380,12 +380,12 @@ void net::Udp::recv(udp_pcb_t *pcb,
     }
 }
 
-netbuf_t *net::Udp::recv_poll(udp_pcb_t *pcb) {
+net::Netbuf *net::Udp::recv_poll(udp_pcb_t *pcb) {
     if (!pcb) return NULL;
     
     sync::SpinlockIrqGuard guard(udp_lock);
     
-    netbuf_t *buf = NULL;
+    net::Netbuf *buf = NULL;
     if (pcb->recv_queue) {
         buf = pcb->recv_queue;
         pcb->recv_queue = buf->next;

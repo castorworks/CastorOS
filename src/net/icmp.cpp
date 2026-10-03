@@ -36,7 +36,7 @@ void net::Icmp::init() {
     LOG_INFO_MSG("icmp: ICMP protocol initialized\n");
 }
 
-void net::Icmp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip) {
+void net::Icmp::input(net::Netdev *dev, net::Netbuf *buf, uint32_t src_ip) {
     if (!dev || !buf) {
         return;
     }
@@ -44,7 +44,7 @@ void net::Icmp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip) {
     // 检查报文长度
     if (buf->len < sizeof(icmp_header_t)) {
         LOG_WARN_MSG("icmp: Packet too short (%u bytes)\n", buf->len);
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return;
     }
     
@@ -53,7 +53,7 @@ void net::Icmp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip) {
     // 验证校验和
     if (checksum(icmp, buf->len) != 0) {
         LOG_WARN_MSG("icmp: Invalid checksum\n");
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return;
     }
     
@@ -126,7 +126,7 @@ void net::Icmp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip) {
             break;
     }
     
-    netbuf_free(buf);
+    net::Netbuf::free(buf);
 }
 
 int net::Icmp::send_echo_request(uint32_t dst_ip, uint16_t id, uint16_t seq,
@@ -135,14 +135,14 @@ int net::Icmp::send_echo_request(uint32_t dst_ip, uint16_t id, uint16_t seq,
     uint32_t icmp_len = sizeof(icmp_header_t) + len;
     
     // 分配缓冲区
-    netbuf_t *buf = netbuf_alloc(icmp_len);
+    net::Netbuf *buf = net::Netbuf::alloc(icmp_len);
     if (!buf) {
         LOG_ERROR_MSG("icmp: Failed to allocate buffer\n");
         return -1;
     }
     
     // 填充 ICMP 报文
-    uint8_t *pkt = netbuf_put(buf, icmp_len);
+    uint8_t *pkt = net::Netbuf::put(buf, icmp_len);
     icmp_header_t *icmp = (icmp_header_t *)pkt;
     
     icmp->type = ICMP_ECHO_REQUEST;
@@ -169,7 +169,7 @@ int net::Icmp::send_echo_request(uint32_t dst_ip, uint16_t id, uint16_t seq,
     // 发送
     int ret = net::Ip::output(NULL, buf, dst_ip, IP_PROTO_ICMP);
     if (ret < 0) {
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         last_ping.waiting = false;
     }
     
@@ -182,14 +182,14 @@ int net::Icmp::send_echo_reply(uint32_t dst_ip, uint16_t id, uint16_t seq,
     uint32_t icmp_len = sizeof(icmp_header_t) + len;
     
     // 分配缓冲区
-    netbuf_t *buf = netbuf_alloc(icmp_len);
+    net::Netbuf *buf = net::Netbuf::alloc(icmp_len);
     if (!buf) {
         LOG_ERROR_MSG("icmp: Failed to allocate buffer\n");
         return -1;
     }
     
     // 填充 ICMP 报文
-    uint8_t *pkt = netbuf_put(buf, icmp_len);
+    uint8_t *pkt = net::Netbuf::put(buf, icmp_len);
     icmp_header_t *icmp = (icmp_header_t *)pkt;
     
     icmp->type = ICMP_ECHO_REPLY;
@@ -209,7 +209,7 @@ int net::Icmp::send_echo_reply(uint32_t dst_ip, uint16_t id, uint16_t seq,
     // 发送
     int ret = net::Ip::output(NULL, buf, dst_ip, IP_PROTO_ICMP);
     if (ret < 0) {
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
     }
     
     return ret;
@@ -222,14 +222,14 @@ int net::Icmp::send_dest_unreachable(uint32_t dst_ip, uint8_t code,
     uint32_t icmp_len = sizeof(icmp_header_t) + orig_len;
     
     // 分配缓冲区
-    netbuf_t *buf = netbuf_alloc(icmp_len);
+    net::Netbuf *buf = net::Netbuf::alloc(icmp_len);
     if (!buf) {
         LOG_ERROR_MSG("icmp: Failed to allocate buffer\n");
         return -1;
     }
     
     // 填充 ICMP 报文
-    uint8_t *pkt = netbuf_put(buf, icmp_len);
+    uint8_t *pkt = net::Netbuf::put(buf, icmp_len);
     icmp_header_t *icmp = (icmp_header_t *)pkt;
     
     icmp->type = ICMP_DEST_UNREACHABLE;
@@ -252,7 +252,7 @@ int net::Icmp::send_dest_unreachable(uint32_t dst_ip, uint8_t code,
     // 发送
     int ret = net::Ip::output(NULL, buf, dst_ip, IP_PROTO_ICMP);
     if (ret < 0) {
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
     }
     
     return ret;

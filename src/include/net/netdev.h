@@ -27,19 +27,21 @@ typedef enum {
 /**
  * @brief 网络设备操作函数（虚函数表）
  */
-struct netdev;
+namespace net { struct Netdev; }
 
 typedef struct netdev_ops {
-    int (*open)(struct netdev *dev);                        ///< 打开设备
-    int (*close)(struct netdev *dev);                       ///< 关闭设备
-    int (*transmit)(struct netdev *dev, netbuf_t *buf);     ///< 发送数据包
-    int (*set_mac)(struct netdev *dev, uint8_t *mac);       ///< 设置 MAC 地址
+    int (*open)(net::Netdev *dev);                        ///< 打开设备
+    int (*close)(net::Netdev *dev);                       ///< 关闭设备
+    int (*transmit)(net::Netdev *dev, net::Netbuf *buf);     ///< 发送数据包
+    int (*set_mac)(net::Netdev *dev, uint8_t *mac);       ///< 设置 MAC 地址
 } netdev_ops_t;
+
+namespace net {
 
 /**
  * @brief 网络设备结构
  */
-typedef struct netdev {
+struct Netdev {
     char name[NETDEV_NAME_LEN];     ///< 设备名称（如 "eth0"）
     uint8_t mac[MAC_ADDR_LEN];      ///< MAC 地址
     uint32_t ip_addr;               ///< IPv4 地址（网络字节序）
@@ -63,127 +65,128 @@ typedef struct netdev {
     void *priv;                     ///< 驱动私有数据
     
     sync::Mutex lock;                   ///< 设备锁
-} netdev_t;
 
-/**
- * @brief 初始化网络设备子系统
- */
-void netdev_init(void);
+    /**
+     * @brief 初始化网络设备子系统
+     */
+    static void init();
 
-/**
- * @brief 注册网络设备
- * @param dev 设备结构
- * @return 0 成功，-1 失败
- */
-int netdev_register(netdev_t *dev);
+    /**
+     * @brief 注册网络设备
+     * @param dev 设备结构
+     * @return 0 成功，-1 失败
+     */
+    static int register_device(Netdev *dev);
 
-/**
- * @brief 注销网络设备
- * @param dev 设备结构
- * @return 0 成功，-1 失败
- */
-int netdev_unregister(netdev_t *dev);
+    /**
+     * @brief 注销网络设备
+     * @param dev 设备结构
+     * @return 0 成功，-1 失败
+     */
+    static int unregister_device(Netdev *dev);
 
-/**
- * @brief 分配新的网络设备结构
- * @param name 设备名称前缀（如 "eth"）
- * @return 新设备指针，失败返回 NULL
- */
-netdev_t *netdev_alloc(const char *name);
+    /**
+     * @brief 分配新的网络设备结构
+     * @param name 设备名称前缀（如 "eth"）
+     * @return 新设备指针，失败返回 NULL
+     */
+    static Netdev *alloc(const char *name);
 
-/**
- * @brief 释放网络设备结构
- * @param dev 设备指针
- */
-void netdev_free(netdev_t *dev);
+    /**
+     * @brief 释放网络设备结构
+     * @param dev 设备指针
+     */
+    static void free(Netdev *dev);
 
-/**
- * @brief 通过名称查找网络设备
- * @param name 设备名称
- * @return 设备指针，未找到返回 NULL
- */
-netdev_t *netdev_get_by_name(const char *name);
+    /**
+     * @brief 通过名称查找网络设备
+     * @param name 设备名称
+     * @return 设备指针，未找到返回 NULL
+     */
+    static Netdev *get_by_name(const char *name);
 
-/**
- * @brief 获取默认网络设备
- * @return 默认设备指针，没有则返回 NULL
- */
-netdev_t *netdev_get_default(void);
+    /**
+     * @brief 获取默认网络设备
+     * @return 默认设备指针，没有则返回 NULL
+     */
+    static Netdev *get_default();
 
-/**
- * @brief 设置默认网络设备
- * @param dev 设备指针
- */
-void netdev_set_default(netdev_t *dev);
+    /**
+     * @brief 设置默认网络设备
+     * @param dev 设备指针
+     */
+    static void set_default(Netdev *dev);
 
-/**
- * @brief 启用网络设备
- * @param dev 设备结构
- * @return 0 成功，-1 失败
- */
-int netdev_up(netdev_t *dev);
+    /**
+     * @brief 启用网络设备
+     * @param dev 设备结构
+     * @return 0 成功，-1 失败
+     */
+    static int up(Netdev *dev);
 
-/**
- * @brief 禁用网络设备
- * @param dev 设备结构
- * @return 0 成功，-1 失败
- */
-int netdev_down(netdev_t *dev);
+    /**
+     * @brief 禁用网络设备
+     * @param dev 设备结构
+     * @return 0 成功，-1 失败
+     */
+    static int down(Netdev *dev);
 
-/**
- * @brief 发送数据包
- * @param dev 设备结构
- * @param buf 网络缓冲区
- * @return 0 成功，-1 失败
- */
-int netdev_transmit(netdev_t *dev, netbuf_t *buf);
+    /**
+     * @brief 发送数据包
+     * @param dev 设备结构
+     * @param buf 网络缓冲区
+     * @return 0 成功，-1 失败
+     */
+    static int transmit(Netdev *dev, net::Netbuf *buf);
 
-/**
- * @brief 接收数据包（由驱动调用）
- * @param dev 设备结构
- * @param buf 网络缓冲区
- */
-void netdev_receive(netdev_t *dev, netbuf_t *buf);
+    /**
+     * @brief 接收数据包（由驱动调用）
+     * @param dev 设备结构
+     * @param buf 网络缓冲区
+     */
+    static void receive(Netdev *dev, net::Netbuf *buf);
 
-/**
- * @brief 设置网络设备 IP 地址
- * @param dev 设备结构
- * @param ip IP 地址（网络字节序）
- */
-void netdev_set_ipaddr(netdev_t *dev, uint32_t ip);
+    /**
+     * @brief 设置网络设备 IP 地址
+     * @param dev 设备结构
+     * @param ip IP 地址（网络字节序）
+     */
+    static void set_ipaddr(Netdev *dev, uint32_t ip);
 
-/**
- * @brief 设置网络设备子网掩码
- * @param dev 设备结构
- * @param netmask 子网掩码（网络字节序）
- */
-void netdev_set_netmask(netdev_t *dev, uint32_t netmask);
+    /**
+     * @brief 设置网络设备子网掩码
+     * @param dev 设备结构
+     * @param netmask 子网掩码（网络字节序）
+     */
+    static void set_netmask(Netdev *dev, uint32_t netmask);
 
-/**
- * @brief 设置网络设备默认网关
- * @param dev 设备结构
- * @param gateway 网关地址（网络字节序）
- */
-void netdev_set_gateway(netdev_t *dev, uint32_t gateway);
+    /**
+     * @brief 设置网络设备默认网关
+     * @param dev 设备结构
+     * @param gateway 网关地址（网络字节序）
+     */
+    static void set_gateway(Netdev *dev, uint32_t gateway);
 
-/**
- * @brief 获取所有网络设备列表
- * @param devs 设备指针数组
- * @param max_count 数组最大容量
- * @return 实际设备数量
- */
-int netdev_get_all(netdev_t **devs, int max_count);
+    /**
+     * @brief 获取所有网络设备列表
+     * @param devs 设备指针数组
+     * @param max_count 数组最大容量
+     * @return 实际设备数量
+     */
+    static int get_all(Netdev **devs, int max_count);
 
-/**
- * @brief 打印网络设备信息
- * @param dev 设备指针
- */
-void netdev_print_info(netdev_t *dev);
+    /**
+     * @brief 打印网络设备信息
+     * @param dev 设备指针
+     */
+    static void print_info(Netdev *dev);
 
-/**
- * @brief 打印所有网络设备信息
- */
-void netdev_print_all(void);
+    /**
+     * @brief 打印所有网络设备信息
+     */
+    static void print_all();
+};
+
+} // namespace net
 
 #endif // _NET_NETDEV_H_
-

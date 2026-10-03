@@ -90,7 +90,7 @@ public:
      * @param buf 接收缓冲区
      * @param src_ip 源 IP 地址（网络字节序）
      */
-    static void input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip);
+    static void input(net::Netdev *dev, net::Netbuf *buf, uint32_t src_ip);
 
     /**
      * @brief 发送 ICMP Echo 请求（ping）

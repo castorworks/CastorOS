@@ -394,17 +394,17 @@ static int dns_do_query(uint32_t server_ip, const char *hostname, uint32_t *ip) 
     uint32_t pkt_len = sizeof(dns_header_t) + (uint32_t)name_len + sizeof(dns_question_t);
     
     // 发送查询
-    netbuf_t *buf = netbuf_alloc(pkt_len);
+    net::Netbuf *buf = net::Netbuf::alloc(pkt_len);
     if (!buf) {
         net::Udp::pcb_free(pcb);
         return -1;
     }
     
-    uint8_t *data = netbuf_put(buf, pkt_len);
+    uint8_t *data = net::Netbuf::put(buf, pkt_len);
     memcpy(data, packet, pkt_len);
     
     int ret = net::Udp::sendto(pcb, buf, server_ip, DNS_PORT);
-    netbuf_free(buf);
+    net::Netbuf::free(buf);
     
     if (ret < 0) {
         net::Udp::pcb_free(pcb);
@@ -418,7 +418,7 @@ static int dns_do_query(uint32_t server_ip, const char *hostname, uint32_t *ip) 
     
     while ((uint32_t)timer_get_uptime_ms() - start < DNS_QUERY_TIMEOUT) {
         // 检查是否收到响应
-        netbuf_t *resp = net::Udp::recv_poll(pcb);
+        net::Netbuf *resp = net::Udp::recv_poll(pcb);
         if (!resp) {
             // 短暂延迟
             for (int i = 0; i < 10000; i++) { __asm__ volatile (""); }
@@ -427,7 +427,7 @@ static int dns_do_query(uint32_t server_ip, const char *hostname, uint32_t *ip) 
         
         // 解析响应
         if (resp->len < sizeof(dns_header_t)) {
-            netbuf_free(resp);
+            net::Netbuf::free(resp);
             continue;
         }
         
@@ -435,21 +435,21 @@ static int dns_do_query(uint32_t server_ip, const char *hostname, uint32_t *ip) 
         
         // 验证响应
         if (ntohs(resp_hdr->id) != query_id) {
-            netbuf_free(resp);
+            net::Netbuf::free(resp);
             continue;
         }
         
         uint16_t flags = ntohs(resp_hdr->flags);
         if (!(flags & DNS_FLAG_QR)) {
             // 不是响应
-            netbuf_free(resp);
+            net::Netbuf::free(resp);
             continue;
         }
         
         uint8_t rcode = flags & DNS_FLAG_RCODE_MASK;
         if (rcode != DNS_RCODE_NOERROR) {
             LOG_WARN_MSG("dns: Query failed, rcode=%d\n", rcode);
-            netbuf_free(resp);
+            net::Netbuf::free(resp);
             result = -1;
             break;
         }
@@ -457,7 +457,7 @@ static int dns_do_query(uint32_t server_ip, const char *hostname, uint32_t *ip) 
         uint16_t ancount = ntohs(resp_hdr->ancount);
         if (ancount == 0) {
             LOG_WARN_MSG("dns: No answers\n");
-            netbuf_free(resp);
+            net::Netbuf::free(resp);
             result = -1;
             break;
         }
@@ -471,7 +471,7 @@ static int dns_do_query(uint32_t server_ip, const char *hostname, uint32_t *ip) 
         int skip_len = dns_decode_name(resp->data, resp->len, ptr, 
                                         skip_name, sizeof(skip_name));
         if (skip_len < 0) {
-            netbuf_free(resp);
+            net::Netbuf::free(resp);
             continue;
         }
         ptr += skip_len + 4;  // +4 for QTYPE and QCLASS
@@ -514,7 +514,7 @@ static int dns_do_query(uint32_t server_ip, const char *hostname, uint32_t *ip) 
             ptr += rdlength;
         }
         
-        netbuf_free(resp);
+        net::Netbuf::free(resp);
         break;
     }
     

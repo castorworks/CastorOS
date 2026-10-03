@@ -98,7 +98,7 @@ typedef struct ip_route {
     uint32_t dest;              ///< 目的网络（网络字节序）
     uint32_t netmask;           ///< 子网掩码（网络字节序）
     uint32_t gateway;           ///< 网关（0 表示直连）
-    netdev_t *dev;              ///< 出接口
+    net::Netdev *dev;              ///< 出接口
     uint32_t metric;            ///< 度量值（跳数）
     bool valid;                 ///< 条目是否有效
 } ip_route_t;
@@ -145,7 +145,7 @@ public:
      * @param next_hop 输出下一跳地址（网络字节序）
      * @return 出接口，NULL 表示无路由
      */
-    static netdev_t *route_lookup(uint32_t dst_ip, uint32_t *next_hop);
+    static net::Netdev *route_lookup(uint32_t dst_ip, uint32_t *next_hop);
 
     /**
      * @brief 添加路由
@@ -157,7 +157,7 @@ public:
      * @return 0 成功，-1 失败
      */
     static int route_add(uint32_t dest, uint32_t netmask, uint32_t gateway, 
-                     netdev_t *dev, uint32_t metric);
+                     net::Netdev *dev, uint32_t metric);
 
     /**
      * @brief 删除路由
@@ -180,7 +180,7 @@ public:
      * @param dev 网络设备
      * @param buf 接收缓冲区
      */
-    static void input(netdev_t *dev, netbuf_t *buf);
+    static void input(net::Netdev *dev, net::Netbuf *buf);
 
     /**
      * @brief 发送 IP 数据包
@@ -190,7 +190,7 @@ public:
      * @param protocol 上层协议号
      * @return 0 成功，-1 失败
      */
-    static int output(netdev_t *dev, netbuf_t *buf, uint32_t dst_ip, uint8_t protocol);
+    static int output(net::Netdev *dev, net::Netbuf *buf, uint32_t dst_ip, uint8_t protocol);
 
     /**
      * @brief 计算 IP 头部校验和
@@ -223,7 +223,7 @@ public:
      * @param dst_ip 目的 IP 地址（网络字节序）
      * @return 下一跳 IP 地址（网络字节序）
      */
-    static uint32_t get_next_hop(netdev_t *dev, uint32_t dst_ip);
+    static uint32_t get_next_hop(net::Netdev *dev, uint32_t dst_ip);
 
     /**
      * @brief 获取 IP 头部长度

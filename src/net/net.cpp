@@ -23,7 +23,7 @@ void net_init(void) {
     LOG_INFO_MSG("net: Initializing network stack...\n");
     
     // 1. 初始化网络设备层
-    netdev_init();
+    net::Netdev::init();
     
     // 2. 初始化以太网层
     net::Ethernet::init();
@@ -56,7 +56,7 @@ void net_init(void) {
 }
 
 int net_configure(const char *ip, const char *netmask, const char *gateway) {
-    netdev_t *dev = netdev_get_default();
+    net::Netdev *dev = net::Netdev::get_default();
     if (!dev) {
         LOG_ERROR_MSG("net: No network device available\n");
         return -1;
@@ -79,9 +79,9 @@ int net_configure(const char *ip, const char *netmask, const char *gateway) {
         return -1;
     }
     
-    netdev_set_ipaddr(dev, ip_addr);
-    netdev_set_netmask(dev, mask_addr);
-    netdev_set_gateway(dev, gw_addr);
+    net::Netdev::set_ipaddr(dev, ip_addr);
+    net::Netdev::set_netmask(dev, mask_addr);
+    net::Netdev::set_gateway(dev, gw_addr);
     
     char ip_str[16], mask_str[16], gw_str[16];
     net::Ip::to_str(ip_addr, ip_str);

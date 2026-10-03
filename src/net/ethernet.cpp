@@ -32,7 +32,7 @@ void net::Ethernet::init() {
     LOG_INFO_MSG("ethernet: Ethernet layer initialized\n");
 }
 
-void net::Ethernet::input(netdev_t *dev, netbuf_t *buf) {
+void net::Ethernet::input(net::Netdev *dev, net::Netbuf *buf) {
     if (!dev || !buf) {
         return;
     }
@@ -40,7 +40,7 @@ void net::Ethernet::input(netdev_t *dev, netbuf_t *buf) {
     // 检查帧长度是否足够
     if (buf->len < ETH_HEADER_LEN) {
         LOG_WARN_MSG("ethernet: Frame too short (%u bytes)\n", buf->len);
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return;
     }
     
@@ -54,7 +54,7 @@ void net::Ethernet::input(netdev_t *dev, netbuf_t *buf) {
         !mac_addr_is_multicast(eth->dst) &&
         mac_addr_cmp(eth->dst, dev->mac) != 0) {
         // 不是发给我们的帧，丢弃
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return;
     }
     
@@ -62,7 +62,7 @@ void net::Ethernet::input(netdev_t *dev, netbuf_t *buf) {
     uint16_t type = eth_ntohs(eth->type);
     
     // 剥离以太网头部，将数据指针移到上层协议数据
-    netbuf_pull(buf, ETH_HEADER_LEN);
+    net::Netbuf::pull(buf, ETH_HEADER_LEN);
     buf->network_header = buf->data;
     
     // 根据 EtherType 分发到对应的协议处理函数
@@ -78,23 +78,23 @@ void net::Ethernet::input(netdev_t *dev, netbuf_t *buf) {
         case ETH_TYPE_IPV6:
             // IPv6 暂不支持
             LOG_DEBUG_MSG("ethernet: IPv6 not supported\n");
-            netbuf_free(buf);
+            net::Netbuf::free(buf);
             break;
             
         default:
             LOG_DEBUG_MSG("ethernet: Unknown EtherType 0x%04x\n", type);
-            netbuf_free(buf);
+            net::Netbuf::free(buf);
             break;
     }
 }
 
-int net::Ethernet::output(netdev_t *dev, netbuf_t *buf, const uint8_t *dst_mac, uint16_t type) {
+int net::Ethernet::output(net::Netdev *dev, net::Netbuf *buf, const uint8_t *dst_mac, uint16_t type) {
     if (!dev || !buf || !dst_mac) {
         return -1;
     }
     
     // 在数据前添加以太网头部空间
-    uint8_t *header_ptr = netbuf_push(buf, ETH_HEADER_LEN);
+    uint8_t *header_ptr = net::Netbuf::push(buf, ETH_HEADER_LEN);
     if (!header_ptr) {
         LOG_ERROR_MSG("ethernet: No headroom for Ethernet header\n");
         return -1;
@@ -112,7 +112,7 @@ int net::Ethernet::output(netdev_t *dev, netbuf_t *buf, const uint8_t *dst_mac, 
     // 注：实际的填充通常由网卡硬件完成
     
     // 发送帧
-    return netdev_transmit(dev, buf);
+    return net::Netdev::transmit(dev, buf);
 }
 
 int mac_addr_cmp(const uint8_t *a, const uint8_t *b) {

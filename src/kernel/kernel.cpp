@@ -537,7 +537,7 @@ void kernel_main(multiboot_info_t* mbi) {
     }
 
     // 4.7 初始化网络设备子系统
-    netdev_init();
+    net::Netdev::init();
     LOG_INFO_MSG("  [4.7] Network device subsystem initialized\n");
 
     // 4.8 初始化 E1000 网卡驱动
@@ -552,9 +552,9 @@ void kernel_main(multiboot_info_t* mbi) {
         LOG_INFO_MSG("  [4.8] E1000 driver initialized (%d device(s))\n", e1000_count);
         
         // 如果有网卡，启用第一个网卡
-        netdev_t *eth0 = netdev_get_by_name("eth0");
+        net::Netdev *eth0 = net::Netdev::get_by_name("eth0");
         if (eth0) {
-            netdev_up(eth0);
+            net::Netdev::up(eth0);
             LOG_INFO_MSG("  Network: eth0 enabled\n");
         }
     } else {

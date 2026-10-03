@@ -7,13 +7,13 @@
 #include <mm/heap.h>
 #include <lib/string.h>
 
-netbuf_t *netbuf_alloc(uint32_t size) {
+net::Netbuf *net::Netbuf::alloc(uint32_t size) {
     uint32_t total_size = NETBUF_HEADROOM + size;
     if (total_size > NETBUF_MAX_SIZE) {
         total_size = NETBUF_MAX_SIZE;
     }
     
-    netbuf_t *buf = (netbuf_t *)kmalloc(sizeof(netbuf_t));
+    net::Netbuf *buf = (net::Netbuf *)kmalloc(sizeof(net::Netbuf));
     if (!buf) {
         return NULL;
     }
@@ -41,7 +41,7 @@ netbuf_t *netbuf_alloc(uint32_t size) {
     return buf;
 }
 
-void netbuf_free(netbuf_t *buf) {
+void net::Netbuf::free(net::Netbuf *buf) {
     if (buf) {
         if (buf->head) {
             kfree(buf->head);
@@ -50,7 +50,7 @@ void netbuf_free(netbuf_t *buf) {
     }
 }
 
-uint8_t *netbuf_push(netbuf_t *buf, uint32_t len) {
+uint8_t *net::Netbuf::push(net::Netbuf *buf, uint32_t len) {
     if (!buf || buf->data - buf->head < (int)len) {
         return NULL;  // 没有足够的 headroom
     }
@@ -59,7 +59,7 @@ uint8_t *netbuf_push(netbuf_t *buf, uint32_t len) {
     return buf->data;
 }
 
-uint8_t *netbuf_pull(netbuf_t *buf, uint32_t len) {
+uint8_t *net::Netbuf::pull(net::Netbuf *buf, uint32_t len) {
     if (!buf || buf->len < len) {
         return NULL;
     }
@@ -68,7 +68,7 @@ uint8_t *netbuf_pull(netbuf_t *buf, uint32_t len) {
     return buf->data;
 }
 
-uint8_t *netbuf_put(netbuf_t *buf, uint32_t len) {
+uint8_t *net::Netbuf::put(net::Netbuf *buf, uint32_t len) {
     if (!buf || buf->end - buf->tail < (int)len) {
         return NULL;  // 没有足够的 tailroom
     }
@@ -78,12 +78,12 @@ uint8_t *netbuf_put(netbuf_t *buf, uint32_t len) {
     return old_tail;
 }
 
-netbuf_t *netbuf_clone(netbuf_t *buf) {
+net::Netbuf *net::Netbuf::clone(net::Netbuf *buf) {
     if (!buf) {
         return NULL;
     }
     
-    netbuf_t *new_buf = netbuf_alloc(buf->len);
+    net::Netbuf *new_buf = net::Netbuf::alloc(buf->len);
     if (!new_buf) {
         return NULL;
     }
@@ -96,7 +96,7 @@ netbuf_t *netbuf_clone(netbuf_t *buf) {
     return new_buf;
 }
 
-void netbuf_reset(netbuf_t *buf) {
+void net::Netbuf::reset(net::Netbuf *buf) {
     if (!buf) {
         return;
     }
@@ -109,14 +109,14 @@ void netbuf_reset(netbuf_t *buf) {
     buf->transport_header = NULL;
 }
 
-uint32_t netbuf_headroom(netbuf_t *buf) {
+uint32_t net::Netbuf::headroom(net::Netbuf *buf) {
     if (!buf) {
         return 0;
     }
     return buf->data - buf->head;
 }
 
-uint32_t netbuf_tailroom(netbuf_t *buf) {
+uint32_t net::Netbuf::tailroom(net::Netbuf *buf) {
     if (!buf) {
         return 0;
     }

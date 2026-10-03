@@ -11,16 +11,16 @@
 #include <lib/kprintf.h>
 
 // 已注册的网络设备
-static netdev_t *netdevs[MAX_NETDEV];
+static net::Netdev *netdevs[MAX_NETDEV];
 static int netdev_count = 0;
 
 // 默认网络设备
-static netdev_t *default_netdev = NULL;
+static net::Netdev *default_netdev = NULL;
 
 // 设备编号计数器（用于自动命名）
 static int eth_dev_num = 0;
 
-void netdev_init(void) {
+void net::Netdev::init() {
     memset(netdevs, 0, sizeof(netdevs));
     netdev_count = 0;
     default_netdev = NULL;
@@ -29,14 +29,14 @@ void netdev_init(void) {
     LOG_INFO_MSG("netdev: Network device subsystem initialized\n");
 }
 
-netdev_t *netdev_alloc(const char *name) {
-    netdev_t *dev = (netdev_t *)kmalloc(sizeof(netdev_t));
+net::Netdev *net::Netdev::alloc(const char *name) {
+    net::Netdev *dev = (net::Netdev *)kmalloc(sizeof(net::Netdev));
     if (!dev) {
         LOG_ERROR_MSG("netdev: Failed to allocate device structure\n");
         return NULL;
     }
     
-    memset(dev, 0, sizeof(netdev_t));
+    memset(dev, 0, sizeof(net::Netdev));
     
     // 生成设备名称
     if (name) {
@@ -55,13 +55,13 @@ netdev_t *netdev_alloc(const char *name) {
     return dev;
 }
 
-void netdev_free(netdev_t *dev) {
+void net::Netdev::free(net::Netdev *dev) {
     if (dev) {
         kfree(dev);
     }
 }
 
-int netdev_register(netdev_t *dev) {
+int net::Netdev::register_device(net::Netdev *dev) {
     if (!dev) {
         return -1;
     }
@@ -94,7 +94,7 @@ int netdev_register(netdev_t *dev) {
     return 0;
 }
 
-int netdev_unregister(netdev_t *dev) {
+int net::Netdev::unregister_device(net::Netdev *dev) {
     if (!dev) {
         return -1;
     }
@@ -133,7 +133,7 @@ int netdev_unregister(netdev_t *dev) {
     return 0;
 }
 
-netdev_t *netdev_get_by_name(const char *name) {
+net::Netdev *net::Netdev::get_by_name(const char *name) {
     if (!name) {
         return NULL;
     }
@@ -147,15 +147,15 @@ netdev_t *netdev_get_by_name(const char *name) {
     return NULL;
 }
 
-netdev_t *netdev_get_default(void) {
+net::Netdev *net::Netdev::get_default() {
     return default_netdev;
 }
 
-void netdev_set_default(netdev_t *dev) {
+void net::Netdev::set_default(net::Netdev *dev) {
     default_netdev = dev;
 }
 
-int netdev_up(netdev_t *dev) {
+int net::Netdev::up(net::Netdev *dev) {
     if (!dev) {
         return -1;
     }
@@ -186,7 +186,7 @@ int netdev_up(netdev_t *dev) {
     return 0;
 }
 
-int netdev_down(netdev_t *dev) {
+int net::Netdev::down(net::Netdev *dev) {
     if (!dev) {
         return -1;
     }
@@ -217,7 +217,7 @@ int netdev_down(netdev_t *dev) {
     return 0;
 }
 
-int netdev_transmit(netdev_t *dev, netbuf_t *buf) {
+int net::Netdev::transmit(net::Netdev *dev, net::Netbuf *buf) {
     if (!dev || !buf) {
         return -1;
     }
@@ -246,13 +246,13 @@ int netdev_transmit(netdev_t *dev, netbuf_t *buf) {
     return ret;
 }
 
-void netdev_receive(netdev_t *dev, netbuf_t *buf) {
+void net::Netdev::receive(net::Netdev *dev, net::Netbuf *buf) {
     if (!dev || !buf) {
         return;
     }
     
     if (dev->state != NETDEV_UP) {
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         dev->rx_dropped++;
         return;
     }
@@ -268,28 +268,28 @@ void netdev_receive(netdev_t *dev, netbuf_t *buf) {
     net::Ethernet::input(dev, buf);
 }
 
-void netdev_set_ipaddr(netdev_t *dev, uint32_t ip) {
+void net::Netdev::set_ipaddr(net::Netdev *dev, uint32_t ip) {
     if (!dev) return;
     
     sync::MutexGuard guard(dev->lock);
     dev->ip_addr = ip;
 }
 
-void netdev_set_netmask(netdev_t *dev, uint32_t netmask) {
+void net::Netdev::set_netmask(net::Netdev *dev, uint32_t netmask) {
     if (!dev) return;
     
     sync::MutexGuard guard(dev->lock);
     dev->netmask = netmask;
 }
 
-void netdev_set_gateway(netdev_t *dev, uint32_t gateway) {
+void net::Netdev::set_gateway(net::Netdev *dev, uint32_t gateway) {
     if (!dev) return;
     
     sync::MutexGuard guard(dev->lock);
     dev->gateway = gateway;
 }
 
-int netdev_get_all(netdev_t **devs, int max_count) {
+int net::Netdev::get_all(net::Netdev **devs, int max_count) {
     if (!devs || max_count <= 0) {
         return 0;
     }
@@ -311,7 +311,7 @@ static void ip_to_str_internal(uint32_t ip, char *buf) {
     snprintf(buf, 16, "%u.%u.%u.%u", bytes[0], bytes[1], bytes[2], bytes[3]);
 }
 
-void netdev_print_info(netdev_t *dev) {
+void net::Netdev::print_info(net::Netdev *dev) {
     if (!dev) {
         return;
     }
@@ -334,14 +334,14 @@ void netdev_print_info(netdev_t *dev) {
             dev->tx_packets, dev->tx_bytes, dev->tx_errors, dev->tx_dropped);
 }
 
-void netdev_print_all(void) {
+void net::Netdev::print_all() {
     if (netdev_count == 0) {
         kprintf("No network devices registered.\n");
         return;
     }
     
     for (int i = 0; i < netdev_count; i++) {
-        netdev_print_info(netdevs[i]);
+        net::Netdev::print_info(netdevs[i]);
         if (i < netdev_count - 1) {
             kprintf("\n");
         }

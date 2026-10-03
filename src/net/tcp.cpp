@@ -394,7 +394,7 @@ static tcp_pcb_t *tcp_find_pcb(uint32_t local_ip, uint16_t local_port,
  * @brief 发送 TCP 段
  */
 static int tcp_send_segment(tcp_pcb_t *pcb, uint8_t flags, uint8_t *data, uint32_t len) {
-    netdev_t *dev = netdev_get_default();
+    net::Netdev *dev = net::Netdev::get_default();
     if (!dev) {
         return -1;
     }
@@ -403,7 +403,7 @@ static int tcp_send_segment(tcp_pcb_t *pcb, uint8_t flags, uint8_t *data, uint32
     uint32_t tcp_len = TCP_HEADER_MIN_LEN + len;
     
     // 分配缓冲区
-    netbuf_t *buf = netbuf_alloc(tcp_len);
+    net::Netbuf *buf = net::Netbuf::alloc(tcp_len);
     if (!buf) {
         return -1;
     }
@@ -412,7 +412,7 @@ static int tcp_send_segment(tcp_pcb_t *pcb, uint8_t flags, uint8_t *data, uint32
     uint32_t seq = pcb->snd_nxt;
     
     // 填充 TCP 段
-    uint8_t *pkt = netbuf_put(buf, tcp_len);
+    uint8_t *pkt = net::Netbuf::put(buf, tcp_len);
     tcp_header_t *tcp = (tcp_header_t *)pkt;
     
     tcp->src_port = htons(pcb->local_port);
@@ -449,7 +449,7 @@ static int tcp_send_segment(tcp_pcb_t *pcb, uint8_t flags, uint8_t *data, uint32
     // 发送
     int ret = net::Ip::output(dev, buf, pcb->remote_ip, IP_PROTO_TCP);
     if (ret < 0) {
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return ret;
     }
     
@@ -468,19 +468,19 @@ static int tcp_send_segment(tcp_pcb_t *pcb, uint8_t flags, uint8_t *data, uint32
 static void tcp_send_rst(uint32_t src_ip, uint32_t dst_ip,
                          uint16_t src_port, uint16_t dst_port,
                          uint32_t seq, uint32_t ack, bool ack_valid) {
-    netdev_t *dev = netdev_get_default();
+    net::Netdev *dev = net::Netdev::get_default();
     if (!dev) {
         return;
     }
     
     // 分配缓冲区
-    netbuf_t *buf = netbuf_alloc(TCP_HEADER_MIN_LEN);
+    net::Netbuf *buf = net::Netbuf::alloc(TCP_HEADER_MIN_LEN);
     if (!buf) {
         return;
     }
     
     // 填充 TCP 段
-    uint8_t *pkt = netbuf_put(buf, TCP_HEADER_MIN_LEN);
+    uint8_t *pkt = net::Netbuf::put(buf, TCP_HEADER_MIN_LEN);
     tcp_header_t *tcp = (tcp_header_t *)pkt;
     
     tcp->src_port = htons(src_port);
@@ -499,7 +499,7 @@ static void tcp_send_rst(uint32_t src_ip, uint32_t dst_ip,
     // 发送
     int ret = net::Ip::output(dev, buf, dst_ip, IP_PROTO_TCP);
     if (ret < 0) {
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
     }
 }
 
@@ -513,7 +513,7 @@ void net::Tcp::init() {
     LOG_INFO_MSG("tcp: TCP protocol initialized\n");
 }
 
-void net::Tcp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip) {
+void net::Tcp::input(net::Netdev *dev, net::Netbuf *buf, uint32_t src_ip, uint32_t dst_ip) {
     if (!dev || !buf) {
         return;
     }
@@ -521,7 +521,7 @@ void net::Tcp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst
     // 检查报文长度
     if (buf->len < TCP_HEADER_MIN_LEN) {
         LOG_WARN_MSG("tcp: Packet too short (%u bytes)\n", buf->len);
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return;
     }
     
@@ -532,7 +532,7 @@ void net::Tcp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst
     uint8_t hdr_len = net::Tcp::header_len(tcp);
     if (hdr_len < TCP_HEADER_MIN_LEN || hdr_len > buf->len) {
         LOG_WARN_MSG("tcp: Invalid header length %u\n", hdr_len);
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return;
     }
     
@@ -543,7 +543,7 @@ void net::Tcp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst
     
     if (calc_checksum != orig_checksum) {
         LOG_WARN_MSG("tcp: Invalid checksum\n");
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return;
     }
     tcp->checksum = orig_checksum;
@@ -581,7 +581,7 @@ void net::Tcp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst
             }
         }
         
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return;
     }
     
@@ -630,7 +630,7 @@ void net::Tcp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst
                 // 发送 SYN+ACK
                 tcp_send_segment(new_pcb, TCP_FLAG_SYN | TCP_FLAG_ACK, NULL, 0);
                 
-                netbuf_free(buf);
+                net::Netbuf::free(buf);
                 return;
             }
             break;
@@ -653,7 +653,7 @@ void net::Tcp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst
                     if (pcb->error_callback) {
                         tcp_lock.unlock_irqrestore(irq_state);
                         pcb->error_callback(pcb, -1, pcb->callback_arg);
-                        netbuf_free(buf);
+                        net::Netbuf::free(buf);
                         return;
                     }
                 }
@@ -674,7 +674,7 @@ void net::Tcp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst
                     // 发送 ACK
                     tcp_send_segment(pcb, TCP_FLAG_ACK, NULL, 0);
                     
-                    netbuf_free(buf);
+                    net::Netbuf::free(buf);
                     return;
                 } else {
                     // 同时打开
@@ -683,7 +683,7 @@ void net::Tcp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst
                     
                     tcp_send_segment(pcb, TCP_FLAG_SYN | TCP_FLAG_ACK, NULL, 0);
                     
-                    netbuf_free(buf);
+                    net::Netbuf::free(buf);
                     return;
                 }
             }
@@ -723,7 +723,7 @@ void net::Tcp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst
                         if (listen->accept_callback) {
                             tcp_lock.unlock_irqrestore(irq_state);
                             listen->accept_callback(pcb, listen->callback_arg);
-                            netbuf_free(buf);
+                            net::Netbuf::free(buf);
                             return;
                         }
                     }
@@ -744,7 +744,7 @@ void net::Tcp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst
                 if (pcb->error_callback) {
                     tcp_lock.unlock_irqrestore(irq_state);
                     pcb->error_callback(pcb, -1, pcb->callback_arg);
-                    netbuf_free(buf);
+                    net::Netbuf::free(buf);
                     return;
                 }
                 break;
@@ -784,13 +784,13 @@ void net::Tcp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst
                         pcb->recv_callback(pcb, pcb->callback_arg);
                     }
                     
-                    netbuf_free(buf);
+                    net::Netbuf::free(buf);
                     return;
                 } else if (TCP_SEQ_GT(seq, pcb->rcv_nxt)) {
                     // 乱序数据，发送重复 ACK
                     tcp_lock.unlock_irqrestore(irq_state);
                     tcp_send_segment(pcb, TCP_FLAG_ACK, NULL, 0);
-                    netbuf_free(buf);
+                    net::Netbuf::free(buf);
                     return;
                 }
             }
@@ -821,7 +821,7 @@ void net::Tcp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst
                 // 发送 ACK
                 tcp_send_segment(pcb, TCP_FLAG_ACK, NULL, 0);
                 
-                netbuf_free(buf);
+                net::Netbuf::free(buf);
                 return;
             }
             break;
@@ -850,7 +850,7 @@ void net::Tcp::input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst
     }
     
     tcp_lock.unlock_irqrestore(irq_state);
-    netbuf_free(buf);
+    net::Netbuf::free(buf);
 }
 
 tcp_pcb_t *net::Tcp::pcb_new() {
@@ -1143,7 +1143,7 @@ void net::Tcp::abort(tcp_pcb_t *pcb) {
     }
     
     if (pcb->state != TCP_CLOSED && pcb->state != TCP_LISTEN) {
-        netdev_t *dev = netdev_get_default();
+        net::Netdev *dev = net::Netdev::get_default();
         if (dev) {
             tcp_send_rst(dev->ip_addr, pcb->remote_ip,
                         pcb->local_port, pcb->remote_port,
@@ -1352,12 +1352,12 @@ void net::Tcp::timer() {
                     tcp_lock.unlock_irqrestore(irq_state);
                     
                     // 重新发送段（不通过 tcp_send_segment 以避免再次加入队列）
-                    netdev_t *dev = netdev_get_default();
+                    net::Netdev *dev = net::Netdev::get_default();
                     if (dev) {
                         uint32_t tcp_len = TCP_HEADER_MIN_LEN + seg->data_len;
-                        netbuf_t *buf = netbuf_alloc(tcp_len);
+                        net::Netbuf *buf = net::Netbuf::alloc(tcp_len);
                         if (buf) {
-                            uint8_t *pkt = netbuf_put(buf, tcp_len);
+                            uint8_t *pkt = net::Netbuf::put(buf, tcp_len);
                             tcp_header_t *tcp = (tcp_header_t *)pkt;
                             
                             tcp->src_port = htons(pcb->local_port);
@@ -1379,7 +1379,7 @@ void net::Tcp::timer() {
                             
                             int ret = net::Ip::output(dev, buf, pcb->remote_ip, IP_PROTO_TCP);
                             if (ret < 0) {
-                                netbuf_free(buf);
+                                net::Netbuf::free(buf);
                             }
                         }
                     }

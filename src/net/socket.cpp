@@ -335,17 +335,17 @@ ssize_t sys_send(int sockfd, const void *buf, size_t len, int flags) {
         return net::Tcp::write(sock->pcb.tcp, buf, len);
     } else {
         // UDP: 使用已连接的地址
-        netbuf_t *nbuf = netbuf_alloc(len);
+        net::Netbuf *nbuf = net::Netbuf::alloc(len);
         if (!nbuf) {
             return -1;
         }
         
-        uint8_t *data = netbuf_put(nbuf, len);
+        uint8_t *data = net::Netbuf::put(nbuf, len);
         memcpy(data, buf, len);
         
         int ret = net::Udp::send(sock->pcb.udp, nbuf);
         if (ret < 0) {
-            netbuf_free(nbuf);
+            net::Netbuf::free(nbuf);
             return -1;
         }
         
@@ -380,17 +380,17 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         return -1;
     }
     
-    netbuf_t *nbuf = netbuf_alloc(len);
+    net::Netbuf *nbuf = net::Netbuf::alloc(len);
     if (!nbuf) {
         return -1;
     }
     
-    uint8_t *data = netbuf_put(nbuf, len);
+    uint8_t *data = net::Netbuf::put(nbuf, len);
     memcpy(data, buf, len);
     
     int ret = net::Udp::sendto(sock->pcb.udp, nbuf, sin->sin_addr, ntohs(sin->sin_port));
     if (ret < 0) {
-        netbuf_free(nbuf);
+        net::Netbuf::free(nbuf);
         return -1;
     }
     
@@ -424,7 +424,7 @@ ssize_t sys_recv(int sockfd, void *buf, size_t len, int flags) {
     } else {
         // UDP: 从接收队列获取
         udp_pcb_t *pcb = sock->pcb.udp;
-        netbuf_t *nbuf = net::Udp::recv_poll(pcb);
+        net::Netbuf *nbuf = net::Udp::recv_poll(pcb);
         if (!nbuf) {
             if (nonblock) {
                 return -EAGAIN;  // 非阻塞模式，无数据
@@ -435,7 +435,7 @@ ssize_t sys_recv(int sockfd, void *buf, size_t len, int flags) {
         size_t copy_len = (nbuf->len < len) ? nbuf->len : len;
         memcpy(buf, nbuf->data, copy_len);
         
-        netbuf_free(nbuf);
+        net::Netbuf::free(nbuf);
         return copy_len;
     }
 }
@@ -456,7 +456,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
     
     // UDP
     udp_pcb_t *pcb = sock->pcb.udp;
-    netbuf_t *nbuf = net::Udp::recv_poll(pcb);
+    net::Netbuf *nbuf = net::Udp::recv_poll(pcb);
     if (!nbuf) {
         if (nonblock) {
             return -EAGAIN;  // 非阻塞模式，无数据
@@ -477,7 +477,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         *addrlen = sizeof(struct sockaddr_in);
     }
     
-    netbuf_free(nbuf);
+    net::Netbuf::free(nbuf);
     return copy_len;
 }
 

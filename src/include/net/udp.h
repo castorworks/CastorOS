@@ -52,11 +52,11 @@ typedef struct udp_pcb {
     uint16_t remote_port;       ///< 远程端口（0 表示任意）
 
     // 接收缓冲区
-    netbuf_t *recv_queue;       ///< 接收队列
+    net::Netbuf *recv_queue;       ///< 接收队列
     uint32_t recv_queue_len;    ///< 队列中的数据包数
 
     // 回调函数
-    void (*recv_callback)(struct udp_pcb *pcb, netbuf_t *buf,
+    void (*recv_callback)(struct udp_pcb *pcb, net::Netbuf *buf,
                          uint32_t src_ip, uint16_t src_port);
     void *callback_arg;         ///< 回调参数
 
@@ -82,7 +82,7 @@ public:
      * @param src_ip 源 IP 地址（网络字节序）
      * @param dst_ip 目的 IP 地址（网络字节序）
      */
-    static void input(netdev_t *dev, netbuf_t *buf, uint32_t src_ip, uint32_t dst_ip);
+    static void input(net::Netdev *dev, net::Netbuf *buf, uint32_t src_ip, uint32_t dst_ip);
 
     /**
      * @brief 发送 UDP 数据报
@@ -138,7 +138,7 @@ public:
      * @param buf 数据缓冲区
      * @return 0 成功，-1 失败
      */
-    static int send(udp_pcb_t *pcb, netbuf_t *buf);
+    static int send(udp_pcb_t *pcb, net::Netbuf *buf);
 
     /**
      * @brief 通过 PCB 发送数据到指定地址
@@ -148,7 +148,7 @@ public:
      * @param dst_port 目的端口（主机字节序）
      * @return 0 成功，-1 失败
      */
-    static int sendto(udp_pcb_t *pcb, netbuf_t *buf, uint32_t dst_ip, uint16_t dst_port);
+    static int sendto(udp_pcb_t *pcb, net::Netbuf *buf, uint32_t dst_ip, uint16_t dst_port);
 
     /**
      * @brief 设置接收回调函数
@@ -157,7 +157,7 @@ public:
      * @param arg 回调参数
      */
     static void recv(udp_pcb_t *pcb,
-                  void (*callback)(udp_pcb_t *pcb, netbuf_t *buf,
+                  void (*callback)(udp_pcb_t *pcb, net::Netbuf *buf,
                                   uint32_t src_ip, uint16_t src_port),
                   void *arg);
 
@@ -168,7 +168,7 @@ public:
      * 
      * 注意：调用者负责释放返回的 netbuf
      */
-    static netbuf_t *recv_poll(udp_pcb_t *pcb);
+    static net::Netbuf *recv_poll(udp_pcb_t *pcb);
 
     /**
      * @brief 检查是否有待接收的数据

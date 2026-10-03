@@ -157,7 +157,7 @@ static int ip_reass_add_fragment(ip_reassembly_t *r, uint16_t offset,
 /**
  * @brief 检查并重组完整数据包
  */
-static netbuf_t *ip_reass_complete(ip_reassembly_t *r, netdev_t *dev, uint8_t protocol) {
+static net::Netbuf *ip_reass_complete(ip_reassembly_t *r, net::Netdev *dev, uint8_t protocol) {
     // 检查是否知道总长度
     if (r->total_len == 0) return NULL;
     
@@ -175,10 +175,10 @@ static netbuf_t *ip_reass_complete(ip_reassembly_t *r, netdev_t *dev, uint8_t pr
     }
     
     // 分配缓冲区并重组
-    netbuf_t *buf = netbuf_alloc(r->total_len);
+    net::Netbuf *buf = net::Netbuf::alloc(r->total_len);
     if (!buf) return NULL;
     
-    uint8_t *dest = netbuf_put(buf, r->total_len);
+    uint8_t *dest = net::Netbuf::put(buf, r->total_len);
     for (ip_fragment_t *f = r->fragments; f != NULL; f = f->next) {
         memcpy(dest + f->offset, f->data, f->len);
     }
@@ -197,7 +197,7 @@ static netbuf_t *ip_reass_complete(ip_reassembly_t *r, netdev_t *dev, uint8_t pr
 /**
  * @brief 处理 IP 分片
  */
-static netbuf_t *ip_reassemble(netdev_t *dev, netbuf_t *buf, ip_header_t *ip) {
+static net::Netbuf *ip_reassemble(net::Netdev *dev, net::Netbuf *buf, ip_header_t *ip) {
     uint16_t flags_frag = ntohs(ip->flags_fragment);
     uint16_t offset = (flags_frag & IP_FRAG_OFFSET_MASK) * 8;
     bool more_frags = (flags_frag & IP_FLAG_MF) != 0;
@@ -207,7 +207,7 @@ static netbuf_t *ip_reassemble(netdev_t *dev, netbuf_t *buf, ip_header_t *ip) {
                                         ntohs(ip->identification), ip->protocol);
     if (!r) {
         LOG_WARN_MSG("ip: No reassembly entry available\n");
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return NULL;
     }
     
@@ -217,11 +217,11 @@ static netbuf_t *ip_reassemble(netdev_t *dev, netbuf_t *buf, ip_header_t *ip) {
     uint16_t data_len = ntohs(ip->total_length) - hdr_len;
     
     if (ip_reass_add_fragment(r, offset, data, data_len, more_frags) < 0) {
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return NULL;
     }
     
-    netbuf_free(buf);
+    net::Netbuf::free(buf);
     
     // 尝试重组
     return ip_reass_complete(r, dev, ip->protocol);
@@ -258,8 +258,8 @@ void net::Ip::init() {
 // 路由表
 // ============================================================================
 
-netdev_t *net::Ip::route_lookup(uint32_t dst_ip, uint32_t *next_hop) {
-    netdev_t *best_dev = NULL;
+net::Netdev *net::Ip::route_lookup(uint32_t dst_ip, uint32_t *next_hop) {
+    net::Netdev *best_dev = NULL;
     uint32_t best_mask = 0;
     uint32_t best_gateway = 0;
     uint32_t best_metric = 0xFFFFFFFF;
@@ -318,7 +318,7 @@ netdev_t *net::Ip::route_lookup(uint32_t dst_ip, uint32_t *next_hop) {
     
     // 如果没有找到路由，使用默认设备
     if (!best_dev) {
-        best_dev = netdev_get_default();
+        best_dev = net::Netdev::get_default();
         if (best_dev && next_hop) {
             // 使用设备的网关作为下一跳
             if (net::Ip::same_subnet(best_dev->ip_addr, dst_ip, best_dev->netmask)) {
@@ -335,7 +335,7 @@ netdev_t *net::Ip::route_lookup(uint32_t dst_ip, uint32_t *next_hop) {
 }
 
 int net::Ip::route_add(uint32_t dest, uint32_t netmask, uint32_t gateway, 
-                 netdev_t *dev, uint32_t metric) {
+                 net::Netdev *dev, uint32_t metric) {
     // 查找空闲条目或相同路由
     for (int i = 0; i < IP_ROUTE_MAX; i++) {
         ip_route_t *r = &route_table[i];
@@ -424,7 +424,7 @@ int net::Ip::route_dump(char *buf, size_t size) {
     return len;
 }
 
-void net::Ip::input(netdev_t *dev, netbuf_t *buf) {
+void net::Ip::input(net::Netdev *dev, net::Netbuf *buf) {
     if (!dev || !buf) {
         return;
     }
@@ -432,7 +432,7 @@ void net::Ip::input(netdev_t *dev, netbuf_t *buf) {
     // 检查数据包长度
     if (buf->len < IP_HEADER_MIN_LEN) {
         LOG_WARN_MSG("ip: Packet too short (%u bytes)\n", buf->len);
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return;
     }
     
@@ -442,7 +442,7 @@ void net::Ip::input(netdev_t *dev, netbuf_t *buf) {
     // 验证 IP 版本
     if (net::Ip::version(ip) != IP_VERSION_4) {
         LOG_WARN_MSG("ip: Invalid version %u\n", net::Ip::version(ip));
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return;
     }
     
@@ -450,14 +450,14 @@ void net::Ip::input(netdev_t *dev, netbuf_t *buf) {
     uint8_t hdr_len = net::Ip::header_len(ip);
     if (hdr_len < IP_HEADER_MIN_LEN || hdr_len > buf->len) {
         LOG_WARN_MSG("ip: Invalid header length %u\n", hdr_len);
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return;
     }
     
     // 验证校验和
     if (net::Ip::checksum(ip, hdr_len) != 0) {
         LOG_WARN_MSG("ip: Invalid checksum\n");
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return;
     }
     
@@ -465,7 +465,7 @@ void net::Ip::input(netdev_t *dev, netbuf_t *buf) {
     uint16_t total_len = ntohs(ip->total_length);
     if (total_len < hdr_len || total_len > buf->len) {
         LOG_WARN_MSG("ip: Invalid total length %u\n", total_len);
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return;
     }
     
@@ -478,7 +478,7 @@ void net::Ip::input(netdev_t *dev, netbuf_t *buf) {
     
     if (!is_for_us) {
         // 不是发给我们的，丢弃（不转发）
-        netbuf_free(buf);
+        net::Netbuf::free(buf);
         return;
     }
     
@@ -499,7 +499,7 @@ void net::Ip::input(netdev_t *dev, netbuf_t *buf) {
         buf->transport_header = buf->data;
     } else {
         // 非分片包，剥离 IP 头部
-        netbuf_pull(buf, hdr_len);
+        net::Netbuf::pull(buf, hdr_len);
         buf->transport_header = buf->data;
     }
     
@@ -519,12 +519,12 @@ void net::Ip::input(netdev_t *dev, netbuf_t *buf) {
             
         default:
             LOG_DEBUG_MSG("ip: Unknown protocol %u\n", protocol);
-            netbuf_free(buf);
+            net::Netbuf::free(buf);
             break;
     }
 }
 
-int net::Ip::output(netdev_t *dev, netbuf_t *buf, uint32_t dst_ip, uint8_t protocol) {
+int net::Ip::output(net::Netdev *dev, net::Netbuf *buf, uint32_t dst_ip, uint8_t protocol) {
     if (!buf) {
         return -1;
     }
@@ -550,7 +550,7 @@ int net::Ip::output(netdev_t *dev, netbuf_t *buf, uint32_t dst_ip, uint8_t proto
     }
     
     // 添加 IP 头部空间
-    uint8_t *header_ptr = netbuf_push(buf, IP_HEADER_MIN_LEN);
+    uint8_t *header_ptr = net::Netbuf::push(buf, IP_HEADER_MIN_LEN);
     if (!header_ptr) {
         LOG_ERROR_MSG("ip: No headroom for IP header\n");
         return -1;
@@ -681,7 +681,7 @@ bool net::Ip::same_subnet(uint32_t ip1, uint32_t ip2, uint32_t netmask) {
     return (ip1 & netmask) == (ip2 & netmask);
 }
 
-uint32_t net::Ip::get_next_hop(netdev_t *dev, uint32_t dst_ip) {
+uint32_t net::Ip::get_next_hop(net::Netdev *dev, uint32_t dst_ip) {
     if (!dev) {
         return dst_ip;
     }

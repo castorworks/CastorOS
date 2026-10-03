@@ -104,7 +104,7 @@ public:
      * @param dev 网络设备
      * @param buf 接收缓冲区
      */
-    static void input(netdev_t *dev, netbuf_t *buf);
+    static void input(net::Netdev *dev, net::Netbuf *buf);
 
     /**
      * @brief 发送以太网帧
@@ -114,7 +114,7 @@ public:
      * @param type EtherType
      * @return 0 成功，-1 失败
      */
-    static int output(netdev_t *dev, netbuf_t *buf, const uint8_t *dst_mac, uint16_t type);
+    static int output(net::Netdev *dev, net::Netbuf *buf, const uint8_t *dst_mac, uint16_t type);
 };
 
 } // namespace net

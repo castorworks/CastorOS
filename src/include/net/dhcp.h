@@ -120,7 +120,7 @@ typedef struct {
  * DHCP 客户端上下文
  */
 typedef struct {
-    netdev_t *dev;          // 网络设备
+    net::Netdev *dev;          // 网络设备
     dhcp_state_t state;     // 客户端状态
     dhcp_info_t info;       // 配置信息
     uint32_t xid;           // 当前事务 ID
@@ -144,20 +144,20 @@ public:
      * @param dev 网络设备
      * @return 0 成功，-1 失败
      */
-    static int start(netdev_t *dev);
+    static int start(net::Netdev *dev);
 
     /**
      * @brief 停止 DHCP 客户端
      * @param dev 网络设备
      */
-    static void stop(netdev_t *dev);
+    static void stop(net::Netdev *dev);
 
     /**
      * @brief 释放 DHCP 租约
      * @param dev 网络设备
      * @return 0 成功，-1 失败
      */
-    static int release(netdev_t *dev);
+    static int release(net::Netdev *dev);
 
     /**
      * @brief 获取 DHCP 状态
@@ -165,7 +165,7 @@ public:
      * @param info 输出配置信息
      * @return 当前状态
      */
-    static dhcp_state_t get_status(netdev_t *dev, dhcp_info_t *info);
+    static dhcp_state_t get_status(net::Netdev *dev, dhcp_info_t *info);
 
     /**
      * @brief DHCP 定时器处理（需要定期调用）
@@ -180,7 +180,7 @@ public:
      * @param data 数据包内容
      * @param len 数据包长度
      */
-    static void input(netdev_t *dev, uint8_t *data, uint32_t len);
+    static void input(net::Netdev *dev, uint8_t *data, uint32_t len);
 };
 
 } // namespace net

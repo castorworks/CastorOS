@@ -254,7 +254,7 @@ typedef struct e1000_device {
     uint32_t tx_cur;                     ///< 当前发送描述符索引
     
     /* 网络设备接口 */
-    netdev_t netdev;
+    net::Netdev netdev;
     
     /* 统计信息 */
     uint64_t rx_packets;
