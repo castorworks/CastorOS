@@ -25,19 +25,19 @@
 /**
  * syscall::Mm::brk - 调整堆边界
  * @param addr 新的堆结束地址（0 表示查询当前值）
- * @return 成功返回新的堆结束地址，失败返回 (uint32_t)-1
+ * @return 成功返回新的堆结束地址，失败返回 (uintptr_t)-1
  */
-uint32_t syscall::Mm::brk(uint32_t addr) {
+uintptr_t syscall::Mm::brk(uint32_t addr) {
     task_t *current = kernel::Scheduler::get_current();
     if (!current) {
         LOG_ERROR_MSG("syscall::Mm::brk: no current task\n");
-        return (uint32_t)-1;
+        return (uintptr_t)-1;
     }
     
     // 如果不是用户进程，返回错误
     if (!current->is_user_process) {
         LOG_ERROR_MSG("syscall::Mm::brk: not a user process\n");
-        return (uint32_t)-1;
+        return (uintptr_t)-1;
     }
     
     // 如果 addr 为 0，返回当前堆结束地址
@@ -50,13 +50,13 @@ uint32_t syscall::Mm::brk(uint32_t addr) {
     if (addr < current->heap_start) {
         LOG_ERROR_MSG("syscall::Mm::brk: addr 0x%x below heap_start 0x%x\n", 
                       addr, current->heap_start);
-        return (uint32_t)-1;
+        return (uintptr_t)-1;
     }
     
     if (addr > current->heap_max) {
         LOG_ERROR_MSG("syscall::Mm::brk: addr 0x%x exceeds heap_max 0x%x\n", 
                       addr, current->heap_max);
-        return (uint32_t)-1;
+        return (uintptr_t)-1;
     }
     
     uint32_t old_end = current->heap_end;
@@ -188,7 +188,7 @@ static uint32_t find_free_vaddr(task_t *task, uint32_t hint, uint32_t length) {
 /**
  * 执行匿名映射
  */
-static uint32_t do_mmap_anonymous(task_t *current, uint32_t vaddr, uint32_t length,
+static uintptr_t do_mmap_anonymous(task_t *current, uint32_t vaddr, uint32_t length,
                                    uint32_t page_flags) {
     uint32_t pages_allocated = 0;
     
@@ -204,7 +204,7 @@ static uint32_t do_mmap_anonymous(task_t *current, uint32_t vaddr, uint32_t leng
                     mm::Pmm::free_frame((paddr_t)pf);
                 }
             }
-            return (uint32_t)-1;
+            return (uintptr_t)-1;
         }
         
         // 先通过内核地址清零物理页（在映射之前）
@@ -222,7 +222,7 @@ static uint32_t do_mmap_anonymous(task_t *current, uint32_t vaddr, uint32_t leng
                     mm::Pmm::free_frame((paddr_t)pf);
                 }
             }
-            return (uint32_t)-1;
+            return (uintptr_t)-1;
         }
         
         pages_allocated++;
@@ -245,7 +245,7 @@ static uint32_t do_mmap_anonymous(task_t *current, uint32_t vaddr, uint32_t leng
  * @param is_private 是否为私有映射（MAP_PRIVATE）
  * @return 成功返回虚拟地址，失败返回 -1
  */
-static uint32_t do_mmap_file(task_t *current, uint32_t vaddr, uint32_t length,
+static uintptr_t do_mmap_file(task_t *current, uint32_t vaddr, uint32_t length,
                               uint32_t page_flags, fs_node_t *node, uint32_t offset,
                               bool is_private) {
     uint32_t pages_allocated = 0;
@@ -266,7 +266,7 @@ static uint32_t do_mmap_file(task_t *current, uint32_t vaddr, uint32_t length,
                     mm::Pmm::free_frame((paddr_t)pf);
                 }
             }
-            return (uint32_t)-1;
+            return (uintptr_t)-1;
         }
         
         // 获取内核地址以便操作物理页
@@ -304,7 +304,7 @@ static uint32_t do_mmap_file(task_t *current, uint32_t vaddr, uint32_t length,
                     mm::Pmm::free_frame((paddr_t)pf);
                 }
             }
-            return (uint32_t)-1;
+            return (uintptr_t)-1;
         }
         
         file_offset += PAGE_SIZE;
@@ -325,39 +325,39 @@ static uint32_t do_mmap_file(task_t *current, uint32_t vaddr, uint32_t length,
  * @param flags 映射标志
  * @param fd 文件描述符（匿名映射时应为 -1）
  * @param offset 文件偏移（匿名映射时忽略）
- * @return 成功返回映射的虚拟地址，失败返回 (uint32_t)-1
+ * @return 成功返回映射的虚拟地址，失败返回 (uintptr_t)-1
  */
-uint32_t syscall::Mm::mmap(uint32_t addr, uint32_t length, uint32_t prot,
+uintptr_t syscall::Mm::mmap(uint32_t addr, uint32_t length, uint32_t prot,
                   uint32_t flags, int32_t fd, uint32_t offset) {
     task_t *current = kernel::Scheduler::get_current();
     if (!current) {
         LOG_ERROR_MSG("syscall::Mm::mmap: no current task\n");
-        return (uint32_t)-1;
+        return (uintptr_t)-1;
     }
     
     // 检查是否为用户进程
     if (!current->is_user_process) {
         LOG_ERROR_MSG("syscall::Mm::mmap: not a user process\n");
-        return (uint32_t)-1;
+        return (uintptr_t)-1;
     }
     
     // 对齐长度
     length = PAGE_ALIGN_UP(length);
     if (length == 0) {
         LOG_ERROR_MSG("syscall::Mm::mmap: invalid length 0\n");
-        return (uint32_t)-1;
+        return (uintptr_t)-1;
     }
     
     // 检查长度是否超出限制
     if (length > MMAP_REGION_END - MMAP_REGION_START) {
         LOG_ERROR_MSG("syscall::Mm::mmap: length 0x%x too large\n", length);
-        return (uint32_t)-1;
+        return (uintptr_t)-1;
     }
     
     // 检查 offset 是否页对齐
     if (offset & (PAGE_SIZE - 1)) {
         LOG_ERROR_MSG("syscall::Mm::mmap: offset 0x%x not page aligned\n", offset);
-        return (uint32_t)-1;
+        return (uintptr_t)-1;
     }
     
     bool is_anonymous = (flags & MAP_ANONYMOUS) != 0;
@@ -371,14 +371,14 @@ uint32_t syscall::Mm::mmap(uint32_t addr, uint32_t length, uint32_t prot,
     if (!is_anonymous) {
         if (fd < 0) {
             LOG_ERROR_MSG("syscall::Mm::mmap: file mapping requires valid fd (got %d)\n", fd);
-            return (uint32_t)-1;
+            return (uintptr_t)-1;
         }
         
         // 获取文件节点
         kernel::FdEntry *entry = kernel::FdTable::get(current->fd_table, fd);
         if (!entry || !entry->node) {
             LOG_ERROR_MSG("syscall::Mm::mmap: invalid fd %d\n", fd);
-            return (uint32_t)-1;
+            return (uintptr_t)-1;
         }
         
         file_node = entry->node;
@@ -386,7 +386,7 @@ uint32_t syscall::Mm::mmap(uint32_t addr, uint32_t length, uint32_t prot,
         // 检查文件类型（只能映射普通文件）
         if (file_node->type != FS_FILE) {
             LOG_ERROR_MSG("syscall::Mm::mmap: can only map regular files (type=%d)\n", file_node->type);
-            return (uint32_t)-1;
+            return (uintptr_t)-1;
         }
         
         // 检查文件权限
@@ -397,13 +397,13 @@ uint32_t syscall::Mm::mmap(uint32_t addr, uint32_t length, uint32_t prot,
         
         if ((prot & PROT_READ) && !can_read) {
             LOG_ERROR_MSG("syscall::Mm::mmap: file not opened for reading\n");
-            return (uint32_t)-1;
+            return (uintptr_t)-1;
         }
         
         if ((prot & PROT_WRITE) && !is_private && !can_write) {
             // 共享可写映射需要文件以写模式打开
             LOG_ERROR_MSG("syscall::Mm::mmap: shared writable mapping requires write access\n");
-            return (uint32_t)-1;
+            return (uintptr_t)-1;
         }
     }
     
@@ -411,7 +411,7 @@ uint32_t syscall::Mm::mmap(uint32_t addr, uint32_t length, uint32_t prot,
     uint32_t vaddr = find_free_vaddr(current, addr, length);
     if (vaddr == 0) {
         LOG_ERROR_MSG("syscall::Mm::mmap: no free virtual address space for length 0x%x\n", length);
-        return (uint32_t)-1;
+        return (uintptr_t)-1;
     }
     
     // 确定页面标志
@@ -432,19 +432,19 @@ uint32_t syscall::Mm::mmap(uint32_t addr, uint32_t length, uint32_t prot,
  * syscall::Mm::munmap - 取消内存映射
  * @param addr 映射起始地址
  * @param length 取消映射的长度
- * @return 成功返回 0，失败返回 (uint32_t)-1
+ * @return 成功返回 0，失败返回 (uintptr_t)-1
  */
-uint32_t syscall::Mm::munmap(uint32_t addr, uint32_t length) {
+uintptr_t syscall::Mm::munmap(uint32_t addr, uint32_t length) {
     task_t *current = kernel::Scheduler::get_current();
     if (!current) {
         LOG_ERROR_MSG("syscall::Mm::munmap: no current task\n");
-        return (uint32_t)-1;
+        return (uintptr_t)-1;
     }
     
     // 检查是否为用户进程
     if (!current->is_user_process) {
         LOG_ERROR_MSG("syscall::Mm::munmap: not a user process\n");
-        return (uint32_t)-1;
+        return (uintptr_t)-1;
     }
     
     // 对齐地址和长度
@@ -458,7 +458,7 @@ uint32_t syscall::Mm::munmap(uint32_t addr, uint32_t length) {
     // 检查地址范围是否有效（在用户空间内）
     if (aligned_addr >= USER_SPACE_END || aligned_addr + length > USER_SPACE_END) {
         LOG_ERROR_MSG("syscall::Mm::munmap: address 0x%x out of user space\n", aligned_addr);
-        return (uint32_t)-1;
+        return (uintptr_t)-1;
     }
     
     LOG_DEBUG_MSG("syscall::Mm::munmap: addr=0x%x, length=0x%x\n", aligned_addr, length);

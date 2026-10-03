@@ -55,6 +55,25 @@ static syscall_handler_t syscall_table[SYS_MAX];
 /**
  * sys_exit_wrapper - 退出进程（系统调用包装器）
  */
+/**
+ * @brief 取第 6 个系统调用参数
+ *
+ * syscall_dispatcher 只通过寄存器传递前 5 个参数，第 6 个要从保存的寄存器帧里取，
+ * 它所在的寄存器由各架构用户库的 syscall6 约定决定：
+ *   - i686:   EBP -> frame[7]
+ *   - x86_64: R9  -> frame[6]（frame[7] 是 R8，即第 5 个参数）
+ *   - arm64:  X5  -> frame[5]
+ */
+static inline syscall_arg_t syscall_arg6(const syscall_arg_t *frame) {
+#if defined(ARCH_X86_64)
+    return frame[6];
+#elif defined(ARCH_ARM64)
+    return frame[5];
+#else
+    return frame[7];
+#endif
+}
+
 static syscall_arg_t sys_exit_wrapper(syscall_arg_t *frame, syscall_arg_t exit_code, 
                                       syscall_arg_t p2, syscall_arg_t p3, 
                                       syscall_arg_t p4, syscall_arg_t p5) {
@@ -293,9 +312,8 @@ static syscall_arg_t sys_brk_wrapper(syscall_arg_t *frame, syscall_arg_t addr, s
 
 static syscall_arg_t sys_mmap_wrapper(syscall_arg_t *frame, syscall_arg_t addr, syscall_arg_t length,
                                       syscall_arg_t prot, syscall_arg_t flags, syscall_arg_t fd) {
-    // frame[7] 是用户态传递的 ebp/rbp，我们用它作为第 6 个参数 (offset)
-    // 用户态需要在调用 int 0x80/syscall 前将 offset 放入 ebp/rbp
-    syscall_arg_t offset = frame[7];
+    // 第 6 个参数 (offset) 不在寄存器参数里，从保存的寄存器帧中取
+    syscall_arg_t offset = syscall_arg6(frame);
     return syscall::Mm::mmap((uintptr_t)addr, (size_t)length, (uint32_t)prot, (uint32_t)flags, 
                     (int32_t)fd, (uint32_t)offset);
 }
@@ -373,8 +391,8 @@ static syscall_arg_t sys_send_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd
 static syscall_arg_t sys_sendto_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
                                         syscall_arg_t buf, syscall_arg_t len, 
                                         syscall_arg_t flags, syscall_arg_t dest_addr) {
-    // 第 6 个参数 addrlen 通过 frame[7] 传递
-    syscall_arg_t addrlen = frame[7];
+    // 第 6 个参数 addrlen 从保存的寄存器帧中取
+    syscall_arg_t addrlen = syscall_arg6(frame);
     return (syscall_arg_t)net::Socket::sendto((int)sockfd, (const void *)(uintptr_t)buf, 
                                      (size_t)len, (int)flags,
                                      (const struct sockaddr *)(uintptr_t)dest_addr, 
@@ -392,8 +410,8 @@ static syscall_arg_t sys_recv_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd
 static syscall_arg_t sys_recvfrom_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
                                           syscall_arg_t buf, syscall_arg_t len, 
                                           syscall_arg_t flags, syscall_arg_t src_addr) {
-    // 第 6 个参数 addrlen 指针通过 frame[7] 传递
-    socklen_t *addrlen = (socklen_t *)(uintptr_t)frame[7];
+    // 第 6 个参数 addrlen 指针从保存的寄存器帧中取
+    socklen_t *addrlen = (socklen_t *)(uintptr_t)syscall_arg6(frame);
     return (syscall_arg_t)net::Socket::recvfrom((int)sockfd, (void *)(uintptr_t)buf, 
                                        (size_t)len, (int)flags,
                                        (struct sockaddr *)(uintptr_t)src_addr, addrlen);
