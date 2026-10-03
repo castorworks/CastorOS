@@ -89,6 +89,7 @@ make compile-db
 + [x] [用户模式](./docs/09-usermode.md)
 + [x] [同步机制](./docs/10-sync.md)
 + [x] [系统增强](./docs/11-system-enhancement.md)
++ [x] [C++ 重构](./docs/19-cpp-migration.md)
 
 ## 下一步安排
 
