@@ -14,13 +14,13 @@
 #include <hal/hal.h>
 #endif
 
-bool elf_is_64bit(const void *elf_data) {
+bool kernel::Elf::is_64bit(const void *elf_data) {
     if (!elf_data) return false;
     const uint8_t *ident = (const uint8_t *)elf_data;
     return ident[4] == ELF_CLASS_64;
 }
 
-bool elf_validate_header(const void *elf_data) {
+bool kernel::Elf::validate_header(const void *elf_data) {
     if (!elf_data) return false;
     const uint8_t *ident = (const uint8_t *)elf_data;
     if (ident[0] != 0x7F || ident[1] != 'E' || ident[2] != 'L' || ident[3] != 'F') {
@@ -81,8 +81,8 @@ bool elf_validate_header(const void *elf_data) {
     return true;
 }
 
-uintptr_t elf_get_entry(const void *elf_data) {
-    if (!elf_validate_header(elf_data)) return 0;
+uintptr_t kernel::Elf::get_entry(const void *elf_data) {
+    if (!kernel::Elf::validate_header(elf_data)) return 0;
 #if defined(ARCH_X86_64) || defined(ARCH_ARM64)
     const elf64_ehdr_t *ehdr = (const elf64_ehdr_t *)elf_data;
     return (uintptr_t)ehdr->e_entry;
@@ -227,7 +227,7 @@ static bool elf_load_impl(const void *elf_data, uint32_t size, page_directory_t 
             memset(phys_ptr, 0, PAGE_SIZE);
             
             /* Map the page using HAL MMU interface */
-            if (!hal_mmu_map(addr_space, vaddr, phys, flags)) {
+            if (!hal::Mmu::map(addr_space, vaddr, phys, flags)) {
                 LOG_ERROR_MSG("ELF: Failed to map page vaddr=0x%llx phys=0x%llx\n",
                              (unsigned long long)vaddr, (unsigned long long)phys);
                 mm::Pmm::free_frame(phys);
@@ -314,12 +314,12 @@ static bool elf_load_impl(const void *elf_data, uint32_t size, page_directory_t 
 }
 #endif
 
-bool elf_load(const void *elf_data, uint32_t size, page_directory_t *page_dir,
+bool kernel::Elf::load(const void *elf_data, uint32_t size, page_directory_t *page_dir,
               uintptr_t *entry_point, uintptr_t *program_end) {
     if (!elf_data || !page_dir || !entry_point) {
         LOG_ERROR_MSG("ELF: Invalid parameters\n");
         return false;
     }
-    if (!elf_validate_header(elf_data)) return false;
+    if (!kernel::Elf::validate_header(elf_data)) return false;
     return elf_load_impl(elf_data, size, page_dir, entry_point, program_end);
 }

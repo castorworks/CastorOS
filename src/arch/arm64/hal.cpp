@@ -37,7 +37,7 @@ static bool g_hal_mmu_initialized = false;
  * 
  * Requirements: 1.1 - HAL initialization dispatch
  */
-void hal_cpu_init(void) {
+void hal::Cpu::init() {
     serial_puts("HAL: Initializing ARM64 CPU...\n");
     
     /* ARM64 CPU initialization:
@@ -63,7 +63,7 @@ void hal_cpu_init(void) {
  * @brief Get current CPU ID
  * @return CPU ID from MPIDR_EL1 register
  */
-uint32_t hal_cpu_id(void) {
+uint32_t hal::Cpu::id() {
     uint64_t mpidr;
     __asm__ volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
     return (uint32_t)(mpidr & 0xFF);  /* Aff0 field */
@@ -72,7 +72,7 @@ uint32_t hal_cpu_id(void) {
 /**
  * @brief Halt the CPU until next interrupt
  */
-void hal_cpu_halt(void) {
+void hal::Cpu::halt() {
     __asm__ volatile("wfi");
 }
 
@@ -85,7 +85,7 @@ void hal_cpu_halt(void) {
  * 
  * Requirements: 1.1 - HAL initialization dispatch
  */
-void hal_interrupt_init(void) {
+void hal::Interrupt::init() {
     serial_puts("HAL: Initializing ARM64 interrupt system...\n");
     
     /* Initialize exception vectors (VBAR_EL1) */
@@ -107,7 +107,7 @@ void hal_interrupt_init(void) {
  * **Feature: multi-arch-support, Property 8: Interrupt Handler Registration API Consistency**
  * **Validates: Requirements 6.4**
  */
-void hal_interrupt_register(uint32_t irq, hal_interrupt_handler_t handler, void *data) {
+void hal::Interrupt::register_handler(uint32_t irq, hal_interrupt_handler_t handler, void *data) {
     gic_register_handler(irq, handler, data);
     gic_enable_irq(irq);
 }
@@ -116,7 +116,7 @@ void hal_interrupt_register(uint32_t irq, hal_interrupt_handler_t handler, void 
  * @brief Unregister an interrupt handler
  * @param irq IRQ number
  */
-void hal_interrupt_unregister(uint32_t irq) {
+void hal::Interrupt::unregister_handler(uint32_t irq) {
     gic_disable_irq(irq);
     gic_unregister_handler(irq);
 }
@@ -124,7 +124,7 @@ void hal_interrupt_unregister(uint32_t irq) {
 /**
  * @brief Enable interrupts globally
  */
-void hal_interrupt_enable(void) {
+void hal::Interrupt::enable() {
     serial_puts("HAL: Enabling interrupts...\n");
     
     /* Debug: Print current SP before enabling interrupts */
@@ -141,7 +141,7 @@ void hal_interrupt_enable(void) {
 /**
  * @brief Disable interrupts globally
  */
-void hal_interrupt_disable(void) {
+void hal::Interrupt::disable() {
     __asm__ volatile("msr daifset, #0xf" ::: "memory");
 }
 
@@ -149,7 +149,7 @@ void hal_interrupt_disable(void) {
  * @brief Save interrupt state and disable interrupts
  * @return Previous DAIF value
  */
-uint64_t hal_interrupt_save(void) {
+uint64_t hal::Interrupt::save() {
     uint64_t daif;
     __asm__ volatile(
         "mrs %0, daif\n\t"
@@ -165,7 +165,7 @@ uint64_t hal_interrupt_save(void) {
  * @brief Restore interrupt state
  * @param state Previously saved DAIF value
  */
-void hal_interrupt_restore(uint64_t state) {
+void hal::Interrupt::restore(uint64_t state) {
     __asm__ volatile("msr daif, %0" : : "r"(state) : "memory");
 }
 
@@ -173,7 +173,7 @@ void hal_interrupt_restore(uint64_t state) {
  * @brief Send End-Of-Interrupt signal to GIC
  * @param irq IRQ number that was handled
  */
-void hal_interrupt_eoi(uint32_t irq) {
+void hal::Interrupt::eoi(uint32_t irq) {
     gic_end_irq(irq);
 }
 
@@ -293,7 +293,7 @@ static void hal_timer_irq_handler(void *data) {
  * Configures the ARM Generic Timer (physical timer) to generate
  * periodic interrupts at the specified frequency.
  */
-void hal_timer_init(uint32_t freq_hz, hal_timer_callback_t callback) {
+void hal::Timer::init(uint32_t freq_hz, hal_timer_callback_t callback) {
     serial_puts("HAL: Initializing ARM64 timer...\n");
     
     g_timer_frequency = freq_hz;
@@ -320,7 +320,7 @@ void hal_timer_init(uint32_t freq_hz, hal_timer_callback_t callback) {
     serial_puts("  Registering timer IRQ handler for IRQ ");
     serial_put_hex64(ARM_TIMER_IRQ);
     serial_puts("\n");
-    hal_interrupt_register(ARM_TIMER_IRQ, hal_timer_irq_handler, NULL);
+    hal::Interrupt::register_handler(ARM_TIMER_IRQ, hal_timer_irq_handler, NULL);
     
     /* Set timer value and enable timer */
     write_cntp_tval_el0(tval);
@@ -379,7 +379,7 @@ void hal_timer_init(uint32_t freq_hz, hal_timer_callback_t callback) {
  * @brief Get system tick count
  * @return Number of timer ticks since boot (software counter)
  */
-uint64_t hal_timer_get_ticks(void) {
+uint64_t hal::Timer::get_ticks() {
     return g_timer_ticks;
 }
 
@@ -387,7 +387,7 @@ uint64_t hal_timer_get_ticks(void) {
  * @brief Get timer frequency
  * @return Timer frequency in Hz
  */
-uint32_t hal_timer_get_frequency(void) {
+uint32_t hal::Timer::get_frequency() {
     return g_timer_frequency;
 }
 
@@ -505,15 +505,15 @@ void hal_isb(void) {
  * Initialization State Queries
  * ========================================================================== */
 
-bool hal_cpu_initialized(void) {
+bool hal::Cpu::initialized() {
     return g_hal_cpu_initialized;
 }
 
-bool hal_interrupt_initialized(void) {
+bool hal::Interrupt::initialized() {
     return g_hal_interrupt_initialized;
 }
 
-bool hal_mmu_initialized(void) {
+bool hal::Mmu::initialized() {
     return g_hal_mmu_initialized;
 }
 

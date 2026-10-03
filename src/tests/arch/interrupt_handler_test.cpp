@@ -65,7 +65,7 @@ static void reset_test_state(void) {
 /**
  * Test: Verify interrupt registration API is callable
  * 
- * Tests that hal_interrupt_register can be called without crashing.
+ * Tests that hal::Interrupt::register_handler can be called without crashing.
  * 
  * **Feature: multi-arch-support, Property 8: Interrupt Handler Registration API Consistency**
  * **Validates: Requirements 6.4**
@@ -78,10 +78,10 @@ TEST_CASE(hal_interrupt_register_callable) {
     uint32_t test_data = 0x12345678;
     
     /* Registration should not crash */
-    hal_interrupt_register(test_irq, test_interrupt_handler, (void *)(uintptr_t)test_data);
+    hal::Interrupt::register_handler(test_irq, test_interrupt_handler, (void *)(uintptr_t)test_data);
     
     /* Unregister to clean up */
-    hal_interrupt_unregister(test_irq);
+    hal::Interrupt::unregister_handler(test_irq);
     
     /* If we get here, the API is callable */
     ASSERT_TRUE(true);
@@ -90,14 +90,14 @@ TEST_CASE(hal_interrupt_register_callable) {
 /**
  * Test: Verify interrupt unregistration API is callable
  * 
- * Tests that hal_interrupt_unregister can be called without crashing.
+ * Tests that hal::Interrupt::unregister_handler can be called without crashing.
  * 
  * **Feature: multi-arch-support, Property 8: Interrupt Handler Registration API Consistency**
  * **Validates: Requirements 6.4**
  */
 TEST_CASE(hal_interrupt_unregister_callable) {
     /* Unregistering a non-existent handler should not crash */
-    hal_interrupt_unregister(200);
+    hal::Interrupt::unregister_handler(200);
     
     /* If we get here, the API is callable */
     ASSERT_TRUE(true);
@@ -119,12 +119,12 @@ TEST_CASE(hal_interrupt_multiple_registrations) {
     uint32_t num_irqs = sizeof(irqs) / sizeof(irqs[0]);
     
     for (uint32_t i = 0; i < num_irqs; i++) {
-        hal_interrupt_register(irqs[i], test_interrupt_handler, (void *)(uintptr_t)i);
+        hal::Interrupt::register_handler(irqs[i], test_interrupt_handler, (void *)(uintptr_t)i);
     }
     
     /* Unregister all */
     for (uint32_t i = 0; i < num_irqs; i++) {
-        hal_interrupt_unregister(irqs[i]);
+        hal::Interrupt::unregister_handler(irqs[i]);
     }
     
     /* If we get here, multiple registrations work */
@@ -141,10 +141,10 @@ TEST_CASE(hal_interrupt_multiple_registrations) {
  */
 TEST_CASE(hal_interrupt_null_handler) {
     /* Registering NULL handler should not crash */
-    hal_interrupt_register(150, NULL, NULL);
+    hal::Interrupt::register_handler(150, NULL, NULL);
     
     /* Clean up */
-    hal_interrupt_unregister(150);
+    hal::Interrupt::unregister_handler(150);
     
     /* If we get here, NULL handler is handled */
     ASSERT_TRUE(true);
@@ -164,13 +164,13 @@ TEST_CASE(hal_interrupt_reregistration) {
     uint32_t test_irq = 160;
     
     /* Register first handler */
-    hal_interrupt_register(test_irq, test_interrupt_handler, (void *)1);
+    hal::Interrupt::register_handler(test_irq, test_interrupt_handler, (void *)1);
     
     /* Re-register with different data */
-    hal_interrupt_register(test_irq, test_interrupt_handler, (void *)2);
+    hal::Interrupt::register_handler(test_irq, test_interrupt_handler, (void *)2);
     
     /* Clean up */
-    hal_interrupt_unregister(test_irq);
+    hal::Interrupt::unregister_handler(test_irq);
     
     /* If we get here, re-registration works */
     ASSERT_TRUE(true);
@@ -179,26 +179,26 @@ TEST_CASE(hal_interrupt_reregistration) {
 /**
  * Test: Verify interrupt enable/disable API is callable
  * 
- * Tests that hal_interrupt_enable and hal_interrupt_disable work.
+ * Tests that hal::Interrupt::enable and hal::Interrupt::disable work.
  * 
  * **Feature: multi-arch-support, Property 8: Interrupt Handler Registration API Consistency**
  * **Validates: Requirements 6.4**
  */
 TEST_CASE(hal_interrupt_enable_disable) {
     /* Save current state */
-    uint64_t saved_state = hal_interrupt_save();
+    uint64_t saved_state = hal::Interrupt::save();
     
     /* Disable interrupts */
-    hal_interrupt_disable();
+    hal::Interrupt::disable();
     
     /* Enable interrupts */
-    hal_interrupt_enable();
+    hal::Interrupt::enable();
     
     /* Disable again */
-    hal_interrupt_disable();
+    hal::Interrupt::disable();
     
     /* Restore original state */
-    hal_interrupt_restore(saved_state);
+    hal::Interrupt::restore(saved_state);
     
     /* If we get here, enable/disable works */
     ASSERT_TRUE(true);
@@ -207,23 +207,23 @@ TEST_CASE(hal_interrupt_enable_disable) {
 /**
  * Test: Verify interrupt save/restore API is callable
  * 
- * Tests that hal_interrupt_save and hal_interrupt_restore work.
+ * Tests that hal::Interrupt::save and hal::Interrupt::restore work.
  * 
  * **Feature: multi-arch-support, Property 8: Interrupt Handler Registration API Consistency**
  * **Validates: Requirements 6.4**
  */
 TEST_CASE(hal_interrupt_save_restore) {
     /* Save state */
-    uint64_t state1 = hal_interrupt_save();
+    uint64_t state1 = hal::Interrupt::save();
     
     /* Save again (should be disabled now) */
-    uint64_t state2 = hal_interrupt_save();
+    uint64_t state2 = hal::Interrupt::save();
     
     /* Restore inner state */
-    hal_interrupt_restore(state2);
+    hal::Interrupt::restore(state2);
     
     /* Restore outer state */
-    hal_interrupt_restore(state1);
+    hal::Interrupt::restore(state1);
     
     /* If we get here, save/restore works */
     ASSERT_TRUE(true);
@@ -232,14 +232,14 @@ TEST_CASE(hal_interrupt_save_restore) {
 /**
  * Test: Verify EOI API is callable
  * 
- * Tests that hal_interrupt_eoi can be called.
+ * Tests that hal::Interrupt::eoi can be called.
  * 
  * **Feature: multi-arch-support, Property 8: Interrupt Handler Registration API Consistency**
  * **Validates: Requirements 6.4**
  */
 TEST_CASE(hal_interrupt_eoi_callable) {
     /* EOI for a non-active interrupt should not crash */
-    hal_interrupt_eoi(100);
+    hal::Interrupt::eoi(100);
     
     /* If we get here, EOI is callable */
     ASSERT_TRUE(true);
@@ -255,7 +255,7 @@ TEST_CASE(hal_interrupt_eoi_callable) {
  */
 TEST_CASE(hal_interrupt_initialized_state) {
     /* Interrupt system should be initialized */
-    ASSERT_TRUE(hal_interrupt_initialized());
+    ASSERT_TRUE(hal::Interrupt::initialized());
 }
 
 /* ============================================================================

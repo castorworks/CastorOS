@@ -57,7 +57,7 @@
  */
 TEST_CASE(hal_cpu_init_dispatch) {
     /* Verify CPU initialization state */
-    ASSERT_TRUE(hal_cpu_initialized());
+    ASSERT_TRUE(hal::Cpu::initialized());
 }
 
 /**
@@ -68,7 +68,7 @@ TEST_CASE(hal_cpu_init_dispatch) {
  */
 TEST_CASE(hal_interrupt_init_dispatch) {
     /* Verify interrupt initialization state */
-    ASSERT_TRUE(hal_interrupt_initialized());
+    ASSERT_TRUE(hal::Interrupt::initialized());
 }
 
 /**
@@ -79,7 +79,7 @@ TEST_CASE(hal_interrupt_init_dispatch) {
  */
 TEST_CASE(hal_mmu_init_dispatch) {
     /* Verify MMU initialization state */
-    ASSERT_TRUE(hal_mmu_initialized());
+    ASSERT_TRUE(hal::Mmu::initialized());
 }
 
 /**
@@ -148,9 +148,9 @@ TEST_CASE(hal_is_64bit_correct) {
  */
 TEST_CASE(hal_all_subsystems_initialized) {
     /* All three core subsystems must be initialized */
-    bool cpu_ok = hal_cpu_initialized();
-    bool int_ok = hal_interrupt_initialized();
-    bool mmu_ok = hal_mmu_initialized();
+    bool cpu_ok = hal::Cpu::initialized();
+    bool int_ok = hal::Interrupt::initialized();
+    bool mmu_ok = hal::Mmu::initialized();
     
     ASSERT_TRUE(cpu_ok);
     ASSERT_TRUE(int_ok);
@@ -188,10 +188,10 @@ TEST_CASE(hal_mmio_read_write_8bit) {
     volatile uint8_t test_var = 0;
     
     /* Write a value */
-    hal_mmio_write8(&test_var, 0x42);
+    hal::Mmio::write8(&test_var, 0x42);
     
     /* Read it back - should get the same value */
-    uint8_t read_val = hal_mmio_read8(&test_var);
+    uint8_t read_val = hal::Mmio::read8(&test_var);
     
     ASSERT_EQ_UINT(0x42, read_val);
 }
@@ -205,8 +205,8 @@ TEST_CASE(hal_mmio_read_write_8bit) {
 TEST_CASE(hal_mmio_read_write_16bit) {
     volatile uint16_t test_var = 0;
     
-    hal_mmio_write16(&test_var, 0x1234);
-    uint16_t read_val = hal_mmio_read16(&test_var);
+    hal::Mmio::write16(&test_var, 0x1234);
+    uint16_t read_val = hal::Mmio::read16(&test_var);
     
     ASSERT_EQ_UINT(0x1234, read_val);
 }
@@ -220,8 +220,8 @@ TEST_CASE(hal_mmio_read_write_16bit) {
 TEST_CASE(hal_mmio_read_write_32bit) {
     volatile uint32_t test_var = 0;
     
-    hal_mmio_write32(&test_var, 0xDEADBEEF);
-    uint32_t read_val = hal_mmio_read32(&test_var);
+    hal::Mmio::write32(&test_var, 0xDEADBEEF);
+    uint32_t read_val = hal::Mmio::read32(&test_var);
     
     ASSERT_EQ_UINT(0xDEADBEEF, read_val);
 }
@@ -235,8 +235,8 @@ TEST_CASE(hal_mmio_read_write_32bit) {
 TEST_CASE(hal_mmio_read_write_64bit) {
     volatile uint64_t test_var = 0;
     
-    hal_mmio_write64(&test_var, 0xDEADBEEFCAFEBABEULL);
-    uint64_t read_val = hal_mmio_read64(&test_var);
+    hal::Mmio::write64(&test_var, 0xDEADBEEFCAFEBABEULL);
+    uint64_t read_val = hal::Mmio::read64(&test_var);
     
     ASSERT_TRUE(read_val == 0xDEADBEEFCAFEBABEULL);
 }
@@ -271,19 +271,19 @@ TEST_CASE(hal_mmio_write_ordering) {
     volatile uint32_t test_vars[4] = {0, 0, 0, 0};
     
     /* Write multiple values in sequence */
-    hal_mmio_write32(&test_vars[0], 0x11111111);
-    hal_mmio_write32(&test_vars[1], 0x22222222);
-    hal_mmio_write32(&test_vars[2], 0x33333333);
-    hal_mmio_write32(&test_vars[3], 0x44444444);
+    hal::Mmio::write32(&test_vars[0], 0x11111111);
+    hal::Mmio::write32(&test_vars[1], 0x22222222);
+    hal::Mmio::write32(&test_vars[2], 0x33333333);
+    hal::Mmio::write32(&test_vars[3], 0x44444444);
     
     /* Full memory barrier */
     hal_memory_barrier();
     
     /* Read them back - should all be correct */
-    ASSERT_EQ_UINT(0x11111111, hal_mmio_read32(&test_vars[0]));
-    ASSERT_EQ_UINT(0x22222222, hal_mmio_read32(&test_vars[1]));
-    ASSERT_EQ_UINT(0x33333333, hal_mmio_read32(&test_vars[2]));
-    ASSERT_EQ_UINT(0x44444444, hal_mmio_read32(&test_vars[3]));
+    ASSERT_EQ_UINT(0x11111111, hal::Mmio::read32(&test_vars[0]));
+    ASSERT_EQ_UINT(0x22222222, hal::Mmio::read32(&test_vars[1]));
+    ASSERT_EQ_UINT(0x33333333, hal::Mmio::read32(&test_vars[2]));
+    ASSERT_EQ_UINT(0x44444444, hal::Mmio::read32(&test_vars[3]));
 }
 
 /* ============================================================================
@@ -291,8 +291,8 @@ TEST_CASE(hal_mmio_write_ordering) {
  * ============================================================================
  * 
  * *For any* valid virtual address `virt`, physical address `phys`, and flags 
- * `flags`, after `hal_mmu_map(space, virt, phys, flags)` succeeds, 
- * `hal_mmu_query(space, virt, &out_phys, &out_flags)` SHALL return `true` 
+ * `flags`, after `hal::Mmu::map(space, virt, phys, flags)` succeeds, 
+ * `hal::Mmu::query(space, virt, &out_phys, &out_flags)` SHALL return `true` 
  * with `out_phys == phys`.
  * 
  * **Feature: mm-refactor, Property 8: HAL MMU Map-Query Round-Trip**
@@ -300,8 +300,8 @@ TEST_CASE(hal_mmio_write_ordering) {
  * 
  * Test Strategy:
  * 1. Allocate physical frames
- * 2. Map them to user-space virtual addresses using hal_mmu_map()
- * 3. Query the mappings using hal_mmu_query()
+ * 2. Map them to user-space virtual addresses using hal::Mmu::map()
+ * 3. Query the mappings using hal::Mmu::query()
  * 4. Verify the returned physical address matches the original
  * 5. Clean up by unmapping and freeing frames
  * ========================================================================== */
@@ -328,16 +328,16 @@ TEST_CASE(hal_mmu_map_query_roundtrip_single) {
     uint32_t flags = HAL_PAGE_PRESENT | HAL_PAGE_WRITE | HAL_PAGE_USER;
     
     /* Map the page */
-    bool map_result = hal_mmu_map(HAL_ADDR_SPACE_CURRENT, virt, phys, flags);
+    bool map_result = hal::Mmu::map(HAL_ADDR_SPACE_CURRENT, virt, phys, flags);
     ASSERT_TRUE(map_result);
     
     /* Flush TLB to ensure mapping is visible */
-    hal_mmu_flush_tlb(virt);
+    hal::Mmu::flush_tlb(virt);
     
     /* Query the mapping */
     paddr_t out_phys = 0;
     uint32_t out_flags = 0;
-    bool query_result = hal_mmu_query(HAL_ADDR_SPACE_CURRENT, virt, &out_phys, &out_flags);
+    bool query_result = hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, virt, &out_phys, &out_flags);
     
     /* Property: Query should succeed and return the same physical address */
     ASSERT_TRUE(query_result);
@@ -349,8 +349,8 @@ TEST_CASE(hal_mmu_map_query_roundtrip_single) {
     ASSERT_TRUE((out_flags & HAL_PAGE_USER) != 0);
     
     /* Clean up */
-    hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, virt);
-    hal_mmu_flush_tlb(virt);
+    hal::Mmu::unmap(HAL_ADDR_SPACE_CURRENT, virt);
+    hal::Mmu::flush_tlb(virt);
     mm::Pmm::free_frame(phys);
 #else
     /* Skip on non-i686 architectures for now */
@@ -390,21 +390,21 @@ TEST_CASE(hal_mmu_map_query_roundtrip_multiple) {
             flags |= HAL_PAGE_WRITE;
         }
         
-        bool map_result = hal_mmu_map(HAL_ADDR_SPACE_CURRENT, virts[i], frames[i], flags);
+        bool map_result = hal::Mmu::map(HAL_ADDR_SPACE_CURRENT, virts[i], frames[i], flags);
         ASSERT_TRUE(map_result);
         
         allocated++;
     }
     
     /* Flush TLB */
-    hal_mmu_flush_tlb_all();
+    hal::Mmu::flush_tlb_all();
     
     /* Verify all mappings */
     for (uint32_t i = 0; i < allocated; i++) {
         paddr_t out_phys = 0;
         uint32_t out_flags = 0;
         
-        bool query_result = hal_mmu_query(HAL_ADDR_SPACE_CURRENT, virts[i], &out_phys, &out_flags);
+        bool query_result = hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, virts[i], &out_phys, &out_flags);
         
         /* Property: Query must succeed */
         ASSERT_TRUE(query_result);
@@ -418,10 +418,10 @@ TEST_CASE(hal_mmu_map_query_roundtrip_multiple) {
     
     /* Clean up */
     for (uint32_t i = 0; i < allocated; i++) {
-        hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, virts[i]);
+        hal::Mmu::unmap(HAL_ADDR_SPACE_CURRENT, virts[i]);
         mm::Pmm::free_frame(frames[i]);
     }
-    hal_mmu_flush_tlb_all();
+    hal::Mmu::flush_tlb_all();
 #else
     ASSERT_TRUE(true);
 #endif
@@ -441,7 +441,7 @@ TEST_CASE(hal_mmu_query_unmapped_returns_false) {
     paddr_t out_phys = 0;
     uint32_t out_flags = 0;
     
-    bool query_result = hal_mmu_query(HAL_ADDR_SPACE_CURRENT, unmapped_virt, &out_phys, &out_flags);
+    bool query_result = hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, unmapped_virt, &out_phys, &out_flags);
     
     /* Property: Query should return false for unmapped address */
     ASSERT_FALSE(query_result);
@@ -454,8 +454,8 @@ TEST_CASE(hal_mmu_query_unmapped_returns_false) {
  * Property 9: Address Space Switch Consistency
  * ============================================================================
  * 
- * *For any* valid address space `space`, after `hal_mmu_switch_space(space)`, 
- * `hal_mmu_current_space()` SHALL return `space`.
+ * *For any* valid address space `space`, after `hal::Mmu::switch_space(space)`, 
+ * `hal::Mmu::current_space()` SHALL return `space`.
  * 
  * **Feature: mm-refactor, Property 9: Address Space Switch Consistency**
  * **Validates: Requirements 4.5**
@@ -464,9 +464,9 @@ TEST_CASE(hal_mmu_query_unmapped_returns_false) {
  * 1. Save the current address space
  * 2. Create a new address space
  * 3. Switch to the new address space
- * 4. Verify hal_mmu_current_space() returns the new space
+ * 4. Verify hal::Mmu::current_space() returns the new space
  * 5. Switch back to the original address space
- * 6. Verify hal_mmu_current_space() returns the original space
+ * 6. Verify hal::Mmu::current_space() returns the original space
  * 7. Clean up
  * ========================================================================== */
 
@@ -479,30 +479,30 @@ TEST_CASE(hal_mmu_query_unmapped_returns_false) {
 TEST_CASE(hal_mmu_switch_space_consistency) {
 #if defined(ARCH_I686)
     /* Save original address space */
-    hal_addr_space_t original_space = hal_mmu_current_space();
+    hal_addr_space_t original_space = hal::Mmu::current_space();
     ASSERT_NE_U(original_space, HAL_ADDR_SPACE_INVALID);
     
     /* Create a new address space */
-    hal_addr_space_t new_space = hal_mmu_create_space();
+    hal_addr_space_t new_space = hal::Mmu::create_space();
     ASSERT_NE_U(new_space, HAL_ADDR_SPACE_INVALID);
     ASSERT_NE_U(new_space, original_space);
     
     /* Switch to new address space */
-    hal_mmu_switch_space(new_space);
+    hal::Mmu::switch_space(new_space);
     
     /* Property: Current space should be the new space */
-    hal_addr_space_t current_after_switch = hal_mmu_current_space();
+    hal_addr_space_t current_after_switch = hal::Mmu::current_space();
     ASSERT_EQ_U(current_after_switch, new_space);
     
     /* Switch back to original */
-    hal_mmu_switch_space(original_space);
+    hal::Mmu::switch_space(original_space);
     
     /* Property: Current space should be the original space */
-    hal_addr_space_t current_after_restore = hal_mmu_current_space();
+    hal_addr_space_t current_after_restore = hal::Mmu::current_space();
     ASSERT_EQ_U(current_after_restore, original_space);
     
     /* Clean up */
-    hal_mmu_destroy_space(new_space);
+    hal::Mmu::destroy_space(new_space);
 #else
     ASSERT_TRUE(true);
 #endif
@@ -516,30 +516,30 @@ TEST_CASE(hal_mmu_switch_space_consistency) {
  */
 TEST_CASE(hal_mmu_switch_space_multiple) {
 #if defined(ARCH_I686)
-    hal_addr_space_t original_space = hal_mmu_current_space();
+    hal_addr_space_t original_space = hal::Mmu::current_space();
     
     /* Create multiple address spaces */
     hal_addr_space_t spaces[3];
     for (int i = 0; i < 3; i++) {
-        spaces[i] = hal_mmu_create_space();
+        spaces[i] = hal::Mmu::create_space();
         ASSERT_NE_U(spaces[i], HAL_ADDR_SPACE_INVALID);
     }
     
     /* Switch through all spaces and verify */
     for (int i = 0; i < 3; i++) {
-        hal_mmu_switch_space(spaces[i]);
+        hal::Mmu::switch_space(spaces[i]);
         
         /* Property: Current space must match what we switched to */
-        ASSERT_EQ_U(hal_mmu_current_space(), spaces[i]);
+        ASSERT_EQ_U(hal::Mmu::current_space(), spaces[i]);
     }
     
     /* Switch back to original */
-    hal_mmu_switch_space(original_space);
-    ASSERT_EQ_U(hal_mmu_current_space(), original_space);
+    hal::Mmu::switch_space(original_space);
+    ASSERT_EQ_U(hal::Mmu::current_space(), original_space);
     
     /* Clean up */
     for (int i = 0; i < 3; i++) {
-        hal_mmu_destroy_space(spaces[i]);
+        hal::Mmu::destroy_space(spaces[i]);
     }
 #else
     ASSERT_TRUE(true);
@@ -622,9 +622,9 @@ static void print_arch_diagnostics(void) {
     kprintf("  Architecture:     %s\n", hal_arch_name());
     kprintf("  Pointer Size:     %u bytes\n", (unsigned)hal_pointer_size());
     kprintf("  64-bit Mode:      %s\n", hal_is_64bit() ? "yes" : "no");
-    kprintf("  CPU Initialized:  %s\n", hal_cpu_initialized() ? "yes" : "no");
-    kprintf("  IRQ Initialized:  %s\n", hal_interrupt_initialized() ? "yes" : "no");
-    kprintf("  MMU Initialized:  %s\n", hal_mmu_initialized() ? "yes" : "no");
+    kprintf("  CPU Initialized:  %s\n", hal::Cpu::initialized() ? "yes" : "no");
+    kprintf("  IRQ Initialized:  %s\n", hal::Interrupt::initialized() ? "yes" : "no");
+    kprintf("  MMU Initialized:  %s\n", hal::Mmu::initialized() ? "yes" : "no");
     
 #if defined(ARCH_I686)
     kprintf("  Page Table:       2-level (PDE -> PTE)\n");

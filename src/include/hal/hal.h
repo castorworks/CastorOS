@@ -33,102 +33,11 @@
  */
 typedef struct hal_context hal_context_t;
 
-/* ============================================================================
- * CPU Initialization
- * ========================================================================== */
-
-/**
- * @brief Initialize CPU architecture-specific features
- * 
- * This function initializes architecture-specific CPU features:
- *   - i686: GDT, TSS
- *   - x86_64: GDT64, TSS64
- *   - arm64: Exception Level configuration
- */
-void hal_cpu_init(void);
-
-/**
- * @brief Get current CPU ID (reserved for multi-core support)
- * @return Current CPU ID (0 for single-core systems)
- */
-uint32_t hal_cpu_id(void);
-
-/**
- * @brief Halt the CPU
- * 
- * Puts the CPU into a low-power state until the next interrupt.
- */
-void hal_cpu_halt(void);
-
-/* ============================================================================
- * Interrupt Management
- * ========================================================================== */
-
 /**
  * @brief Interrupt handler function type
  * @param data User-provided data pointer
  */
 typedef void (*hal_interrupt_handler_t)(void *data);
-
-/**
- * @brief Initialize interrupt system
- * 
- * This function initializes the interrupt system:
- *   - i686/x86_64: IDT, PIC/APIC
- *   - arm64: Exception vectors, GIC
- */
-void hal_interrupt_init(void);
-
-/**
- * @brief Register an interrupt handler
- * @param irq Architecture-independent IRQ number
- * @param handler Handler function
- * @param data User data to pass to handler
- */
-void hal_interrupt_register(uint32_t irq, hal_interrupt_handler_t handler, void *data);
-
-/**
- * @brief Unregister an interrupt handler
- * @param irq Architecture-independent IRQ number
- */
-void hal_interrupt_unregister(uint32_t irq);
-
-/**
- * @brief Enable interrupts globally
- */
-void hal_interrupt_enable(void);
-
-/**
- * @brief Disable interrupts globally
- */
-void hal_interrupt_disable(void);
-
-/**
- * @brief Save interrupt state and disable interrupts
- * @return Previous interrupt state (for restoration)
- */
-uint64_t hal_interrupt_save(void);
-
-/**
- * @brief Restore interrupt state
- * @param state Previously saved interrupt state
- */
-void hal_interrupt_restore(uint64_t state);
-
-/**
- * @brief Send End-Of-Interrupt signal
- * @param irq IRQ number that was handled
- */
-void hal_interrupt_eoi(uint32_t irq);
-
-/* ============================================================================
- * Memory Management Unit (MMU)
- * 
- * Extended HAL MMU interface providing architecture-independent page table
- * operations, address space management, and page fault handling.
- * 
- * @see Requirements 4.1, 4.2, 4.3, 4.4, 4.5
- * ========================================================================== */
 
 /** Page table entry flags (architecture-independent) */
 #define HAL_PAGE_PRESENT    (1 << 0)   /**< Page is present in memory */
@@ -141,10 +50,6 @@ void hal_interrupt_eoi(uint32_t irq);
 #define HAL_PAGE_ACCESSED   (1 << 7)   /**< Page has been accessed */
 #define HAL_PAGE_WRITECOMB  (1 << 8)   /**< Write-combining memory type */
 #define HAL_PAGE_HUGE       (1 << 9)   /**< Huge page (2MB on x86_64, 2MB block on ARM64) */
-
-/*----------------------------------------------------------------------------
- * Address Space Handle
- *----------------------------------------------------------------------------*/
 
 /**
  * @brief Address space handle type
@@ -165,10 +70,6 @@ typedef paddr_t hal_addr_space_t;
 /** @brief Use current address space (for hal_mmu_map/unmap/query/protect) */
 #define HAL_ADDR_SPACE_CURRENT  ((hal_addr_space_t)0)
 
-/*----------------------------------------------------------------------------
- * Page Fault Information
- *----------------------------------------------------------------------------*/
-
 /**
  * @brief Page fault information structure
  * 
@@ -187,340 +88,11 @@ typedef struct hal_page_fault_info {
     uint32_t raw_error;     /**< Architecture-specific raw error code */
 } hal_page_fault_info_t;
 
-/*----------------------------------------------------------------------------
- * MMU Initialization
- *----------------------------------------------------------------------------*/
-
-/**
- * @brief Initialize MMU/paging
- * 
- * Initializes architecture-specific MMU configuration:
- *   - i686: Enable paging, set up initial page tables
- *   - x86_64: Configure 4-level paging
- *   - ARM64: Configure TCR_EL1, MAIR_EL1, enable MMU
- */
-void hal_mmu_init(void);
-
-/*----------------------------------------------------------------------------
- * Page Mapping Operations
- * @see Requirements 4.1
- *----------------------------------------------------------------------------*/
-
-/**
- * @brief Create a page table mapping
- * 
- * Maps a virtual address to a physical address with specified flags.
- * Allocates intermediate page table levels as needed.
- * 
- * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
- * @param virt Virtual address (must be page-aligned)
- * @param phys Physical address (must be page-aligned)
- * @param flags Page flags (HAL_PAGE_*)
- * @return true on success, false on failure (e.g., out of memory)
- * 
- * @note This function does NOT flush the TLB. Caller must call
- *       hal_mmu_flush_tlb() if the mapping is for the current address space.
- */
-bool hal_mmu_map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags);
-
-/**
- * @brief Remove a page table mapping
- * 
- * Unmaps a virtual address and returns the previously mapped physical address.
- * Does NOT free intermediate page table levels.
- * 
- * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
- * @param virt Virtual address to unmap
- * @return Previously mapped physical address, or PADDR_INVALID if not mapped
- * 
- * @note This function does NOT flush the TLB. Caller must call
- *       hal_mmu_flush_tlb() if the mapping was for the current address space.
- */
-paddr_t hal_mmu_unmap(hal_addr_space_t space, vaddr_t virt);
-
-/**
- * @brief Query page table mapping
- * 
- * Retrieves the physical address and flags for a virtual address mapping.
- * 
- * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
- * @param virt Virtual address to query
- * @param[out] phys Pointer to store physical address (can be NULL)
- * @param[out] flags Pointer to store page flags (can be NULL)
- * @return true if mapping exists, false if not mapped
- * 
- * @see Requirements 4.1
- */
-bool hal_mmu_query(hal_addr_space_t space, vaddr_t virt, paddr_t *phys, uint32_t *flags);
-
-/**
- * @brief Modify page table entry flags
- * 
- * Changes the flags of an existing mapping without changing the physical address.
- * Useful for implementing COW (clearing write flag) and protection changes.
- * 
- * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
- * @param virt Virtual address of the mapping to modify
- * @param set_flags Flags to set (OR'd into existing flags)
- * @param clear_flags Flags to clear (AND'd out of existing flags)
- * @return true on success, false if mapping doesn't exist
- * 
- * @note This function does NOT flush the TLB. Caller must call
- *       hal_mmu_flush_tlb() after modifying mappings.
- * 
- * @see Requirements 4.1
- */
-bool hal_mmu_protect(hal_addr_space_t space, vaddr_t virt, 
-                     uint32_t set_flags, uint32_t clear_flags);
-
-/*----------------------------------------------------------------------------
- * Huge Page Mapping Operations (2MB pages)
- * @see Requirements 8.1, 8.2
- *----------------------------------------------------------------------------*/
-
 /** @brief Huge page size (2MB) */
 #define HAL_HUGE_PAGE_SIZE      (2 * 1024 * 1024)
 
 /** @brief Huge page alignment mask */
 #define HAL_HUGE_PAGE_MASK      (~((vaddr_t)HAL_HUGE_PAGE_SIZE - 1))
-
-/**
- * @brief Check if huge pages are supported on this architecture
- * @return true if 2MB huge pages are supported
- * 
- * @note i686 does not support huge pages in this implementation
- * @note x86_64 and ARM64 support 2MB huge pages
- */
-bool hal_mmu_huge_pages_supported(void);
-
-/**
- * @brief Map a 2MB huge page
- * 
- * Creates a 2MB huge page mapping. Both virtual and physical addresses
- * must be 2MB aligned.
- * 
- * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
- * @param virt Virtual address (must be 2MB aligned)
- * @param phys Physical address (must be 2MB aligned)
- * @param flags Page flags (HAL_PAGE_*)
- * @return true on success, false on failure
- * 
- * @note On architectures that don't support huge pages, this falls back
- *       to mapping 512 individual 4KB pages.
- * @note This function does NOT flush the TLB.
- * 
- * @see Requirements 8.2
- */
-bool hal_mmu_map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags);
-
-/**
- * @brief Unmap a 2MB huge page
- * 
- * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
- * @param virt Virtual address (must be 2MB aligned)
- * @return Previously mapped physical address, or PADDR_INVALID if not mapped
- * 
- * @note This function does NOT flush the TLB.
- * 
- * @see Requirements 8.2
- */
-paddr_t hal_mmu_unmap_huge(hal_addr_space_t space, vaddr_t virt);
-
-/**
- * @brief Query if a mapping is a huge page
- * 
- * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
- * @param virt Virtual address
- * @return true if the mapping is a 2MB huge page, false otherwise
- * 
- * @see Requirements 8.3
- */
-bool hal_mmu_is_huge_page(hal_addr_space_t space, vaddr_t virt);
-
-/*----------------------------------------------------------------------------
- * TLB Management
- *----------------------------------------------------------------------------*/
-
-/**
- * @brief Flush TLB entry for a specific address
- * @param virt Virtual address to flush
- */
-void hal_mmu_flush_tlb(vaddr_t virt);
-
-/**
- * @brief Flush entire TLB
- */
-void hal_mmu_flush_tlb_all(void);
-
-/*----------------------------------------------------------------------------
- * Address Space Management
- * @see Requirements 4.2, 4.4, 4.5
- *----------------------------------------------------------------------------*/
-
-/**
- * @brief Create a new address space
- * 
- * Allocates and initializes a new page table hierarchy. The kernel portion
- * of the address space is shared with all other address spaces.
- * 
- * @return Address space handle, or HAL_ADDR_SPACE_INVALID on failure
- * 
- * @see Requirements 4.2
- */
-hal_addr_space_t hal_mmu_create_space(void);
-
-/**
- * @brief Clone an address space with COW semantics
- * 
- * Creates a copy of an address space where user-space pages are shared
- * with copy-on-write semantics:
- *   - User pages are marked read-only in both parent and child
- *   - Physical pages have their reference count incremented
- *   - Kernel space is shared (not copied)
- * 
- * @param src Source address space to clone
- * @return New address space handle, or HAL_ADDR_SPACE_INVALID on failure
- * 
- * @see Requirements 4.4
- */
-hal_addr_space_t hal_mmu_clone_space(hal_addr_space_t src);
-
-/**
- * @brief Destroy an address space
- * 
- * Frees all page table structures and decrements reference counts on
- * physical pages. Does NOT free physical pages that are still referenced
- * by other address spaces (COW).
- * 
- * @param space Address space handle to destroy
- * 
- * @warning Must not be the currently active address space.
- */
-void hal_mmu_destroy_space(hal_addr_space_t space);
-
-/**
- * @brief Switch to a different address space
- * 
- * Changes the current address space by updating the page table base register:
- *   - i686/x86_64: Updates CR3
- *   - ARM64: Updates TTBR0_EL1 and issues appropriate barriers
- * 
- * @param space Address space handle to switch to
- * 
- * @see Requirements 4.5
- */
-void hal_mmu_switch_space(hal_addr_space_t space);
-
-/**
- * @brief Get the current address space
- * @return Handle of the currently active address space
- */
-hal_addr_space_t hal_mmu_current_space(void);
-
-/*----------------------------------------------------------------------------
- * Page Fault Handling
- * @see Requirements 4.3
- *----------------------------------------------------------------------------*/
-
-/**
- * @brief Parse page fault information
- * 
- * Reads architecture-specific fault registers and fills the
- * hal_page_fault_info_t structure with architecture-independent information.
- * 
- * Call this from the page fault handler to get fault details:
- *   - i686/x86_64: Reads CR2 and error code from stack
- *   - ARM64: Reads FAR_EL1 and ESR_EL1
- * 
- * @param[out] info Pointer to structure to fill with fault information
- * 
- * @see Requirements 4.3
- */
-void hal_mmu_parse_fault(hal_page_fault_info_t *info);
-
-/**
- * @brief Get the faulting address from a page fault
- * 
- * Quick accessor for just the fault address without full fault parsing.
- * 
- * @return The virtual address that caused the page fault
- */
-vaddr_t hal_mmu_get_fault_addr(void);
-
-/*----------------------------------------------------------------------------
- * Address Translation (Legacy/Convenience)
- *----------------------------------------------------------------------------*/
-
-/**
- * @brief Translate virtual address to physical address
- * 
- * Convenience wrapper around hal_mmu_query() for the current address space.
- * 
- * @param virt Virtual address to translate
- * @return Physical address, or PADDR_INVALID if not mapped
- */
-paddr_t hal_mmu_virt_to_phys(vaddr_t virt);
-
-/**
- * @brief Get current page table physical address
- * 
- * @return Physical address of the current page table (CR3 on x86, TTBR on ARM)
- * @deprecated Use hal_mmu_current_space() instead
- */
-paddr_t hal_mmu_get_current_page_table(void);
-
-/**
- * @brief Create a new page table
- * 
- * @return Physical address of the new page table, or PADDR_INVALID on failure
- * @deprecated Use hal_mmu_create_space() instead
- */
-paddr_t hal_mmu_create_page_table(void);
-
-/**
- * @brief Destroy a page table
- * 
- * @param page_table_phys Physical address of the page table to destroy
- * @deprecated Use hal_mmu_destroy_space() instead
- */
-void hal_mmu_destroy_page_table(paddr_t page_table_phys);
-
-/* ============================================================================
- * Context Switch
- * ========================================================================== */
-
-/**
- * @brief Get the size of the architecture-specific context structure
- * @return Size in bytes
- */
-size_t hal_context_size(void);
-
-/**
- * @brief Initialize a task context
- * @param ctx Pointer to context structure to initialize
- * @param entry Entry point address
- * @param stack Stack pointer
- * @param is_user true if this is a user-mode context
- */
-void hal_context_init(hal_context_t *ctx, uintptr_t entry, 
-                      uintptr_t stack, bool is_user);
-
-/**
- * @brief Perform a context switch
- * @param old_ctx Pointer to save current context (can be NULL)
- * @param new_ctx Pointer to context to switch to
- */
-void hal_context_switch(hal_context_t **old_ctx, hal_context_t *new_ctx);
-
-/**
- * @brief Set the kernel stack for the current CPU
- * @param stack_top Top of the kernel stack
- */
-void hal_context_set_kernel_stack(uintptr_t stack_top);
-
-/* ============================================================================
- * System Call Interface
- * ========================================================================== */
 
 /**
  * @brief System call handler function type
@@ -534,221 +106,9 @@ typedef int64_t (*hal_syscall_handler_t)(uint32_t syscall_num,
                                           uint64_t arg5, uint64_t arg6);
 
 /**
- * @brief Initialize system call entry mechanism
- * @param handler The system call dispatcher function
- */
-void hal_syscall_init(hal_syscall_handler_t handler);
-
-/* ============================================================================
- * Timer
- * ========================================================================== */
-
-/**
  * @brief Timer callback function type
  */
 typedef void (*hal_timer_callback_t)(void);
-
-/**
- * @brief Initialize system timer
- * @param freq_hz Timer frequency in Hz
- * @param callback Function to call on each timer tick
- */
-void hal_timer_init(uint32_t freq_hz, hal_timer_callback_t callback);
-
-/**
- * @brief Get system tick count
- * @return Number of timer ticks since boot
- */
-uint64_t hal_timer_get_ticks(void);
-
-/**
- * @brief Get timer frequency
- * @return Timer frequency in Hz
- */
-uint32_t hal_timer_get_frequency(void);
-
-/* ============================================================================
- * I/O Operations
- * ========================================================================== */
-
-/**
- * @brief Read 8-bit value from MMIO address
- * @param addr MMIO address
- * @return Value read
- */
-static inline uint8_t hal_mmio_read8(volatile void *addr) {
-    uint8_t val = *(volatile uint8_t *)addr;
-#if defined(ARCH_ARM64)
-    __asm__ volatile("dmb sy" ::: "memory");
-#else
-    __asm__ volatile("" ::: "memory");
-#endif
-    return val;
-}
-
-/**
- * @brief Read 16-bit value from MMIO address
- * @param addr MMIO address
- * @return Value read
- */
-static inline uint16_t hal_mmio_read16(volatile void *addr) {
-    uint16_t val = *(volatile uint16_t *)addr;
-#if defined(ARCH_ARM64)
-    __asm__ volatile("dmb sy" ::: "memory");
-#else
-    __asm__ volatile("" ::: "memory");
-#endif
-    return val;
-}
-
-/**
- * @brief Read 32-bit value from MMIO address
- * @param addr MMIO address
- * @return Value read
- */
-static inline uint32_t hal_mmio_read32(volatile void *addr) {
-    uint32_t val = *(volatile uint32_t *)addr;
-#if defined(ARCH_ARM64)
-    __asm__ volatile("dmb sy" ::: "memory");
-#else
-    __asm__ volatile("" ::: "memory");
-#endif
-    return val;
-}
-
-/**
- * @brief Read 64-bit value from MMIO address
- * @param addr MMIO address
- * @return Value read
- */
-static inline uint64_t hal_mmio_read64(volatile void *addr) {
-    uint64_t val = *(volatile uint64_t *)addr;
-#if defined(ARCH_ARM64)
-    __asm__ volatile("dmb sy" ::: "memory");
-#else
-    __asm__ volatile("" ::: "memory");
-#endif
-    return val;
-}
-
-/**
- * @brief Write 8-bit value to MMIO address
- * @param addr MMIO address
- * @param val Value to write
- */
-static inline void hal_mmio_write8(volatile void *addr, uint8_t val) {
-#if defined(ARCH_ARM64)
-    __asm__ volatile("dmb sy" ::: "memory");
-#else
-    __asm__ volatile("" ::: "memory");
-#endif
-    *(volatile uint8_t *)addr = val;
-}
-
-/**
- * @brief Write 16-bit value to MMIO address
- * @param addr MMIO address
- * @param val Value to write
- */
-static inline void hal_mmio_write16(volatile void *addr, uint16_t val) {
-#if defined(ARCH_ARM64)
-    __asm__ volatile("dmb sy" ::: "memory");
-#else
-    __asm__ volatile("" ::: "memory");
-#endif
-    *(volatile uint16_t *)addr = val;
-}
-
-/**
- * @brief Write 32-bit value to MMIO address
- * @param addr MMIO address
- * @param val Value to write
- */
-static inline void hal_mmio_write32(volatile void *addr, uint32_t val) {
-#if defined(ARCH_ARM64)
-    __asm__ volatile("dmb sy" ::: "memory");
-#else
-    __asm__ volatile("" ::: "memory");
-#endif
-    *(volatile uint32_t *)addr = val;
-}
-
-/**
- * @brief Write 64-bit value to MMIO address
- * @param addr MMIO address
- * @param val Value to write
- */
-static inline void hal_mmio_write64(volatile void *addr, uint64_t val) {
-#if defined(ARCH_ARM64)
-    __asm__ volatile("dmb sy" ::: "memory");
-#else
-    __asm__ volatile("" ::: "memory");
-#endif
-    *(volatile uint64_t *)addr = val;
-}
-
-/* ============================================================================
- * Cache Maintenance Operations (DMA Support)
- * 
- * These functions are required for DMA operations on architectures with
- * non-coherent caches (primarily ARM64). On x86, caches are typically
- * coherent with DMA, so these are no-ops.
- * 
- * @see Requirements 10.2
- * ========================================================================== */
-
-/**
- * @brief Clean cache for a memory region (write back dirty data)
- * 
- * Ensures that any dirty cache lines in the specified region are written
- * back to main memory. This should be called before a DMA read operation
- * (device reading from memory) to ensure the device sees the latest data.
- * 
- * @param addr Virtual address of the region start
- * @param size Size of the region in bytes
- * 
- * @note On x86, this is a no-op as caches are DMA-coherent.
- * @note On ARM64, this performs DC CVAC (Clean by VA to PoC) operations.
- */
-void hal_cache_clean(void *addr, size_t size);
-
-/**
- * @brief Invalidate cache for a memory region (discard cached data)
- * 
- * Invalidates any cache lines in the specified region, forcing subsequent
- * reads to fetch data from main memory. This should be called after a DMA
- * write operation (device writing to memory) to ensure the CPU sees the
- * new data written by the device.
- * 
- * @param addr Virtual address of the region start
- * @param size Size of the region in bytes
- * 
- * @warning This may discard dirty data! Use hal_cache_clean_invalidate()
- *          if the region may contain modified data.
- * 
- * @note On x86, this is a no-op as caches are DMA-coherent.
- * @note On ARM64, this performs DC IVAC (Invalidate by VA to PoC) operations.
- */
-void hal_cache_invalidate(void *addr, size_t size);
-
-/**
- * @brief Clean and invalidate cache for a memory region
- * 
- * Combines clean and invalidate operations: writes back dirty data and
- * then invalidates the cache lines. This is the safest option for
- * bidirectional DMA buffers.
- * 
- * @param addr Virtual address of the region start
- * @param size Size of the region in bytes
- * 
- * @note On x86, this is a no-op as caches are DMA-coherent.
- * @note On ARM64, this performs DC CIVAC (Clean and Invalidate by VA to PoC).
- */
-void hal_cache_clean_invalidate(void *addr, size_t size);
-
-/* ============================================================================
- * Memory Barriers
- * ========================================================================== */
 
 /**
  * @brief Full memory barrier (read and write)
@@ -802,77 +162,9 @@ static inline void hal_instruction_barrier(void) {
 #endif
 }
 
-/* ============================================================================
- * Port I/O (x86 only)
- * ========================================================================== */
-
 #if defined(ARCH_I686) || defined(ARCH_X86_64)
 
-/**
- * @brief Read 8-bit value from I/O port
- * @param port Port number
- * @return Value read
- */
-static inline uint8_t hal_port_read8(uint16_t port) {
-    uint8_t ret;
-    __asm__ volatile("inb %1, %0" : "=a"(ret) : "Nd"(port));
-    return ret;
-}
-
-/**
- * @brief Read 16-bit value from I/O port
- * @param port Port number
- * @return Value read
- */
-static inline uint16_t hal_port_read16(uint16_t port) {
-    uint16_t ret;
-    __asm__ volatile("inw %1, %0" : "=a"(ret) : "Nd"(port));
-    return ret;
-}
-
-/**
- * @brief Read 32-bit value from I/O port
- * @param port Port number
- * @return Value read
- */
-static inline uint32_t hal_port_read32(uint16_t port) {
-    uint32_t ret;
-    __asm__ volatile("inl %1, %0" : "=a"(ret) : "Nd"(port));
-    return ret;
-}
-
-/**
- * @brief Write 8-bit value to I/O port
- * @param port Port number
- * @param val Value to write
- */
-static inline void hal_port_write8(uint16_t port, uint8_t val) {
-    __asm__ volatile("outb %0, %1" : : "a"(val), "Nd"(port));
-}
-
-/**
- * @brief Write 16-bit value to I/O port
- * @param port Port number
- * @param val Value to write
- */
-static inline void hal_port_write16(uint16_t port, uint16_t val) {
-    __asm__ volatile("outw %0, %1" : : "a"(val), "Nd"(port));
-}
-
-/**
- * @brief Write 32-bit value to I/O port
- * @param port Port number
- * @param val Value to write
- */
-static inline void hal_port_write32(uint16_t port, uint32_t val) {
-    __asm__ volatile("outl %0, %1" : : "a"(val), "Nd"(port));
-}
-
 #endif /* ARCH_I686 || ARCH_X86_64 */
-
-/* ============================================================================
- * Architecture Information
- * ========================================================================== */
 
 /**
  * @brief Get architecture name string
@@ -888,28 +180,6 @@ static inline size_t hal_pointer_size(void) {
     return sizeof(void *);
 }
 
-/* ============================================================================
- * HAL Initialization State Query
- * ========================================================================== */
-
-/**
- * @brief Check if CPU has been initialized via HAL
- * @return true if hal_cpu_init() has completed successfully
- */
-bool hal_cpu_initialized(void);
-
-/**
- * @brief Check if interrupt system has been initialized via HAL
- * @return true if hal_interrupt_init() has completed successfully
- */
-bool hal_interrupt_initialized(void);
-
-/**
- * @brief Check if MMU has been initialized via HAL
- * @return true if hal_mmu_init() has completed successfully
- */
-bool hal_mmu_initialized(void);
-
 /**
  * @brief Check if running on 64-bit architecture
  * @return true if 64-bit, false if 32-bit
@@ -921,5 +191,810 @@ static inline bool hal_is_64bit(void) {
     return false;
 #endif
 }
+
+namespace hal {
+
+/**
+ * @brief CPU 初始化与控制
+ */
+class Cpu {
+public:
+    /* ============================================================================
+     * CPU Initialization
+     * ========================================================================== */
+
+    /**
+     * @brief Initialize CPU architecture-specific features
+     * 
+     * This function initializes architecture-specific CPU features:
+     *   - i686: GDT, TSS
+     *   - x86_64: GDT64, TSS64
+     *   - arm64: Exception Level configuration
+     */
+    static void init();
+
+    /**
+     * @brief Get current CPU ID (reserved for multi-core support)
+     * @return Current CPU ID (0 for single-core systems)
+     */
+    static uint32_t id();
+
+    /**
+     * @brief Halt the CPU
+     * 
+     * Puts the CPU into a low-power state until the next interrupt.
+     */
+    static void halt();
+
+    /* ============================================================================
+     * Interrupt Management
+     * ========================================================================== */
+
+    /* ============================================================================
+     * Memory Management Unit (MMU)
+     * 
+     * Extended HAL MMU interface providing architecture-independent page table
+     * operations, address space management, and page fault handling.
+     * 
+     * @see Requirements 4.1, 4.2, 4.3, 4.4, 4.5
+     * ========================================================================== */
+
+    /*----------------------------------------------------------------------------
+     * Address Space Handle
+     *----------------------------------------------------------------------------*/
+
+    /*----------------------------------------------------------------------------
+     * Page Fault Information
+     *----------------------------------------------------------------------------*/
+
+    /*----------------------------------------------------------------------------
+     * MMU Initialization
+     *----------------------------------------------------------------------------*/
+
+    /*----------------------------------------------------------------------------
+     * Page Mapping Operations
+     * @see Requirements 4.1
+     *----------------------------------------------------------------------------*/
+
+    /*----------------------------------------------------------------------------
+     * Huge Page Mapping Operations (2MB pages)
+     * @see Requirements 8.1, 8.2
+     *----------------------------------------------------------------------------*/
+
+    /*----------------------------------------------------------------------------
+     * TLB Management
+     *----------------------------------------------------------------------------*/
+
+    /*----------------------------------------------------------------------------
+     * Address Space Management
+     * @see Requirements 4.2, 4.4, 4.5
+     *----------------------------------------------------------------------------*/
+
+    /*----------------------------------------------------------------------------
+     * Page Fault Handling
+     * @see Requirements 4.3
+     *----------------------------------------------------------------------------*/
+
+    /*----------------------------------------------------------------------------
+     * Address Translation (Legacy/Convenience)
+     *----------------------------------------------------------------------------*/
+
+    /* ============================================================================
+     * Context Switch
+     * ========================================================================== */
+
+    /* ============================================================================
+     * System Call Interface
+     * ========================================================================== */
+
+    /* ============================================================================
+     * Timer
+     * ========================================================================== */
+
+    /* ============================================================================
+     * I/O Operations
+     * ========================================================================== */
+
+    /* ============================================================================
+     * Cache Maintenance Operations (DMA Support)
+     * 
+     * These functions are required for DMA operations on architectures with
+     * non-coherent caches (primarily ARM64). On x86, caches are typically
+     * coherent with DMA, so these are no-ops.
+     * 
+     * @see Requirements 10.2
+     * ========================================================================== */
+
+    /* ============================================================================
+     * Memory Barriers
+     * ========================================================================== */
+
+    /* ============================================================================
+     * Port I/O (x86 only)
+     * ========================================================================== */
+
+    /* ============================================================================
+     * Architecture Information
+     * ========================================================================== */
+
+    /* ============================================================================
+     * HAL Initialization State Query
+     * ========================================================================== */
+
+    /**
+     * @brief Check if CPU has been initialized via HAL
+     * @return true if hal_cpu_init() has completed successfully
+     */
+    static bool initialized();
+};
+
+} // namespace hal
+
+namespace hal {
+
+/**
+ * @brief MMU / 页表操作
+ */
+class Mmu {
+public:
+    /**
+     * @brief Initialize MMU/paging
+     * 
+     * Initializes architecture-specific MMU configuration:
+     *   - i686: Enable paging, set up initial page tables
+     *   - x86_64: Configure 4-level paging
+     *   - ARM64: Configure TCR_EL1, MAIR_EL1, enable MMU
+     */
+    static void init();
+
+    /**
+     * @brief Create a page table mapping
+     * 
+     * Maps a virtual address to a physical address with specified flags.
+     * Allocates intermediate page table levels as needed.
+     * 
+     * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
+     * @param virt Virtual address (must be page-aligned)
+     * @param phys Physical address (must be page-aligned)
+     * @param flags Page flags (HAL_PAGE_*)
+     * @return true on success, false on failure (e.g., out of memory)
+     * 
+     * @note This function does NOT flush the TLB. Caller must call
+     *       hal_mmu_flush_tlb() if the mapping is for the current address space.
+     */
+    static bool map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags);
+
+    /**
+     * @brief Remove a page table mapping
+     * 
+     * Unmaps a virtual address and returns the previously mapped physical address.
+     * Does NOT free intermediate page table levels.
+     * 
+     * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
+     * @param virt Virtual address to unmap
+     * @return Previously mapped physical address, or PADDR_INVALID if not mapped
+     * 
+     * @note This function does NOT flush the TLB. Caller must call
+     *       hal_mmu_flush_tlb() if the mapping was for the current address space.
+     */
+    static paddr_t unmap(hal_addr_space_t space, vaddr_t virt);
+
+    /**
+     * @brief Query page table mapping
+     * 
+     * Retrieves the physical address and flags for a virtual address mapping.
+     * 
+     * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
+     * @param virt Virtual address to query
+     * @param[out] phys Pointer to store physical address (can be NULL)
+     * @param[out] flags Pointer to store page flags (can be NULL)
+     * @return true if mapping exists, false if not mapped
+     * 
+     * @see Requirements 4.1
+     */
+    static bool query(hal_addr_space_t space, vaddr_t virt, paddr_t *phys, uint32_t *flags);
+
+    /**
+     * @brief Modify page table entry flags
+     * 
+     * Changes the flags of an existing mapping without changing the physical address.
+     * Useful for implementing COW (clearing write flag) and protection changes.
+     * 
+     * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
+     * @param virt Virtual address of the mapping to modify
+     * @param set_flags Flags to set (OR'd into existing flags)
+     * @param clear_flags Flags to clear (AND'd out of existing flags)
+     * @return true on success, false if mapping doesn't exist
+     * 
+     * @note This function does NOT flush the TLB. Caller must call
+     *       hal_mmu_flush_tlb() after modifying mappings.
+     * 
+     * @see Requirements 4.1
+     */
+    static bool protect(hal_addr_space_t space, vaddr_t virt, 
+                         uint32_t set_flags, uint32_t clear_flags);
+
+    /**
+     * @brief Check if huge pages are supported on this architecture
+     * @return true if 2MB huge pages are supported
+     * 
+     * @note i686 does not support huge pages in this implementation
+     * @note x86_64 and ARM64 support 2MB huge pages
+     */
+    static bool huge_pages_supported();
+
+    /**
+     * @brief Map a 2MB huge page
+     * 
+     * Creates a 2MB huge page mapping. Both virtual and physical addresses
+     * must be 2MB aligned.
+     * 
+     * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
+     * @param virt Virtual address (must be 2MB aligned)
+     * @param phys Physical address (must be 2MB aligned)
+     * @param flags Page flags (HAL_PAGE_*)
+     * @return true on success, false on failure
+     * 
+     * @note On architectures that don't support huge pages, this falls back
+     *       to mapping 512 individual 4KB pages.
+     * @note This function does NOT flush the TLB.
+     * 
+     * @see Requirements 8.2
+     */
+    static bool map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags);
+
+    /**
+     * @brief Unmap a 2MB huge page
+     * 
+     * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
+     * @param virt Virtual address (must be 2MB aligned)
+     * @return Previously mapped physical address, or PADDR_INVALID if not mapped
+     * 
+     * @note This function does NOT flush the TLB.
+     * 
+     * @see Requirements 8.2
+     */
+    static paddr_t unmap_huge(hal_addr_space_t space, vaddr_t virt);
+
+    /**
+     * @brief Query if a mapping is a huge page
+     * 
+     * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
+     * @param virt Virtual address
+     * @return true if the mapping is a 2MB huge page, false otherwise
+     * 
+     * @see Requirements 8.3
+     */
+    static bool is_huge_page(hal_addr_space_t space, vaddr_t virt);
+
+    /**
+     * @brief Flush TLB entry for a specific address
+     * @param virt Virtual address to flush
+     */
+    static void flush_tlb(vaddr_t virt);
+
+    /**
+     * @brief Flush entire TLB
+     */
+    static void flush_tlb_all();
+
+    /**
+     * @brief Create a new address space
+     * 
+     * Allocates and initializes a new page table hierarchy. The kernel portion
+     * of the address space is shared with all other address spaces.
+     * 
+     * @return Address space handle, or HAL_ADDR_SPACE_INVALID on failure
+     * 
+     * @see Requirements 4.2
+     */
+    static hal_addr_space_t create_space();
+
+    /**
+     * @brief Clone an address space with COW semantics
+     * 
+     * Creates a copy of an address space where user-space pages are shared
+     * with copy-on-write semantics:
+     *   - User pages are marked read-only in both parent and child
+     *   - Physical pages have their reference count incremented
+     *   - Kernel space is shared (not copied)
+     * 
+     * @param src Source address space to clone
+     * @return New address space handle, or HAL_ADDR_SPACE_INVALID on failure
+     * 
+     * @see Requirements 4.4
+     */
+    static hal_addr_space_t clone_space(hal_addr_space_t src);
+
+    /**
+     * @brief Destroy an address space
+     * 
+     * Frees all page table structures and decrements reference counts on
+     * physical pages. Does NOT free physical pages that are still referenced
+     * by other address spaces (COW).
+     * 
+     * @param space Address space handle to destroy
+     * 
+     * @warning Must not be the currently active address space.
+     */
+    static void destroy_space(hal_addr_space_t space);
+
+    /**
+     * @brief Switch to a different address space
+     * 
+     * Changes the current address space by updating the page table base register:
+     *   - i686/x86_64: Updates CR3
+     *   - ARM64: Updates TTBR0_EL1 and issues appropriate barriers
+     * 
+     * @param space Address space handle to switch to
+     * 
+     * @see Requirements 4.5
+     */
+    static void switch_space(hal_addr_space_t space);
+
+    /**
+     * @brief Get the current address space
+     * @return Handle of the currently active address space
+     */
+    static hal_addr_space_t current_space();
+
+    /**
+     * @brief Parse page fault information
+     * 
+     * Reads architecture-specific fault registers and fills the
+     * hal_page_fault_info_t structure with architecture-independent information.
+     * 
+     * Call this from the page fault handler to get fault details:
+     *   - i686/x86_64: Reads CR2 and error code from stack
+     *   - ARM64: Reads FAR_EL1 and ESR_EL1
+     * 
+     * @param[out] info Pointer to structure to fill with fault information
+     * 
+     * @see Requirements 4.3
+     */
+    static void parse_fault(hal_page_fault_info_t *info);
+
+    /**
+     * @brief Get the faulting address from a page fault
+     * 
+     * Quick accessor for just the fault address without full fault parsing.
+     * 
+     * @return The virtual address that caused the page fault
+     */
+    static vaddr_t get_fault_addr();
+
+    /**
+     * @brief Translate virtual address to physical address
+     * 
+     * Convenience wrapper around hal_mmu_query() for the current address space.
+     * 
+     * @param virt Virtual address to translate
+     * @return Physical address, or PADDR_INVALID if not mapped
+     */
+    static paddr_t virt_to_phys(vaddr_t virt);
+
+    /**
+     * @brief Get current page table physical address
+     * 
+     * @return Physical address of the current page table (CR3 on x86, TTBR on ARM)
+     * @deprecated Use hal_mmu_current_space() instead
+     */
+    static paddr_t get_current_page_table();
+
+    /**
+     * @brief Create a new page table
+     * 
+     * @return Physical address of the new page table, or PADDR_INVALID on failure
+     * @deprecated Use hal_mmu_create_space() instead
+     */
+    static paddr_t create_page_table();
+
+    /**
+     * @brief Destroy a page table
+     * 
+     * @param page_table_phys Physical address of the page table to destroy
+     * @deprecated Use hal_mmu_destroy_space() instead
+     */
+    static void destroy_page_table(paddr_t page_table_phys);
+
+    /**
+     * @brief Check if MMU has been initialized via HAL
+     * @return true if hal_mmu_init() has completed successfully
+     */
+    static bool initialized();
+};
+
+} // namespace hal
+
+namespace hal {
+
+/**
+ * @brief 中断控制与处理函数注册
+ */
+class Interrupt {
+public:
+    /**
+     * @brief Initialize interrupt system
+     * 
+     * This function initializes the interrupt system:
+     *   - i686/x86_64: IDT, PIC/APIC
+     *   - arm64: Exception vectors, GIC
+     */
+    static void init();
+
+    /**
+     * @brief Register an interrupt handler
+     * @param irq Architecture-independent IRQ number
+     * @param handler Handler function
+     * @param data User data to pass to handler
+     */
+    static void register_handler(uint32_t irq, hal_interrupt_handler_t handler, void *data);
+
+    /**
+     * @brief Unregister an interrupt handler
+     * @param irq Architecture-independent IRQ number
+     */
+    static void unregister_handler(uint32_t irq);
+
+    /**
+     * @brief Enable interrupts globally
+     */
+    static void enable();
+
+    /**
+     * @brief Disable interrupts globally
+     */
+    static void disable();
+
+    /**
+     * @brief Save interrupt state and disable interrupts
+     * @return Previous interrupt state (for restoration)
+     */
+    static uint64_t save();
+
+    /**
+     * @brief Restore interrupt state
+     * @param state Previously saved interrupt state
+     */
+    static void restore(uint64_t state);
+
+    /**
+     * @brief Send End-Of-Interrupt signal
+     * @param irq IRQ number that was handled
+     */
+    static void eoi(uint32_t irq);
+
+    /**
+     * @brief Check if interrupt system has been initialized via HAL
+     * @return true if hal::Interrupt::init() has completed successfully
+     */
+    static bool initialized();
+};
+
+} // namespace hal
+
+namespace hal {
+
+/**
+ * @brief 平台定时器
+ */
+class Timer {
+public:
+    /**
+     * @brief Initialize system timer
+     * @param freq_hz Timer frequency in Hz
+     * @param callback Function to call on each timer tick
+     */
+    static void init(uint32_t freq_hz, hal_timer_callback_t callback);
+
+    /**
+     * @brief Get system tick count
+     * @return Number of timer ticks since boot
+     */
+    static uint64_t get_ticks();
+
+    /**
+     * @brief Get timer frequency
+     * @return Timer frequency in Hz
+     */
+    static uint32_t get_frequency();
+};
+
+} // namespace hal
+
+namespace hal {
+
+/**
+ * @brief 缓存维护操作
+ */
+class Cache {
+public:
+    /**
+     * @brief Clean cache for a memory region (write back dirty data)
+     * 
+     * Ensures that any dirty cache lines in the specified region are written
+     * back to main memory. This should be called before a DMA read operation
+     * (device reading from memory) to ensure the device sees the latest data.
+     * 
+     * @param addr Virtual address of the region start
+     * @param size Size of the region in bytes
+     * 
+     * @note On x86, this is a no-op as caches are DMA-coherent.
+     * @note On ARM64, this performs DC CVAC (Clean by VA to PoC) operations.
+     */
+    static void clean(void *addr, size_t size);
+
+    /**
+     * @brief Invalidate cache for a memory region (discard cached data)
+     * 
+     * Invalidates any cache lines in the specified region, forcing subsequent
+     * reads to fetch data from main memory. This should be called after a DMA
+     * write operation (device writing to memory) to ensure the CPU sees the
+     * new data written by the device.
+     * 
+     * @param addr Virtual address of the region start
+     * @param size Size of the region in bytes
+     * 
+     * @warning This may discard dirty data! Use hal_cache_clean_invalidate()
+     *          if the region may contain modified data.
+     * 
+     * @note On x86, this is a no-op as caches are DMA-coherent.
+     * @note On ARM64, this performs DC IVAC (Invalidate by VA to PoC) operations.
+     */
+    static void invalidate(void *addr, size_t size);
+
+    /**
+     * @brief Clean and invalidate cache for a memory region
+     * 
+     * Combines clean and invalidate operations: writes back dirty data and
+     * then invalidates the cache lines. This is the safest option for
+     * bidirectional DMA buffers.
+     * 
+     * @param addr Virtual address of the region start
+     * @param size Size of the region in bytes
+     * 
+     * @note On x86, this is a no-op as caches are DMA-coherent.
+     * @note On ARM64, this performs DC CIVAC (Clean and Invalidate by VA to PoC).
+     */
+    static void clean_invalidate(void *addr, size_t size);
+};
+
+} // namespace hal
+
+namespace hal {
+
+/**
+ * @brief 内存映射 I/O 访问
+ */
+class Mmio {
+public:
+    /**
+     * @brief Read 8-bit value from MMIO address
+     * @param addr MMIO address
+     * @return Value read
+     */
+    static inline uint8_t read8(volatile void *addr) {
+        uint8_t val = *(volatile uint8_t *)addr;
+    #if defined(ARCH_ARM64)
+        __asm__ volatile("dmb sy" ::: "memory");
+    #else
+        __asm__ volatile("" ::: "memory");
+    #endif
+        return val;
+    }
+
+    /**
+     * @brief Read 16-bit value from MMIO address
+     * @param addr MMIO address
+     * @return Value read
+     */
+    static inline uint16_t read16(volatile void *addr) {
+        uint16_t val = *(volatile uint16_t *)addr;
+    #if defined(ARCH_ARM64)
+        __asm__ volatile("dmb sy" ::: "memory");
+    #else
+        __asm__ volatile("" ::: "memory");
+    #endif
+        return val;
+    }
+
+    /**
+     * @brief Read 32-bit value from MMIO address
+     * @param addr MMIO address
+     * @return Value read
+     */
+    static inline uint32_t read32(volatile void *addr) {
+        uint32_t val = *(volatile uint32_t *)addr;
+    #if defined(ARCH_ARM64)
+        __asm__ volatile("dmb sy" ::: "memory");
+    #else
+        __asm__ volatile("" ::: "memory");
+    #endif
+        return val;
+    }
+
+    /**
+     * @brief Read 64-bit value from MMIO address
+     * @param addr MMIO address
+     * @return Value read
+     */
+    static inline uint64_t read64(volatile void *addr) {
+        uint64_t val = *(volatile uint64_t *)addr;
+    #if defined(ARCH_ARM64)
+        __asm__ volatile("dmb sy" ::: "memory");
+    #else
+        __asm__ volatile("" ::: "memory");
+    #endif
+        return val;
+    }
+
+    /**
+     * @brief Write 8-bit value to MMIO address
+     * @param addr MMIO address
+     * @param val Value to write
+     */
+    static inline void write8(volatile void *addr, uint8_t val) {
+    #if defined(ARCH_ARM64)
+        __asm__ volatile("dmb sy" ::: "memory");
+    #else
+        __asm__ volatile("" ::: "memory");
+    #endif
+        *(volatile uint8_t *)addr = val;
+    }
+
+    /**
+     * @brief Write 16-bit value to MMIO address
+     * @param addr MMIO address
+     * @param val Value to write
+     */
+    static inline void write16(volatile void *addr, uint16_t val) {
+    #if defined(ARCH_ARM64)
+        __asm__ volatile("dmb sy" ::: "memory");
+    #else
+        __asm__ volatile("" ::: "memory");
+    #endif
+        *(volatile uint16_t *)addr = val;
+    }
+
+    /**
+     * @brief Write 32-bit value to MMIO address
+     * @param addr MMIO address
+     * @param val Value to write
+     */
+    static inline void write32(volatile void *addr, uint32_t val) {
+    #if defined(ARCH_ARM64)
+        __asm__ volatile("dmb sy" ::: "memory");
+    #else
+        __asm__ volatile("" ::: "memory");
+    #endif
+        *(volatile uint32_t *)addr = val;
+    }
+
+    /**
+     * @brief Write 64-bit value to MMIO address
+     * @param addr MMIO address
+     * @param val Value to write
+     */
+    static inline void write64(volatile void *addr, uint64_t val) {
+    #if defined(ARCH_ARM64)
+        __asm__ volatile("dmb sy" ::: "memory");
+    #else
+        __asm__ volatile("" ::: "memory");
+    #endif
+        *(volatile uint64_t *)addr = val;
+    }
+};
+
+} // namespace hal
+
+namespace hal {
+
+/**
+ * @brief 端口 I/O 访问（仅 x86）
+ */
+class Port {
+public:
+    /**
+     * @brief Read 8-bit value from I/O port
+     * @param port Port number
+     * @return Value read
+     */
+    static inline uint8_t read8(uint16_t port) {
+        uint8_t ret;
+        __asm__ volatile("inb %1, %0" : "=a"(ret) : "Nd"(port));
+        return ret;
+    }
+
+    /**
+     * @brief Read 16-bit value from I/O port
+     * @param port Port number
+     * @return Value read
+     */
+    static inline uint16_t read16(uint16_t port) {
+        uint16_t ret;
+        __asm__ volatile("inw %1, %0" : "=a"(ret) : "Nd"(port));
+        return ret;
+    }
+
+    /**
+     * @brief Read 32-bit value from I/O port
+     * @param port Port number
+     * @return Value read
+     */
+    static inline uint32_t read32(uint16_t port) {
+        uint32_t ret;
+        __asm__ volatile("inl %1, %0" : "=a"(ret) : "Nd"(port));
+        return ret;
+    }
+
+    /**
+     * @brief Write 8-bit value to I/O port
+     * @param port Port number
+     * @param val Value to write
+     */
+    static inline void write8(uint16_t port, uint8_t val) {
+        __asm__ volatile("outb %0, %1" : : "a"(val), "Nd"(port));
+    }
+
+    /**
+     * @brief Write 16-bit value to I/O port
+     * @param port Port number
+     * @param val Value to write
+     */
+    static inline void write16(uint16_t port, uint16_t val) {
+        __asm__ volatile("outw %0, %1" : : "a"(val), "Nd"(port));
+    }
+
+    /**
+     * @brief Write 32-bit value to I/O port
+     * @param port Port number
+     * @param val Value to write
+     */
+    static inline void write32(uint16_t port, uint32_t val) {
+        __asm__ volatile("outl %0, %1" : : "a"(val), "Nd"(port));
+    }
+};
+
+} // namespace hal
+
+namespace hal {
+
+/**
+ * @brief 任务上下文初始化与切换
+ */
+class Context {
+public:
+    /**
+     * @brief Get the size of the architecture-specific context structure
+     * @return Size in bytes
+     */
+    static size_t size();
+
+    /**
+     * @brief Initialize a task context
+     * @param ctx Pointer to context structure to initialize
+     * @param entry Entry point address
+     * @param stack Stack pointer
+     * @param is_user true if this is a user-mode context
+     */
+    static void init(hal_context_t *ctx, uintptr_t entry, 
+                          uintptr_t stack, bool is_user);
+
+    /**
+     * @brief Perform a context switch
+     * @param old_ctx Pointer to save current context (can be NULL)
+     * @param new_ctx Pointer to context to switch to
+     */
+    static void switch_to(hal_context_t **old_ctx, hal_context_t *new_ctx);
+
+    /**
+     * @brief Set the kernel stack for the current CPU
+     * @param stack_top Top of the kernel stack
+     */
+    static void set_kernel_stack(uintptr_t stack_top);
+};
+
+} // namespace hal
+
 
 #endif /* _HAL_HAL_H_ */

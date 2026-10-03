@@ -36,7 +36,7 @@ extern "C" void hal_context_enter_kernel_thread(void);
  * @brief Get the size of the architecture-specific context structure
  * @return Size in bytes
  */
-size_t hal_context_size(void) {
+size_t hal::Context::size() {
     return sizeof(i686_context_t);
 }
 
@@ -52,7 +52,7 @@ size_t hal_context_size(void) {
  * @param stack Stack pointer (top of stack)
  * @param is_user true if this is a user-mode context
  */
-void hal_context_init(hal_context_t *ctx, uintptr_t entry, 
+void hal::Context::init(hal_context_t *ctx, uintptr_t entry, 
                       uintptr_t stack, bool is_user) {
     if (!ctx) {
         return;
@@ -112,7 +112,7 @@ void hal_context_init(hal_context_t *ctx, uintptr_t entry,
  * @param old_ctx Pointer to save current context (can be NULL)
  * @param new_ctx Pointer to context to switch to
  */
-void hal_context_switch(hal_context_t **old_ctx, hal_context_t *new_ctx) {
+void hal::Context::switch_to(hal_context_t **old_ctx, hal_context_t *new_ctx) {
     hal_context_switch_asm(old_ctx, new_ctx);
 }
 
@@ -124,7 +124,7 @@ void hal_context_switch(hal_context_t **old_ctx, hal_context_t *new_ctx) {
  * 
  * @param stack_top Top of the kernel stack
  */
-void hal_context_set_kernel_stack(uintptr_t stack_top) {
+void hal::Context::set_kernel_stack(uintptr_t stack_top) {
     tss_set_kernel_stack((uint32_t)stack_top);
 }
 

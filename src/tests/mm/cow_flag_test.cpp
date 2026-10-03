@@ -52,13 +52,13 @@ TEST_CASE(test_cow_flag_set_query) {
     
     // Map the page with COW flag (read-only + COW)
     uint32_t cow_flags = HAL_PAGE_PRESENT | HAL_PAGE_USER | HAL_PAGE_COW;
-    bool map_result = hal_mmu_map(HAL_ADDR_SPACE_CURRENT, test_vaddr, frame, cow_flags);
+    bool map_result = hal::Mmu::map(HAL_ADDR_SPACE_CURRENT, test_vaddr, frame, cow_flags);
     ASSERT_TRUE(map_result);
     
     // Query the mapping and verify COW flag is set
     paddr_t queried_phys;
     uint32_t queried_flags;
-    bool query_result = hal_mmu_query(HAL_ADDR_SPACE_CURRENT, test_vaddr, 
+    bool query_result = hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, test_vaddr, 
                                        &queried_phys, &queried_flags);
     ASSERT_TRUE(query_result);
     
@@ -79,13 +79,13 @@ TEST_CASE(test_cow_flag_set_query) {
     ASSERT_TRUE((queried_flags & HAL_PAGE_WRITE) == 0);
     
     // Clean up
-    hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, test_vaddr);
-    hal_mmu_flush_tlb(test_vaddr);
+    hal::Mmu::unmap(HAL_ADDR_SPACE_CURRENT, test_vaddr);
+    hal::Mmu::flush_tlb(test_vaddr);
     mm::Pmm::free_frame(frame);
 }
 
 /**
- * Test: COW flag can be cleared via hal_mmu_protect
+ * Test: COW flag can be cleared via hal::Mmu::protect
  * 
  * Clearing the COW flag and setting write permission
  * SHALL result in a writable page without COW flag.
@@ -102,24 +102,24 @@ TEST_CASE(test_cow_flag_clear) {
     
     // Map the page with COW flag
     uint32_t cow_flags = HAL_PAGE_PRESENT | HAL_PAGE_USER | HAL_PAGE_COW;
-    bool map_result = hal_mmu_map(HAL_ADDR_SPACE_CURRENT, test_vaddr, frame, cow_flags);
+    bool map_result = hal::Mmu::map(HAL_ADDR_SPACE_CURRENT, test_vaddr, frame, cow_flags);
     ASSERT_TRUE(map_result);
     
     // Verify COW flag is set
     uint32_t flags_before;
-    hal_mmu_query(HAL_ADDR_SPACE_CURRENT, test_vaddr, NULL, &flags_before);
+    hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, test_vaddr, NULL, &flags_before);
     ASSERT_TRUE((flags_before & HAL_PAGE_COW) != 0);
     
     // Clear COW flag and set write permission (simulating COW fault handling)
-    bool protect_result = hal_mmu_protect(HAL_ADDR_SPACE_CURRENT, test_vaddr,
+    bool protect_result = hal::Mmu::protect(HAL_ADDR_SPACE_CURRENT, test_vaddr,
                                           HAL_PAGE_WRITE,  // Set write
                                           HAL_PAGE_COW);   // Clear COW
     ASSERT_TRUE(protect_result);
-    hal_mmu_flush_tlb(test_vaddr);
+    hal::Mmu::flush_tlb(test_vaddr);
     
     // Query and verify COW flag is cleared
     uint32_t flags_after;
-    hal_mmu_query(HAL_ADDR_SPACE_CURRENT, test_vaddr, NULL, &flags_after);
+    hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, test_vaddr, NULL, &flags_after);
     
     // Property: COW flag must be cleared
     ASSERT_TRUE((flags_after & HAL_PAGE_COW) == 0);
@@ -131,8 +131,8 @@ TEST_CASE(test_cow_flag_clear) {
     ASSERT_TRUE((flags_after & HAL_PAGE_PRESENT) != 0);
     
     // Clean up
-    hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, test_vaddr);
-    hal_mmu_flush_tlb(test_vaddr);
+    hal::Mmu::unmap(HAL_ADDR_SPACE_CURRENT, test_vaddr);
+    hal::Mmu::flush_tlb(test_vaddr);
     mm::Pmm::free_frame(frame);
 }
 
@@ -157,12 +157,12 @@ TEST_CASE(test_cow_write_mutual_exclusion) {
     // 1. Clear WRITE when COW is set, OR
     // 2. The resulting page should be read-only
     uint32_t flags = HAL_PAGE_PRESENT | HAL_PAGE_USER | HAL_PAGE_COW | HAL_PAGE_WRITE;
-    bool map_result = hal_mmu_map(HAL_ADDR_SPACE_CURRENT, test_vaddr, frame, flags);
+    bool map_result = hal::Mmu::map(HAL_ADDR_SPACE_CURRENT, test_vaddr, frame, flags);
     ASSERT_TRUE(map_result);
     
     // Query the actual flags
     uint32_t actual_flags;
-    hal_mmu_query(HAL_ADDR_SPACE_CURRENT, test_vaddr, NULL, &actual_flags);
+    hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, test_vaddr, NULL, &actual_flags);
     
     // Property: If COW is set, the page should be read-only
     // (COW semantics require read-only to trigger page fault on write)
@@ -175,8 +175,8 @@ TEST_CASE(test_cow_write_mutual_exclusion) {
     }
     
     // Clean up
-    hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, test_vaddr);
-    hal_mmu_flush_tlb(test_vaddr);
+    hal::Mmu::unmap(HAL_ADDR_SPACE_CURRENT, test_vaddr);
+    hal::Mmu::flush_tlb(test_vaddr);
     mm::Pmm::free_frame(frame);
 }
 
@@ -227,7 +227,7 @@ TEST_CASE(test_cow_hal_flag_value) {
     ASSERT_EQ_U(PTE_FLAG_COW, (1 << 9));
     
     // The actual architecture-specific mapping is tested through
-    // the hal_mmu_map/query roundtrip tests above
+    // the hal::Mmu::map/query roundtrip tests above
 }
 
 /**
@@ -252,29 +252,29 @@ TEST_CASE(test_cow_multiple_pages) {
     // Map all pages with COW flag
     for (int i = 0; i < NUM_TEST_PAGES; i++) {
         uint32_t flags = HAL_PAGE_PRESENT | HAL_PAGE_USER | HAL_PAGE_COW;
-        bool result = hal_mmu_map(HAL_ADDR_SPACE_CURRENT, vaddrs[i], frames[i], flags);
+        bool result = hal::Mmu::map(HAL_ADDR_SPACE_CURRENT, vaddrs[i], frames[i], flags);
         ASSERT_TRUE(result);
     }
     
     // Verify all pages have COW flag
     for (int i = 0; i < NUM_TEST_PAGES; i++) {
         uint32_t flags;
-        hal_mmu_query(HAL_ADDR_SPACE_CURRENT, vaddrs[i], NULL, &flags);
+        hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, vaddrs[i], NULL, &flags);
         ASSERT_TRUE((flags & HAL_PAGE_COW) != 0);
     }
     
     // Clear COW on some pages (simulating partial COW resolution)
-    hal_mmu_protect(HAL_ADDR_SPACE_CURRENT, vaddrs[0], HAL_PAGE_WRITE, HAL_PAGE_COW);
-    hal_mmu_protect(HAL_ADDR_SPACE_CURRENT, vaddrs[2], HAL_PAGE_WRITE, HAL_PAGE_COW);
-    hal_mmu_flush_tlb(vaddrs[0]);
-    hal_mmu_flush_tlb(vaddrs[2]);
+    hal::Mmu::protect(HAL_ADDR_SPACE_CURRENT, vaddrs[0], HAL_PAGE_WRITE, HAL_PAGE_COW);
+    hal::Mmu::protect(HAL_ADDR_SPACE_CURRENT, vaddrs[2], HAL_PAGE_WRITE, HAL_PAGE_COW);
+    hal::Mmu::flush_tlb(vaddrs[0]);
+    hal::Mmu::flush_tlb(vaddrs[2]);
     
     // Verify COW state is independent for each page
     uint32_t flags0, flags1, flags2, flags3;
-    hal_mmu_query(HAL_ADDR_SPACE_CURRENT, vaddrs[0], NULL, &flags0);
-    hal_mmu_query(HAL_ADDR_SPACE_CURRENT, vaddrs[1], NULL, &flags1);
-    hal_mmu_query(HAL_ADDR_SPACE_CURRENT, vaddrs[2], NULL, &flags2);
-    hal_mmu_query(HAL_ADDR_SPACE_CURRENT, vaddrs[3], NULL, &flags3);
+    hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, vaddrs[0], NULL, &flags0);
+    hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, vaddrs[1], NULL, &flags1);
+    hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, vaddrs[2], NULL, &flags2);
+    hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, vaddrs[3], NULL, &flags3);
     
     // Property: Pages 0 and 2 should NOT have COW (cleared)
     ASSERT_TRUE((flags0 & HAL_PAGE_COW) == 0);
@@ -290,8 +290,8 @@ TEST_CASE(test_cow_multiple_pages) {
     
     // Clean up
     for (int i = 0; i < NUM_TEST_PAGES; i++) {
-        hal_mmu_unmap(HAL_ADDR_SPACE_CURRENT, vaddrs[i]);
-        hal_mmu_flush_tlb(vaddrs[i]);
+        hal::Mmu::unmap(HAL_ADDR_SPACE_CURRENT, vaddrs[i]);
+        hal::Mmu::flush_tlb(vaddrs[i]);
         mm::Pmm::free_frame(frames[i]);
     }
     

@@ -85,7 +85,7 @@ static void system_reboot_triple_fault(void) {
 }
 #endif /* ARCH_I686 || ARCH_X86_64 */
 
-void system_reboot(void) {
+void kernel::System::reboot() {
     LOG_INFO_MSG("System: Initiating reboot...\n");
     
 #if defined(ARCH_I686) || defined(ARCH_X86_64)
@@ -122,7 +122,7 @@ void system_reboot(void) {
     system_halt_forever();
 }
 
-void system_poweroff(void) {
+void kernel::System::poweroff() {
     LOG_INFO_MSG("System: Initiating power off...\n");
     
 #if defined(ARCH_I686) || defined(ARCH_X86_64)

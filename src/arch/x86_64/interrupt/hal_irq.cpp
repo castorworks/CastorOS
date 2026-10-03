@@ -185,7 +185,7 @@ static isr_handler_t get_wrapper_for_type(hal_irq_type_t type) {
 /**
  * @brief 获取逻辑中断对应的物理 IRQ 号
  */
-int32_t hal_irq_get_number(hal_irq_type_t type, uint32_t instance) {
+int32_t hal::Irq::get_number(hal_irq_type_t type, uint32_t instance) {
     /* 目前 x86_64 不支持多实例设备 */
     (void)instance;
     
@@ -199,7 +199,7 @@ int32_t hal_irq_get_number(hal_irq_type_t type, uint32_t instance) {
 /**
  * @brief 注册逻辑中断处理程序
  */
-hal_error_t hal_irq_register_logical(hal_irq_type_t type, uint32_t instance,
+hal_error_t hal::Irq::register_logical(hal_irq_type_t type, uint32_t instance,
                                       hal_interrupt_handler_t handler, void *data) {
     (void)instance;  /* x86_64 不支持多实例 */
     
@@ -233,7 +233,7 @@ hal_error_t hal_irq_register_logical(hal_irq_type_t type, uint32_t instance,
 /**
  * @brief 注销逻辑中断处理程序
  */
-hal_error_t hal_irq_unregister_logical(hal_irq_type_t type, uint32_t instance) {
+hal_error_t hal::Irq::unregister_logical(hal_irq_type_t type, uint32_t instance) {
     (void)instance;
     
     if (type >= HAL_IRQ_MAX) {
@@ -258,7 +258,7 @@ hal_error_t hal_irq_unregister_logical(hal_irq_type_t type, uint32_t instance) {
 /**
  * @brief 启用逻辑中断
  */
-hal_error_t hal_irq_enable_logical(hal_irq_type_t type, uint32_t instance) {
+hal_error_t hal::Irq::enable_logical(hal_irq_type_t type, uint32_t instance) {
     (void)instance;
     
     if (type >= HAL_IRQ_MAX) {
@@ -277,7 +277,7 @@ hal_error_t hal_irq_enable_logical(hal_irq_type_t type, uint32_t instance) {
 /**
  * @brief 禁用逻辑中断
  */
-hal_error_t hal_irq_disable_logical(hal_irq_type_t type, uint32_t instance) {
+hal_error_t hal::Irq::disable_logical(hal_irq_type_t type, uint32_t instance) {
     (void)instance;
     
     if (type >= HAL_IRQ_MAX) {
@@ -296,7 +296,7 @@ hal_error_t hal_irq_disable_logical(hal_irq_type_t type, uint32_t instance) {
 /**
  * @brief 检查逻辑中断类型是否可用
  */
-bool hal_irq_is_available(hal_irq_type_t type) {
+bool hal::Irq::is_available(hal_irq_type_t type) {
     if (type >= HAL_IRQ_MAX) {
         return false;
     }
@@ -306,7 +306,7 @@ bool hal_irq_is_available(hal_irq_type_t type) {
 /**
  * @brief 获取逻辑中断类型名称
  */
-const char *hal_irq_type_name(hal_irq_type_t type) {
+const char *hal::Irq::type_name(hal_irq_type_t type) {
     if (type >= HAL_IRQ_MAX) {
         return "Unknown";
     }

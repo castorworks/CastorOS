@@ -24,13 +24,14 @@
  */
 
 #include <hal/hal.h>
+#include <hal/hal_syscall.h>
 #include <types.h>
 
 /* Forward declaration for serial output */
 extern "C" void serial_puts(const char *str);
 extern "C" void serial_put_hex64(uint64_t value);
 
-/* Global syscall handler (set by hal_syscall_init) */
+/* Global syscall handler (set by hal::Syscall::init) */
 static hal_syscall_handler_t g_syscall_handler = NULL;
 
 /* Flag to track if syscall system is initialized */
@@ -46,7 +47,7 @@ static bool g_syscall_initialized = false;
  *
  * Requirements: 7.5, 8.1 - System call entry mechanism
  */
-void hal_syscall_init(hal_syscall_handler_t handler) {
+void hal::Syscall::init(hal_syscall_handler_t handler) {
     serial_puts("Initializing ARM64 system call mechanism (SVC)...\n");
     
     /* Store the handler for potential future use */
@@ -57,7 +58,7 @@ void hal_syscall_init(hal_syscall_handler_t handler) {
      * dispatches to the syscall handler.
      * 
      * No additional setup is required here - the exception vectors are
-     * installed during hal_interrupt_init().
+     * installed during hal::Interrupt::init().
      */
     
     g_syscall_initialized = true;

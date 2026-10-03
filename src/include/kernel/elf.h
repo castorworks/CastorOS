@@ -120,38 +120,48 @@ typedef struct {
     uint64_t p_align;        // 对齐
 } __attribute__((packed)) elf64_phdr_t;
 
-/**
- * 验证 ELF 文件头（自动检测32/64位）
- * @param elf_data ELF 数据指针
- * @return 成功返回 true
- */
-bool elf_validate_header(const void *elf_data);
+namespace kernel {
 
 /**
- * 检查 ELF 是否为 64 位
- * @param elf_data ELF 数据指针
- * @return 64位返回 true，32位返回 false
+ * @brief ELF 可执行文件加载器
  */
-bool elf_is_64bit(const void *elf_data);
+class Elf {
+public:
+    /**
+     * 验证 ELF 文件头（自动检测32/64位）
+     * @param elf_data ELF 数据指针
+     * @return 成功返回 true
+     */
+    static bool validate_header(const void *elf_data);
 
-/**
- * 加载 ELF 文件到指定页目录（使用 uintptr_t 支持 32/64 位）
- * @param elf_data ELF 数据指针
- * @param size ELF 文件大小
- * @param page_dir 目标页目录
- * @param entry_point 输出参数：程序入口点地址
- * @param program_end 输出参数：程序加载的最高地址（可选，可为 NULL）
- * @return 成功返回 true
- */
-bool elf_load(const void *elf_data, uint32_t size, 
-              page_directory_t *page_dir, uintptr_t *entry_point,
-              uintptr_t *program_end);
+    /**
+     * 检查 ELF 是否为 64 位
+     * @param elf_data ELF 数据指针
+     * @return 64位返回 true，32位返回 false
+     */
+    static bool is_64bit(const void *elf_data);
 
-/**
- * 获取 ELF 入口点地址
- * @param elf_data ELF 数据指针
- * @return 入口点地址，失败返回 0
- */
-uintptr_t elf_get_entry(const void *elf_data);
+    /**
+     * 加载 ELF 文件到指定页目录（使用 uintptr_t 支持 32/64 位）
+     * @param elf_data ELF 数据指针
+     * @param size ELF 文件大小
+     * @param page_dir 目标页目录
+     * @param entry_point 输出参数：程序入口点地址
+     * @param program_end 输出参数：程序加载的最高地址（可选，可为 NULL）
+     * @return 成功返回 true
+     */
+    static bool load(const void *elf_data, uint32_t size, 
+                  page_directory_t *page_dir, uintptr_t *entry_point,
+                  uintptr_t *program_end);
+
+    /**
+     * 获取 ELF 入口点地址
+     * @param elf_data ELF 数据指针
+     * @return 入口点地址，失败返回 0
+     */
+    static uintptr_t get_entry(const void *elf_data);
+};
+
+} // namespace kernel
 
 #endif // _KERNEL_ELF_H_

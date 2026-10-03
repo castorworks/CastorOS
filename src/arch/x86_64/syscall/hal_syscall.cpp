@@ -35,7 +35,7 @@
  * @param ctx CPU context from which to extract arguments
  * @param[out] args Pointer to structure to fill with arguments
  */
-void hal_syscall_get_args(hal_context_t *ctx, hal_syscall_args_t *args) {
+void hal::Syscall::get_args(hal_context_t *ctx, hal_syscall_args_t *args) {
     x86_64_context_t *arch_ctx = (x86_64_context_t *)ctx;
     
     if (!arch_ctx || !args) {
@@ -65,7 +65,7 @@ void hal_syscall_get_args(hal_context_t *ctx, hal_syscall_args_t *args) {
  * @param ctx CPU context to modify
  * @param ret Return value to set
  */
-void hal_syscall_set_return(hal_context_t *ctx, int64_t ret) {
+void hal::Syscall::set_return(hal_context_t *ctx, int64_t ret) {
     x86_64_context_t *arch_ctx = (x86_64_context_t *)ctx;
     
     if (!arch_ctx) {
@@ -84,7 +84,7 @@ void hal_syscall_set_return(hal_context_t *ctx, int64_t ret) {
  * @param ctx CPU context to modify
  * @param errno Error code to set (positive value, will be negated)
  */
-void hal_syscall_set_errno(hal_context_t *ctx, int32_t errno) {
+void hal::Syscall::set_errno(hal_context_t *ctx, int32_t errno) {
     x86_64_context_t *arch_ctx = (x86_64_context_t *)ctx;
     
     if (!arch_ctx) {
@@ -102,7 +102,7 @@ void hal_syscall_set_errno(hal_context_t *ctx, int32_t errno) {
  * @param index Argument index (0-5)
  * @return Argument value, or 0 if index is out of range
  */
-uint64_t hal_syscall_get_arg(hal_context_t *ctx, uint32_t index) {
+uint64_t hal::Syscall::get_arg(hal_context_t *ctx, uint32_t index) {
     x86_64_context_t *arch_ctx = (x86_64_context_t *)ctx;
     
     if (!arch_ctx || index >= HAL_SYSCALL_MAX_ARGS) {
@@ -126,7 +126,7 @@ uint64_t hal_syscall_get_arg(hal_context_t *ctx, uint32_t index) {
  * @param ctx CPU context
  * @return System call number from RAX
  */
-uint64_t hal_syscall_get_number(hal_context_t *ctx) {
+uint64_t hal::Syscall::get_number(hal_context_t *ctx) {
     x86_64_context_t *arch_ctx = (x86_64_context_t *)ctx;
     
     if (!arch_ctx) {

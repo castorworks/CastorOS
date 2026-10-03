@@ -393,7 +393,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     }
     
     // 验证 ELF 文件头
-    if (!elf_validate_header(elf_data)) {
+    if (!kernel::Elf::validate_header(elf_data)) {
         LOG_ERROR_MSG("sys_execve: invalid ELF file '%s'\n", path);
         kfree(elf_data);
         fs::Vfs::release_node(file);  // 释放节点
@@ -401,7 +401,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     }
     
     // 获取入口点
-    uintptr_t entry_point = elf_get_entry(elf_data);
+    uintptr_t entry_point = kernel::Elf::get_entry(elf_data);
     if (entry_point == 0) {
         LOG_ERROR_MSG("sys_execve: failed to get entry point from '%s'\n", path);
         kfree(elf_data);
@@ -439,7 +439,7 @@ uint32_t sys_execve(uintptr_t *frame, const char *path) {
     
     // 加载 ELF 到新页目录
     uintptr_t program_end;
-    if (!elf_load(elf_data, file_size, new_dir, &entry_point, &program_end)) {
+    if (!kernel::Elf::load(elf_data, file_size, new_dir, &entry_point, &program_end)) {
         LOG_ERROR_MSG("sys_execve: failed to load ELF '%s'\n", path);
         mm::Vmm::free_page_directory(new_dir_phys);
         kfree(elf_data);

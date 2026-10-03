@@ -19,7 +19,7 @@ static void net_tcp_timer_callback(void *data) {
     net::Tcp::timer();
 }
 
-void net_init(void) {
+void net::Stack::init() {
     LOG_INFO_MSG("net: Initializing network stack...\n");
     
     // 1. 初始化网络设备层
@@ -55,7 +55,7 @@ void net_init(void) {
     LOG_INFO_MSG("net: Network stack initialized\n");
 }
 
-int net_configure(const char *ip, const char *netmask, const char *gateway) {
+int net::Stack::configure(const char *ip, const char *netmask, const char *gateway) {
     net::Netdev *dev = net::Netdev::get_default();
     if (!dev) {
         LOG_ERROR_MSG("net: No network device available\n");
@@ -110,7 +110,7 @@ static void ping_callback(uint32_t src_ip, uint16_t seq, uint32_t rtt_ms, bool s
     }
 }
 
-int net_ping(const char *ip_str, int count) {
+int net::Stack::ping(const char *ip_str, int count) {
     uint32_t dst_ip;
     if (str_to_ip(ip_str, &dst_ip) < 0) {
         kprintf("ping: Invalid IP address: %s\n", ip_str);

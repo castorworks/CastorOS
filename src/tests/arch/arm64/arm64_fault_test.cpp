@@ -62,7 +62,7 @@ static uint64_t make_inst_abort_esr(bool from_el0, uint32_t fsc) {
 /**
  * @brief Parse fault info from a synthetic ESR value (for testing)
  * 
- * This function simulates hal_mmu_parse_fault() but uses a provided
+ * This function simulates hal::Mmu::parse_fault() but uses a provided
  * ESR value instead of reading from the actual register.
  */
 static void parse_fault_from_esr(hal_page_fault_info_t *info, uint64_t esr, vaddr_t fault_addr) {

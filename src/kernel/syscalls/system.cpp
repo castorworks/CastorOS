@@ -6,12 +6,12 @@
 #include <lib/klog.h>
 
 uint32_t sys_reboot(void) {
-    system_reboot();
+    kernel::System::reboot();
     return 0;
 }
 
 uint32_t sys_poweroff(void) {
-    system_poweroff();
+    kernel::System::poweroff();
     return 0;
 }
 

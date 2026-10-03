@@ -38,7 +38,7 @@ static bool g_hal_mmu_initialized = false;
  * 
  * Requirements: 1.1 - HAL initialization dispatch
  */
-void hal_cpu_init(void) {
+void hal::Cpu::init() {
     LOG_INFO_MSG("HAL: Initializing x86_64 CPU...\n");
     
     /* Initialize GDT with TSS
@@ -56,7 +56,7 @@ void hal_cpu_init(void) {
  * @brief Get current CPU ID
  * @return Always 0 for single-core x86_64 systems
  */
-uint32_t hal_cpu_id(void) {
+uint32_t hal::Cpu::id() {
     /* Single-core implementation - always return 0 */
     /* TODO: Use CPUID/APIC ID for multi-core support */
     return 0;
@@ -65,7 +65,7 @@ uint32_t hal_cpu_id(void) {
 /**
  * @brief Halt the CPU until next interrupt
  */
-void hal_cpu_halt(void) {
+void hal::Cpu::halt() {
     __asm__ volatile("hlt");
 }
 
@@ -80,7 +80,7 @@ void hal_cpu_halt(void) {
  * 
  * Requirements: 1.1 - HAL initialization dispatch
  */
-void hal_interrupt_init(void) {
+void hal::Interrupt::init() {
     LOG_INFO_MSG("HAL: Initializing x86_64 interrupt system...\n");
     
     /* Initialize IDT (Interrupt Descriptor Table) - 64-bit format */
@@ -103,7 +103,7 @@ void hal_interrupt_init(void) {
  * @param handler Handler function
  * @param data User data (unused in current implementation)
  */
-void hal_interrupt_register(uint32_t irq, hal_interrupt_handler_t handler, void *data) {
+void hal::Interrupt::register_handler(uint32_t irq, hal_interrupt_handler_t handler, void *data) {
     (void)data;  /* Currently unused */
     
     if (irq < 16) {
@@ -119,7 +119,7 @@ void hal_interrupt_register(uint32_t irq, hal_interrupt_handler_t handler, void 
  * @brief Unregister an interrupt handler
  * @param irq IRQ number
  */
-void hal_interrupt_unregister(uint32_t irq) {
+void hal::Interrupt::unregister_handler(uint32_t irq) {
     if (irq < 16) {
         irq64_register_handler((uint8_t)irq, NULL);
     } else if (irq < 32) {
@@ -130,14 +130,14 @@ void hal_interrupt_unregister(uint32_t irq) {
 /**
  * @brief Enable interrupts globally
  */
-void hal_interrupt_enable(void) {
+void hal::Interrupt::enable() {
     __asm__ volatile("sti");
 }
 
 /**
  * @brief Disable interrupts globally
  */
-void hal_interrupt_disable(void) {
+void hal::Interrupt::disable() {
     __asm__ volatile("cli");
 }
 
@@ -145,7 +145,7 @@ void hal_interrupt_disable(void) {
  * @brief Save interrupt state and disable interrupts
  * @return Previous RFLAGS value
  */
-uint64_t hal_interrupt_save(void) {
+uint64_t hal::Interrupt::save() {
     uint64_t flags;
     __asm__ volatile(
         "pushfq\n\t"
@@ -162,7 +162,7 @@ uint64_t hal_interrupt_save(void) {
  * @brief Restore interrupt state
  * @param state Previously saved RFLAGS value
  */
-void hal_interrupt_restore(uint64_t state) {
+void hal::Interrupt::restore(uint64_t state) {
     __asm__ volatile(
         "pushq %0\n\t"
         "popfq"
@@ -176,7 +176,7 @@ void hal_interrupt_restore(uint64_t state) {
  * @brief Send End-Of-Interrupt signal to PIC
  * @param irq IRQ number that was handled
  */
-void hal_interrupt_eoi(uint32_t irq) {
+void hal::Interrupt::eoi(uint32_t irq) {
     /* PIC EOI command */
     #define PIC1_COMMAND 0x20
     #define PIC2_COMMAND 0xA0
@@ -184,10 +184,10 @@ void hal_interrupt_eoi(uint32_t irq) {
     
     if (irq >= 8) {
         /* Send EOI to slave PIC */
-        hal_port_write8(PIC2_COMMAND, PIC_EOI);
+        hal::Port::write8(PIC2_COMMAND, PIC_EOI);
     }
     /* Always send EOI to master PIC */
-    hal_port_write8(PIC1_COMMAND, PIC_EOI);
+    hal::Port::write8(PIC1_COMMAND, PIC_EOI);
 }
 
 /* ============================================================================
@@ -201,7 +201,7 @@ void hal_interrupt_eoi(uint32_t irq) {
  * 
  * Requirements: 1.1 - HAL initialization dispatch
  */
-void hal_mmu_init(void) {
+void hal::Mmu::init() {
     LOG_INFO_MSG("HAL: Initializing x86_64 MMU...\n");
     
     /* Initialize VMM (Virtual Memory Manager)
@@ -242,7 +242,7 @@ static void hal_timer_irq_handler(void *regs) {
  * @param freq_hz Timer frequency in Hz
  * @param callback Function to call on each timer tick
  */
-void hal_timer_init(uint32_t freq_hz, hal_timer_callback_t callback) {
+void hal::Timer::init(uint32_t freq_hz, hal_timer_callback_t callback) {
     g_timer_frequency = freq_hz;
     g_timer_callback = callback;
     
@@ -254,12 +254,12 @@ void hal_timer_init(uint32_t freq_hz, hal_timer_callback_t callback) {
     uint16_t divisor = (uint16_t)(PIT_BASE_FREQ / freq_hz);
     
     /* Set PIT to mode 3 (square wave generator) */
-    hal_port_write8(PIT_COMMAND, 0x36);
-    hal_port_write8(PIT_CHANNEL0_DATA, (uint8_t)(divisor & 0xFF));
-    hal_port_write8(PIT_CHANNEL0_DATA, (uint8_t)((divisor >> 8) & 0xFF));
+    hal::Port::write8(PIT_COMMAND, 0x36);
+    hal::Port::write8(PIT_CHANNEL0_DATA, (uint8_t)(divisor & 0xFF));
+    hal::Port::write8(PIT_CHANNEL0_DATA, (uint8_t)((divisor >> 8) & 0xFF));
     
     /* Register timer handler (IRQ 0) */
-    hal_interrupt_register(0, hal_timer_irq_handler, NULL);
+    hal::Interrupt::register_handler(0, hal_timer_irq_handler, NULL);
     
     LOG_INFO_MSG("HAL: Timer initialized at %u Hz\n", freq_hz);
 }
@@ -268,7 +268,7 @@ void hal_timer_init(uint32_t freq_hz, hal_timer_callback_t callback) {
  * @brief Get system tick count
  * @return Number of timer ticks since boot
  */
-uint64_t hal_timer_get_ticks(void) {
+uint64_t hal::Timer::get_ticks() {
     return g_timer_ticks;
 }
 
@@ -276,7 +276,7 @@ uint64_t hal_timer_get_ticks(void) {
  * @brief Get timer frequency
  * @return Timer frequency in Hz
  */
-uint32_t hal_timer_get_frequency(void) {
+uint32_t hal::Timer::get_frequency() {
     return g_timer_frequency;
 }
 
@@ -289,10 +289,10 @@ uint32_t hal_timer_get_frequency(void) {
  * @return true if CPU initialization has completed (GDT64/TSS64 loaded)
  * 
  * This function checks the actual system state rather than relying on
- * hal_cpu_init() being called, since the kernel may initialize the CPU
+ * hal::Cpu::init() being called, since the kernel may initialize the CPU
  * directly without going through the HAL wrapper.
  */
-bool hal_cpu_initialized(void) {
+bool hal::Cpu::initialized() {
     if (g_hal_cpu_initialized) {
         return true;
     }
@@ -314,9 +314,9 @@ bool hal_cpu_initialized(void) {
  * @return true if interrupt system has been initialized (IDT loaded)
  * 
  * This function checks the actual system state rather than relying on
- * hal_interrupt_init() being called.
+ * hal::Interrupt::init() being called.
  */
-bool hal_interrupt_initialized(void) {
+bool hal::Interrupt::initialized() {
     if (g_hal_interrupt_initialized) {
         return true;
     }
@@ -339,9 +339,9 @@ bool hal_interrupt_initialized(void) {
  * @return true if MMU/paging has been initialized (CR0.PG set)
  * 
  * This function checks the actual system state rather than relying on
- * hal_mmu_init() being called.
+ * hal::Mmu::init() being called.
  */
-bool hal_mmu_initialized(void) {
+bool hal::Mmu::initialized() {
     if (g_hal_mmu_initialized) {
         return true;
     }
@@ -371,7 +371,7 @@ bool hal_mmu_initialized(void) {
  * @param addr Virtual address of the region start
  * @param size Size of the region in bytes
  */
-void hal_cache_clean(void *addr, size_t size) {
+void hal::Cache::clean(void *addr, size_t size) {
     (void)addr;
     (void)size;
     /* x86_64 caches are DMA-coherent - no action needed */
@@ -385,7 +385,7 @@ void hal_cache_clean(void *addr, size_t size) {
  * @param addr Virtual address of the region start
  * @param size Size of the region in bytes
  */
-void hal_cache_invalidate(void *addr, size_t size) {
+void hal::Cache::invalidate(void *addr, size_t size) {
     (void)addr;
     (void)size;
     /* x86_64 caches are DMA-coherent - no action needed */
@@ -399,7 +399,7 @@ void hal_cache_invalidate(void *addr, size_t size) {
  * @param addr Virtual address of the region start
  * @param size Size of the region in bytes
  */
-void hal_cache_clean_invalidate(void *addr, size_t size) {
+void hal::Cache::clean_invalidate(void *addr, size_t size) {
     (void)addr;
     (void)size;
     /* x86_64 caches are DMA-coherent - no action needed */

@@ -761,7 +761,7 @@ static int cmd_reboot(int argc, char **argv) {
     kprintf("Rebooting system...\n");
     shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     
-    system_reboot();
+    kernel::System::reboot();
     return 0;
 }
 
@@ -776,7 +776,7 @@ static int cmd_poweroff(int argc, char **argv) {
     kprintf("Powering off system...\n");
     shell_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     
-    system_poweroff();
+    kernel::System::poweroff();
     return 0;
 }
 
@@ -1392,7 +1392,7 @@ static int cmd_ifconfig(int argc, char **argv) {
             return -1;
         }
         
-        if (net_configure(argv[2], argv[3], argv[4]) < 0) {
+        if (net::Stack::configure(argv[2], argv[3], argv[4]) < 0) {
             return -1;
         }
         
@@ -1476,7 +1476,7 @@ static int cmd_ping(int argc, char **argv) {
         return -1;
     }
     
-    return net_ping(host, count);
+    return net::Stack::ping(host, count);
 }
 
 /**

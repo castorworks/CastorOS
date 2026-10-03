@@ -16,6 +16,9 @@
 #include <lib/string.h>
 #include <hal/hal.h>
 
+/* 引导页目录（定义在 boot.asm） */
+extern "C" uint32_t boot_page_directory[];
+
 /* ============================================================================
  * i686 页表结构定义
  * ============================================================================
@@ -59,7 +62,7 @@ static inline bool i686_is_present(uint32_t entry) {
  * @brief 刷新单个 TLB 条目 (i686)
  * @param virt 虚拟地址
  */
-void hal_mmu_flush_tlb(vaddr_t virt) {
+void hal::Mmu::flush_tlb(vaddr_t virt) {
     __asm__ volatile("invlpg (%0)" : : "r"((uint32_t)virt) : "memory");
 }
 
@@ -68,7 +71,7 @@ void hal_mmu_flush_tlb(vaddr_t virt) {
  * 
  * 通过重新加载 CR3 寄存器来刷新整个 TLB
  */
-void hal_mmu_flush_tlb_all(void) {
+void hal::Mmu::flush_tlb_all() {
     __asm__ volatile(
         "mov %%cr3, %%eax\n\t"
         "mov %%eax, %%cr3"
@@ -80,7 +83,7 @@ void hal_mmu_flush_tlb_all(void) {
  * @brief 切换地址空间 (i686)
  * @param page_table_phys 新页目录的物理地址
  */
-void hal_mmu_switch_space(paddr_t page_table_phys) {
+void hal::Mmu::switch_space(paddr_t page_table_phys) {
     __asm__ volatile("mov %0, %%cr3" : : "r"((uint32_t)page_table_phys) : "memory");
 }
 
@@ -88,7 +91,7 @@ void hal_mmu_switch_space(paddr_t page_table_phys) {
  * @brief 获取页错误地址 (i686)
  * @return CR2 寄存器中的错误地址
  */
-vaddr_t hal_mmu_get_fault_addr(void) {
+vaddr_t hal::Mmu::get_fault_addr() {
     uint32_t fault_addr;
     __asm__ volatile("mov %%cr2, %0" : "=r"(fault_addr));
     return (vaddr_t)fault_addr;
@@ -98,7 +101,7 @@ vaddr_t hal_mmu_get_fault_addr(void) {
  * @brief 获取当前页目录物理地址 (i686)
  * @return CR3 寄存器的值
  */
-paddr_t hal_mmu_get_current_page_table(void) {
+paddr_t hal::Mmu::get_current_page_table() {
     uint32_t cr3;
     __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
     return (paddr_t)cr3;
@@ -224,8 +227,8 @@ uintptr_t i686_get_kernel_virtual_base(void) {
  * 
  * @see Requirements 4.5
  */
-hal_addr_space_t hal_mmu_current_space(void) {
-    return (hal_addr_space_t)hal_mmu_get_current_page_table();
+hal_addr_space_t hal::Mmu::current_space() {
+    return (hal_addr_space_t)hal::Mmu::get_current_page_table();
 }
 
 /**
@@ -275,7 +278,7 @@ static page_directory_t* get_page_directory(hal_addr_space_t space) {
     paddr_t dir_phys;
     
     if (space == HAL_ADDR_SPACE_CURRENT || space == 0) {
-        dir_phys = hal_mmu_get_current_page_table();
+        dir_phys = hal::Mmu::get_current_page_table();
     } else {
         dir_phys = space;
     }
@@ -296,7 +299,7 @@ static page_directory_t* get_page_directory(hal_addr_space_t space) {
  * 
  * @see Requirements 4.1
  */
-bool hal_mmu_query(hal_addr_space_t space, vaddr_t virt, paddr_t *phys, uint32_t *flags) {
+bool hal::Mmu::query(hal_addr_space_t space, vaddr_t virt, paddr_t *phys, uint32_t *flags) {
     page_directory_t *dir = get_page_directory(space);
     
     uint32_t pd_idx = i686_pde_index((uint32_t)virt);
@@ -342,11 +345,11 @@ bool hal_mmu_query(hal_addr_space_t space, vaddr_t virt, paddr_t *phys, uint32_t
  * @param clear_flags 要清除的 HAL 标志
  * @return true 成功，false 如果映射不存在
  * 
- * @note 调用者需要在修改后调用 hal_mmu_flush_tlb()
+ * @note 调用者需要在修改后调用 hal::Mmu::flush_tlb()
  * 
  * @see Requirements 4.1
  */
-bool hal_mmu_protect(hal_addr_space_t space, vaddr_t virt, 
+bool hal::Mmu::protect(hal_addr_space_t space, vaddr_t virt, 
                      uint32_t set_flags, uint32_t clear_flags) {
     page_directory_t *dir = get_page_directory(space);
     
@@ -398,7 +401,7 @@ bool hal_mmu_protect(hal_addr_space_t space, vaddr_t virt,
  * 
  * @see Requirements 4.4
  */
-hal_addr_space_t hal_mmu_clone_space(hal_addr_space_t src) {
+hal_addr_space_t hal::Mmu::clone_space(hal_addr_space_t src) {
     /* Validate source address space */
     if (src == HAL_ADDR_SPACE_INVALID) {
         return HAL_ADDR_SPACE_INVALID;
@@ -406,7 +409,7 @@ hal_addr_space_t hal_mmu_clone_space(hal_addr_space_t src) {
     
     /* Get source page directory */
     paddr_t src_phys = (src == HAL_ADDR_SPACE_CURRENT || src == 0) 
-                       ? hal_mmu_get_current_page_table() 
+                       ? hal::Mmu::get_current_page_table() 
                        : src;
     
     /* Use VMM's clone function which already implements COW */
@@ -437,13 +440,13 @@ hal_addr_space_t hal_mmu_clone_space(hal_addr_space_t src) {
  * 
  * @see Requirements 4.3
  */
-void hal_mmu_parse_fault(hal_page_fault_info_t *info) {
+void hal::Mmu::parse_fault(hal_page_fault_info_t *info) {
     if (info == NULL) {
         return;
     }
     
     /* Get fault address from CR2 */
-    info->fault_addr = hal_mmu_get_fault_addr();
+    info->fault_addr = hal::Mmu::get_fault_addr();
     
     /* 
      * Get error code from the ISR stack frame
@@ -483,7 +486,7 @@ void hal_mmu_parse_fault_with_error(hal_page_fault_info_t *info, uint32_t error_
     }
     
     /* Get fault address from CR2 */
-    info->fault_addr = hal_mmu_get_fault_addr();
+    info->fault_addr = hal::Mmu::get_fault_addr();
     
     /* Parse error code */
     info->raw_error = error_code;
@@ -503,7 +506,7 @@ void hal_mmu_parse_fault_with_error(hal_page_fault_info_t *info, uint32_t error_
  * 
  * @see Requirements 4.2
  */
-hal_addr_space_t hal_mmu_create_space(void) {
+hal_addr_space_t hal::Mmu::create_space() {
     /* Allocate a new page directory */
     paddr_t dir_phys = mm::Pmm::alloc_frame();
     if (dir_phys == PADDR_INVALID) {
@@ -517,7 +520,6 @@ hal_addr_space_t hal_mmu_create_space(void) {
     memset(new_dir, 0, sizeof(page_directory_t));
     
     /* Get the master kernel page directory (boot_page_directory) */
-    extern uint32_t boot_page_directory[];
     page_directory_t *master_dir = (page_directory_t *)boot_page_directory;
     
     /* Copy kernel space mappings (512-1023, i.e., 0x80000000-0xFFFFFFFF) */
@@ -526,7 +528,7 @@ hal_addr_space_t hal_mmu_create_space(void) {
         new_dir->entries[i] = master_dir->entries[i];
     }
     
-    LOG_DEBUG_MSG("hal_mmu_create_space: Created new page directory at phys 0x%llx\n",
+    LOG_DEBUG_MSG("hal::Mmu::create_space: Created new page directory at phys 0x%llx\n",
                   (unsigned long long)dir_phys);
     
     return (hal_addr_space_t)dir_phys;
@@ -541,13 +543,13 @@ hal_addr_space_t hal_mmu_create_space(void) {
  * 
  * @warning 不能销毁当前活动的地址空间
  */
-void hal_mmu_destroy_space(hal_addr_space_t space) {
+void hal::Mmu::destroy_space(hal_addr_space_t space) {
     if (space == HAL_ADDR_SPACE_INVALID || space == 0) {
         return;
     }
     
     /* Don't destroy current address space */
-    if (space == hal_mmu_current_space()) {
+    if (space == hal::Mmu::current_space()) {
         LOG_ERROR_MSG("HAL MMU: Cannot destroy current address space\n");
         return;
     }
@@ -566,11 +568,11 @@ void hal_mmu_destroy_space(hal_addr_space_t space) {
  * @param flags HAL 页标志
  * @return true 成功，false 失败
  * 
- * @note 调用者需要在映射后调用 hal_mmu_flush_tlb()
+ * @note 调用者需要在映射后调用 hal::Mmu::flush_tlb()
  * 
  * @see Requirements 4.1
  */
-bool hal_mmu_map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags) {
+bool hal::Mmu::map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags) {
     /* Check page alignment */
     if (((uint32_t)virt | (uint32_t)phys) & (PAGE_SIZE - 1)) {
         return false;
@@ -633,9 +635,9 @@ bool hal_mmu_map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t fl
  * @param virt 虚拟地址
  * @return 原物理地址，未映射返回 PADDR_INVALID
  * 
- * @note 调用者需要在取消映射后调用 hal_mmu_flush_tlb()
+ * @note 调用者需要在取消映射后调用 hal::Mmu::flush_tlb()
  */
-paddr_t hal_mmu_unmap(hal_addr_space_t space, vaddr_t virt) {
+paddr_t hal::Mmu::unmap(hal_addr_space_t space, vaddr_t virt) {
     /* Check page alignment */
     if ((uint32_t)virt & (PAGE_SIZE - 1)) {
         return PADDR_INVALID;
@@ -680,9 +682,9 @@ paddr_t hal_mmu_unmap(hal_addr_space_t space, vaddr_t virt) {
  * @param virt 虚拟地址
  * @return 物理地址，未映射返回 PADDR_INVALID
  */
-paddr_t hal_mmu_virt_to_phys(vaddr_t virt) {
+paddr_t hal::Mmu::virt_to_phys(vaddr_t virt) {
     paddr_t phys;
-    if (hal_mmu_query(HAL_ADDR_SPACE_CURRENT, virt, &phys, NULL)) {
+    if (hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, virt, &phys, NULL)) {
         return phys;
     }
     return PADDR_INVALID;
@@ -691,20 +693,20 @@ paddr_t hal_mmu_virt_to_phys(vaddr_t virt) {
 /**
  * @brief 创建新页表 (i686, 兼容旧接口)
  * @return 页表物理地址，失败返回 PADDR_INVALID
- * @deprecated 使用 hal_mmu_create_space() 代替
+ * @deprecated 使用 hal::Mmu::create_space() 代替
  */
-paddr_t hal_mmu_create_page_table(void) {
-    hal_addr_space_t space = hal_mmu_create_space();
+paddr_t hal::Mmu::create_page_table() {
+    hal_addr_space_t space = hal::Mmu::create_space();
     return (space == HAL_ADDR_SPACE_INVALID) ? PADDR_INVALID : space;
 }
 
 /**
  * @brief 销毁页表 (i686, 兼容旧接口)
  * @param page_table_phys 页表物理地址
- * @deprecated 使用 hal_mmu_destroy_space() 代替
+ * @deprecated 使用 hal::Mmu::destroy_space() 代替
  */
-void hal_mmu_destroy_page_table(paddr_t page_table_phys) {
-    hal_mmu_destroy_space((hal_addr_space_t)page_table_phys);
+void hal::Mmu::destroy_page_table(paddr_t page_table_phys) {
+    hal::Mmu::destroy_space((hal_addr_space_t)page_table_phys);
 }
 
 /* ============================================================================
@@ -729,7 +731,7 @@ void hal_mmu_destroy_page_table(paddr_t page_table_phys) {
  * i686 理论上支持 4MB 大页（PSE），但此实现返回 false
  * 表示不支持原生 2MB 大页，将使用回退方式。
  */
-bool hal_mmu_huge_pages_supported(void) {
+bool hal::Mmu::huge_pages_supported() {
     return false;  /* Use fallback implementation */
 }
 
@@ -754,15 +756,15 @@ static inline bool is_huge_page_aligned(uint32_t addr) {
  * 
  * @see Requirements 8.2, 8.4
  */
-bool hal_mmu_map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags) {
+bool hal::Mmu::map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags) {
     /* Validate 2MB alignment */
     if (!is_huge_page_aligned((uint32_t)virt) || !is_huge_page_aligned((uint32_t)phys)) {
-        LOG_ERROR_MSG("hal_mmu_map_huge: addresses not 2MB-aligned (virt=0x%lx, phys=0x%llx)\n",
+        LOG_ERROR_MSG("hal::Mmu::map_huge: addresses not 2MB-aligned (virt=0x%lx, phys=0x%llx)\n",
                       (unsigned long)virt, (unsigned long long)phys);
         return false;
     }
     
-    LOG_DEBUG_MSG("hal_mmu_map_huge (i686 fallback): Mapping 512 x 4KB pages at virt=0x%lx\n",
+    LOG_DEBUG_MSG("hal::Mmu::map_huge (i686 fallback): Mapping 512 x 4KB pages at virt=0x%lx\n",
                   (unsigned long)virt);
     
     /* Map 512 individual 4KB pages */
@@ -770,11 +772,11 @@ bool hal_mmu_map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32
         vaddr_t page_virt = virt + (i * PAGE_SIZE);
         paddr_t page_phys = phys + (i * PAGE_SIZE);
         
-        if (!hal_mmu_map(space, page_virt, page_phys, flags)) {
+        if (!hal::Mmu::map(space, page_virt, page_phys, flags)) {
             /* Rollback on failure */
-            LOG_ERROR_MSG("hal_mmu_map_huge: Failed at page %u, rolling back\n", i);
+            LOG_ERROR_MSG("hal::Mmu::map_huge: Failed at page %u, rolling back\n", i);
             for (uint32_t j = 0; j < i; j++) {
-                hal_mmu_unmap(space, virt + (j * PAGE_SIZE));
+                hal::Mmu::unmap(space, virt + (j * PAGE_SIZE));
             }
             return false;
         }
@@ -792,27 +794,27 @@ bool hal_mmu_map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32
  * 
  * @see Requirements 8.2
  */
-paddr_t hal_mmu_unmap_huge(hal_addr_space_t space, vaddr_t virt) {
+paddr_t hal::Mmu::unmap_huge(hal_addr_space_t space, vaddr_t virt) {
     /* Validate 2MB alignment */
     if (!is_huge_page_aligned((uint32_t)virt)) {
-        LOG_ERROR_MSG("hal_mmu_unmap_huge: address not 2MB-aligned (virt=0x%lx)\n",
+        LOG_ERROR_MSG("hal::Mmu::unmap_huge: address not 2MB-aligned (virt=0x%lx)\n",
                       (unsigned long)virt);
         return PADDR_INVALID;
     }
     
     /* Get the physical address of the first page */
     paddr_t first_phys;
-    if (!hal_mmu_query(space, virt, &first_phys, NULL)) {
+    if (!hal::Mmu::query(space, virt, &first_phys, NULL)) {
         return PADDR_INVALID;
     }
     
-    LOG_DEBUG_MSG("hal_mmu_unmap_huge (i686 fallback): Unmapping 512 x 4KB pages at virt=0x%lx\n",
+    LOG_DEBUG_MSG("hal::Mmu::unmap_huge (i686 fallback): Unmapping 512 x 4KB pages at virt=0x%lx\n",
                   (unsigned long)virt);
     
     /* Unmap all 512 pages */
     for (uint32_t i = 0; i < HUGE_PAGE_FRAMES_I686; i++) {
         vaddr_t page_virt = virt + (i * PAGE_SIZE);
-        hal_mmu_unmap(space, page_virt);
+        hal::Mmu::unmap(space, page_virt);
     }
     
     return first_phys;
@@ -827,7 +829,7 @@ paddr_t hal_mmu_unmap_huge(hal_addr_space_t space, vaddr_t virt) {
  * 
  * @see Requirements 8.3
  */
-bool hal_mmu_is_huge_page(hal_addr_space_t space, vaddr_t virt) {
+bool hal::Mmu::is_huge_page(hal_addr_space_t space, vaddr_t virt) {
     (void)space;
     (void)virt;
     /* i686 fallback implementation doesn't use native huge pages */

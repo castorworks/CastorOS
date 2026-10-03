@@ -21,6 +21,7 @@
  */
 
 #include <hal/hal.h>
+#include <hal/hal_syscall.h>
 #include <kernel/syscall.h>
 #include <gdt64.h>
 #include <idt64.h>
@@ -32,7 +33,7 @@ extern "C" void syscall_entry_compat(void);
 extern "C" void syscall_init_msr(void);
 extern "C" void set_kernel_stack(uint64_t stack_ptr);
 
-/* Global syscall handler (set by hal_syscall_init) */
+/* Global syscall handler (set by hal::Syscall::init) */
 static hal_syscall_handler_t g_syscall_handler = NULL;
 
 /**
@@ -44,7 +45,7 @@ static hal_syscall_handler_t g_syscall_handler = NULL;
  *
  * Requirements: 7.5, 8.1 - System call entry mechanism
  */
-void hal_syscall_init(hal_syscall_handler_t handler) {
+void hal::Syscall::init(hal_syscall_handler_t handler) {
     LOG_INFO_MSG("Initializing x86_64 system call mechanism (SYSCALL/SYSRET)...\n");
     
     /* Store the handler for potential future use */

@@ -307,9 +307,9 @@ bool kernel::Scheduler::setup_user_stack(task_t *task) {
             /* Cleanup already allocated pages */
             for (uint32_t j = 0; j < i; j++) {
                 uintptr_t cleanup_virt = stack_bottom + ((uintptr_t)j * PAGE_SIZE);
-                paddr_t phys = hal_mmu_unmap(space, cleanup_virt);
+                paddr_t phys = hal::Mmu::unmap(space, cleanup_virt);
                 if (phys != PADDR_INVALID) {
-                    hal_mmu_flush_tlb(cleanup_virt);
+                    hal::Mmu::flush_tlb(cleanup_virt);
                     mm::Pmm::free_frame(phys);
                 }
             }
@@ -328,9 +328,9 @@ bool kernel::Scheduler::setup_user_stack(task_t *task) {
             /* Cleanup already allocated pages */
             for (uint32_t j = 0; j < i; j++) {
                 uintptr_t cleanup_virt = stack_bottom + ((uintptr_t)j * PAGE_SIZE);
-                paddr_t cleanup_phys = hal_mmu_unmap(space, cleanup_virt);
+                paddr_t cleanup_phys = hal::Mmu::unmap(space, cleanup_virt);
                 if (cleanup_phys != PADDR_INVALID) {
-                    hal_mmu_flush_tlb(cleanup_virt);
+                    hal::Mmu::flush_tlb(cleanup_virt);
                     mm::Pmm::free_frame(cleanup_phys);
                 }
             }
@@ -340,7 +340,7 @@ bool kernel::Scheduler::setup_user_stack(task_t *task) {
         
         /* Map to user space (user read-write) */
         uint32_t flags = HAL_PAGE_PRESENT | HAL_PAGE_WRITE | HAL_PAGE_USER;
-        if (!hal_mmu_map(space, virt_addr, phys_addr, flags)) {
+        if (!hal::Mmu::map(space, virt_addr, phys_addr, flags)) {
             LOG_ERROR_MSG("kernel::Scheduler::setup_user_stack: Failed to map page %u/%u at 0x%llx\n", 
                          i + 1, num_pages, (unsigned long long)virt_addr);
             
@@ -350,9 +350,9 @@ bool kernel::Scheduler::setup_user_stack(task_t *task) {
             /* Cleanup previously mapped pages */
             for (uint32_t j = 0; j < i; j++) {
                 uintptr_t cleanup_virt = stack_bottom + ((uintptr_t)j * PAGE_SIZE);
-                paddr_t cleanup_phys = hal_mmu_unmap(space, cleanup_virt);
+                paddr_t cleanup_phys = hal::Mmu::unmap(space, cleanup_virt);
                 if (cleanup_phys != PADDR_INVALID) {
-                    hal_mmu_flush_tlb(cleanup_virt);
+                    hal::Mmu::flush_tlb(cleanup_virt);
                     mm::Pmm::free_frame(cleanup_phys);
                 }
             }
@@ -773,7 +773,7 @@ uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entr
  * @brief Create a user process with a new address space (ARM64)
  * 
  * This is a convenience function that creates a new address space using
- * hal_mmu_create_space() and then creates a user process in that space.
+ * hal::Mmu::create_space() and then creates a user process in that space.
  * 
  * **Feature: arm64-kernel-integration**
  * **Validates: Requirements 6.1**
@@ -791,7 +791,7 @@ uint32_t task_create_user_process_arm64(const char *name, uintptr_t entry_point,
     }
     
     /* Create a new address space for the user process */
-    hal_addr_space_t addr_space = hal_mmu_create_space();
+    hal_addr_space_t addr_space = hal::Mmu::create_space();
     if (addr_space == HAL_ADDR_SPACE_INVALID) {
         LOG_ERROR_MSG("task_create_user_process_arm64: Failed to create address space\n");
         return 0;
@@ -808,7 +808,7 @@ uint32_t task_create_user_process_arm64(const char *name, uintptr_t entry_point,
     
     if (pid == 0) {
         /* Failed to create process, destroy the address space */
-        hal_mmu_destroy_space(addr_space);
+        hal::Mmu::destroy_space(addr_space);
         LOG_ERROR_MSG("task_create_user_process_arm64: Failed to create process\n");
         return 0;
     }
@@ -831,7 +831,7 @@ static void idle_task_loop(void) {
     
     while (1) {
         // 暂停 CPU 直到下一次中断
-        hal_cpu_halt();
+        hal::Cpu::halt();
         
         // 在中断返回后，主动让出 CPU
         // 这样如果有任务被唤醒，它们就能得到执行
@@ -1173,7 +1173,7 @@ void task_exit(uint32_t exit_code) {
         interrupts_restore(prev_state);
         // 无限循环，因为函数标记为 noreturn
         while (1) {
-            hal_cpu_halt();
+            hal::Cpu::halt();
         }
     }
     
@@ -1245,7 +1245,7 @@ void task_exit(uint32_t exit_code) {
     
     // 永远不会执行到这里
     while (1) {
-        hal_cpu_halt();
+        hal::Cpu::halt();
     }
 }
 

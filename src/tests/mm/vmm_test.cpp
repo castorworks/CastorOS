@@ -1392,7 +1392,7 @@ TEST_CASE(test_pbt_vmm_mmio_nocache_flag) {
         uint32_t flags;
         
         // Query the mapping
-        bool mapped = hal_mmu_query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)virt, &phys, &flags);
+        bool mapped = hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)virt, &phys, &flags);
         
         // Property: Page should be mapped
         ASSERT_TRUE(mapped);
@@ -1415,7 +1415,7 @@ TEST_CASE(test_pbt_vmm_mmio_nocache_flag) {
         uintptr_t virt = virt_base + (i * PAGE_SIZE);
         paddr_t phys;
         
-        bool still_mapped = hal_mmu_query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)virt, &phys, NULL);
+        bool still_mapped = hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)virt, &phys, NULL);
         ASSERT_FALSE(still_mapped);
     }
 }
@@ -1447,8 +1447,8 @@ TEST_CASE(test_pbt_vmm_mmio_multiple_mappings) {
     paddr_t p1, p2;
     uint32_t f1, f2;
     
-    ASSERT_TRUE(hal_mmu_query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)(virt1 & ~(PAGE_SIZE-1)), &p1, &f1));
-    ASSERT_TRUE(hal_mmu_query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)(virt2 & ~(PAGE_SIZE-1)), &p2, &f2));
+    ASSERT_TRUE(hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)(virt1 & ~(PAGE_SIZE-1)), &p1, &f1));
+    ASSERT_TRUE(hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)(virt2 & ~(PAGE_SIZE-1)), &p2, &f2));
     
     ASSERT_TRUE((f1 & HAL_PAGE_NOCACHE) != 0);
     ASSERT_TRUE((f2 & HAL_PAGE_NOCACHE) != 0);

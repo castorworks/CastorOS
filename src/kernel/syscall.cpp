@@ -11,6 +11,7 @@
 // ============================================================================
 
 #include <kernel/syscall.h>
+#include <hal/hal_syscall.h>
 #include <kernel/syscalls/fs.h>
 #include <kernel/syscalls/process.h>
 #include <kernel/syscalls/time.h>
@@ -573,7 +574,7 @@ void syscall_init(void) {
 #endif
     
     /* Initialize architecture-specific system call entry mechanism via HAL */
-    hal_syscall_init(NULL);
+    hal::Syscall::init(NULL);
     
 #if defined(ARCH_ARM64)
     LOG_INFO_MSG("System calls initialized (network syscalls not available on ARM64)\n");

@@ -3,7 +3,7 @@
 // ============================================================================
 // 
 // 验证 fork/exec 在各架构上的正确工作：
-//   - Task 36.1: 测试 fork 系统调用 (hal_mmu_clone_space COW)
+//   - Task 36.1: 测试 fork 系统调用 (hal::Mmu::clone_space COW)
 //   - Task 36.2: 测试 exec 系统调用 (程序加载)
 // 
 // **Feature: multi-arch-support**
@@ -31,23 +31,23 @@
 #define FORK_TEST_PAGE_COUNT  8
 
 // ============================================================================
-// Task 36.1: Fork System Call Tests (hal_mmu_clone_space COW)
+// Task 36.1: Fork System Call Tests (hal::Mmu::clone_space COW)
 // **Feature: multi-arch-support**
 // **Validates: Requirements 5.5, mm-refactor 4.4, 5.3**
 // ============================================================================
 
 /**
- * Test: hal_mmu_clone_space creates valid address space
+ * Test: hal::Mmu::clone_space creates valid address space
  * 
  * Verifies that cloning an address space produces a valid, distinct
  * address space handle.
  */
 TEST_CASE(test_fork_clone_space_creates_valid_space) {
-    hal_addr_space_t current = hal_mmu_current_space();
+    hal_addr_space_t current = hal::Mmu::current_space();
     ASSERT_NE_U(current, HAL_ADDR_SPACE_INVALID);
     
     // Clone the current address space
-    hal_addr_space_t cloned = hal_mmu_clone_space(current);
+    hal_addr_space_t cloned = hal::Mmu::clone_space(current);
     
     // Property: Clone must succeed
     ASSERT_NE_U(cloned, HAL_ADDR_SPACE_INVALID);
@@ -56,17 +56,17 @@ TEST_CASE(test_fork_clone_space_creates_valid_space) {
     ASSERT_NE_U(cloned, current);
     
     // Clean up
-    hal_mmu_destroy_space(cloned);
+    hal::Mmu::destroy_space(cloned);
 }
 
 /**
- * Test: hal_mmu_clone_space shares physical pages via COW
+ * Test: hal::Mmu::clone_space shares physical pages via COW
  * 
  * *For any* mapped user page, after clone, both parent and child
  * SHALL map to the same physical address with COW flag set.
  */
 TEST_CASE(test_fork_cow_shares_physical_pages) {
-    hal_addr_space_t current = hal_mmu_current_space();
+    hal_addr_space_t current = hal::Mmu::current_space();
     
     // Allocate and map a test page
     paddr_t frame = mm::Pmm::alloc_frame();
@@ -75,30 +75,30 @@ TEST_CASE(test_fork_cow_shares_physical_pages) {
     vaddr_t test_vaddr = FORK_TEST_VADDR_BASE;
     
     // Skip if already mapped
-    if (hal_mmu_query(current, test_vaddr, NULL, NULL)) {
+    if (hal::Mmu::query(current, test_vaddr, NULL, NULL)) {
         mm::Pmm::free_frame(frame);
         return;
     }
     
     // Map with write permission
     uint32_t flags = HAL_PAGE_PRESENT | HAL_PAGE_USER | HAL_PAGE_WRITE;
-    bool map_result = hal_mmu_map(current, test_vaddr, frame, flags);
+    bool map_result = hal::Mmu::map(current, test_vaddr, frame, flags);
     ASSERT_TRUE(map_result);
-    hal_mmu_flush_tlb(test_vaddr);
+    hal::Mmu::flush_tlb(test_vaddr);
     
     // Get initial reference count
     uint32_t initial_refcount = mm::Pmm::frame_get_refcount(frame);
     
     // Clone the address space
-    hal_addr_space_t cloned = hal_mmu_clone_space(current);
+    hal_addr_space_t cloned = hal::Mmu::clone_space(current);
     ASSERT_NE_U(cloned, HAL_ADDR_SPACE_INVALID);
     
     // Query both spaces
     paddr_t parent_phys = 0, child_phys = 0;
     uint32_t parent_flags = 0, child_flags = 0;
     
-    bool parent_mapped = hal_mmu_query(current, test_vaddr, &parent_phys, &parent_flags);
-    bool child_mapped = hal_mmu_query(cloned, test_vaddr, &child_phys, &child_flags);
+    bool parent_mapped = hal::Mmu::query(current, test_vaddr, &parent_phys, &parent_flags);
+    bool child_mapped = hal::Mmu::query(cloned, test_vaddr, &child_phys, &child_flags);
     
     // Property: Both must be mapped
     ASSERT_TRUE(parent_mapped);
@@ -121,9 +121,9 @@ TEST_CASE(test_fork_cow_shares_physical_pages) {
     ASSERT_TRUE((child_flags & HAL_PAGE_WRITE) == 0);
     
     // Clean up
-    hal_mmu_destroy_space(cloned);
-    hal_mmu_unmap(current, test_vaddr);
-    hal_mmu_flush_tlb(test_vaddr);
+    hal::Mmu::destroy_space(cloned);
+    hal::Mmu::unmap(current, test_vaddr);
+    hal::Mmu::flush_tlb(test_vaddr);
     mm::Pmm::free_frame(frame);
 }
 
@@ -134,7 +134,7 @@ TEST_CASE(test_fork_cow_shares_physical_pages) {
  * clone and destroy operations.
  */
 TEST_CASE(test_fork_cow_reference_counting) {
-    hal_addr_space_t current = hal_mmu_current_space();
+    hal_addr_space_t current = hal::Mmu::current_space();
     
     // Allocate and map a test page
     paddr_t frame = mm::Pmm::alloc_frame();
@@ -142,46 +142,46 @@ TEST_CASE(test_fork_cow_reference_counting) {
     
     vaddr_t test_vaddr = FORK_TEST_VADDR_BASE + PAGE_SIZE;
     
-    if (hal_mmu_query(current, test_vaddr, NULL, NULL)) {
+    if (hal::Mmu::query(current, test_vaddr, NULL, NULL)) {
         mm::Pmm::free_frame(frame);
         return;
     }
     
     uint32_t flags = HAL_PAGE_PRESENT | HAL_PAGE_USER | HAL_PAGE_WRITE;
-    ASSERT_TRUE(hal_mmu_map(current, test_vaddr, frame, flags));
-    hal_mmu_flush_tlb(test_vaddr);
+    ASSERT_TRUE(hal::Mmu::map(current, test_vaddr, frame, flags));
+    hal::Mmu::flush_tlb(test_vaddr);
     
     // Initial refcount should be 1
     uint32_t refcount1 = mm::Pmm::frame_get_refcount(frame);
     ASSERT_EQ_U(refcount1, 1);
     
     // Clone once - refcount should be 2
-    hal_addr_space_t clone1 = hal_mmu_clone_space(current);
+    hal_addr_space_t clone1 = hal::Mmu::clone_space(current);
     ASSERT_NE_U(clone1, HAL_ADDR_SPACE_INVALID);
     
     uint32_t refcount2 = mm::Pmm::frame_get_refcount(frame);
     ASSERT_EQ_U(refcount2, 2);
     
     // Clone again - refcount should be 3
-    hal_addr_space_t clone2 = hal_mmu_clone_space(current);
+    hal_addr_space_t clone2 = hal::Mmu::clone_space(current);
     ASSERT_NE_U(clone2, HAL_ADDR_SPACE_INVALID);
     
     uint32_t refcount3 = mm::Pmm::frame_get_refcount(frame);
     ASSERT_EQ_U(refcount3, 3);
     
     // Destroy one clone - refcount should be 2
-    hal_mmu_destroy_space(clone2);
+    hal::Mmu::destroy_space(clone2);
     uint32_t refcount4 = mm::Pmm::frame_get_refcount(frame);
     ASSERT_EQ_U(refcount4, 2);
     
     // Destroy other clone - refcount should be 1
-    hal_mmu_destroy_space(clone1);
+    hal::Mmu::destroy_space(clone1);
     uint32_t refcount5 = mm::Pmm::frame_get_refcount(frame);
     ASSERT_EQ_U(refcount5, 1);
     
     // Clean up
-    hal_mmu_unmap(current, test_vaddr);
-    hal_mmu_flush_tlb(test_vaddr);
+    hal::Mmu::unmap(current, test_vaddr);
+    hal::Mmu::flush_tlb(test_vaddr);
     mm::Pmm::free_frame(frame);
 }
 
@@ -191,7 +191,7 @@ TEST_CASE(test_fork_cow_reference_counting) {
  * Verifies that cloning works correctly with multiple mapped pages.
  */
 TEST_CASE(test_fork_cow_multiple_pages) {
-    hal_addr_space_t current = hal_mmu_current_space();
+    hal_addr_space_t current = hal::Mmu::current_space();
     
     paddr_t frames[FORK_TEST_PAGE_COUNT];
     vaddr_t vaddrs[FORK_TEST_PAGE_COUNT];
@@ -206,14 +206,14 @@ TEST_CASE(test_fork_cow_multiple_pages) {
         
         vaddrs[i] = FORK_TEST_VADDR_BASE + (i + 2) * PAGE_SIZE;
         
-        if (hal_mmu_query(current, vaddrs[i], NULL, NULL)) {
+        if (hal::Mmu::query(current, vaddrs[i], NULL, NULL)) {
             mm::Pmm::free_frame(frames[i]);
             continue;
         }
         
         uint32_t flags = HAL_PAGE_PRESENT | HAL_PAGE_USER | HAL_PAGE_WRITE;
-        if (hal_mmu_map(current, vaddrs[i], frames[i], flags)) {
-            hal_mmu_flush_tlb(vaddrs[i]);
+        if (hal::Mmu::map(current, vaddrs[i], frames[i], flags)) {
+            hal::Mmu::flush_tlb(vaddrs[i]);
             mapped_count++;
         } else {
             mm::Pmm::free_frame(frames[i]);
@@ -224,7 +224,7 @@ TEST_CASE(test_fork_cow_multiple_pages) {
     ASSERT_TRUE(mapped_count > 0);
     
     // Clone the address space
-    hal_addr_space_t cloned = hal_mmu_clone_space(current);
+    hal_addr_space_t cloned = hal::Mmu::clone_space(current);
     ASSERT_NE_U(cloned, HAL_ADDR_SPACE_INVALID);
     
     // Verify all mapped pages are COW-shared
@@ -232,8 +232,8 @@ TEST_CASE(test_fork_cow_multiple_pages) {
         paddr_t parent_phys = 0, child_phys = 0;
         uint32_t parent_flags = 0, child_flags = 0;
         
-        bool parent_ok = hal_mmu_query(current, vaddrs[i], &parent_phys, &parent_flags);
-        bool child_ok = hal_mmu_query(cloned, vaddrs[i], &child_phys, &child_flags);
+        bool parent_ok = hal::Mmu::query(current, vaddrs[i], &parent_phys, &parent_flags);
+        bool child_ok = hal::Mmu::query(cloned, vaddrs[i], &child_phys, &child_flags);
         
         // Property: Both must be mapped
         ASSERT_TRUE(parent_ok);
@@ -252,11 +252,11 @@ TEST_CASE(test_fork_cow_multiple_pages) {
     }
     
     // Clean up
-    hal_mmu_destroy_space(cloned);
+    hal::Mmu::destroy_space(cloned);
     
     for (uint32_t i = 0; i < mapped_count; i++) {
-        hal_mmu_unmap(current, vaddrs[i]);
-        hal_mmu_flush_tlb(vaddrs[i]);
+        hal::Mmu::unmap(current, vaddrs[i]);
+        hal::Mmu::flush_tlb(vaddrs[i]);
         mm::Pmm::free_frame(frames[i]);
     }
 }
@@ -267,10 +267,10 @@ TEST_CASE(test_fork_cow_multiple_pages) {
  * Verifies that kernel mappings are shared directly without COW.
  */
 TEST_CASE(test_fork_kernel_space_shared) {
-    hal_addr_space_t current = hal_mmu_current_space();
+    hal_addr_space_t current = hal::Mmu::current_space();
     
     // Clone the address space
-    hal_addr_space_t cloned = hal_mmu_clone_space(current);
+    hal_addr_space_t cloned = hal::Mmu::clone_space(current);
     ASSERT_NE_U(cloned, HAL_ADDR_SPACE_INVALID);
     
     // Test a kernel address
@@ -279,8 +279,8 @@ TEST_CASE(test_fork_kernel_space_shared) {
     paddr_t parent_phys = 0, child_phys = 0;
     uint32_t parent_flags = 0, child_flags = 0;
     
-    bool parent_mapped = hal_mmu_query(current, kernel_addr, &parent_phys, &parent_flags);
-    bool child_mapped = hal_mmu_query(cloned, kernel_addr, &child_phys, &child_flags);
+    bool parent_mapped = hal::Mmu::query(current, kernel_addr, &parent_phys, &parent_flags);
+    bool child_mapped = hal::Mmu::query(cloned, kernel_addr, &child_phys, &child_flags);
     
     // Property: Kernel space must be mapped in both
     ASSERT_TRUE(parent_mapped);
@@ -295,13 +295,13 @@ TEST_CASE(test_fork_kernel_space_shared) {
     ASSERT_TRUE((child_flags & HAL_PAGE_COW) == 0);
     
     // Clean up
-    hal_mmu_destroy_space(cloned);
+    hal::Mmu::destroy_space(cloned);
 }
 
 /**
  * Test: mm::Vmm::clone_page_directory wrapper works correctly
  * 
- * Tests the VMM-level clone function that wraps hal_mmu_clone_space.
+ * Tests the VMM-level clone function that wraps hal::Mmu::clone_space.
  */
 TEST_CASE(test_fork_vmm_clone_page_directory) {
     // Create a new page directory
@@ -365,7 +365,7 @@ TEST_CASE(test_exec_user_mode_transition_setup) {
 /**
  * Test: Context initialization for user mode is correct
  * 
- * Verifies that hal_context_init correctly sets up a user-mode context.
+ * Verifies that hal::Context::init correctly sets up a user-mode context.
  */
 TEST_CASE(test_exec_context_init_user_mode) {
 #if defined(ARCH_I686)
@@ -374,7 +374,7 @@ TEST_CASE(test_exec_context_init_user_mode) {
     uintptr_t entry = 0x08048000;  // Typical ELF entry point
     uintptr_t stack = 0x7FFFF000;  // User stack
     
-    hal_context_init((hal_context_t*)&ctx, entry, stack, true);
+    hal::Context::init((hal_context_t*)&ctx, entry, stack, true);
     
     // Property: Entry point must be set
     ASSERT_EQ_U(ctx.eip, entry);
@@ -398,7 +398,7 @@ TEST_CASE(test_exec_context_init_user_mode) {
     uint64_t entry = 0x00400000ULL;
     uint64_t stack = 0x7FFFFFFFE000ULL;
     
-    hal_context_init((hal_context_t*)&ctx, entry, stack, true);
+    hal::Context::init((hal_context_t*)&ctx, entry, stack, true);
     
     // Property: Entry point must be set
     ASSERT_EQ_U(ctx.rip, entry);
@@ -421,7 +421,7 @@ TEST_CASE(test_exec_context_init_user_mode) {
     uint64_t entry = 0x00400000ULL;
     uint64_t stack = 0x7FFFFFFFE000ULL;
     
-    hal_context_init((hal_context_t*)&ctx, entry, stack, true);
+    hal::Context::init((hal_context_t*)&ctx, entry, stack, true);
     
     // Property: Entry point must be set
     ASSERT_EQ_U(ctx.pc, entry);
@@ -453,7 +453,7 @@ TEST_CASE(test_exec_page_directory_creation) {
     vaddr_t kernel_addr = KERNEL_VIRTUAL_BASE + 0x100000;
     
     paddr_t phys = 0;
-    bool mapped = hal_mmu_query(space, kernel_addr, &phys, NULL);
+    bool mapped = hal::Mmu::query(space, kernel_addr, &phys, NULL);
     ASSERT_TRUE(mapped);
     ASSERT_NE_U(phys, 0);
     
@@ -488,7 +488,7 @@ TEST_CASE(test_exec_user_stack_setup) {
     paddr_t queried_phys = 0;
     uint32_t queried_flags = 0;
     
-    bool query_ok = hal_mmu_query(space, stack_vaddr, &queried_phys, &queried_flags);
+    bool query_ok = hal::Mmu::query(space, stack_vaddr, &queried_phys, &queried_flags);
     ASSERT_TRUE(query_ok);
     ASSERT_EQ_U(queried_phys, stack_frame);
     
@@ -530,7 +530,7 @@ TEST_CASE(test_exec_program_code_mapping) {
     paddr_t queried_phys = 0;
     uint32_t queried_flags = 0;
     
-    bool query_ok = hal_mmu_query(space, code_vaddr, &queried_phys, &queried_flags);
+    bool query_ok = hal::Mmu::query(space, code_vaddr, &queried_phys, &queried_flags);
     ASSERT_TRUE(query_ok);
     ASSERT_EQ_U(queried_phys, code_frame);
     

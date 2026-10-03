@@ -96,7 +96,7 @@ TEST_CASE(test_user_stack_full_allocation_and_release) {
  * for the architecture's register set.
  */
 TEST_CASE(test_pbt_context_size) {
-    size_t ctx_size = hal_context_size();
+    size_t ctx_size = hal::Context::size();
     
     // For i686, context should be 72 bytes (18 x 4-byte fields)
     // This includes: gs, fs, es, ds (4x4), edi-eax (8x4), eip, cs, eflags, esp, ss, cr3 (6x4)
@@ -127,10 +127,10 @@ TEST_CASE(test_pbt_context_init_segments) {
     cpu_context_t user_ctx;
     
     // Initialize kernel context
-    hal_context_init((hal_context_t*)&kernel_ctx, 0x80100000, 0x80200000, false);
+    hal::Context::init((hal_context_t*)&kernel_ctx, 0x80100000, 0x80200000, false);
     
     // Initialize user context
-    hal_context_init((hal_context_t*)&user_ctx, 0x00100000, 0x7FFFF000, true);
+    hal::Context::init((hal_context_t*)&user_ctx, 0x00100000, 0x7FFFF000, true);
     
     // Kernel context: CS should be 0x08 (kernel code segment)
     ASSERT_EQ_U(kernel_ctx.cs, 0x08);
@@ -150,10 +150,10 @@ TEST_CASE(test_pbt_context_init_segments) {
     x86_64_context_t user_ctx;
     
     // Initialize kernel context (use 64-bit addresses)
-    hal_context_init((hal_context_t*)&kernel_ctx, 0xFFFF800000100000ULL, 0xFFFF800000200000ULL, false);
+    hal::Context::init((hal_context_t*)&kernel_ctx, 0xFFFF800000100000ULL, 0xFFFF800000200000ULL, false);
     
     // Initialize user context
-    hal_context_init((hal_context_t*)&user_ctx, 0x00400000ULL, 0x7FFFFFFFE000ULL, true);
+    hal::Context::init((hal_context_t*)&user_ctx, 0x00400000ULL, 0x7FFFFFFFE000ULL, true);
     
     // Kernel context: CS should be 0x08 (kernel code segment)
     ASSERT_EQ_U(kernel_ctx.cs, 0x08);
@@ -185,7 +185,7 @@ TEST_CASE(test_pbt_context_init_entry_stack) {
     uintptr_t test_entry = 0x00400000;
     uintptr_t test_stack = 0x7FFFF000;
     
-    hal_context_init((hal_context_t*)&ctx, test_entry, test_stack, true);
+    hal::Context::init((hal_context_t*)&ctx, test_entry, test_stack, true);
     
     // For user context, EIP should be the entry point
     ASSERT_EQ_U(ctx.eip, test_entry);
@@ -198,7 +198,7 @@ TEST_CASE(test_pbt_context_init_entry_stack) {
     uint64_t test_entry = 0x00400000ULL;
     uint64_t test_stack = 0x7FFFFFFFE000ULL;
     
-    hal_context_init((hal_context_t*)&ctx, test_entry, test_stack, true);
+    hal::Context::init((hal_context_t*)&ctx, test_entry, test_stack, true);
     
     // For user context, RIP should be the entry point
     ASSERT_EQ_U(ctx.rip, test_entry);
@@ -350,13 +350,13 @@ TEST_CASE(test_pbt_x86_64_address_space_switch_cr3_init) {
     x86_64_context_t ctx;
     
     // Initialize a user context
-    hal_context_init((hal_context_t*)&ctx, 0x00400000ULL, 0x7FFFFFFFE000ULL, true);
+    hal::Context::init((hal_context_t*)&ctx, 0x00400000ULL, 0x7FFFFFFFE000ULL, true);
     
     // CR3 should be 0 after initialization (caller sets it)
     ASSERT_EQ_U(ctx.cr3, 0);
     
     // Initialize a kernel context
-    hal_context_init((hal_context_t*)&ctx, 0xFFFF800000100000ULL, 0xFFFF800000200000ULL, false);
+    hal::Context::init((hal_context_t*)&ctx, 0xFFFF800000100000ULL, 0xFFFF800000200000ULL, false);
     
     // CR3 should still be 0 after initialization
     ASSERT_EQ_U(ctx.cr3, 0);
@@ -382,7 +382,7 @@ TEST_CASE(test_pbt_x86_64_address_space_switch_cr3_storage) {
     
     for (size_t i = 0; i < sizeof(test_addresses) / sizeof(test_addresses[0]); i++) {
         // Initialize context
-        hal_context_init((hal_context_t*)&ctx, 0x00400000ULL, 0x7FFFFFFFE000ULL, true);
+        hal::Context::init((hal_context_t*)&ctx, 0x00400000ULL, 0x7FFFFFFFE000ULL, true);
         
         // Set CR3 to test address
         ctx.cr3 = test_addresses[i];
@@ -405,8 +405,8 @@ TEST_CASE(test_pbt_x86_64_address_space_switch_context_size) {
     // Context size must be 168 bytes (21 x 8-byte fields)
     ASSERT_EQ_U(sizeof(x86_64_context_t), 168);
     
-    // Verify this matches what hal_context_size() returns
-    ASSERT_EQ_U(hal_context_size(), 168);
+    // Verify this matches what hal::Context::size() returns
+    ASSERT_EQ_U(hal::Context::size(), 168);
 }
 #endif /* ARCH_X86_64 */
 
@@ -433,8 +433,8 @@ TEST_CASE(test_pbt_arm64_context_size) {
     // Total: 280 bytes
     ASSERT_EQ_U(sizeof(arm64_context_t), 280);
     
-    // Verify this matches what hal_context_size() returns
-    ASSERT_EQ_U(hal_context_size(), 280);
+    // Verify this matches what hal::Context::size() returns
+    ASSERT_EQ_U(hal::Context::size(), 280);
 }
 
 /**
@@ -478,10 +478,10 @@ TEST_CASE(test_pbt_arm64_context_init_pstate) {
     arm64_context_t user_ctx;
     
     // Initialize kernel context
-    hal_context_init((hal_context_t*)&kernel_ctx, 0xFFFF000000100000ULL, 0xFFFF000000200000ULL, false);
+    hal::Context::init((hal_context_t*)&kernel_ctx, 0xFFFF000000100000ULL, 0xFFFF000000200000ULL, false);
     
     // Initialize user context
-    hal_context_init((hal_context_t*)&user_ctx, 0x00400000ULL, 0x7FFFFFFFE000ULL, true);
+    hal::Context::init((hal_context_t*)&user_ctx, 0x00400000ULL, 0x7FFFFFFFE000ULL, true);
     
     // Kernel context: PSTATE should indicate EL1h (0x05)
     ASSERT_EQ_U(kernel_ctx.pstate & 0x0F, ARM64_PSTATE_EL1h);
@@ -503,7 +503,7 @@ TEST_CASE(test_pbt_arm64_context_init_entry_stack) {
     uint64_t test_entry = 0x00400000ULL;
     uint64_t test_stack = 0x7FFFFFFFE000ULL;
     
-    hal_context_init((hal_context_t*)&ctx, test_entry, test_stack, true);
+    hal::Context::init((hal_context_t*)&ctx, test_entry, test_stack, true);
     
     // For user context, PC should be the entry point
     ASSERT_EQ_U(ctx.pc, test_entry);
@@ -525,7 +525,7 @@ TEST_CASE(test_pbt_arm64_kernel_context_entry_in_x19) {
     uint64_t test_entry = 0xFFFF000000100000ULL;
     uint64_t test_stack = 0xFFFF000000200000ULL;
     
-    hal_context_init((hal_context_t*)&ctx, test_entry, test_stack, false);
+    hal::Context::init((hal_context_t*)&ctx, test_entry, test_stack, false);
     
     // For kernel context, X19 should contain the actual entry function
     ASSERT_EQ_U(ctx.x[19], test_entry);
@@ -569,13 +569,13 @@ TEST_CASE(test_pbt_arm64_address_space_switch_ttbr0_init) {
     arm64_context_t ctx;
     
     // Initialize a user context
-    hal_context_init((hal_context_t*)&ctx, 0x00400000ULL, 0x7FFFFFFFE000ULL, true);
+    hal::Context::init((hal_context_t*)&ctx, 0x00400000ULL, 0x7FFFFFFFE000ULL, true);
     
     // TTBR0 should be 0 after initialization (caller sets it)
     ASSERT_EQ_U(ctx.ttbr0, 0);
     
     // Initialize a kernel context
-    hal_context_init((hal_context_t*)&ctx, 0xFFFF000000100000ULL, 0xFFFF000000200000ULL, false);
+    hal::Context::init((hal_context_t*)&ctx, 0xFFFF000000100000ULL, 0xFFFF000000200000ULL, false);
     
     // TTBR0 should still be 0 after initialization
     ASSERT_EQ_U(ctx.ttbr0, 0);
@@ -600,7 +600,7 @@ TEST_CASE(test_pbt_arm64_address_space_switch_ttbr0_storage) {
     
     for (size_t i = 0; i < sizeof(test_addresses) / sizeof(test_addresses[0]); i++) {
         // Initialize context
-        hal_context_init((hal_context_t*)&ctx, 0x00400000ULL, 0x7FFFFFFFE000ULL, true);
+        hal::Context::init((hal_context_t*)&ctx, 0x00400000ULL, 0x7FFFFFFFE000ULL, true);
         
         // Set TTBR0 to test address
         ctx.ttbr0 = test_addresses[i];

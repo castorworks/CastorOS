@@ -14,6 +14,7 @@
 // ============================================================================
 
 #include <hal/hal.h>
+#include <hal/hal_syscall.h>
 #include <kernel/syscall.h>
 #include <idt.h>
 #include <gdt.h>
@@ -22,11 +23,11 @@
 // External assembly entry point
 extern "C" void syscall_handler(void);
 
-// Global syscall handler (set by hal_syscall_init)
+// Global syscall handler (set by hal::Syscall::init)
 static hal_syscall_handler_t g_syscall_handler = NULL;
 
 /**
- * hal_syscall_init - Initialize i686 system call mechanism
+ * hal::Syscall::init - Initialize i686 system call mechanism
  * @handler: The system call dispatcher function
  *
  * This function sets up INT 0x80 as the system call entry point.
@@ -35,7 +36,7 @@ static hal_syscall_handler_t g_syscall_handler = NULL;
  *
  * Requirements: 8.1 - System call entry mechanism
  */
-void hal_syscall_init(hal_syscall_handler_t handler) {
+void hal::Syscall::init(hal_syscall_handler_t handler) {
     LOG_INFO_MSG("Initializing i686 system call mechanism (INT 0x80)...\n");
     
     // Store the handler for potential future use

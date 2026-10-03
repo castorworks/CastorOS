@@ -113,7 +113,7 @@ static inline bool pte64_is_huge(pte64_t entry) {
  * @brief 刷新单个 TLB 条目 (x86_64)
  * @param virt 虚拟地址
  */
-void hal_mmu_flush_tlb(uintptr_t virt) {
+void hal::Mmu::flush_tlb(uintptr_t virt) {
     __asm__ volatile("invlpg (%0)" : : "r"(virt) : "memory");
 }
 
@@ -122,7 +122,7 @@ void hal_mmu_flush_tlb(uintptr_t virt) {
  * 
  * 通过重新加载 CR3 寄存器来刷新整个 TLB
  */
-void hal_mmu_flush_tlb_all(void) {
+void hal::Mmu::flush_tlb_all() {
     __asm__ volatile(
         "mov %%cr3, %%rax\n\t"
         "mov %%rax, %%cr3"
@@ -134,7 +134,7 @@ void hal_mmu_flush_tlb_all(void) {
  * @brief 切换地址空间 (x86_64)
  * @param page_table_phys 新 PML4 的物理地址
  */
-void hal_mmu_switch_space(paddr_t page_table_phys) {
+void hal::Mmu::switch_space(paddr_t page_table_phys) {
     __asm__ volatile("mov %0, %%cr3" : : "r"((uint64_t)page_table_phys) : "memory");
 }
 
@@ -142,7 +142,7 @@ void hal_mmu_switch_space(paddr_t page_table_phys) {
  * @brief 获取页错误地址 (x86_64)
  * @return CR2 寄存器中的错误地址
  */
-vaddr_t hal_mmu_get_fault_addr(void) {
+vaddr_t hal::Mmu::get_fault_addr() {
     uint64_t fault_addr;
     __asm__ volatile("mov %%cr2, %0" : "=r"(fault_addr));
     return (vaddr_t)fault_addr;
@@ -152,7 +152,7 @@ vaddr_t hal_mmu_get_fault_addr(void) {
  * @brief 获取当前 PML4 物理地址 (x86_64)
  * @return CR3 寄存器的值
  */
-paddr_t hal_mmu_get_current_page_table(void) {
+paddr_t hal::Mmu::get_current_page_table() {
     uint64_t cr3;
     __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
     return (paddr_t)cr3;
@@ -388,8 +388,8 @@ const char* x86_64_page_fault_type_str(uint64_t error_code) {
  * 
  * @see Requirements 4.5
  */
-hal_addr_space_t hal_mmu_current_space(void) {
-    return (hal_addr_space_t)hal_mmu_get_current_page_table();
+hal_addr_space_t hal::Mmu::current_space() {
+    return (hal_addr_space_t)hal::Mmu::get_current_page_table();
 }
 
 /**
@@ -440,7 +440,7 @@ static pte64_t* get_pml4(hal_addr_space_t space) {
     paddr_t pml4_phys;
     
     if (space == HAL_ADDR_SPACE_CURRENT || space == 0) {
-        pml4_phys = hal_mmu_get_current_page_table();
+        pml4_phys = hal::Mmu::get_current_page_table();
     } else {
         pml4_phys = space;
     }
@@ -479,7 +479,7 @@ static paddr_t alloc_page_table(void) {
  * 
  * @see Requirements 4.1, 5.1
  */
-bool hal_mmu_query(hal_addr_space_t space, vaddr_t virt, paddr_t *phys, uint32_t *flags) {
+bool hal::Mmu::query(hal_addr_space_t space, vaddr_t virt, paddr_t *phys, uint32_t *flags) {
     /* Validate canonical address */
     if (!x86_64_is_canonical_address((uint64_t)virt)) {
         return false;
@@ -567,19 +567,19 @@ bool hal_mmu_query(hal_addr_space_t space, vaddr_t virt, paddr_t *phys, uint32_t
  * @param flags HAL 页标志
  * @return true 成功，false 失败
  * 
- * @note 调用者需要在映射后调用 hal_mmu_flush_tlb()
+ * @note 调用者需要在映射后调用 hal::Mmu::flush_tlb()
  * 
  * @see Requirements 4.1, 5.1
  */
-bool hal_mmu_map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags) {
+bool hal::Mmu::map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags) {
     /* Validate addresses */
     if (!IS_VADDR_ALIGNED(virt) || !IS_PADDR_ALIGNED(phys)) {
-        LOG_ERROR_MSG("hal_mmu_map: addresses not page-aligned\n");
+        LOG_ERROR_MSG("hal::Mmu::map: addresses not page-aligned\n");
         return false;
     }
     
     if (!x86_64_is_canonical_address((uint64_t)virt)) {
-        LOG_ERROR_MSG("hal_mmu_map: non-canonical address\n");
+        LOG_ERROR_MSG("hal::Mmu::map: non-canonical address\n");
         return false;
     }
     
@@ -624,7 +624,7 @@ bool hal_mmu_map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t fl
         pdpt[pdpt_idx] = pd_phys | table_flags;
     } else if (pte64_is_huge(pdpt[pdpt_idx])) {
         /* Cannot map 4KB page over 1GB huge page */
-        LOG_ERROR_MSG("hal_mmu_map: cannot map over 1GB huge page\n");
+        LOG_ERROR_MSG("hal::Mmu::map: cannot map over 1GB huge page\n");
         return false;
     } else if (flags & HAL_PAGE_USER) {
         /* Existing entry: ensure USER flag is set for user mappings */
@@ -642,7 +642,7 @@ bool hal_mmu_map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t fl
         pd[pd_idx] = pt_phys | table_flags;
     } else if (pte64_is_huge(pd[pd_idx])) {
         /* Cannot map 4KB page over 2MB huge page */
-        LOG_ERROR_MSG("hal_mmu_map: cannot map over 2MB huge page\n");
+        LOG_ERROR_MSG("hal::Mmu::map: cannot map over 2MB huge page\n");
         return false;
     } else if (flags & HAL_PAGE_USER) {
         /* Existing entry: ensure USER flag is set for user mappings */
@@ -663,12 +663,12 @@ bool hal_mmu_map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t fl
  * @param virt 虚拟地址
  * @return 原物理地址，未映射返回 PADDR_INVALID
  * 
- * @note 调用者需要在取消映射后调用 hal_mmu_flush_tlb()
+ * @note 调用者需要在取消映射后调用 hal::Mmu::flush_tlb()
  * @note 此函数不释放中间页表级别
  * 
  * @see Requirements 4.1, 5.1
  */
-paddr_t hal_mmu_unmap(hal_addr_space_t space, vaddr_t virt) {
+paddr_t hal::Mmu::unmap(hal_addr_space_t space, vaddr_t virt) {
     /* Validate canonical address */
     if (!x86_64_is_canonical_address((uint64_t)virt)) {
         return PADDR_INVALID;
@@ -697,7 +697,7 @@ paddr_t hal_mmu_unmap(hal_addr_space_t space, vaddr_t virt) {
     
     /* Cannot unmap 1GB huge page with this function */
     if (pte64_is_huge(pdpte)) {
-        LOG_ERROR_MSG("hal_mmu_unmap: cannot unmap 1GB huge page\n");
+        LOG_ERROR_MSG("hal::Mmu::unmap: cannot unmap 1GB huge page\n");
         return PADDR_INVALID;
     }
     
@@ -710,7 +710,7 @@ paddr_t hal_mmu_unmap(hal_addr_space_t space, vaddr_t virt) {
     
     /* Cannot unmap 2MB huge page with this function */
     if (pte64_is_huge(pde)) {
-        LOG_ERROR_MSG("hal_mmu_unmap: cannot unmap 2MB huge page\n");
+        LOG_ERROR_MSG("hal::Mmu::unmap: cannot unmap 2MB huge page\n");
         return PADDR_INVALID;
     }
     
@@ -742,11 +742,11 @@ paddr_t hal_mmu_unmap(hal_addr_space_t space, vaddr_t virt) {
  * @param clear_flags 要清除的 HAL 标志
  * @return true 成功，false 如果映射不存在
  * 
- * @note 调用者需要在修改后调用 hal_mmu_flush_tlb()
+ * @note 调用者需要在修改后调用 hal::Mmu::flush_tlb()
  * 
  * @see Requirements 4.1, 5.1
  */
-bool hal_mmu_protect(hal_addr_space_t space, vaddr_t virt, 
+bool hal::Mmu::protect(hal_addr_space_t space, vaddr_t virt, 
                      uint32_t set_flags, uint32_t clear_flags) {
     /* Validate canonical address */
     if (!x86_64_is_canonical_address((uint64_t)virt)) {
@@ -843,13 +843,13 @@ bool hal_mmu_protect(hal_addr_space_t space, vaddr_t virt,
  * 
  * @see Requirements 4.3
  */
-void hal_mmu_parse_fault(hal_page_fault_info_t *info) {
+void hal::Mmu::parse_fault(hal_page_fault_info_t *info) {
     if (info == NULL) {
         return;
     }
     
     /* Get fault address from CR2 */
-    info->fault_addr = hal_mmu_get_fault_addr();
+    info->fault_addr = hal::Mmu::get_fault_addr();
     
     /* Default values - caller should update raw_error if available */
     info->raw_error = 0;
@@ -876,7 +876,7 @@ void hal_mmu_parse_fault_with_error(hal_page_fault_info_t *info, uint64_t error_
     }
     
     /* Get fault address from CR2 */
-    info->fault_addr = hal_mmu_get_fault_addr();
+    info->fault_addr = hal::Mmu::get_fault_addr();
     
     /* Parse error code */
     info->raw_error = (uint32_t)error_code;
@@ -895,9 +895,9 @@ void hal_mmu_parse_fault_with_error(hal_page_fault_info_t *info, uint64_t error_
  * @param virt 虚拟地址
  * @return 物理地址，未映射返回 PADDR_INVALID
  */
-paddr_t hal_mmu_virt_to_phys(vaddr_t virt) {
+paddr_t hal::Mmu::virt_to_phys(vaddr_t virt) {
     paddr_t phys;
-    if (hal_mmu_query(HAL_ADDR_SPACE_CURRENT, virt, &phys, NULL)) {
+    if (hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, virt, &phys, NULL)) {
         return phys;
     }
     return PADDR_INVALID;
@@ -922,7 +922,7 @@ paddr_t hal_mmu_virt_to_phys(vaddr_t virt) {
  * @brief 检查是否支持大页 (x86_64)
  * @return true (x86_64 支持 2MB 大页)
  */
-bool hal_mmu_huge_pages_supported(void) {
+bool hal::Mmu::huge_pages_supported() {
     return true;
 }
 
@@ -946,16 +946,16 @@ static inline bool is_huge_page_aligned(uint64_t addr) {
  * 
  * @see Requirements 8.2
  */
-bool hal_mmu_map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags) {
+bool hal::Mmu::map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags) {
     /* Validate 2MB alignment */
     if (!is_huge_page_aligned((uint64_t)virt) || !is_huge_page_aligned((uint64_t)phys)) {
-        LOG_ERROR_MSG("hal_mmu_map_huge: addresses not 2MB-aligned (virt=0x%llx, phys=0x%llx)\n",
+        LOG_ERROR_MSG("hal::Mmu::map_huge: addresses not 2MB-aligned (virt=0x%llx, phys=0x%llx)\n",
                       (unsigned long long)virt, (unsigned long long)phys);
         return false;
     }
     
     if (!x86_64_is_canonical_address((uint64_t)virt)) {
-        LOG_ERROR_MSG("hal_mmu_map_huge: non-canonical address 0x%llx\n",
+        LOG_ERROR_MSG("hal::Mmu::map_huge: non-canonical address 0x%llx\n",
                       (unsigned long long)virt);
         return false;
     }
@@ -1000,7 +1000,7 @@ bool hal_mmu_map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32
         pdpt[pdpt_idx] = pd_phys | table_flags;
     } else if (pte64_is_huge(pdpt[pdpt_idx])) {
         /* Cannot map 2MB page over 1GB huge page */
-        LOG_ERROR_MSG("hal_mmu_map_huge: cannot map over 1GB huge page\n");
+        LOG_ERROR_MSG("hal::Mmu::map_huge: cannot map over 1GB huge page\n");
         return false;
     }
     pd = (pte64_t*)PADDR_TO_KVADDR(pte64_get_frame(pdpt[pdpt_idx]));
@@ -1008,14 +1008,14 @@ bool hal_mmu_map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32
     /* Level 2: PD entry (2MB huge page) */
     /* Check if there's already a PT at this location */
     if (pte64_is_present(pd[pd_idx]) && !pte64_is_huge(pd[pd_idx])) {
-        LOG_ERROR_MSG("hal_mmu_map_huge: cannot map 2MB page over existing PT\n");
+        LOG_ERROR_MSG("hal::Mmu::map_huge: cannot map 2MB page over existing PT\n");
         return false;
     }
     
     /* Create 2MB huge page entry */
     pd[pd_idx] = (phys & PTE64_HUGE_ADDR_MASK) | x64_flags;
     
-    LOG_DEBUG_MSG("hal_mmu_map_huge: Mapped 2MB page virt=0x%llx -> phys=0x%llx\n",
+    LOG_DEBUG_MSG("hal::Mmu::map_huge: Mapped 2MB page virt=0x%llx -> phys=0x%llx\n",
                   (unsigned long long)virt, (unsigned long long)phys);
     
     return true;
@@ -1030,10 +1030,10 @@ bool hal_mmu_map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32
  * 
  * @see Requirements 8.2
  */
-paddr_t hal_mmu_unmap_huge(hal_addr_space_t space, vaddr_t virt) {
+paddr_t hal::Mmu::unmap_huge(hal_addr_space_t space, vaddr_t virt) {
     /* Validate 2MB alignment */
     if (!is_huge_page_aligned((uint64_t)virt)) {
-        LOG_ERROR_MSG("hal_mmu_unmap_huge: address not 2MB-aligned (virt=0x%llx)\n",
+        LOG_ERROR_MSG("hal::Mmu::unmap_huge: address not 2MB-aligned (virt=0x%llx)\n",
                       (unsigned long long)virt);
         return PADDR_INVALID;
     }
@@ -1064,7 +1064,7 @@ paddr_t hal_mmu_unmap_huge(hal_addr_space_t space, vaddr_t virt) {
     
     /* Cannot unmap if this is a 1GB huge page */
     if (pte64_is_huge(pdpte)) {
-        LOG_ERROR_MSG("hal_mmu_unmap_huge: cannot unmap 1GB huge page with this function\n");
+        LOG_ERROR_MSG("hal::Mmu::unmap_huge: cannot unmap 1GB huge page with this function\n");
         return PADDR_INVALID;
     }
     
@@ -1077,7 +1077,7 @@ paddr_t hal_mmu_unmap_huge(hal_addr_space_t space, vaddr_t virt) {
     
     /* Verify this is a 2MB huge page */
     if (!pte64_is_huge(pde)) {
-        LOG_ERROR_MSG("hal_mmu_unmap_huge: entry is not a 2MB huge page\n");
+        LOG_ERROR_MSG("hal::Mmu::unmap_huge: entry is not a 2MB huge page\n");
         return PADDR_INVALID;
     }
     
@@ -1087,7 +1087,7 @@ paddr_t hal_mmu_unmap_huge(hal_addr_space_t space, vaddr_t virt) {
     /* Clear the entry */
     pd[pd_idx] = 0;
     
-    LOG_DEBUG_MSG("hal_mmu_unmap_huge: Unmapped 2MB page virt=0x%llx (was phys=0x%llx)\n",
+    LOG_DEBUG_MSG("hal::Mmu::unmap_huge: Unmapped 2MB page virt=0x%llx (was phys=0x%llx)\n",
                   (unsigned long long)virt, (unsigned long long)phys);
     
     return phys;
@@ -1102,7 +1102,7 @@ paddr_t hal_mmu_unmap_huge(hal_addr_space_t space, vaddr_t virt) {
  * 
  * @see Requirements 8.3
  */
-bool hal_mmu_is_huge_page(hal_addr_space_t space, vaddr_t virt) {
+bool hal::Mmu::is_huge_page(hal_addr_space_t space, vaddr_t virt) {
     if (!x86_64_is_canonical_address((uint64_t)virt)) {
         return false;
     }
@@ -1175,11 +1175,11 @@ bool hal_mmu_is_huge_page(hal_addr_space_t space, vaddr_t virt) {
  * 
  * @see Requirements 5.2
  */
-hal_addr_space_t hal_mmu_create_space(void) {
+hal_addr_space_t hal::Mmu::create_space() {
     /* Allocate a new PML4 */
     paddr_t pml4_phys = alloc_page_table();
     if (pml4_phys == PADDR_INVALID) {
-        LOG_ERROR_MSG("hal_mmu_create_space: Failed to allocate PML4\n");
+        LOG_ERROR_MSG("hal::Mmu::create_space: Failed to allocate PML4\n");
         return HAL_ADDR_SPACE_INVALID;
     }
     
@@ -1199,7 +1199,7 @@ hal_addr_space_t hal_mmu_create_space(void) {
         new_pml4[i] = current_pml4[i];
     }
     
-    LOG_DEBUG_MSG("hal_mmu_create_space: Created new PML4 at phys 0x%llx\n", 
+    LOG_DEBUG_MSG("hal::Mmu::create_space: Created new PML4 at phys 0x%llx\n", 
                   (unsigned long long)pml4_phys);
     
     return (hal_addr_space_t)pml4_phys;
@@ -1272,21 +1272,21 @@ static void free_page_table_recursive(paddr_t table_phys, int level, bool is_use
  * 
  * @see Requirements 5.5
  */
-void hal_mmu_destroy_space(hal_addr_space_t space) {
+void hal::Mmu::destroy_space(hal_addr_space_t space) {
     if (space == HAL_ADDR_SPACE_INVALID || space == 0) {
         return;
     }
     
     /* Don't destroy current address space */
-    hal_addr_space_t current = hal_mmu_current_space();
+    hal_addr_space_t current = hal::Mmu::current_space();
     if (space == current) {
-        LOG_ERROR_MSG("hal_mmu_destroy_space: Cannot destroy current address space\n");
+        LOG_ERROR_MSG("hal::Mmu::destroy_space: Cannot destroy current address space\n");
         return;
     }
     
     pte64_t *pml4 = (pte64_t*)PADDR_TO_KVADDR(space);
     
-    LOG_DEBUG_MSG("hal_mmu_destroy_space: Destroying address space at phys 0x%llx\n",
+    LOG_DEBUG_MSG("hal::Mmu::destroy_space: Destroying address space at phys 0x%llx\n",
                   (unsigned long long)space);
     
     /* Free user space page tables (PML4[0..255]) */
@@ -1307,7 +1307,7 @@ void hal_mmu_destroy_space(hal_addr_space_t space) {
     /* Free the PML4 itself */
     mm::Pmm::free_frame(space);
     
-    LOG_DEBUG_MSG("hal_mmu_destroy_space: Address space destroyed\n");
+    LOG_DEBUG_MSG("hal::Mmu::destroy_space: Address space destroyed\n");
 }
 
 /**
@@ -1419,7 +1419,7 @@ static bool clone_page_table_recursive(paddr_t src_table_phys, int level,
  * 
  * @see Requirements 5.3
  */
-hal_addr_space_t hal_mmu_clone_space(hal_addr_space_t src) {
+hal_addr_space_t hal::Mmu::clone_space(hal_addr_space_t src) {
     /* Validate source address space */
     if (src == HAL_ADDR_SPACE_INVALID) {
         return HAL_ADDR_SPACE_INVALID;
@@ -1427,20 +1427,20 @@ hal_addr_space_t hal_mmu_clone_space(hal_addr_space_t src) {
     
     /* Get source PML4 */
     paddr_t src_phys = (src == HAL_ADDR_SPACE_CURRENT || src == 0) 
-                       ? hal_mmu_get_current_page_table() 
+                       ? hal::Mmu::get_current_page_table() 
                        : src;
     
     /* Allocate new PML4 */
     paddr_t new_pml4_phys = alloc_page_table();
     if (new_pml4_phys == PADDR_INVALID) {
-        LOG_ERROR_MSG("hal_mmu_clone_space: Failed to allocate PML4\n");
+        LOG_ERROR_MSG("hal::Mmu::clone_space: Failed to allocate PML4\n");
         return HAL_ADDR_SPACE_INVALID;
     }
     
     pte64_t *src_pml4 = (pte64_t*)PADDR_TO_KVADDR(src_phys);
     pte64_t *new_pml4 = (pte64_t*)PADDR_TO_KVADDR(new_pml4_phys);
     
-    LOG_DEBUG_MSG("hal_mmu_clone_space: Cloning address space from 0x%llx to 0x%llx\n",
+    LOG_DEBUG_MSG("hal::Mmu::clone_space: Cloning address space from 0x%llx to 0x%llx\n",
                   (unsigned long long)src_phys, (unsigned long long)new_pml4_phys);
     
     /* Clone user space (PML4[0..255]) with COW semantics */
@@ -1458,7 +1458,7 @@ hal_addr_space_t hal_mmu_clone_space(hal_addr_space_t src) {
         /* Recursively clone PDPT and its children */
         paddr_t new_pdpt_phys;
         if (!clone_page_table_recursive(src_pdpt_phys, 3, &new_pdpt_phys)) {
-            LOG_ERROR_MSG("hal_mmu_clone_space: Failed to clone PDPT at index %u\n", i);
+            LOG_ERROR_MSG("hal::Mmu::clone_space: Failed to clone PDPT at index %u\n", i);
             
             /* Clean up already cloned entries */
             for (uint32_t j = USER_PML4_START; j < i; j++) {
@@ -1480,11 +1480,11 @@ hal_addr_space_t hal_mmu_clone_space(hal_addr_space_t src) {
     }
     
     /* Flush TLB for source address space (we modified COW flags) */
-    if (src_phys == hal_mmu_get_current_page_table()) {
-        hal_mmu_flush_tlb_all();
+    if (src_phys == hal::Mmu::get_current_page_table()) {
+        hal::Mmu::flush_tlb_all();
     }
     
-    LOG_DEBUG_MSG("hal_mmu_clone_space: Clone complete\n");
+    LOG_DEBUG_MSG("hal::Mmu::clone_space: Clone complete\n");
     
     return (hal_addr_space_t)new_pml4_phys;
 }

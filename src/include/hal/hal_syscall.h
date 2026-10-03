@@ -47,79 +47,95 @@ typedef struct hal_syscall_args {
     void *extra_args;                       /**< Extra arguments pointer (>6 args) */
 } hal_syscall_args_t;
 
-/* ============================================================================
- * System Call Parameter Functions
- * ========================================================================== */
+namespace hal {
 
 /**
- * @brief Extract system call arguments from CPU context
- * 
- * Reads the system call number and arguments from the architecture-specific
- * CPU context and populates the hal_syscall_args_t structure.
- * 
- * Architecture-specific behavior:
- *   - i686: Extracts from EAX (syscall_nr), EBX, ECX, EDX, ESI, EDI, EBP
- *   - x86_64: Extracts from RAX (syscall_nr), RDI, RSI, RDX, R10, R8, R9
- *   - ARM64: Extracts from X8 (syscall_nr), X0, X1, X2, X3, X4, X5
- * 
- * @param ctx CPU context from which to extract arguments
- * @param[out] args Pointer to structure to fill with arguments
- * 
- * @see Requirements 7.1, 7.3
+ * @brief 系统调用入口与参数访问
  */
-void hal_syscall_get_args(hal_context_t *ctx, hal_syscall_args_t *args);
+class Syscall {
+public:
+    /**
+     * @brief Initialize system call entry mechanism
+     * @param handler The system call dispatcher function
+     */
+    static void init(hal_syscall_handler_t handler);
 
-/**
- * @brief Set system call return value in CPU context
- * 
- * Places the return value in the architecture-appropriate register so that
- * it will be available to the user program when the system call returns.
- * 
- * Architecture-specific behavior:
- *   - i686: Sets EAX
- *   - x86_64: Sets RAX
- *   - ARM64: Sets X0
- * 
- * @param ctx CPU context to modify
- * @param ret Return value to set
- * 
- * @see Requirements 7.2
- */
-void hal_syscall_set_return(hal_context_t *ctx, int64_t ret);
+    /* ============================================================================
+     * System Call Parameter Functions
+     * ========================================================================== */
 
-/**
- * @brief Set system call error code in CPU context
- * 
- * Sets an error code in the appropriate location. On most architectures,
- * this is the same as setting a negative return value, but some architectures
- * may have separate error registers.
- * 
- * @param ctx CPU context to modify
- * @param errno Error code to set (positive value, will be negated)
- * 
- * @see Requirements 7.2
- */
-void hal_syscall_set_errno(hal_context_t *ctx, int32_t errno);
+    /**
+     * @brief Extract system call arguments from CPU context
+     * 
+     * Reads the system call number and arguments from the architecture-specific
+     * CPU context and populates the hal_syscall_args_t structure.
+     * 
+     * Architecture-specific behavior:
+     *   - i686: Extracts from EAX (syscall_nr), EBX, ECX, EDX, ESI, EDI, EBP
+     *   - x86_64: Extracts from RAX (syscall_nr), RDI, RSI, RDX, R10, R8, R9
+     *   - ARM64: Extracts from X8 (syscall_nr), X0, X1, X2, X3, X4, X5
+     * 
+     * @param ctx CPU context from which to extract arguments
+     * @param[out] args Pointer to structure to fill with arguments
+     * 
+     * @see Requirements 7.1, 7.3
+     */
+    static void get_args(hal_context_t *ctx, hal_syscall_args_t *args);
 
-/**
- * @brief Get a specific system call argument from context
- * 
- * Convenience function to get a single argument without extracting all.
- * 
- * @param ctx CPU context
- * @param index Argument index (0-5)
- * @return Argument value, or 0 if index is out of range
- */
-uint64_t hal_syscall_get_arg(hal_context_t *ctx, uint32_t index);
+    /**
+     * @brief Set system call return value in CPU context
+     * 
+     * Places the return value in the architecture-appropriate register so that
+     * it will be available to the user program when the system call returns.
+     * 
+     * Architecture-specific behavior:
+     *   - i686: Sets EAX
+     *   - x86_64: Sets RAX
+     *   - ARM64: Sets X0
+     * 
+     * @param ctx CPU context to modify
+     * @param ret Return value to set
+     * 
+     * @see Requirements 7.2
+     */
+    static void set_return(hal_context_t *ctx, int64_t ret);
 
-/**
- * @brief Get system call number from context
- * 
- * Convenience function to get just the system call number.
- * 
- * @param ctx CPU context
- * @return System call number
- */
-uint64_t hal_syscall_get_number(hal_context_t *ctx);
+    /**
+     * @brief Set system call error code in CPU context
+     * 
+     * Sets an error code in the appropriate location. On most architectures,
+     * this is the same as setting a negative return value, but some architectures
+     * may have separate error registers.
+     * 
+     * @param ctx CPU context to modify
+     * @param errno Error code to set (positive value, will be negated)
+     * 
+     * @see Requirements 7.2
+     */
+    static void set_errno(hal_context_t *ctx, int32_t errno);
+
+    /**
+     * @brief Get a specific system call argument from context
+     * 
+     * Convenience function to get a single argument without extracting all.
+     * 
+     * @param ctx CPU context
+     * @param index Argument index (0-5)
+     * @return Argument value, or 0 if index is out of range
+     */
+    static uint64_t get_arg(hal_context_t *ctx, uint32_t index);
+
+    /**
+     * @brief Get system call number from context
+     * 
+     * Convenience function to get just the system call number.
+     * 
+     * @param ctx CPU context
+     * @return System call number
+     */
+    static uint64_t get_number(hal_context_t *ctx);
+};
+
+} // namespace hal
 
 #endif /* _HAL_HAL_SYSCALL_H_ */

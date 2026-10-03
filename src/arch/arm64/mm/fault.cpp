@@ -186,7 +186,7 @@ static inline bool is_from_user_mode(uint32_t ec) {
 /* ============================================================================
  * HAL Page Fault Parsing Implementation
  * 
- * Note: hal_mmu_parse_fault() is implemented in mmu.c to keep all HAL MMU
+ * Note: hal::Mmu::parse_fault() is implemented in mmu.c to keep all HAL MMU
  * functions together. This file provides additional helper functions for
  * page fault handling.
  * 

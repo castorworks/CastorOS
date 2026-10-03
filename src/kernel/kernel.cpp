@@ -146,10 +146,10 @@ void kernel_main(void *dtb_addr) {
     // ========================================================================
     LOG_INFO_MSG("[Stage 2] Initializing CPU and interrupt system via HAL...\n");
     
-    hal_cpu_init();
+    hal::Cpu::init();
     LOG_INFO_MSG("  [2.1] CPU initialized via HAL (%s)\n", hal_arch_name());
     
-    hal_interrupt_init();
+    hal::Interrupt::init();
     LOG_INFO_MSG("  [2.2] Interrupt system initialized (GIC)\n");
     
     syscall_init();
@@ -224,8 +224,7 @@ void kernel_main(void *dtb_addr) {
     
     // 4.1 Initialize timer with scheduler integration
     // ARM64 uses ARM Generic Timer via HAL
-    extern void hal_timer_init(uint32_t freq_hz, void (*callback)(void));
-    hal_timer_init(100, kernel::Scheduler::timer_tick);  // 100 Hz = 10ms tick
+    hal::Timer::init(100, kernel::Scheduler::timer_tick);  // 100 Hz = 10ms tick
     LOG_INFO_MSG("  [4.1] Timer initialized (100 Hz)\n");
     
     // 4.2 Initialize framebuffer console (virtio-gpu)
@@ -317,7 +316,7 @@ void kernel_main(void *dtb_addr) {
     // 启用中断
     // ========================================================================
     LOG_INFO_MSG("Enabling interrupts...\n");
-    hal_interrupt_enable();
+    hal::Interrupt::enable();
     kprintf("\n");
 
     // ========================================================================
@@ -358,7 +357,7 @@ void kernel_main(void *dtb_addr) {
     
     // Idle loop - should never reach here
     while (1) {
-        hal_cpu_halt();
+        hal::Cpu::halt();
     }
 }
 
@@ -407,7 +406,7 @@ void kernel_main(multiboot_info_t* mbi) {
     // ========================================================================
     LOG_INFO_MSG("[Stage 1] Initializing CPU architecture via HAL...\n");
     
-    hal_cpu_init();
+    hal::Cpu::init();
     LOG_INFO_MSG("  [1.1] CPU initialized via HAL (%s)\n", hal_arch_name());
     
     // ========================================================================
@@ -421,7 +420,7 @@ void kernel_main(multiboot_info_t* mbi) {
     // ========================================================================
     LOG_INFO_MSG("[Stage 2] Initializing interrupt system via HAL...\n");
     
-    hal_interrupt_init();
+    hal::Interrupt::init();
     LOG_INFO_MSG("  [2.1] Interrupt system initialized via HAL\n");
     
     // 2.2 初始化系统调用（System Calls）
@@ -682,7 +681,7 @@ void kernel_main(multiboot_info_t* mbi) {
     
     // Idle loop - use HAL for architecture-independent CPU halt
     while (1) {
-        hal_cpu_halt();
+        hal::Cpu::halt();
     }
 }
 

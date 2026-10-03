@@ -57,7 +57,7 @@ bool load_user_shell(void) {
     LOG_DEBUG_MSG("Shell: ELF data loaded at %p, size=%u\n", elf_data, shell_size);
     
     // 验证 ELF 头
-    if (!elf_validate_header(elf_data)) {
+    if (!kernel::Elf::validate_header(elf_data)) {
         LOG_ERROR_MSG("Invalid ELF file\n");
         kfree(elf_data);
         return false;
@@ -68,7 +68,7 @@ bool load_user_shell(void) {
 #if defined(ARCH_ARM64)
     // ARM64: 使用 HAL MMU 接口创建地址空间
     LOG_DEBUG_MSG("Shell: Creating ARM64 address space...\n");
-    hal_addr_space_t addr_space = hal_mmu_create_space();
+    hal_addr_space_t addr_space = hal::Mmu::create_space();
     if (addr_space == HAL_ADDR_SPACE_INVALID) {
         LOG_ERROR_MSG("Failed to create address space\n");
         kfree(elf_data);
@@ -77,16 +77,16 @@ bool load_user_shell(void) {
     
     LOG_INFO_MSG("Shell: Created address space at 0x%llx\n", (unsigned long long)addr_space);
     
-    /* Cast addr_space to page_directory_t* for compatibility with elf_load API */
+    /* Cast addr_space to page_directory_t* for compatibility with kernel::Elf::load API */
     page_directory_t *page_dir = (page_directory_t*)(uintptr_t)addr_space;
     
     // 加载 ELF
     LOG_DEBUG_MSG("Shell: Loading ELF (size=%u)...\n", shell_size);
     uintptr_t entry_point;
     uintptr_t program_end;
-    if (!elf_load(elf_data, shell_size, page_dir, &entry_point, &program_end)) {
+    if (!kernel::Elf::load(elf_data, shell_size, page_dir, &entry_point, &program_end)) {
         LOG_ERROR_MSG("Failed to load ELF\n");
-        hal_mmu_destroy_space(addr_space);
+        hal::Mmu::destroy_space(addr_space);
         kfree(elf_data);
         return false;
     }
@@ -100,7 +100,7 @@ bool load_user_shell(void) {
     uint32_t pid = kernel::Scheduler::create_user_process("shell", entry_point, page_dir, program_end);
     if (pid == 0) {
         LOG_ERROR_MSG("Failed to create shell process\n");
-        hal_mmu_destroy_space(addr_space);
+        hal::Mmu::destroy_space(addr_space);
         return false;
     }
 #else
@@ -122,7 +122,7 @@ bool load_user_shell(void) {
     LOG_DEBUG_MSG("Shell: Loading ELF (size=%u)...\n", shell_size);
     uintptr_t entry_point;
     uintptr_t program_end;
-    if (!elf_load(elf_data, shell_size, page_dir, &entry_point, &program_end)) {
+    if (!kernel::Elf::load(elf_data, shell_size, page_dir, &entry_point, &program_end)) {
         LOG_ERROR_MSG("Failed to load ELF\n");
         mm::Vmm::free_page_directory(page_dir_phys);
         kfree(elf_data);

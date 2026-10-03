@@ -54,7 +54,7 @@ TEST_CASE(dma_cache_clean_callable) {
     }
     
     /* Cache clean should not crash */
-    hal_cache_clean((void *)buffer, sizeof(buffer));
+    hal::Cache::clean((void *)buffer, sizeof(buffer));
     
     /* Verify data is still intact */
     for (int i = 0; i < 128; i++) {
@@ -77,7 +77,7 @@ TEST_CASE(dma_cache_invalidate_callable) {
     }
     
     /* Cache invalidate should not crash */
-    hal_cache_invalidate((void *)buffer, sizeof(buffer));
+    hal::Cache::invalidate((void *)buffer, sizeof(buffer));
     
     /* Note: After invalidate, data may or may not be preserved depending
      * on whether the cache line was dirty. We just verify no crash. */
@@ -99,7 +99,7 @@ TEST_CASE(dma_cache_clean_invalidate_callable) {
     }
     
     /* Cache clean+invalidate should not crash */
-    hal_cache_clean_invalidate((void *)buffer, sizeof(buffer));
+    hal::Cache::clean_invalidate((void *)buffer, sizeof(buffer));
     
     /* After clean+invalidate, data should be preserved (clean writes back) */
     for (int i = 0; i < 128; i++) {
@@ -116,9 +116,9 @@ TEST_CASE(dma_cache_clean_invalidate_callable) {
  */
 TEST_CASE(dma_cache_ops_null_safe) {
     /* These should not crash with NULL */
-    hal_cache_clean(NULL, 100);
-    hal_cache_invalidate(NULL, 100);
-    hal_cache_clean_invalidate(NULL, 100);
+    hal::Cache::clean(NULL, 100);
+    hal::Cache::invalidate(NULL, 100);
+    hal::Cache::clean_invalidate(NULL, 100);
     
     ASSERT_TRUE(true);
 }
@@ -133,9 +133,9 @@ TEST_CASE(dma_cache_ops_zero_size_safe) {
     volatile uint8_t buffer[64];
     
     /* These should not crash with zero size */
-    hal_cache_clean((void *)buffer, 0);
-    hal_cache_invalidate((void *)buffer, 0);
-    hal_cache_clean_invalidate((void *)buffer, 0);
+    hal::Cache::clean((void *)buffer, 0);
+    hal::Cache::invalidate((void *)buffer, 0);
+    hal::Cache::clean_invalidate((void *)buffer, 0);
     
     ASSERT_TRUE(true);
 }
@@ -155,7 +155,7 @@ TEST_CASE(dma_sync_for_device_to_device) {
     }
     
     /* Sync for device (DMA_TO_DEVICE should clean cache) */
-    hal_dma_sync_for_device((void *)buffer, sizeof(buffer), DMA_TO_DEVICE);
+    hal::Dma::sync_for_device((void *)buffer, sizeof(buffer), DMA_TO_DEVICE);
     
     /* Data should be preserved */
     for (int i = 0; i < 32; i++) {
@@ -174,7 +174,7 @@ TEST_CASE(dma_sync_for_device_from_device) {
     volatile uint32_t buffer[32];
     
     /* Sync for device (DMA_FROM_DEVICE should invalidate cache) */
-    hal_dma_sync_for_device((void *)buffer, sizeof(buffer), DMA_FROM_DEVICE);
+    hal::Dma::sync_for_device((void *)buffer, sizeof(buffer), DMA_FROM_DEVICE);
     
     /* Should not crash */
     ASSERT_TRUE(true);
@@ -195,7 +195,7 @@ TEST_CASE(dma_sync_for_device_bidirectional) {
     }
     
     /* Sync for device (BIDIRECTIONAL should clean+invalidate) */
-    hal_dma_sync_for_device((void *)buffer, sizeof(buffer), DMA_BIDIRECTIONAL);
+    hal::Dma::sync_for_device((void *)buffer, sizeof(buffer), DMA_BIDIRECTIONAL);
     
     /* Data should be preserved (clean writes back before invalidate) */
     for (int i = 0; i < 32; i++) {
@@ -218,7 +218,7 @@ TEST_CASE(dma_sync_for_cpu_to_device) {
     }
     
     /* Sync for CPU (TO_DEVICE is a no-op - device only read) */
-    hal_dma_sync_for_cpu((void *)buffer, sizeof(buffer), DMA_TO_DEVICE);
+    hal::Dma::sync_for_cpu((void *)buffer, sizeof(buffer), DMA_TO_DEVICE);
     
     /* Data should be preserved */
     for (int i = 0; i < 32; i++) {
@@ -237,20 +237,20 @@ TEST_CASE(dma_sync_for_cpu_from_device) {
     volatile uint32_t buffer[32];
     
     /* Sync for CPU (FROM_DEVICE should invalidate cache) */
-    hal_dma_sync_for_cpu((void *)buffer, sizeof(buffer), DMA_FROM_DEVICE);
+    hal::Dma::sync_for_cpu((void *)buffer, sizeof(buffer), DMA_FROM_DEVICE);
     
     /* Should not crash */
     ASSERT_TRUE(true);
 }
 
 /**
- * @brief Test hal_dma_needs_cache_ops returns correct value
+ * @brief Test hal::Dma::needs_cache_ops returns correct value
  * 
  * **Feature: multi-arch-support, Property 15: DMA Cache Coherency**
  * **Validates: Requirements 9.4**
  */
 TEST_CASE(dma_needs_cache_ops_correct) {
-    bool needs_ops = hal_dma_needs_cache_ops();
+    bool needs_ops = hal::Dma::needs_cache_ops();
     
 #if defined(ARCH_ARM64)
     /* ARM64 requires cache ops */
@@ -268,7 +268,7 @@ TEST_CASE(dma_needs_cache_ops_correct) {
  * **Validates: Requirements 9.4**
  */
 TEST_CASE(dma_cache_line_size_reasonable) {
-    size_t line_size = hal_dma_cache_line_size();
+    size_t line_size = hal::Dma::cache_line_size();
     
     /* Cache line size should be a power of 2 between 32 and 128 bytes */
     ASSERT_TRUE(line_size >= 32);
@@ -285,19 +285,19 @@ TEST_CASE(dma_cache_line_size_reasonable) {
  * **Validates: Requirements 9.4**
  */
 TEST_CASE(dma_align_size_correct) {
-    size_t line_size = hal_dma_cache_line_size();
+    size_t line_size = hal::Dma::cache_line_size();
     
     /* Zero should align to zero */
-    ASSERT_EQ_UINT(0, hal_dma_align_size(0));
+    ASSERT_EQ_UINT(0, hal::Dma::align_size(0));
     
     /* 1 byte should align up to cache line size */
-    ASSERT_EQ_UINT(line_size, hal_dma_align_size(1));
+    ASSERT_EQ_UINT(line_size, hal::Dma::align_size(1));
     
     /* Exact cache line size should stay the same */
-    ASSERT_EQ_UINT(line_size, hal_dma_align_size(line_size));
+    ASSERT_EQ_UINT(line_size, hal::Dma::align_size(line_size));
     
     /* One more than cache line should round up to 2x */
-    ASSERT_EQ_UINT(line_size * 2, hal_dma_align_size(line_size + 1));
+    ASSERT_EQ_UINT(line_size * 2, hal::Dma::align_size(line_size + 1));
 }
 
 
@@ -308,16 +308,16 @@ TEST_CASE(dma_align_size_correct) {
  * **Validates: Requirements 9.4**
  */
 TEST_CASE(dma_is_aligned_correct) {
-    size_t line_size = hal_dma_cache_line_size();
+    size_t line_size = hal::Dma::cache_line_size();
     
     /* Aligned addresses should return true */
-    ASSERT_TRUE(hal_dma_is_aligned((void *)0));
-    ASSERT_TRUE(hal_dma_is_aligned((void *)(uintptr_t)line_size));
-    ASSERT_TRUE(hal_dma_is_aligned((void *)(uintptr_t)(line_size * 2)));
+    ASSERT_TRUE(hal::Dma::is_aligned((void *)0));
+    ASSERT_TRUE(hal::Dma::is_aligned((void *)(uintptr_t)line_size));
+    ASSERT_TRUE(hal::Dma::is_aligned((void *)(uintptr_t)(line_size * 2)));
     
     /* Unaligned addresses should return false */
-    ASSERT_FALSE(hal_dma_is_aligned((void *)1));
-    ASSERT_FALSE(hal_dma_is_aligned((void *)(uintptr_t)(line_size + 1)));
+    ASSERT_FALSE(hal::Dma::is_aligned((void *)1));
+    ASSERT_FALSE(hal::Dma::is_aligned((void *)(uintptr_t)(line_size + 1)));
 }
 
 /**
@@ -340,7 +340,7 @@ TEST_CASE(dma_sync_roundtrip_preserves_data) {
     }
     
     /* Simulate DMA write cycle: CPU writes, then device reads */
-    hal_dma_sync_for_device((void *)buffer, sizeof(buffer), DMA_TO_DEVICE);
+    hal::Dma::sync_for_device((void *)buffer, sizeof(buffer), DMA_TO_DEVICE);
     
     /* After sync for device, CPU can still read the data */
     for (int i = 0; i < 16; i++) {
@@ -348,7 +348,7 @@ TEST_CASE(dma_sync_roundtrip_preserves_data) {
     }
     
     /* Sync back for CPU (no-op for TO_DEVICE, but should not corrupt) */
-    hal_dma_sync_for_cpu((void *)buffer, sizeof(buffer), DMA_TO_DEVICE);
+    hal::Dma::sync_for_cpu((void *)buffer, sizeof(buffer), DMA_TO_DEVICE);
     
     /* Data should still be intact */
     for (int i = 0; i < 16; i++) {
@@ -372,8 +372,8 @@ TEST_CASE(dma_multiple_ops_no_corruption) {
     
     /* Perform multiple cache operations */
     for (int iter = 0; iter < 10; iter++) {
-        hal_cache_clean((void *)buffer, sizeof(buffer));
-        hal_cache_clean_invalidate((void *)buffer, sizeof(buffer));
+        hal::Cache::clean((void *)buffer, sizeof(buffer));
+        hal::Cache::clean_invalidate((void *)buffer, sizeof(buffer));
     }
     
     /* Data should be preserved */

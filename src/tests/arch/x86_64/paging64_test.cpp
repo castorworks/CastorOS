@@ -356,8 +356,8 @@ TEST_CASE(test_pbt_x86_64_pte_validation) {
  * Property 8: HAL MMU Map-Query Round-Trip (x86_64)
  * 
  * *For any* valid virtual address `virt`, physical address `phys`, and flags `flags`,
- * after `hal_mmu_map(space, virt, phys, flags)` succeeds, 
- * `hal_mmu_query(space, virt, &out_phys, &out_flags)` SHALL return `true` 
+ * after `hal::Mmu::map(space, virt, phys, flags)` succeeds, 
+ * `hal::Mmu::query(space, virt, &out_phys, &out_flags)` SHALL return `true` 
  * with `out_phys == phys`.
  * 
  * **Feature: mm-refactor, Property 8: HAL MMU Map-Query Round-Trip (x86_64)**
@@ -407,7 +407,7 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_map_query_roundtrip) {
     #define MAP_QUERY_ITERATIONS 100
     
     /* Get current address space */
-    hal_addr_space_t space = hal_mmu_current_space();
+    hal_addr_space_t space = hal::Mmu::current_space();
     
     uint32_t success_count = 0;
     uint32_t skip_count = 0;
@@ -418,7 +418,7 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_map_query_roundtrip) {
         
         /* Skip if address is already mapped */
         paddr_t existing_phys;
-        if (hal_mmu_query(space, virt, &existing_phys, NULL)) {
+        if (hal::Mmu::query(space, virt, &existing_phys, NULL)) {
             skip_count++;
             continue;
         }
@@ -437,7 +437,7 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_map_query_roundtrip) {
         if (pbt_random() & 1) flags |= HAL_PAGE_EXEC;
         
         /* Map the page */
-        bool map_result = hal_mmu_map(space, virt, phys, flags);
+        bool map_result = hal::Mmu::map(space, virt, phys, flags);
         if (!map_result) {
             /* Mapping failed (possibly out of memory for page tables) */
             mm::Pmm::free_frame(phys);
@@ -446,12 +446,12 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_map_query_roundtrip) {
         }
         
         /* Flush TLB for this address */
-        hal_mmu_flush_tlb(virt);
+        hal::Mmu::flush_tlb(virt);
         
         /* Query the mapping */
         paddr_t out_phys = 0;
         uint32_t out_flags = 0;
-        bool query_result = hal_mmu_query(space, virt, &out_phys, &out_flags);
+        bool query_result = hal::Mmu::query(space, virt, &out_phys, &out_flags);
         
         /* Property: Query must succeed after successful map */
         ASSERT_TRUE(query_result);
@@ -466,10 +466,10 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_map_query_roundtrip) {
         ASSERT_TRUE((out_flags & HAL_PAGE_USER) != 0);
         
         /* Clean up: unmap and free the frame */
-        paddr_t unmapped_phys = hal_mmu_unmap(space, virt);
+        paddr_t unmapped_phys = hal::Mmu::unmap(space, virt);
         ASSERT_TRUE(unmapped_phys == phys);
         
-        hal_mmu_flush_tlb(virt);
+        hal::Mmu::flush_tlb(virt);
         mm::Pmm::free_frame(phys);
         
         success_count++;
@@ -485,13 +485,13 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_map_query_roundtrip) {
  * **Feature: mm-refactor, Property 8: HAL MMU Map-Query Round-Trip (x86_64)**
  * **Validates: Requirements 5.1**
  * 
- * *For any* mapped page, modifying flags with hal_mmu_protect should
- * be reflected in subsequent hal_mmu_query calls.
+ * *For any* mapped page, modifying flags with hal::Mmu::protect should
+ * be reflected in subsequent hal::Mmu::query calls.
  */
 TEST_CASE(test_pbt_x86_64_hal_mmu_protect) {
     #define PROTECT_ITERATIONS 50
     
-    hal_addr_space_t space = hal_mmu_current_space();
+    hal_addr_space_t space = hal::Mmu::current_space();
     
     uint32_t success_count = 0;
     
@@ -500,7 +500,7 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_protect) {
         vaddr_t virt = pbt_random_user_vaddr();
         
         /* Skip if address is already mapped */
-        if (hal_mmu_query(space, virt, NULL, NULL)) {
+        if (hal::Mmu::query(space, virt, NULL, NULL)) {
             continue;
         }
         
@@ -512,41 +512,41 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_protect) {
         
         /* Map with write permission */
         uint32_t initial_flags = HAL_PAGE_PRESENT | HAL_PAGE_USER | HAL_PAGE_WRITE;
-        if (!hal_mmu_map(space, virt, phys, initial_flags)) {
+        if (!hal::Mmu::map(space, virt, phys, initial_flags)) {
             mm::Pmm::free_frame(phys);
             continue;
         }
         
-        hal_mmu_flush_tlb(virt);
+        hal::Mmu::flush_tlb(virt);
         
         /* Verify initial mapping */
         uint32_t out_flags = 0;
-        ASSERT_TRUE(hal_mmu_query(space, virt, NULL, &out_flags));
+        ASSERT_TRUE(hal::Mmu::query(space, virt, NULL, &out_flags));
         ASSERT_TRUE((out_flags & HAL_PAGE_WRITE) != 0);
         
         /* Remove write permission (simulate COW setup) */
-        bool protect_result = hal_mmu_protect(space, virt, 0, HAL_PAGE_WRITE);
+        bool protect_result = hal::Mmu::protect(space, virt, 0, HAL_PAGE_WRITE);
         ASSERT_TRUE(protect_result);
         
-        hal_mmu_flush_tlb(virt);
+        hal::Mmu::flush_tlb(virt);
         
         /* Verify write permission is removed */
-        ASSERT_TRUE(hal_mmu_query(space, virt, NULL, &out_flags));
+        ASSERT_TRUE(hal::Mmu::query(space, virt, NULL, &out_flags));
         ASSERT_FALSE((out_flags & HAL_PAGE_WRITE) != 0);
         
         /* Restore write permission */
-        protect_result = hal_mmu_protect(space, virt, HAL_PAGE_WRITE, 0);
+        protect_result = hal::Mmu::protect(space, virt, HAL_PAGE_WRITE, 0);
         ASSERT_TRUE(protect_result);
         
-        hal_mmu_flush_tlb(virt);
+        hal::Mmu::flush_tlb(virt);
         
         /* Verify write permission is restored */
-        ASSERT_TRUE(hal_mmu_query(space, virt, NULL, &out_flags));
+        ASSERT_TRUE(hal::Mmu::query(space, virt, NULL, &out_flags));
         ASSERT_TRUE((out_flags & HAL_PAGE_WRITE) != 0);
         
         /* Clean up */
-        hal_mmu_unmap(space, virt);
-        hal_mmu_flush_tlb(virt);
+        hal::Mmu::unmap(space, virt);
+        hal::Mmu::flush_tlb(virt);
         mm::Pmm::free_frame(phys);
         
         success_count++;
@@ -561,20 +561,20 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_protect) {
  * **Feature: mm-refactor, Property 8: HAL MMU Map-Query Round-Trip (x86_64)**
  * **Validates: Requirements 5.1**
  * 
- * *For any* mapped page, hal_mmu_unmap should return the physical address
+ * *For any* mapped page, hal::Mmu::unmap should return the physical address
  * that was previously mapped.
  */
 TEST_CASE(test_pbt_x86_64_hal_mmu_unmap_returns_phys) {
     #define UNMAP_ITERATIONS 50
     
-    hal_addr_space_t space = hal_mmu_current_space();
+    hal_addr_space_t space = hal::Mmu::current_space();
     
     uint32_t success_count = 0;
     
     for (uint32_t i = 0; i < UNMAP_ITERATIONS; i++) {
         vaddr_t virt = pbt_random_user_vaddr();
         
-        if (hal_mmu_query(space, virt, NULL, NULL)) {
+        if (hal::Mmu::query(space, virt, NULL, NULL)) {
             continue;
         }
         
@@ -583,23 +583,23 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_unmap_returns_phys) {
             continue;
         }
         
-        if (!hal_mmu_map(space, virt, phys, HAL_PAGE_PRESENT | HAL_PAGE_USER)) {
+        if (!hal::Mmu::map(space, virt, phys, HAL_PAGE_PRESENT | HAL_PAGE_USER)) {
             mm::Pmm::free_frame(phys);
             continue;
         }
         
-        hal_mmu_flush_tlb(virt);
+        hal::Mmu::flush_tlb(virt);
         
         /* Unmap and verify returned physical address */
-        paddr_t returned_phys = hal_mmu_unmap(space, virt);
+        paddr_t returned_phys = hal::Mmu::unmap(space, virt);
         
         /* Property: Unmap must return the mapped physical address */
         ASSERT_TRUE(returned_phys == phys);
         
-        hal_mmu_flush_tlb(virt);
+        hal::Mmu::flush_tlb(virt);
         
         /* Property: After unmap, query should fail */
-        ASSERT_FALSE(hal_mmu_query(space, virt, NULL, NULL));
+        ASSERT_FALSE(hal::Mmu::query(space, virt, NULL, NULL));
         
         mm::Pmm::free_frame(phys);
         success_count++;
@@ -617,23 +617,23 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_unmap_returns_phys) {
  * ============================================================================ */
 
 /**
- * @brief Test that hal_mmu_create_space creates a valid address space
+ * @brief Test that hal::Mmu::create_space creates a valid address space
  * 
  * **Feature: mm-refactor, Property 10: COW Clone Shares Physical Pages**
  * **Validates: Requirements 5.2**
  * 
- * *For any* call to hal_mmu_create_space, the returned address space
+ * *For any* call to hal::Mmu::create_space, the returned address space
  * SHALL have kernel mappings shared with the current address space.
  */
 TEST_CASE(test_pbt_x86_64_create_space_kernel_shared) {
     /* Create a new address space */
-    hal_addr_space_t new_space = hal_mmu_create_space();
+    hal_addr_space_t new_space = hal::Mmu::create_space();
     
     /* Property: Create space must succeed */
     ASSERT_TRUE(new_space != HAL_ADDR_SPACE_INVALID);
     
     /* Get current address space for comparison */
-    hal_addr_space_t current_space = hal_mmu_current_space();
+    hal_addr_space_t current_space = hal::Mmu::current_space();
     
     /* Property: New space must be different from current */
     ASSERT_TRUE(new_space != current_space);
@@ -647,8 +647,8 @@ TEST_CASE(test_pbt_x86_64_create_space_kernel_shared) {
     uint32_t current_flags = 0;
     uint32_t new_flags = 0;
     
-    bool current_mapped = hal_mmu_query(current_space, kernel_addr, &current_phys, &current_flags);
-    bool new_mapped = hal_mmu_query(new_space, kernel_addr, &new_phys, &new_flags);
+    bool current_mapped = hal::Mmu::query(current_space, kernel_addr, &current_phys, &current_flags);
+    bool new_mapped = hal::Mmu::query(new_space, kernel_addr, &new_phys, &new_flags);
     
     /* Property: Kernel address must be mapped in both spaces */
     ASSERT_TRUE(current_mapped);
@@ -658,23 +658,23 @@ TEST_CASE(test_pbt_x86_64_create_space_kernel_shared) {
     ASSERT_TRUE(current_phys == new_phys);
     
     /* Clean up */
-    hal_mmu_destroy_space(new_space);
+    hal::Mmu::destroy_space(new_space);
 }
 
 /**
- * @brief Test that hal_mmu_clone_space shares physical pages with COW
+ * @brief Test that hal::Mmu::clone_space shares physical pages with COW
  * 
  * **Feature: mm-refactor, Property 10: COW Clone Shares Physical Pages**
  * **Validates: Requirements 5.3**
  * 
- * *For any* address space with mapped user pages, after hal_mmu_clone_space(),
+ * *For any* address space with mapped user pages, after hal::Mmu::clone_space(),
  * both parent and child SHALL map the same virtual addresses to the same 
  * physical addresses (until write occurs).
  */
 TEST_CASE(test_pbt_x86_64_cow_clone_shares_physical_pages) {
     #define COW_CLONE_ITERATIONS 20
     
-    hal_addr_space_t current_space = hal_mmu_current_space();
+    hal_addr_space_t current_space = hal::Mmu::current_space();
     
     uint32_t success_count = 0;
     
@@ -683,7 +683,7 @@ TEST_CASE(test_pbt_x86_64_cow_clone_shares_physical_pages) {
         vaddr_t virt = pbt_random_user_vaddr();
         
         /* Skip if address is already mapped */
-        if (hal_mmu_query(current_space, virt, NULL, NULL)) {
+        if (hal::Mmu::query(current_space, virt, NULL, NULL)) {
             continue;
         }
         
@@ -695,21 +695,21 @@ TEST_CASE(test_pbt_x86_64_cow_clone_shares_physical_pages) {
         
         /* Map with write permission in current space */
         uint32_t flags = HAL_PAGE_PRESENT | HAL_PAGE_USER | HAL_PAGE_WRITE;
-        if (!hal_mmu_map(current_space, virt, phys, flags)) {
+        if (!hal::Mmu::map(current_space, virt, phys, flags)) {
             mm::Pmm::free_frame(phys);
             continue;
         }
         
-        hal_mmu_flush_tlb(virt);
+        hal::Mmu::flush_tlb(virt);
         
         /* Get initial reference count */
         uint32_t initial_refcount = mm::Pmm::frame_get_refcount(phys);
         
         /* Clone the address space */
-        hal_addr_space_t cloned_space = hal_mmu_clone_space(current_space);
+        hal_addr_space_t cloned_space = hal::Mmu::clone_space(current_space);
         if (cloned_space == HAL_ADDR_SPACE_INVALID) {
-            hal_mmu_unmap(current_space, virt);
-            hal_mmu_flush_tlb(virt);
+            hal::Mmu::unmap(current_space, virt);
+            hal::Mmu::flush_tlb(virt);
             mm::Pmm::free_frame(phys);
             continue;
         }
@@ -720,8 +720,8 @@ TEST_CASE(test_pbt_x86_64_cow_clone_shares_physical_pages) {
         uint32_t parent_flags = 0;
         uint32_t child_flags = 0;
         
-        bool parent_mapped = hal_mmu_query(current_space, virt, &parent_phys, &parent_flags);
-        bool child_mapped = hal_mmu_query(cloned_space, virt, &child_phys, &child_flags);
+        bool parent_mapped = hal::Mmu::query(current_space, virt, &parent_phys, &parent_flags);
+        bool child_mapped = hal::Mmu::query(cloned_space, virt, &child_phys, &child_flags);
         
         ASSERT_TRUE(parent_mapped);
         ASSERT_TRUE(child_mapped);
@@ -741,11 +741,11 @@ TEST_CASE(test_pbt_x86_64_cow_clone_shares_physical_pages) {
         ASSERT_FALSE((child_flags & HAL_PAGE_WRITE) != 0);
         
         /* Clean up: destroy cloned space first */
-        hal_mmu_destroy_space(cloned_space);
+        hal::Mmu::destroy_space(cloned_space);
         
         /* Unmap from current space */
-        hal_mmu_unmap(current_space, virt);
-        hal_mmu_flush_tlb(virt);
+        hal::Mmu::unmap(current_space, virt);
+        hal::Mmu::flush_tlb(virt);
         
         /* Free the physical frame (refcount should be back to allowing free) */
         mm::Pmm::free_frame(phys);
@@ -769,14 +769,14 @@ TEST_CASE(test_pbt_x86_64_cow_clone_shares_physical_pages) {
 TEST_CASE(test_pbt_x86_64_cow_removes_write_permission) {
     #define COW_WRITE_ITERATIONS 20
     
-    hal_addr_space_t current_space = hal_mmu_current_space();
+    hal_addr_space_t current_space = hal::Mmu::current_space();
     
     uint32_t success_count = 0;
     
     for (uint32_t i = 0; i < COW_WRITE_ITERATIONS; i++) {
         vaddr_t virt = pbt_random_user_vaddr();
         
-        if (hal_mmu_query(current_space, virt, NULL, NULL)) {
+        if (hal::Mmu::query(current_space, virt, NULL, NULL)) {
             continue;
         }
         
@@ -787,29 +787,29 @@ TEST_CASE(test_pbt_x86_64_cow_removes_write_permission) {
         
         /* Map with write permission */
         uint32_t flags = HAL_PAGE_PRESENT | HAL_PAGE_USER | HAL_PAGE_WRITE;
-        if (!hal_mmu_map(current_space, virt, phys, flags)) {
+        if (!hal::Mmu::map(current_space, virt, phys, flags)) {
             mm::Pmm::free_frame(phys);
             continue;
         }
         
-        hal_mmu_flush_tlb(virt);
+        hal::Mmu::flush_tlb(virt);
         
         /* Verify write permission is set initially */
         uint32_t out_flags = 0;
-        ASSERT_TRUE(hal_mmu_query(current_space, virt, NULL, &out_flags));
+        ASSERT_TRUE(hal::Mmu::query(current_space, virt, NULL, &out_flags));
         ASSERT_TRUE((out_flags & HAL_PAGE_WRITE) != 0);
         
         /* Clone the address space */
-        hal_addr_space_t cloned_space = hal_mmu_clone_space(current_space);
+        hal_addr_space_t cloned_space = hal::Mmu::clone_space(current_space);
         if (cloned_space == HAL_ADDR_SPACE_INVALID) {
-            hal_mmu_unmap(current_space, virt);
-            hal_mmu_flush_tlb(virt);
+            hal::Mmu::unmap(current_space, virt);
+            hal::Mmu::flush_tlb(virt);
             mm::Pmm::free_frame(phys);
             continue;
         }
         
         /* Property 11: After clone, write permission should be removed */
-        ASSERT_TRUE(hal_mmu_query(current_space, virt, NULL, &out_flags));
+        ASSERT_TRUE(hal::Mmu::query(current_space, virt, NULL, &out_flags));
         
         /* Property: Write permission must be removed */
         ASSERT_FALSE((out_flags & HAL_PAGE_WRITE) != 0);
@@ -818,9 +818,9 @@ TEST_CASE(test_pbt_x86_64_cow_removes_write_permission) {
         ASSERT_TRUE((out_flags & HAL_PAGE_COW) != 0);
         
         /* Clean up */
-        hal_mmu_destroy_space(cloned_space);
-        hal_mmu_unmap(current_space, virt);
-        hal_mmu_flush_tlb(virt);
+        hal::Mmu::destroy_space(cloned_space);
+        hal::Mmu::unmap(current_space, virt);
+        hal::Mmu::flush_tlb(virt);
         mm::Pmm::free_frame(phys);
         
         success_count++;
@@ -837,12 +837,12 @@ TEST_CASE(test_pbt_x86_64_cow_removes_write_permission) {
  * ============================================================================ */
 
 /**
- * @brief Test that hal_mmu_destroy_space frees page table memory
+ * @brief Test that hal::Mmu::destroy_space frees page table memory
  * 
  * **Feature: mm-refactor, Property 15: Address Space Destruction Frees Memory**
  * **Validates: Requirements 5.5**
  * 
- * *For any* address space, after hal_mmu_destroy_space(), the PMM free frame
+ * *For any* address space, after hal::Mmu::destroy_space(), the PMM free frame
  * count SHALL increase by the number of page table frames used.
  */
 TEST_CASE(test_pbt_x86_64_destroy_space_frees_memory) {
@@ -855,7 +855,7 @@ TEST_CASE(test_pbt_x86_64_destroy_space_frees_memory) {
         mm::PmmInfo info_before = mm::Pmm::get_info();
         
         /* Create a new address space */
-        hal_addr_space_t new_space = hal_mmu_create_space();
+        hal_addr_space_t new_space = hal::Mmu::create_space();
         if (new_space == HAL_ADDR_SPACE_INVALID) {
             continue;
         }
@@ -867,7 +867,7 @@ TEST_CASE(test_pbt_x86_64_destroy_space_frees_memory) {
             vaddr_t virt = pbt_random_user_vaddr();
             
             /* Skip if already mapped */
-            if (hal_mmu_query(new_space, virt, NULL, NULL)) {
+            if (hal::Mmu::query(new_space, virt, NULL, NULL)) {
                 continue;
             }
             
@@ -876,7 +876,7 @@ TEST_CASE(test_pbt_x86_64_destroy_space_frees_memory) {
                 continue;
             }
             
-            if (hal_mmu_map(new_space, virt, phys, 
+            if (hal::Mmu::map(new_space, virt, phys, 
                            HAL_PAGE_PRESENT | HAL_PAGE_USER | HAL_PAGE_WRITE)) {
                 pages_mapped++;
             } else {
@@ -892,7 +892,7 @@ TEST_CASE(test_pbt_x86_64_destroy_space_frees_memory) {
         ASSERT_TRUE(info_after_map.free_frames < info_before.free_frames);
         
         /* Destroy the address space */
-        hal_mmu_destroy_space(new_space);
+        hal::Mmu::destroy_space(new_space);
         
         /* Record free frame count after destruction */
         mm::PmmInfo info_after_destroy = mm::Pmm::get_info();
@@ -925,14 +925,14 @@ TEST_CASE(test_pbt_x86_64_destroy_space_frees_memory) {
 TEST_CASE(test_pbt_x86_64_destroy_cloned_space_decrements_refcount) {
     #define DESTROY_CLONE_ITERATIONS 10
     
-    hal_addr_space_t current_space = hal_mmu_current_space();
+    hal_addr_space_t current_space = hal::Mmu::current_space();
     
     uint32_t success_count = 0;
     
     for (uint32_t i = 0; i < DESTROY_CLONE_ITERATIONS; i++) {
         vaddr_t virt = pbt_random_user_vaddr();
         
-        if (hal_mmu_query(current_space, virt, NULL, NULL)) {
+        if (hal::Mmu::query(current_space, virt, NULL, NULL)) {
             continue;
         }
         
@@ -941,22 +941,22 @@ TEST_CASE(test_pbt_x86_64_destroy_cloned_space_decrements_refcount) {
             continue;
         }
         
-        if (!hal_mmu_map(current_space, virt, phys, 
+        if (!hal::Mmu::map(current_space, virt, phys, 
                         HAL_PAGE_PRESENT | HAL_PAGE_USER | HAL_PAGE_WRITE)) {
             mm::Pmm::free_frame(phys);
             continue;
         }
         
-        hal_mmu_flush_tlb(virt);
+        hal::Mmu::flush_tlb(virt);
         
         /* Get initial reference count */
         uint32_t initial_refcount = mm::Pmm::frame_get_refcount(phys);
         
         /* Clone the address space */
-        hal_addr_space_t cloned_space = hal_mmu_clone_space(current_space);
+        hal_addr_space_t cloned_space = hal::Mmu::clone_space(current_space);
         if (cloned_space == HAL_ADDR_SPACE_INVALID) {
-            hal_mmu_unmap(current_space, virt);
-            hal_mmu_flush_tlb(virt);
+            hal::Mmu::unmap(current_space, virt);
+            hal::Mmu::flush_tlb(virt);
             mm::Pmm::free_frame(phys);
             continue;
         }
@@ -966,7 +966,7 @@ TEST_CASE(test_pbt_x86_64_destroy_cloned_space_decrements_refcount) {
         ASSERT_TRUE(after_clone_refcount > initial_refcount);
         
         /* Destroy the cloned space */
-        hal_mmu_destroy_space(cloned_space);
+        hal::Mmu::destroy_space(cloned_space);
         
         /* Property 15: Reference count should decrease after destruction */
         uint32_t after_destroy_refcount = mm::Pmm::frame_get_refcount(phys);
@@ -977,8 +977,8 @@ TEST_CASE(test_pbt_x86_64_destroy_cloned_space_decrements_refcount) {
         ASSERT_TRUE(after_destroy_refcount == initial_refcount);
         
         /* Clean up */
-        hal_mmu_unmap(current_space, virt);
-        hal_mmu_flush_tlb(virt);
+        hal::Mmu::unmap(current_space, virt);
+        hal::Mmu::flush_tlb(virt);
         mm::Pmm::free_frame(phys);
         
         success_count++;
