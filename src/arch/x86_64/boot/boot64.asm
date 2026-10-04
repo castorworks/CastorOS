@@ -39,8 +39,7 @@ CPUID_LM_BIT            equ (1 << 29)
 MULTIBOOT_MAGIC         equ 0x1BADB002
 MULTIBOOT_PAGE_ALIGN    equ (1 << 0)
 MULTIBOOT_MEMORY_INFO   equ (1 << 1)
-MULTIBOOT_VIDEO_MODE    equ (1 << 2)
-MULTIBOOT_FLAGS         equ (MULTIBOOT_PAGE_ALIGN | MULTIBOOT_MEMORY_INFO | MULTIBOOT_VIDEO_MODE)
+MULTIBOOT_FLAGS         equ (MULTIBOOT_PAGE_ALIGN | MULTIBOOT_MEMORY_INFO)
 MULTIBOOT_CHECKSUM      equ -(MULTIBOOT_MAGIC + MULTIBOOT_FLAGS)
 MULTIBOOT_BOOTLOADER_MAGIC equ 0x2BADB002
 
@@ -63,11 +62,6 @@ multiboot_header:
     dd MULTIBOOT_MAGIC
     dd MULTIBOOT_FLAGS
     dd MULTIBOOT_CHECKSUM
-    dd 0, 0, 0, 0, 0       ; a.out kludge (unused)
-    dd 0                   ; mode_type: 0 = linear graphics mode (1 = EGA text)
-    dd 0                   ; width: 0 = let GRUB choose based on gfxpayload
-    dd 0                   ; height: 0 = let GRUB choose
-    dd 32                  ; depth: 32bpp preferred
 
 ; ============================================================================
 ; 32 位引导代码

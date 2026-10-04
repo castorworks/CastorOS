@@ -786,89 +786,6 @@ TEST_SUITE(snprintf_tests) {
 // 测试用例：路径规范化 / 解析
 // ============================================================================
 
-TEST_CASE(test_path_normalize_basic) {
-    char out[64];
-    ASSERT_EQ(path_normalize("/", out, sizeof(out)), 0);
-    ASSERT_STR_EQ(out, "/");
-    ASSERT_EQ(path_normalize("/a//b/./c/", out, sizeof(out)), 0);
-    ASSERT_STR_EQ(out, "/a/b/c");
-    ASSERT_EQ(path_normalize("a/b", out, sizeof(out)), 0);
-    ASSERT_STR_EQ(out, "a/b");
-    ASSERT_EQ(path_normalize("", out, sizeof(out)), 0);
-    ASSERT_STR_EQ(out, ".");
-}
-
-TEST_CASE(test_path_normalize_dotdot) {
-    char out[64];
-    ASSERT_EQ(path_normalize("/a/b/../c", out, sizeof(out)), 0);
-    ASSERT_STR_EQ(out, "/a/c");
-    ASSERT_EQ(path_normalize("/a/..", out, sizeof(out)), 0);
-    ASSERT_STR_EQ(out, "/");
-    ASSERT_EQ(path_normalize("/../../a", out, sizeof(out)), 0);
-    ASSERT_STR_EQ(out, "/a");
-    ASSERT_EQ(path_normalize("a/../..", out, sizeof(out)), 0);
-    ASSERT_STR_EQ(out, ".");
-    ASSERT_EQ(path_normalize("/a/...", out, sizeof(out)), 0);
-    ASSERT_STR_EQ(out, "/a/...");
-}
-
-// 组件很多、很长的路径不再需要 8KB 的栈上数组
-TEST_CASE(test_path_normalize_deep) {
-    char in[200];
-    char out[200];
-    size_t n = 0;
-    for (int i = 0; i < 90; i++) {
-        in[n++] = '/';
-        in[n++] = 'x';
-    }
-    in[n] = '\0';
-    ASSERT_EQ(path_normalize(in, out, sizeof(out)), 0);
-    ASSERT_STR_EQ(out, in);
-}
-
-TEST_CASE(test_path_normalize_overflow) {
-    char out[8];
-    ASSERT_EQ(path_normalize("/abcdef", out, sizeof(out)), 0);
-    ASSERT_STR_EQ(out, "/abcdef");
-    ASSERT_EQ(path_normalize("/abcdefg", out, sizeof(out)), -1);
-    ASSERT_EQ(path_normalize("/abc/def", out, sizeof(out)), -1);
-    ASSERT_EQ(path_normalize("/a", out, 1), -1);
-    ASSERT_EQ(path_normalize(NULL, out, sizeof(out)), -1);
-}
-
-TEST_CASE(test_path_resolve) {
-    char out[64];
-    // 绝对路径不受 cwd 影响
-    ASSERT_EQ(path_resolve("/home", "/bin/sh", out, sizeof(out)), 0);
-    ASSERT_STR_EQ(out, "/bin/sh");
-    // 相对路径以 cwd 为基准
-    ASSERT_EQ(path_resolve("/home", "a.txt", out, sizeof(out)), 0);
-    ASSERT_STR_EQ(out, "/home/a.txt");
-    ASSERT_EQ(path_resolve("/", "dev/null", out, sizeof(out)), 0);
-    ASSERT_STR_EQ(out, "/dev/null");
-    ASSERT_EQ(path_resolve("/home/user", "../x/./y", out, sizeof(out)), 0);
-    ASSERT_STR_EQ(out, "/home/x/y");
-    ASSERT_EQ(path_resolve("/home", "../../..", out, sizeof(out)), 0);
-    ASSERT_STR_EQ(out, "/");
-    ASSERT_EQ(path_resolve("/home", ".", out, sizeof(out)), 0);
-    ASSERT_STR_EQ(out, "/home");
-    // cwd 缺失时按根目录处理
-    ASSERT_EQ(path_resolve(NULL, "a", out, sizeof(out)), 0);
-    ASSERT_STR_EQ(out, "/a");
-    ASSERT_EQ(path_resolve("", "a", out, sizeof(out)), 0);
-    ASSERT_STR_EQ(out, "/a");
-    // 空路径无效
-    ASSERT_EQ(path_resolve("/home", "", out, sizeof(out)), -1);
-}
-
-TEST_SUITE(path_tests) {
-    RUN_TEST(test_path_normalize_basic);
-    RUN_TEST(test_path_normalize_dotdot);
-    RUN_TEST(test_path_normalize_deep);
-    RUN_TEST(test_path_normalize_overflow);
-    RUN_TEST(test_path_resolve);
-}
-
 // ============================================================================
 // 运行所有测试
 // ============================================================================
@@ -893,7 +810,6 @@ void run_string_tests(void) {
     RUN_SUITE(int64_hex_tests);
     RUN_SUITE(uint64_hex_tests);
     RUN_SUITE(snprintf_tests);
-    RUN_SUITE(path_tests);
     
     // 打印测试摘要
     unittest_print_summary();

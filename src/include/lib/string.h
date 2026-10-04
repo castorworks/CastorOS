@@ -181,28 +181,5 @@ extern "C" void *memmove(void *dest, const void *src, size_t num);
  */
 int snprintf(char *str, size_t size, const char *format, ...);
 
-/**
- * 规范化路径：折叠重复的 '/'，去掉 "."，按词法处理 ".."
- * @param path 输入路径
- * @param out 输出缓冲区（不能与 path 重叠）
- * @param size 输出缓冲区大小（包括 '\0'）
- * @return 0 成功；-1 参数无效或结果放不下
- *
- * 直接在输出缓冲区里完成，不占用额外的栈空间（内核栈只有 8KB）。
- * 绝对路径在根目录上的 ".." 停留在根目录；相对路径多出来的 ".." 被丢弃，
- * 结果为空时输出 "."。
- */
-int path_normalize(const char *path, char *out, size_t size);
-
-/**
- * 把路径解析成规范化的绝对路径
- * @param cwd 当前工作目录（绝对路径；NULL 或空串按 "/" 处理）
- * @param path 输入路径，相对路径以 cwd 为基准
- * @param out 输出缓冲区（不能与 cwd、path 重叠）
- * @param size 输出缓冲区大小（包括 '\0'）
- * @return 0 成功；-1 参数无效、path 为空串或结果放不下
- */
-int path_resolve(const char *cwd, const char *path, char *out, size_t size);
-
 #endif /* _LIB_STRING_H_ */
 
