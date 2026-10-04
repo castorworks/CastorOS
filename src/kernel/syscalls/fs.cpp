@@ -15,6 +15,43 @@
 #include <lib/klog.h>
 #include <lib/kprintf.h>
 #include <lib/string.h>
+#include <mm/heap.h>
+
+/* ============================================================================
+ * 路径解析
+ * ============================================================================ */
+
+#define SYS_PATH_MAX 512    /* 解析后的绝对路径上限（含结尾 NUL） */
+
+/**
+ * 把系统调用收到的路径解析成规范化的绝对路径。
+ * 相对路径以当前进程的工作目录为基准，而不是根目录。
+ * 缓冲区放在堆上：内核栈只有 8KB，路径缓冲区不该占用它。
+ */
+class ResolvedPath {
+public:
+    explicit ResolvedPath(const char *path) : buf_((char *)kmalloc(SYS_PATH_MAX)), ok_(false) {
+        if (!buf_) {
+            return;
+        }
+        task_t *current = kernel::Scheduler::get_current();
+        ok_ = path_resolve(current ? current->cwd : "/", path, buf_, SYS_PATH_MAX) == 0;
+    }
+    ~ResolvedPath() {
+        if (buf_) {
+            kfree(buf_);
+        }
+    }
+    ResolvedPath(const ResolvedPath &) = delete;
+    ResolvedPath &operator=(const ResolvedPath &) = delete;
+
+    bool ok() const { return ok_; }
+    const char *c_str() const { return buf_; }
+
+private:
+    char *buf_;
+    bool ok_;
+};
 
 /* ============================================================================
  * stat/fstat 实现
@@ -73,11 +110,18 @@ static void fill_stat_from_node(fs_node_t *node, struct stat *buf) {
 /**
  * syscall::Fs::stat - 获取文件状态信息
  */
-uint32_t syscall::Fs::stat(const char *path, struct stat *buf) {
-    if (!path || !buf) {
-        LOG_ERROR_MSG("syscall::Fs::stat: invalid arguments (path=%p, buf=%p)\n", path, buf);
+uint32_t syscall::Fs::stat(const char *user_path, struct stat *buf) {
+    if (!user_path || !buf) {
+        LOG_ERROR_MSG("syscall::Fs::stat: invalid arguments (path=%p, buf=%p)\n", user_path, buf);
         return (uint32_t)-1;
     }
+    
+    ResolvedPath resolved(user_path);
+    if (!resolved.ok()) {
+        LOG_ERROR_MSG("syscall::Fs::stat: invalid path\n");
+        return (uint32_t)-1;
+    }
+    const char *path = resolved.c_str();
     
     LOG_DEBUG_MSG("syscall::Fs::stat: path='%s'\n", path);
     
@@ -130,12 +174,19 @@ uint32_t syscall::Fs::fstat(int32_t fd, struct stat *buf) {
 /**
  * syscall::Fs::open - 打开或创建文件
  */
-uint32_t syscall::Fs::open(const char *path, int32_t flags, uint32_t mode) {
+uint32_t syscall::Fs::open(const char *user_path, int32_t flags, uint32_t mode) {
     (void)mode;
-    if (!path) {
+    if (!user_path) {
         LOG_ERROR_MSG("syscall::Fs::open: path is NULL\n");
         return (uint32_t)-1;
     }
+    
+    ResolvedPath resolved(user_path);
+    if (!resolved.ok()) {
+        LOG_ERROR_MSG("syscall::Fs::open: invalid path\n");
+        return (uint32_t)-1;
+    }
+    const char *path = resolved.c_str();
     
     task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->fd_table) {
@@ -145,6 +196,14 @@ uint32_t syscall::Fs::open(const char *path, int32_t flags, uint32_t mode) {
     
     // 查找文件
     fs_node_t *node = fs::Vfs::path_to_node(path);
+    
+    // O_CREAT|O_EXCL：只有文件在本次调用之前就存在才算冲突，
+    // 本次调用刚创建出来的文件不算
+    if (node && (flags & O_CREAT) && (flags & O_EXCL)) {
+        LOG_ERROR_MSG("syscall::Fs::open: file '%s' exists but O_EXCL specified\n", path);
+        fs::Vfs::release_node(node);
+        return (uint32_t)-1;
+    }
     
     // 如果文件不存在且指定了 O_CREAT，创建文件
     if (!node && (flags & O_CREAT)) {
@@ -157,13 +216,6 @@ uint32_t syscall::Fs::open(const char *path, int32_t flags, uint32_t mode) {
     
     if (!node) {
         LOG_ERROR_MSG("syscall::Fs::open: file '%s' not found\n", path);
-        return (uint32_t)-1;
-    }
-    
-    // 检查 O_EXCL 标志
-    if ((flags & O_CREAT) && (flags & O_EXCL)) {
-        LOG_ERROR_MSG("syscall::Fs::open: file '%s' exists but O_EXCL specified\n", path);
-        fs::Vfs::release_node(node);  // 释放节点，修复内存泄漏
         return (uint32_t)-1;
     }
     
@@ -386,11 +438,18 @@ uint32_t syscall::Fs::lseek(int32_t fd, int32_t offset, int32_t whence) {
 /**
  * syscall::Fs::mkdir - 创建目录
  */
-uint32_t syscall::Fs::mkdir(const char *path, uint32_t mode) {
-    if (!path) {
+uint32_t syscall::Fs::mkdir(const char *user_path, uint32_t mode) {
+    if (!user_path) {
         LOG_ERROR_MSG("syscall::Fs::mkdir: path is NULL\n");
         return (uint32_t)-1;
     }
+    
+    ResolvedPath resolved(user_path);
+    if (!resolved.ok()) {
+        LOG_ERROR_MSG("syscall::Fs::mkdir: invalid path\n");
+        return (uint32_t)-1;
+    }
+    const char *path = resolved.c_str();
     
     // 创建目录
     if (fs::Vfs::mkdir(path, mode) != 0) {
@@ -404,122 +463,24 @@ uint32_t syscall::Fs::mkdir(const char *path, uint32_t mode) {
 /**
  * syscall::Fs::unlink - 删除文件或目录
  */
-uint32_t syscall::Fs::unlink(const char *path) {
-    if (!path) {
+uint32_t syscall::Fs::unlink(const char *user_path) {
+    if (!user_path) {
         LOG_ERROR_MSG("syscall::Fs::unlink: path is NULL\n");
         return (uint32_t)-1;
     }
+    
+    ResolvedPath resolved(user_path);
+    if (!resolved.ok()) {
+        LOG_ERROR_MSG("syscall::Fs::unlink: invalid path\n");
+        return (uint32_t)-1;
+    }
+    const char *path = resolved.c_str();
     
     // 删除文件或目录
     if (fs::Vfs::unlink(path) != 0) {
         LOG_ERROR_MSG("syscall::Fs::unlink: failed to unlink '%s'\n", path);
         return (uint32_t)-1;
     }
-    
-    return 0;
-}
-
-/**
- * 规范化路径，移除 . 和 .. 组件
- * @param path 输入路径
- * @param normalized 输出缓冲区
- * @param size 缓冲区大小
- * @return 0 成功，-1 失败
- */
-static int normalize_path(const char *path, char *normalized, size_t size) {
-    if (!path || !normalized || size == 0) {
-        return -1;
-    }
-    
-    // 路径组件栈（最多支持 64 层）
-    const size_t MAX_COMPONENTS = 64;
-    char components[MAX_COMPONENTS][128];
-    size_t component_count = 0;
-    
-    const char *p = path;
-    char current_component[128];
-    size_t comp_len = 0;
-    bool is_absolute = (path[0] == '/');
-    
-    // 解析路径组件
-    while (*p != '\0') {
-        // 跳过连续的 '/'
-        while (*p == '/') {
-            p++;
-        }
-        
-        if (*p == '\0') {
-            break;
-        }
-        
-        // 提取一个组件
-        comp_len = 0;
-        while (*p != '\0' && *p != '/' && comp_len < 127) {
-            current_component[comp_len++] = *p++;
-        }
-        current_component[comp_len] = '\0';
-        
-        // 处理组件
-        if (comp_len == 0) {
-            continue;  // 空组件，跳过
-        } else if (strcmp(current_component, ".") == 0) {
-            // 当前目录，忽略
-            continue;
-        } else if (strcmp(current_component, "..") == 0) {
-            // 父目录
-            if (component_count > 0) {
-                // 有组件可以回退
-                component_count--;
-            }
-            // 绝对路径中，.. 在根目录时保持在根目录（不添加组件）
-        } else {
-            // 普通组件，添加到栈中
-            if (component_count >= MAX_COMPONENTS) {
-                return -1;  // 路径太深
-            }
-            strncpy(components[component_count], current_component, 127);
-            components[component_count][127] = '\0';
-            component_count++;
-        }
-    }
-    
-    // 构建规范化路径
-    size_t pos = 0;
-    
-    // 绝对路径以 '/' 开头
-    if (is_absolute) {
-        if (pos < size - 1) {
-            normalized[pos++] = '/';
-        }
-    }
-    
-    // 添加所有组件
-    for (size_t i = 0; i < component_count; i++) {
-        size_t comp_len = strlen(components[i]);
-        
-        // 添加 '/'（除了第一个组件在绝对路径时）
-        if (pos > 0 && normalized[pos - 1] != '/') {
-            if (pos < size - 1) {
-                normalized[pos++] = '/';
-            }
-        }
-        
-        // 添加组件名
-        for (size_t j = 0; j < comp_len && pos < size - 1; j++) {
-            normalized[pos++] = components[i][j];
-        }
-    }
-    
-    // 如果路径为空，至少要有 '/'
-    if (pos == 0) {
-        if (is_absolute) {
-            normalized[pos++] = '/';
-        } else {
-            normalized[pos++] = '.';
-        }
-    }
-    
-    normalized[pos] = '\0';
     
     return 0;
 }
@@ -541,33 +502,13 @@ uint32_t syscall::Fs::chdir(const char *path) {
     
     LOG_DEBUG_MSG("syscall::Fs::chdir: path='%s'\n", path);
     
-    // 构建绝对路径：如果是相对路径，则相对于当前工作目录
-    char abs_path[512];
-    if (path[0] == '/') {
-        // 绝对路径，直接使用
-        if (strlen(path) >= sizeof(abs_path)) {
-            LOG_ERROR_MSG("syscall::Fs::chdir: path too long\n");
-            return (uint32_t)-1;
-        }
-        strcpy(abs_path, path);
-    } else {
-        // 相对路径，相对于当前工作目录
-        uint32_t cwd_len = strlen(current->cwd);
-        uint32_t path_len = strlen(path);
-        
-        if (cwd_len + 1 + path_len >= sizeof(abs_path)) {
-            LOG_ERROR_MSG("syscall::Fs::chdir: path too long\n");
-            return (uint32_t)-1;
-        }
-        
-        strcpy(abs_path, current->cwd);
-        // 如果当前工作目录不是根目录，添加 '/'
-        if (cwd_len > 1 && abs_path[cwd_len - 1] != '/') {
-            strcat(abs_path, "/");
-        }
-        // 追加路径
-        strcat(abs_path, path);
+    // 解析成规范化的绝对路径（相对路径相对于当前工作目录，处理 . 和 ..）
+    ResolvedPath resolved(path);
+    if (!resolved.ok()) {
+        LOG_ERROR_MSG("syscall::Fs::chdir: invalid path or path too long\n");
+        return (uint32_t)-1;
     }
+    const char *abs_path = resolved.c_str();
     
     LOG_DEBUG_MSG("syscall::Fs::chdir: resolved path='%s'\n", abs_path);
     
@@ -587,24 +528,18 @@ uint32_t syscall::Fs::chdir(const char *path) {
     // 节点已验证，释放它（我们只需要验证路径，不需要保留节点）
     fs::Vfs::release_node(node);
     
-    // 规范化路径，移除 . 和 .. 组件
-    char normalized_path[512];
-    if (normalize_path(abs_path, normalized_path, sizeof(normalized_path)) != 0) {
-        LOG_ERROR_MSG("syscall::Fs::chdir: failed to normalize path\n");
-        return (uint32_t)-1;
-    }
-    
     // 检查规范化后的路径长度
-    uint32_t normalized_len = strlen(normalized_path);
-    if (normalized_len >= sizeof(current->cwd)) {
-        LOG_ERROR_MSG("syscall::Fs::chdir: normalized path too long (%u >= %u)\n", normalized_len, (uint32_t)sizeof(current->cwd));
+    size_t abs_len = strlen(abs_path);
+    if (abs_len >= sizeof(current->cwd)) {
+        LOG_ERROR_MSG("syscall::Fs::chdir: path too long (%u >= %u)\n",
+                      (uint32_t)abs_len, (uint32_t)sizeof(current->cwd));
         return (uint32_t)-1;
     }
     
-    // 更新当前工作目录（使用规范化后的路径）
-    strcpy(current->cwd, normalized_path);
+    // 更新当前工作目录
+    strcpy(current->cwd, abs_path);
     
-    LOG_DEBUG_MSG("syscall::Fs::chdir: changed to '%s'\n", normalized_path);
+    LOG_DEBUG_MSG("syscall::Fs::chdir: changed to '%s'\n", abs_path);
     return 0;
 }
 
@@ -912,12 +847,21 @@ uint32_t syscall::Fs::dup2(int32_t oldfd, int32_t newfd) {
  * @oldpath: 原路径
  * @newpath: 新路径
  */
-uint32_t syscall::Fs::rename(const char *oldpath, const char *newpath) {
-    if (!oldpath || !newpath) {
+uint32_t syscall::Fs::rename(const char *user_oldpath, const char *user_newpath) {
+    if (!user_oldpath || !user_newpath) {
         LOG_ERROR_MSG("syscall::Fs::rename: invalid arguments (oldpath=%p, newpath=%p)\n", 
-                      oldpath, newpath);
+                      user_oldpath, user_newpath);
         return (uint32_t)-1;
     }
+    
+    ResolvedPath resolved_old(user_oldpath);
+    ResolvedPath resolved_new(user_newpath);
+    if (!resolved_old.ok() || !resolved_new.ok()) {
+        LOG_ERROR_MSG("syscall::Fs::rename: invalid path\n");
+        return (uint32_t)-1;
+    }
+    const char *oldpath = resolved_old.c_str();
+    const char *newpath = resolved_new.c_str();
     
     LOG_DEBUG_MSG("syscall::Fs::rename: '%s' -> '%s'\n", oldpath, newpath);
     

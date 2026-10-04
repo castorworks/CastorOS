@@ -4,6 +4,7 @@
 #include <syscall.h>
 #include <stdio.h>
 #include <types.h>
+#include <string.h>
 
 // 辅助函数：获取文件类型字符串
 static const char *get_file_type(uint32_t mode) {
@@ -347,6 +348,34 @@ static void test_cxx_runtime(void) {
     printf("  [%s] virtual dispatch\n", animal.legs() == 2 ? "PASS" : "FAIL");
 }
 
+// 有符号十进制格式化：负数的符号、数字和填充
+static void check_fmt(const char *expected, const char *actual) {
+    printf("  [%s] \"%s\" (expected \"%s\")\n",
+           strcmp(expected, actual) == 0 ? "PASS" : "FAIL", actual, expected);
+}
+
+static void test_printf_signed(void) {
+    printf("\n=== printf Signed Decimal Tests ===\n");
+    char buf[32];
+
+    snprintf(buf, sizeof(buf), "%d", -1);
+    check_fmt("-1", buf);
+    snprintf(buf, sizeof(buf), "%d", -42);
+    check_fmt("-42", buf);
+    snprintf(buf, sizeof(buf), "%5d", -42);
+    check_fmt("  -42", buf);
+    snprintf(buf, sizeof(buf), "%-5d|", -42);
+    check_fmt("-42  |", buf);
+    snprintf(buf, sizeof(buf), "%05d", -42);
+    check_fmt("-0042", buf);
+    snprintf(buf, sizeof(buf), "%02d", -42);
+    check_fmt("-42", buf);
+    snprintf(buf, sizeof(buf), "%3d", 7);
+    check_fmt("  7", buf);
+    snprintf(buf, sizeof(buf), "%lld", (long long)(-9223372036854775807LL - 1));
+    check_fmt("-9223372036854775808", buf);
+}
+
 int main() {
     printf("========================================\n");
     printf("    CastorOS System Call Tests\n");
@@ -355,6 +384,9 @@ int main() {
     
     // C++ 运行时测试
     test_cxx_runtime();
+
+    // printf 负数格式化测试
+    test_printf_signed();
 
     // 运行 stat/fstat 测试
     test_stat();

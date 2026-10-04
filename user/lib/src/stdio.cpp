@@ -162,36 +162,39 @@ void printf(const char *format, ...) {
                         val = __builtin_va_arg(args, int);
                     }
                     
+                    // tmp 里只放绝对值的数字，符号由下面单独输出。
+                    // 用无符号运算取绝对值，LLONG_MIN 也不会溢出。
+                    int neg = (val < 0);
+                    unsigned long long mag = neg ? (0ULL - (unsigned long long)val)
+                                                 : (unsigned long long)val;
                     char tmp[32];
                     int len;
-                    num_to_str_dec((unsigned long long)(val < 0 ? -val : val), 
-                                   val < 0, tmp, &len);
+                    num_to_str_dec(mag, 0, tmp, &len);
                     
-                    int pad = (width > len) ? (width - len) : 0;
+                    int pad = (width > len + neg) ? (width - len - neg) : 0;
                     
-                    if (left_align) {
-                        // 左对齐
-                        for (int i = 0; i < len && pos < sizeof(buffer) - 1; i++) {
-                            buffer[pos++] = tmp[i];
-                        }
+                    // 右对齐且用空格填充时，填充在符号之前
+                    if (!left_align && !zero_pad) {
                         while (pad-- > 0 && pos < sizeof(buffer) - 1) {
                             buffer[pos++] = ' ';
                         }
-                    } else {
-                        // 右对齐
-                        if (zero_pad && val < 0 && pad > 0) {
-                            buffer[pos++] = '-';
-                            pad--;
-                        }
+                    }
+                    if (neg && pos < sizeof(buffer) - 1) {
+                        buffer[pos++] = '-';
+                    }
+                    // 用 0 填充时，填充在符号和数字之间
+                    if (!left_align && zero_pad) {
                         while (pad-- > 0 && pos < sizeof(buffer) - 1) {
-                            buffer[pos++] = (zero_pad) ? '0' : ' ';
+                            buffer[pos++] = '0';
                         }
-                        if (!zero_pad && val < 0) {
-                            buffer[pos++] = '-';
-                        }
-                        for (int i = (val < 0 && !zero_pad) ? 1 : 0; 
-                             i < len && pos < sizeof(buffer) - 1; i++) {
-                            buffer[pos++] = tmp[i];
+                    }
+                    for (int i = 0; i < len && pos < sizeof(buffer) - 1; i++) {
+                        buffer[pos++] = tmp[i];
+                    }
+                    // 左对齐时，填充在数字之后
+                    if (left_align) {
+                        while (pad-- > 0 && pos < sizeof(buffer) - 1) {
+                            buffer[pos++] = ' ';
                         }
                     }
                     break;
@@ -439,36 +442,39 @@ int snprintf(char *str, size_t size, const char *format, ...) {
                         val = __builtin_va_arg(args, int);
                     }
                     
+                    // tmp 里只放绝对值的数字，符号由下面单独输出。
+                    // 用无符号运算取绝对值，LLONG_MIN 也不会溢出。
+                    int neg = (val < 0);
+                    unsigned long long mag = neg ? (0ULL - (unsigned long long)val)
+                                                 : (unsigned long long)val;
                     char tmp[32];
                     int len;
-                    num_to_str_dec((unsigned long long)(val < 0 ? -val : val), 
-                                   val < 0, tmp, &len);
+                    num_to_str_dec(mag, 0, tmp, &len);
                     
-                    int pad = (width > len) ? (width - len) : 0;
+                    int pad = (width > len + neg) ? (width - len - neg) : 0;
                     
-                    if (left_align) {
-                        // 左对齐
-                        for (int i = 0; i < len && pos < size - 1; i++) {
-                            str[pos++] = tmp[i];
-                        }
+                    // 右对齐且用空格填充时，填充在符号之前
+                    if (!left_align && !zero_pad) {
                         while (pad-- > 0 && pos < size - 1) {
                             str[pos++] = ' ';
                         }
-                    } else {
-                        // 右对齐
-                        if (zero_pad && val < 0 && pad > 0) {
-                            if (pos < size - 1) str[pos++] = '-';
-                            pad--;
-                        }
+                    }
+                    if (neg && pos < size - 1) {
+                        str[pos++] = '-';
+                    }
+                    // 用 0 填充时，填充在符号和数字之间
+                    if (!left_align && zero_pad) {
                         while (pad-- > 0 && pos < size - 1) {
-                            str[pos++] = (zero_pad) ? '0' : ' ';
+                            str[pos++] = '0';
                         }
-                        if (!zero_pad && val < 0 && pos < size - 1) {
-                            str[pos++] = '-';
-                        }
-                        for (int i = (val < 0 && !zero_pad) ? 1 : 0; 
-                             i < len && pos < size - 1; i++) {
-                            str[pos++] = tmp[i];
+                    }
+                    for (int i = 0; i < len && pos < size - 1; i++) {
+                        str[pos++] = tmp[i];
+                    }
+                    // 左对齐时，填充在数字之后
+                    if (left_align) {
+                        while (pad-- > 0 && pos < size - 1) {
+                            str[pos++] = ' ';
                         }
                     }
                     break;

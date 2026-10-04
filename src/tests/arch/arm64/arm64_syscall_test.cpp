@@ -102,10 +102,9 @@ TEST_CASE(test_arm64_syscall_error_consistency) {
  * Verifies that the write syscall can be dispatched.
  * Note: This doesn't actually write to a file, just tests dispatch.
  * 
- * During early boot (before task creation), syscalls that require a current
- * task will return an error. The error value may be (uint32_t)-1 which is
- * 0xFFFFFFFF - this is not sign-extended on 64-bit, so we check for both
- * negative values and the 32-bit error pattern.
+ * Errors must come back as a negative machine word: user space stores the
+ * result in a 64-bit ssize_t and tests `n < 0`, so a zero-extended
+ * (uint32_t)-1 (0x00000000FFFFFFFF) would look like a huge success value.
  * 
  * **Feature: arm64-kernel-integration**
  * **Validates: Requirements 5.1, 5.2, 5.3**
@@ -121,18 +120,26 @@ TEST_CASE(test_arm64_syscall_write_dispatch) {
                                               4,  /* length */
                                               0, 0, dummy_frame);
     
-    /* 
-     * Should return error for invalid fd.
-     * Check for both:
-     * 1. Negative value (properly sign-extended error)
-     * 2. 0xFFFFFFFF (32-bit error not sign-extended on 64-bit)
-     * 
-     * Note: During early boot without a current task, syscall::Fs::write returns
-     * (uint32_t)-1 which is 0xFFFFFFFF. This is a valid error indication.
-     */
-    intptr_t signed_result = (intptr_t)result;
-    bool is_error = (signed_result < 0) || (result == 0xFFFFFFFF);
-    ASSERT_TRUE(is_error);
+    /* Should return an error, sign-extended to the full register width */
+    ASSERT_TRUE((intptr_t)result < 0);
+}
+
+/* ============================================================================
+ * Test: 32-bit error results are sign-extended
+ * ============================================================================
+ * lseek on an invalid fd reaches the implementation, which returns
+ * (uint32_t)-1. The dispatcher must hand back -1 as a full machine word,
+ * not 0x00000000FFFFFFFF.
+ * ============================================================================ */
+TEST_CASE(test_arm64_syscall_error_sign_extended) {
+    syscall_arg_t dummy_frame[16] = {0};
+    
+    syscall_arg_t result = syscall_dispatcher(SYS_LSEEK,
+                                              (syscall_arg_t)-1,  /* invalid fd */
+                                              0, 0, 0, 0, dummy_frame);
+    
+    ASSERT_TRUE((intptr_t)result < 0);
+    ASSERT_TRUE(result != (syscall_arg_t)0xFFFFFFFFu);
 }
 
 /* ============================================================================
@@ -144,6 +151,7 @@ TEST_SUITE(arm64_syscall_tests) {
     RUN_TEST(test_arm64_syscall_return_value);
     RUN_TEST(test_arm64_syscall_error_consistency);
     RUN_TEST(test_arm64_syscall_write_dispatch);
+    RUN_TEST(test_arm64_syscall_error_sign_extended);
 }
 
 /* ============================================================================
