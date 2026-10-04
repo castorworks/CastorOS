@@ -6,6 +6,7 @@
 #include <kernel/idt.h>
 #include <kernel/gdt.h>
 #include <lib/klog.h>
+#include <kernel/task.h>
 #include <lib/kprintf.h>
 #include <lib/string.h>
 
@@ -61,6 +62,17 @@ void isr_register_handler(uint8_t n, isr_handler_t handler) {
 
 
 /**
+ * 用户态触发的异常只终止出错的进程，内核继续运行。
+ * 仅当异常来自 Ring 3 时调用；不返回。
+ */
+static void kill_faulting_user_task(registers_t *regs, const char *what) {
+    task_t *task = kernel::Scheduler::get_current();
+    LOG_ERROR_MSG("%s in user process %u (%s) at EIP=0x%x, terminating\n", what,
+                  task ? task->pid : 0, task ? task->name : "?", regs->eip);
+    task_exit(128 + 11);  /* SIGSEGV */
+}
+
+/**
  * 通用中断处理程序
  * 由汇编 ISR 存根调用
  */
@@ -80,6 +92,9 @@ void isr_handler(registers_t *regs) {
         
         /* 检查中断来源（Ring 0 还是 Ring 3） */
         bool from_usermode = (regs->cs & 0x3) == 3;
+        if (from_usermode) {
+            kill_faulting_user_task(regs, exception_messages[regs->int_no]);
+        }
         
         kprintf("\n================================= KERNEL PANIC =================================\n");
         kprintf("Exception: %s\n", exception_messages[regs->int_no]);
@@ -129,6 +144,9 @@ void isr_handler(registers_t *regs) {
     
     // 检查中断来源
     bool from_usermode = (regs->cs & 0x3) == 3;
+    if (from_usermode) {
+        kill_faulting_user_task(regs, "Page fault");
+    }
     
     LOG_ERROR_MSG("Page fault at 0x%x (error: 0x%x)\n", 
                  faulting_address, regs->err_code);
@@ -176,6 +194,9 @@ static void general_protection_fault_handler(registers_t *regs) {
     
     /* 检查中断来源（Ring 0 还是 Ring 3） */
     bool from_usermode = (regs->cs & 0x3) == 3;
+    if (from_usermode) {
+        kill_faulting_user_task(regs, "General protection fault");
+    }
     
     kprintf("\n=========================== GENERAL PROTECTION FAULT ===========================\n");
     kprintf("Error code: 0x%x\n", regs->err_code);

@@ -398,6 +398,13 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
             break;
     }
     
+    /* 来自 EL0 的未处理异常（未定义指令、BRK、对齐错误等）只终止出错进程 */
+    if ((regs->spsr & 0xF) == 0) {
+        serial_puts("Terminating user process due to unhandled exception\n");
+        arm64_terminate_user_process(regs, ARM64_SIGNAL_SEGV, regs->elr);
+        return;
+    }
+
     dump_registers(regs);
     serial_puts("============================================\n");
     

@@ -11,6 +11,7 @@
 #include "idt64.h"
 #include "gdt64.h"
 #include <lib/klog.h>
+#include <kernel/task.h>
 #include <lib/kprintf.h>
 #include <lib/string.h>
 #include <mm/vmm.h>
@@ -66,6 +67,19 @@ void isr64_register_handler(uint8_t n, isr_handler_t handler) {
 }
 
 /**
+ * @brief Terminate the faulting user process instead of halting the kernel
+ *
+ * Only called for exceptions raised from Ring 3. Does not return.
+ */
+static void kill_faulting_user_task(registers_t *regs, const char *what) {
+    task_t *task = kernel::Scheduler::get_current();
+    LOG_ERROR_MSG("%s in user process %u (%s) at RIP=0x%llx, terminating\n", what,
+                  task ? task->pid : 0, task ? task->name : "?",
+                  (unsigned long long)regs->rip);
+    task_exit(128 + 11);  /* SIGSEGV */
+}
+
+/**
  * @brief Common interrupt handler (called from assembly)
  */
 extern "C" void isr64_handler(registers_t *regs);
@@ -84,6 +98,9 @@ void isr64_handler(registers_t *regs) {
         
         /* Check interrupt source (Ring 0 or Ring 3) */
         bool from_usermode = (regs->cs & 0x3) == 3;
+        if (from_usermode) {
+            kill_faulting_user_task(regs, exception_messages[regs->int_no]);
+        }
         
         kprintf("\n================================= KERNEL PANIC =================================\n");
         kprintf("Exception: %s\n", exception_messages[regs->int_no]);
@@ -134,6 +151,9 @@ static void page_fault_handler(registers_t *regs) {
     page_fault_info_t pf_info = parse_page_fault_error(regs->err_code);
     
     bool from_usermode = (regs->cs & 0x3) == 3;
+    if (from_usermode) {
+        kill_faulting_user_task(regs, "Page fault");
+    }
     
     LOG_ERROR_MSG("Page fault at 0x%llx (error: 0x%llx)\n", 
                  faulting_address, regs->err_code);
@@ -177,6 +197,9 @@ static void general_protection_fault_handler(registers_t *regs) {
     const char* table_names[] = {"GDT", "IDT", "LDT", "LDT"};
     
     bool from_usermode = (regs->cs & 0x3) == 3;
+    if (from_usermode) {
+        kill_faulting_user_task(regs, "General protection fault");
+    }
     
     kprintf("\n=========================== GENERAL PROTECTION FAULT ===========================\n");
     kprintf("Error code: 0x%llx\n", regs->err_code);
