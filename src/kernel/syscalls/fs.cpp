@@ -197,6 +197,14 @@ uint32_t syscall::Fs::open(const char *user_path, int32_t flags, uint32_t mode) 
     // 查找文件
     fs_node_t *node = fs::Vfs::path_to_node(path);
     
+    // O_CREAT|O_EXCL：只有文件在本次调用之前就存在才算冲突，
+    // 本次调用刚创建出来的文件不算
+    if (node && (flags & O_CREAT) && (flags & O_EXCL)) {
+        LOG_ERROR_MSG("syscall::Fs::open: file '%s' exists but O_EXCL specified\n", path);
+        fs::Vfs::release_node(node);
+        return (uint32_t)-1;
+    }
+    
     // 如果文件不存在且指定了 O_CREAT，创建文件
     if (!node && (flags & O_CREAT)) {
         if (fs::Vfs::create(path) != 0) {
@@ -208,13 +216,6 @@ uint32_t syscall::Fs::open(const char *user_path, int32_t flags, uint32_t mode) 
     
     if (!node) {
         LOG_ERROR_MSG("syscall::Fs::open: file '%s' not found\n", path);
-        return (uint32_t)-1;
-    }
-    
-    // 检查 O_EXCL 标志
-    if ((flags & O_CREAT) && (flags & O_EXCL)) {
-        LOG_ERROR_MSG("syscall::Fs::open: file '%s' exists but O_EXCL specified\n", path);
-        fs::Vfs::release_node(node);  // 释放节点，修复内存泄漏
         return (uint32_t)-1;
     }
     
