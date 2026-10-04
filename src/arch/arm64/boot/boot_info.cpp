@@ -27,8 +27,8 @@ extern "C" void serial_put_hex64(uint64_t value);
  * Linker symbols defined in linker_arm64.ld
  * These mark the physical address boundaries of the kernel image.
  */
-extern char _kernel_start[];    /* Kernel start address (physical) */
-extern char _kernel_end[];      /* Kernel end address (physical) */
+extern char _kernel_start[];    /* Kernel start address (higher-half virtual) */
+extern char _kernel_end[];      /* Kernel end address (higher-half virtual) */
 
 /* QEMU virt machine physical memory base */
 #define ARM64_PHYS_MEM_BASE     0x40000000ULL
@@ -206,13 +206,13 @@ boot_info_t *boot_info_init_dtb(void *dtb) {
     
     /*
      * Calculate kernel physical address range using linker symbols.
-     * On ARM64, _kernel_start and _kernel_end are physical addresses
-     * as defined in linker_arm64.ld (starting at KERNEL_PHYS_BASE = 0x40100000).
+     * The kernel is linked in the higher half, so _kernel_start and _kernel_end
+     * are virtual addresses; the image is loaded at KERNEL_PHYS_BASE = 0x40100000.
      * 
      * **Validates: Requirements 1.1 - Kernel physical address range detection**
      */
-    uint64_t kernel_phys_start = (uint64_t)(uintptr_t)_kernel_start;
-    uint64_t kernel_phys_end = (uint64_t)(uintptr_t)_kernel_end;
+    uint64_t kernel_phys_start = (uint64_t)VIRT_TO_PHYS((uintptr_t)_kernel_start);
+    uint64_t kernel_phys_end = (uint64_t)VIRT_TO_PHYS((uintptr_t)_kernel_end);
     
     /* Align kernel end to page boundary (4KB) */
     kernel_phys_end = (kernel_phys_end + 0xFFF) & ~0xFFFULL;
@@ -334,7 +334,7 @@ const boot_mmap_entry_t *boot_info_find_memory(boot_mem_type_t type, uint32_t in
  * @return Kernel physical start address
  */
 uint64_t boot_info_get_kernel_phys_start(void) {
-    return (uint64_t)(uintptr_t)_kernel_start;
+    return (uint64_t)VIRT_TO_PHYS((uintptr_t)_kernel_start);
 }
 
 /**
@@ -346,7 +346,7 @@ uint64_t boot_info_get_kernel_phys_start(void) {
  * @return Kernel physical end address (page-aligned)
  */
 uint64_t boot_info_get_kernel_phys_end(void) {
-    uint64_t end = (uint64_t)(uintptr_t)_kernel_end;
+    uint64_t end = (uint64_t)VIRT_TO_PHYS((uintptr_t)_kernel_end);
     /* Align to 4KB page boundary */
     return (end + 0xFFF) & ~0xFFFULL;
 }

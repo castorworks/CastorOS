@@ -193,15 +193,14 @@ el2_entry:
  */
 el1_entry:
     /* 设置栈指针 (使用物理地址，MMU 尚未启用) */
-    adrp    x0, boot_stack_top
-    add     x0, x0, :lo12:boot_stack_top
+    /* 引导代码运行在物理地址，而 .bss/.data 里的符号链接在高半区：
+     * MMU 打开之前一律用“符号地址 - KERNEL_VMA”得到物理地址 */
+    ldr     x0, =(boot_stack_top - KERNEL_VMA)
     mov     sp, x0
 
     /* 清零 BSS 段 */
-    adrp    x0, _bss_start
-    add     x0, x0, :lo12:_bss_start
-    adrp    x1, _bss_end
-    add     x1, x1, :lo12:_bss_end
+    ldr     x0, =(_bss_start - KERNEL_VMA)
+    ldr     x1, =(_bss_end - KERNEL_VMA)
 clear_bss:
     cmp     x0, x1
     b.ge    bss_done
@@ -254,8 +253,7 @@ bss_done:
     msr     tcr_el1, x0
 
     /* 加载页表基址 */
-    adrp    x0, boot_l0_table
-    add     x0, x0, :lo12:boot_l0_table
+    ldr     x0, =(boot_l0_table - KERNEL_VMA)
     msr     ttbr0_el1, x0       /* 用户空间页表 (恒等映射) */
     msr     ttbr1_el1, x0       /* 内核空间页表 */
 
@@ -273,10 +271,9 @@ bss_done:
     /* 同步屏障 */
     isb
 
-    /* 跳转到内核主函数 (暂时不使用高半核) */
-    /* 设置栈 */
-    adrp    x0, stack_top
-    add     x0, x0, :lo12:stack_top
+    /* MMU 已打开：从这里起切到高半区运行。栈和 kernel_main 都用链接地址
+     * （高半区，经 TTBR1 映射），不再依赖 TTBR0 的恒等映射 */
+    ldr     x0, =stack_top
     mov     sp, x0
 
     /* 准备 kernel_main 参数 */
@@ -286,13 +283,17 @@ bss_done:
     mov     x0, x21             /* Otherwise try x21 backup */
 1:
 
-    /* 调用 kernel_main */
-    bl      kernel_main
+    /* 调用 kernel_main（绝对地址跳转：它在高半区，bl 够不到） */
+    ldr     x1, =kernel_main
+    blr     x1
 
     /* kernel_main 不应返回 */
 halt:
     wfi
     b       halt
+
+    /* 上面 ldr = 用到的字面量放在引导段内（物理地址可达） */
+    .ltorg
 
 /* ============================================================================
  * 页表设置
@@ -312,14 +313,14 @@ setup_page_tables:
     mov     x20, x30
 
     /* 清零页表 */
-    adr     x0, boot_l0_table
+    ldr     x0, =(boot_l0_table - KERNEL_VMA)
     mov     x1, #(PAGE_SIZE * 4)    /* L0 + L1 tables */
     bl      zero_memory
 
-    /* 获取页表地址 */
-    adr     x0, boot_l0_table
-    adr     x1, boot_l1_table_low
-    adr     x2, boot_l1_table_high
+    /* 获取页表地址（物理地址） */
+    ldr     x0, =(boot_l0_table - KERNEL_VMA)
+    ldr     x1, =(boot_l1_table_low - KERNEL_VMA)
+    ldr     x2, =(boot_l1_table_high - KERNEL_VMA)
 
     /* L0[0] -> L1 低地址表 (恒等映射) */
     orr     x3, x1, #TABLE_DESC
@@ -401,6 +402,8 @@ zero_memory:
     b.gt    1b
 2:
     ret
+
+    .ltorg
 
 /* ============================================================================
  * 数据段

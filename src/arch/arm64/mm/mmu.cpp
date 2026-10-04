@@ -427,14 +427,21 @@ void hal::Mmu::init() {
  * ========================================================================== */
 
 /**
- * @brief 获取指定地址空间的 Level 0 表虚拟地址
+ * @brief 获取翻译 virt 所用的 Level 0 表的虚拟地址
+ *
+ * 高半区地址（内核）由 TTBR1 的页表翻译，这张表所有地址空间共用，与 space 无关；
+ * 低半区地址（用户）由 space 自己的页表翻译。
+ *
  * @param space 地址空间句柄 (HAL_ADDR_SPACE_CURRENT 表示当前)
+ * @param virt  要翻译的虚拟地址
  * @return Level 0 表的虚拟地址
  */
-static uint64_t* get_l0_table(hal_addr_space_t space) {
+static uint64_t* get_l0_table(hal_addr_space_t space, vaddr_t virt) {
     paddr_t l0_phys;
     
-    if (space == HAL_ADDR_SPACE_CURRENT || space == 0) {
+    if ((uint64_t)virt >= KERNEL_VIRTUAL_BASE) {
+        l0_phys = (paddr_t)(read_ttbr1_el1() & DESC_ADDR_MASK);
+    } else if (space == HAL_ADDR_SPACE_CURRENT || space == 0) {
         l0_phys = hal::Mmu::get_current_page_table();
     } else {
         l0_phys = space;
@@ -614,7 +621,7 @@ static uint32_t arm64_flags_to_hal(uint64_t arm64_flags) {
  * @see Requirements 6.2
  */
 bool hal::Mmu::query(hal_addr_space_t space, vaddr_t virt, paddr_t *phys, uint32_t *flags) {
-    uint64_t *l0 = get_l0_table(space);
+    uint64_t *l0 = get_l0_table(space, virt);
     
     /* Get indices for each level */
     uint64_t l0_idx = l0_index((uint64_t)virt);
@@ -715,7 +722,7 @@ bool hal::Mmu::map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t 
         return false;
     }
     
-    uint64_t *l0 = get_l0_table(space);
+    uint64_t *l0 = get_l0_table(space, virt);
     
     /* Get indices for each level */
     uint64_t l0_idx = l0_index((uint64_t)virt);
@@ -790,7 +797,7 @@ bool hal::Mmu::map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t 
  * @see Requirements 6.2
  */
 paddr_t hal::Mmu::unmap(hal_addr_space_t space, vaddr_t virt) {
-    uint64_t *l0 = get_l0_table(space);
+    uint64_t *l0 = get_l0_table(space, virt);
     
     /* Get indices for each level */
     uint64_t l0_idx = l0_index((uint64_t)virt);
@@ -872,7 +879,7 @@ paddr_t hal::Mmu::unmap(hal_addr_space_t space, vaddr_t virt) {
  */
 bool hal::Mmu::protect(hal_addr_space_t space, vaddr_t virt, 
                      uint32_t set_flags, uint32_t clear_flags) {
-    uint64_t *l0 = get_l0_table(space);
+    uint64_t *l0 = get_l0_table(space, virt);
     
     /* Get indices for each level */
     uint64_t l0_idx = l0_index((uint64_t)virt);
@@ -995,141 +1002,13 @@ hal_addr_space_t hal::Mmu::create_space() {
     
     uint64_t *new_l0 = (uint64_t*)PADDR_TO_KVADDR(l0_phys);
     
-    /* Get current L0 for copying kernel mappings */
-    uint64_t *current_l0 = get_l0_table(HAL_ADDR_SPACE_CURRENT);
-    
-    /* Clear user space entries (L0[0..255]) */
-    for (uint32_t i = USER_L0_START; i < USER_L0_END; i++) {
-        new_l0[i] = 0;
-    }
-    
-    /* 
-     * CRITICAL: The kernel runs at physical addresses (0x40xxxxxx) which are in
-     * the TTBR0 region. We need to preserve access to kernel code/data while
-     * allowing user programs to be loaded at low addresses (e.g., 0x10000000).
-     * 
-     * The boot page tables have:
-     *   L0[0] -> L1 table with:
-     *     - L1[0]: 0x00000000-0x3FFFFFFF (device memory, 1GB block)
-     *     - L1[1]: 0x40000000-0x7FFFFFFF (RAM/kernel, 1GB block)
-     * 
-     * For user processes, we create a NEW L1 table that:
-     *   - L1[0]: Empty (allows user mappings at 0x00000000-0x3FFFFFFF)
-     *   - L1[1]: Copy of kernel RAM mapping (preserves kernel access)
-     * 
-     * This allows user programs to be loaded at addresses like 0x10000000
-     * while keeping the kernel accessible at 0x40000000.
+    /*
+     * 用户地址空间（TTBR0）里只有用户映射，新建时整张表为空。内核和设备寄存器
+     * 都在高半区，由 TTBR1 的页表翻译，所有进程共用，和这张表无关：
+     * 整个低半区（包括 0x40000000 以上）都留给用户程序。
      */
-    
-    /* Check if current L0[0] is valid and points to an L1 table */
-    if (desc_is_valid(current_l0[0]) && desc_is_table(current_l0[0])) {
-        /* Allocate a new L1 table for this user process */
-        paddr_t new_l1_phys = alloc_page_table();
-        if (new_l1_phys == PADDR_INVALID) {
-            LOG_ERROR_MSG("hal::Mmu::create_space: Failed to allocate L1 table\n");
-            mm::Pmm::free_frame(l0_phys);
-            return HAL_ADDR_SPACE_INVALID;
-        }
-        
-        uint64_t *new_l1 = (uint64_t*)PADDR_TO_KVADDR(new_l1_phys);
-        uint64_t *current_l1 = (uint64_t*)PADDR_TO_KVADDR(desc_get_addr(current_l0[0]));
-        
-        /* Clear the new L1 table */
-        memset(new_l1, 0, PAGE_SIZE);
-        
-        /* 
-         * For user processes, we need to:
-         * 1. Keep device memory accessible (serial port at 0x09000000)
-         * 2. Keep kernel RAM accessible (0x40000000-0x7FFFFFFF)
-         * 3. Allow user programs to be loaded at low addresses
-         * 
-         * Solution: Create an L2 table for L1[0] that maps only the device regions
-         * we need, leaving the rest available for user mappings.
-         * 
-         * L1[0] covers 0x00000000-0x3FFFFFFF (1GB)
-         * Device memory is at 0x00000000-0x3FFFFFFF (first 1GB in QEMU virt)
-         * Serial port (PL011) is at 0x09000000
-         * 
-         * We'll create an L2 table with 2MB blocks for device regions.
-         */
-        paddr_t new_l2_phys = alloc_page_table();
-        if (new_l2_phys == PADDR_INVALID) {
-            LOG_ERROR_MSG("hal::Mmu::create_space: Failed to allocate L2 table\n");
-            mm::Pmm::free_frame(new_l1_phys);
-            mm::Pmm::free_frame(l0_phys);
-            return HAL_ADDR_SPACE_INVALID;
-        }
-        
-        uint64_t *new_l2 = (uint64_t*)PADDR_TO_KVADDR(new_l2_phys);
-        memset(new_l2, 0, PAGE_SIZE);
-        
-        /* Map device memory regions as 2MB blocks in L2 */
-        /* L2 index = (virt >> 21) & 0x1FF, each entry covers 2MB */
-        /* Serial port at 0x09000000 -> L2 index = (0x09000000 >> 21) & 0x1FF = 4 */
-        /* GIC at 0x08000000 -> L2 index = (0x08000000 >> 21) & 0x1FF = 4 (same 2MB block) */
-        /* Actually 0x08000000 >> 21 = 64, 0x09000000 >> 21 = 72 */
-        
-        /* Device block descriptor: valid, block, AF, device memory attributes */
-        /* MMIO is data only: never executable, at EL0 or EL1 */
-        uint64_t dev_block_flags = DESC_VALID | DESC_AF | 
-                                   ((uint64_t)MAIR_IDX_DEVICE_nGnRnE << DESC_ATTR_INDEX_SHIFT) |
-                                   DESC_AP_RW_EL1 | DESC_UXN | DESC_PXN;
-        
-        /* Every device the kernel touches while this address space is live
-         * must be mapped here: system calls and interrupts run on the
-         * process's TTBR0, and a missing window is an EL1 translation fault.
-         * (QEMU virt layout; user images load at 0x10000000 and above.) */
-        /* L2[64] = 0x08000000 (GIC distributor + CPU interface) */
-        new_l2[64] = 0x08000000ULL | dev_block_flags | DESC_TYPE_BLOCK;
-        /* L2[72] = 0x09000000 (PL011 serial port, RTC, fw_cfg) */
-        new_l2[72] = 0x09000000ULL | dev_block_flags | DESC_TYPE_BLOCK;
-        /* L2[80] = 0x0a000000 (virtio-mmio transports: virtio-gpu console) */
-        new_l2[80] = 0x0a000000ULL | dev_block_flags | DESC_TYPE_BLOCK;
-        
-        /* Point L1[0] to our new L2 table */
-        new_l1[0] = new_l2_phys | DESC_VALID | DESC_TABLE;
-        
-        /* Copy L1[1-3] as 1GB blocks (kernel RAM and additional memory) */
-        new_l1[1] = current_l1[1];
-        new_l1[2] = current_l1[2];
-        new_l1[3] = current_l1[3];
-        
-        LOG_INFO_MSG("hal::Mmu::create_space: Created L2 table for device memory at 0x%llx\n",
-                      (unsigned long long)new_l2_phys);
-        LOG_INFO_MSG("  L2[64]=0x%llx (GIC), L2[72]=0x%llx (serial)\n",
-                      (unsigned long long)new_l2[64], (unsigned long long)new_l2[72]);
-        
-        /* Point L0[0] to our new L1 table */
-        new_l0[0] = new_l1_phys | DESC_VALID | DESC_TABLE;
-        
-        /* Ensure the writes are visible before we use this table */
-        __asm__ volatile("dsb sy" ::: "memory");
-        
-        LOG_INFO_MSG("hal::Mmu::create_space: Created new L1 table at phys 0x%llx\n",
-                      (unsigned long long)new_l1_phys);
-        LOG_INFO_MSG("  current_l0[0]=0x%llx -> current_l1 at 0x%llx\n",
-                      (unsigned long long)current_l0[0],
-                      (unsigned long long)desc_get_addr(current_l0[0]));
-        LOG_INFO_MSG("  current_l1[1]=0x%llx (kernel RAM block)\n",
-                      (unsigned long long)current_l1[1]);
-        LOG_INFO_MSG("  new_l0[0]=0x%llx -> new_l1 at 0x%llx\n",
-                      (unsigned long long)new_l0[0],
-                      (unsigned long long)new_l1_phys);
-        LOG_INFO_MSG("  new_l1[0-3]=0x%llx, 0x%llx, 0x%llx, 0x%llx\n",
-                      (unsigned long long)new_l1[0], (unsigned long long)new_l1[1],
-                      (unsigned long long)new_l1[2], (unsigned long long)new_l1[3]);
-    } else {
-        /* Fallback: just copy L0[0] as before */
-        new_l0[0] = current_l0[0];
-        LOG_WARN_MSG("hal::Mmu::create_space: L0[0] not a table, copying directly\n");
-    }
-    
-    /* Copy kernel space entries (L0[256..511]) */
-    /* These are shared across all address spaces */
-    for (uint32_t i = KERNEL_L0_START; i < KERNEL_L0_END; i++) {
-        new_l0[i] = current_l0[i];
-    }
-    
+    memset(new_l0, 0, PAGE_SIZE);
+
     LOG_DEBUG_MSG("hal::Mmu::create_space: Created new L0 table at phys 0x%llx\n", 
                   (unsigned long long)l0_phys);
     
@@ -1900,7 +1779,7 @@ bool hal::Mmu::map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint
         return false;
     }
     
-    uint64_t *l0 = get_l0_table(space);
+    uint64_t *l0 = get_l0_table(space, virt);
     
     /* Get indices for each level */
     uint64_t l0_idx = l0_index((uint64_t)virt);
@@ -1974,7 +1853,7 @@ paddr_t hal::Mmu::unmap_huge(hal_addr_space_t space, vaddr_t virt) {
         return PADDR_INVALID;
     }
     
-    uint64_t *l0 = get_l0_table(space);
+    uint64_t *l0 = get_l0_table(space, virt);
     
     /* Get indices for each level */
     uint64_t l0_idx = l0_index((uint64_t)virt);
@@ -2039,7 +1918,7 @@ paddr_t hal::Mmu::unmap_huge(hal_addr_space_t space, vaddr_t virt) {
  * @see Requirements 8.3
  */
 bool hal::Mmu::is_huge_page(hal_addr_space_t space, vaddr_t virt) {
-    uint64_t *l0 = get_l0_table(space);
+    uint64_t *l0 = get_l0_table(space, virt);
     
     /* Get indices for each level */
     uint64_t l0_idx = l0_index((uint64_t)virt);

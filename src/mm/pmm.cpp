@@ -451,11 +451,10 @@ void mm::Pmm::init_boot_info(boot_info_t *boot_info) {
      */
 #if defined(ARCH_ARM64)
     /* 
-     * ARM64: 链接器脚本将内核放在物理地址空间
-     * _kernel_start 和 _kernel_end 是物理地址，不需要转换
+     * ARM64: 内核链接在高半区，_kernel_start 和 _kernel_end 是虚拟地址
      */
-    paddr_t kernel_phys_start = (paddr_t)(uintptr_t)_kernel_start;
-    paddr_t kernel_phys_end = PAGE_ALIGN_UP((paddr_t)(uintptr_t)_kernel_end);
+    paddr_t kernel_phys_start = (paddr_t)VIRT_TO_PHYS((uintptr_t)_kernel_start);
+    paddr_t kernel_phys_end = PAGE_ALIGN_UP((paddr_t)VIRT_TO_PHYS((uintptr_t)_kernel_end));
     
     LOG_INFO_MSG("PMM: ARM64 kernel physical range: 0x%llx - 0x%llx\n",
                  (unsigned long long)kernel_phys_start,
@@ -504,8 +503,8 @@ void mm::Pmm::init_boot_info(boot_info_t *boot_info) {
     
 #if defined(ARCH_ARM64)
     /* 
-     * ARM64: _kernel_end 是物理地址，需要转换为虚拟地址
-     * 位图放在内核结束后的虚拟地址空间
+     * ARM64: 位图放在内核结束后的虚拟地址空间
+     * （kernel_phys_end 是页对齐后的物理地址）
      */
     uintptr_t kernel_end_virt = PHYS_TO_VIRT(kernel_phys_end);
 #else

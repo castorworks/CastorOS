@@ -307,29 +307,37 @@ TEST_CASE(test_arm64_hal_mmu_protect_keeps_unrelated_flags) {
 }
 
 /**
- * A new address space must carry every device window the kernel touches
- * while running on that space's TTBR0 (GIC, UART, virtio-mmio), mapped
- * kernel-only and never executable.
+ * A new address space holds no kernel or device mappings: the kernel and its
+ * device windows live in the higher half (TTBR1), which every address space
+ * shares, so the whole lower half belongs to the user program.
  */
-TEST_CASE(test_arm64_create_space_maps_kernel_devices) {
+TEST_CASE(test_arm64_create_space_has_no_kernel_mappings) {
     mm::PmmInfo before = mm::Pmm::get_info();
 
     hal_addr_space_t space = hal::Mmu::create_space();
     ASSERT_TRUE(space != HAL_ADDR_SPACE_INVALID);
 
-    const paddr_t devices[] = {
+    /* Nothing of the kernel is reachable through the lower half */
+    const vaddr_t low[] = {
         0x08000000ULL,  /* GIC distributor */
         0x09000000ULL,  /* PL011 UART */
         0x0a000000ULL,  /* virtio-mmio transports */
-        0x0a003e00ULL,  /* last virtio-mmio transport */
+        0x40000000ULL,  /* start of RAM */
+        0x40100000ULL,  /* kernel image load address */
     };
-    for (uint32_t i = 0; i < sizeof(devices) / sizeof(devices[0]); i++) {
+    for (uint32_t i = 0; i < sizeof(low) / sizeof(low[0]); i++) {
+        ASSERT_FALSE(hal::Mmu::query(space, low[i], NULL, NULL));
+    }
+
+    /* The same physical addresses are reachable through the higher half,
+     * kernel-only, whichever address space is asked */
+    const paddr_t phys_addrs[] = { 0x08000000ULL, 0x09000000ULL, 0x40100000ULL };
+    for (uint32_t i = 0; i < sizeof(phys_addrs) / sizeof(phys_addrs[0]); i++) {
         paddr_t phys = 0;
         uint32_t flags = 0;
-        ASSERT_TRUE(hal::Mmu::query(space, (vaddr_t)devices[i], &phys, &flags));
-        ASSERT_TRUE(phys == devices[i]);
+        ASSERT_TRUE(hal::Mmu::query(space, (vaddr_t)PHYS_TO_VIRT(phys_addrs[i]), &phys, &flags));
+        ASSERT_TRUE(phys == phys_addrs[i]);
         ASSERT_TRUE((flags & HAL_PAGE_USER) == 0);
-        ASSERT_TRUE((flags & HAL_PAGE_EXEC) == 0);
     }
 
     hal::Mmu::destroy_space(space);
@@ -354,7 +362,7 @@ TEST_SUITE(arm64_mmu_kernel_range_tests) {
 
 TEST_SUITE(arm64_mmu_hal_tests) {
     RUN_TEST(test_arm64_hal_mmu_protect_keeps_unrelated_flags);
-    RUN_TEST(test_arm64_create_space_maps_kernel_devices);
+    RUN_TEST(test_arm64_create_space_has_no_kernel_mappings);
 }
 
 /**

@@ -1,5 +1,5 @@
 /* CastorOS ARM64 链接器脚本 */
-/* 简化版本：所有代码在物理地址空间 */
+/* 引导代码链接在物理地址；内核其余部分链接在高半区（TTBR1），加载地址仍是物理地址 */
 /* Requirements: 4.1 */
 
 ENTRY(_start)
@@ -18,8 +18,10 @@ SECTIONS
     /* 物理地址从 0x40100000 开始 (QEMU virt machine RAM + 1MB) */
     . = KERNEL_PHYS_BASE;
 
-    /* 保存内核起始地址 */
-    _kernel_start = .;
+    /* 内核起始地址。和其他链接符号一样给的是高半区虚拟地址
+     * （高半区的 C++ 代码用 PC 相对寻址引用符号，够不到物理地址），
+     * 需要物理地址的地方用 VIRT_TO_PHYS 转换 */
+    _kernel_start = . + KERNEL_VIRTUAL_BASE;
 
     /* 引导代码 (在启用 MMU 前执行，使用物理地址) */
     .text.boot ALIGN(4K) :
@@ -27,15 +29,19 @@ SECTIONS
         *(.text.boot)
     }
 
+    /* 之后的段运行在高半区：VMA = 物理地址 + KERNEL_VIRTUAL_BASE，LMA 保持物理地址 */
+    . = ALIGN(4K);
+    . += KERNEL_VIRTUAL_BASE;
+
     /* .text 段：代码段 */
-    .text ALIGN(4K) :
+    .text ALIGN(4K) : AT(ADDR(.text) - KERNEL_VIRTUAL_BASE)
     {
         *(.text)
         *(.text.*)
     }
 
     /* .rodata 段：只读数据 */
-    .rodata ALIGN(4K) :
+    .rodata ALIGN(4K) : AT(ADDR(.rodata) - KERNEL_VIRTUAL_BASE)
     {
         *(.rodata)
         *(.rodata.*)
@@ -53,14 +59,14 @@ SECTIONS
     }
 
     /* .data 段：已初始化数据 */
-    .data ALIGN(4K) :
+    .data ALIGN(4K) : AT(ADDR(.data) - KERNEL_VIRTUAL_BASE)
     {
         *(.data)
         *(.data.*)
     }
 
     /* .bss 段：未初始化数据 */
-    .bss ALIGN(4K) :
+    .bss ALIGN(4K) : AT(ADDR(.bss) - KERNEL_VIRTUAL_BASE)
     {
         _bss_start = .;
         *(COMMON)

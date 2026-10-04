@@ -35,7 +35,8 @@
 #define PL011_DEFAULT_BASE  0x09000000ULL
 
 /** UART base address (can be updated from DTB) */
-static volatile uint8_t *uart_base = (volatile uint8_t *)PL011_DEFAULT_BASE;
+/* 经内核高半区映射访问：进程的 TTBR0 里没有设备映射 */
+static volatile uint8_t *uart_base = (volatile uint8_t *)PHYS_TO_VIRT(PL011_DEFAULT_BASE);
 
 /* Register offsets from base address */
 #define PL011_DR        0x000   /**< Data Register */
@@ -140,7 +141,7 @@ static bool serial_initialized = false;
  * @param base Physical base address of the PL011 UART
  */
 void drivers::Serial::set_base(uint64_t base) {
-    uart_base = (volatile uint8_t *)base;
+    uart_base = (volatile uint8_t *)PHYS_TO_VIRT(base);
 }
 
 /**
@@ -148,7 +149,7 @@ void drivers::Serial::set_base(uint64_t base) {
  * @return Current UART base address
  */
 uint64_t drivers::Serial::get_base() {
-    return (uint64_t)uart_base;
+    return (uint64_t)VIRT_TO_PHYS((uintptr_t)uart_base);
 }
 
 /**

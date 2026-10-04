@@ -23,8 +23,9 @@ extern "C" void serial_put_hex64(uint64_t value);
  * ========================================================================== */
 
 /** GIC base addresses (virtual, after MMU setup) */
-static volatile uint32_t *gicd_base = (volatile uint32_t *)GICD_BASE;
-static volatile uint32_t *gicc_base = (volatile uint32_t *)GICC_BASE;
+/* 设备寄存器经内核高半区映射访问：进程的 TTBR0 里没有设备映射 */
+static volatile uint32_t *gicd_base = (volatile uint32_t *)PHYS_TO_VIRT(GICD_BASE);
+static volatile uint32_t *gicc_base = (volatile uint32_t *)PHYS_TO_VIRT(GICC_BASE);
 
 /** Number of supported interrupts */
 static uint32_t gic_num_interrupts = 0;
