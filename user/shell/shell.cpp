@@ -127,7 +127,8 @@ static int shell_read_line(char *buffer, size_t size) {
                 write(STDOUT_FILENO, buffer, i);
             }
             continue;
-        } else if (c == '\n') {
+        } else if (c == '\n' || c == '\r') {
+            // 串口终端（如 arm64 的 PL011）回车键发送的是 '\r'，同样当作行结束
             buffer[i] = '\0';
             print("\n");
             return (int)i;
@@ -587,6 +588,7 @@ static uint32_t shell_parse_meminfo_value(const char *line);
 // 管道相关函数声明
 static int shell_parse_pipeline(char *line, pipe_stage_t *stages, int *num_stages);
 static int shell_execute_pipeline(pipe_stage_t *stages, int num_stages);
+static int shell_execute_command(int argc, char **argv);
 static int shell_execute_single_command(int argc, char **argv);
 
 static uint32_t shell_parse_meminfo_value(const char *line) {
@@ -2104,9 +2106,13 @@ static int shell_parse_pipeline(char *line, pipe_stage_t *stages, int *num_stage
             }
         }
         
-        if (stage->argc > 0) {
-            (*num_stages)++;
+        if (stage->argc == 0) {
+            // "| cmd" 或 "cmd1 || cmd2"：'|' 前面没有命令
+            printf("Error: syntax error near '|'\n");
+            *num_stages = 0;
+            return -1;
         }
+        (*num_stages)++;
         
         // 移动到下一段
         segment = pipe_pos + 1;
@@ -2136,17 +2142,22 @@ static int shell_parse_pipeline(char *line, pipe_stage_t *stages, int *num_stage
             }
         }
         
-        if (stage->argc > 0) {
-            (*num_stages)++;
+        if (stage->argc == 0) {
+            // "cmd |"：'|' 后面没有命令
+            printf("Error: syntax error near '|'\n");
+            *num_stages = 0;
+            return -1;
         }
+        (*num_stages)++;
     }
     
     return 0;
 }
 
 /**
- * 执行单个命令（在子进程中）
- * 与 shell_execute_command 类似，但用于管道场景
+ * 执行单个命令（只能在 fork 出来的子进程中调用）
+ * 与 shell_execute_command 类似，但用于管道场景：外部程序会直接 exec，
+ * 替换掉调用它的进程，所以绝不能在 shell 自身的进程里调用。
  */
 static int shell_execute_single_command(int argc, char **argv) {
     if (argc == 0) return 0;
@@ -2193,9 +2204,10 @@ static int shell_execute_pipeline(pipe_stage_t *stages, int num_stages) {
         return 0;
     }
     
-    // 只有一个命令，不需要管道
+    // 只有一个命令，不需要管道：没有 fork，走普通命令路径
+    // （shell_execute_single_command 会 exec，把 shell 自己替换掉）
     if (num_stages == 1) {
-        return shell_execute_single_command(stages[0].argc, stages[0].argv);
+        return shell_execute_command(stages[0].argc, stages[0].argv);
     }
     
     // 创建所有需要的管道
