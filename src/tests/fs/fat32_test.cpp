@@ -12,7 +12,7 @@
 //   - 长文件名 (LFN) 处理
 //   - 文件名格式转换
 //   - 内存块设备上的真实卷：共享 in-core 节点、打开状态下删除、
-//     扩展失败回滚、截断
+//     扩展失败回滚、截断、BPB 校验
 //
 // **Feature: test-refactor**
 // **Validates: Requirements 4.3**
@@ -1045,6 +1045,48 @@ TEST_CASE(test_fat32_truncate_real) {
     fat32_test_unmount(root);
 }
 
+/**
+ * @brief BPB 与块设备不符或自相矛盾时拒绝挂载
+ */
+TEST_CASE(test_fat32_rejects_bad_bpb) {
+    struct { uint32_t offset; uint32_t width; uint32_t value; } cases[] = {
+        { 11, 2, 256 },                     // bytes_per_sector 小于设备块大小
+        { 11, 2, 1024 },                    // bytes_per_sector 大于设备块大小
+        { 13, 1, 3 },                       // sectors_per_cluster 不是 2 的幂
+        { 16, 1, 0 },                       // fat_count = 0
+        { 14, 2, 0 },                       // reserved_sectors = 0
+        { 36, 4, 0 },                       // sectors_per_fat = 0
+        { 36, 4, 0x80000000u },             // fat_count * sectors_per_fat 回绕
+        { 32, 4, RD_TOTAL_SECTORS + 100 },  // 文件系统比设备大
+        { 44, 4, 1 },                       // root_cluster 太小
+        { 44, 4, RD_CLUSTERS + 2 },         // root_cluster 超出数据区
+    };
+
+    for (uint32_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        ASSERT_TRUE(fat32_test_format());
+        if (!fat32_test_disk.data) return;
+        uint8_t *field = fat32_test_disk.data + cases[i].offset;
+        if (cases[i].width == 1) {
+            field[0] = (uint8_t)cases[i].value;
+        } else if (cases[i].width == 2) {
+            rd_put16(field, (uint16_t)cases[i].value);
+        } else {
+            rd_put32(field, cases[i].value);
+        }
+        fs_node_t *root = fs::Fat32::init(&fat32_test_dev);
+        ASSERT_NULL(root);
+        if (root) {
+            fs::Fat32::deinit(root);
+        }
+        fat32_test_free_disk();
+    }
+
+    // 合法的卷仍然可以挂载
+    fs_node_t *root = fat32_test_mount();
+    ASSERT_NOT_NULL(root);
+    fat32_test_unmount(root);
+}
+
 // ============================================================================
 // 测试套件定义
 // ============================================================================
@@ -1115,6 +1157,7 @@ TEST_SUITE(fat32_volume_tests) {
     RUN_TEST(test_fat32_unlink_while_open);
     RUN_TEST(test_fat32_extend_failure_rolls_back);
     RUN_TEST(test_fat32_truncate_real);
+    RUN_TEST(test_fat32_rejects_bad_bpb);
 }
 
 // ============================================================================

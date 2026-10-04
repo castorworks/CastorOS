@@ -1995,11 +1995,78 @@ new_node->permissions = FS_PERM_READ | FS_PERM_WRITE;
 // 公共接口
 // ============================================================================
 
+/**
+ * 校验 BPB 的几何参数
+ *
+ * 之后所有扇区/簇缓冲区和 LBA 计算都直接使用这些字段，所以必须在挂载前确认
+ * 它们自洽并且与块设备相符；任何一项不满足都拒绝挂载。
+ */
+static bool fat32_validate_bpb(const fat32_bpb_t *bpb, fs::Blockdev *dev) {
+    // 扇区缓冲区按 bytes_per_sector 分配，而块设备按自己的块大小读写：两者必须相等
+    if (bpb->bytes_per_sector != fs::Blockdev::get_block_size(dev)) {
+        LOG_ERROR_MSG("fat32: bytes per sector (%u) does not match device block size (%u)\n",
+                      bpb->bytes_per_sector, fs::Blockdev::get_block_size(dev));
+        return false;
+    }
+    
+    uint32_t spc = bpb->sectors_per_cluster;
+    if (spc == 0 || (spc & (spc - 1)) != 0) {
+        LOG_ERROR_MSG("fat32: Invalid sectors per cluster (%u)\n", spc);
+        return false;
+    }
+    
+    if (bpb->fat_count == 0 || bpb->reserved_sectors == 0 || bpb->sectors_per_fat_32 == 0) {
+        LOG_ERROR_MSG("fat32: Invalid BPB (fat_count=%u, reserved=%u, sectors_per_fat=%u)\n",
+                      bpb->fat_count, bpb->reserved_sectors, bpb->sectors_per_fat_32);
+        return false;
+    }
+    
+    // 用 64 位计算，避免 fat_count * sectors_per_fat 之类的乘加回绕
+    uint64_t total_sectors = bpb->total_sectors_32 ? bpb->total_sectors_32
+                                                   : bpb->total_sectors_16;
+    uint64_t fats_total = (uint64_t)bpb->fat_count * bpb->sectors_per_fat_32;
+    uint64_t data_start = (uint64_t)bpb->reserved_sectors + fats_total;
+    if (total_sectors <= data_start) {
+        LOG_ERROR_MSG("fat32: Invalid BPB, total sectors too small\n");
+        return false;
+    }
+    if (total_sectors > fs::Blockdev::get_size(dev)) {
+        LOG_ERROR_MSG("fat32: Filesystem (%u sectors) is larger than the device (%u sectors)\n",
+                      (uint32_t)total_sectors, fs::Blockdev::get_size(dev));
+        return false;
+    }
+    
+    uint64_t total_clusters = (total_sectors - data_start) / spc;
+    if (total_clusters == 0 || total_clusters + 2 > FAT32_CLUSTER_RESERVED_MAX) {
+        LOG_ERROR_MSG("fat32: Invalid data cluster count\n");
+        return false;
+    }
+    
+    // 每个 FAT 必须容得下所有簇的表项（含保留的 0、1 号）
+    uint64_t fat_entries = (uint64_t)bpb->sectors_per_fat_32 * bpb->bytes_per_sector / 4;
+    if (fat_entries < total_clusters + 2) {
+        LOG_ERROR_MSG("fat32: FAT too small for %u clusters\n", (uint32_t)total_clusters);
+        return false;
+    }
+    
+    if (bpb->root_cluster < 2 || bpb->root_cluster > total_clusters + 1) {
+        LOG_ERROR_MSG("fat32: Root cluster %u out of range\n", bpb->root_cluster);
+        return false;
+    }
+    
+    return true;
+}
+
 bool fs::Fat32::probe(fs::Blockdev *dev) {
     if (!dev) {
         return false;
     }
     
+    // 引导扇区读进 512 字节的 fat32_bpb_t：块更大的设备会写出缓冲区
+    if (fs::Blockdev::get_block_size(dev) != sizeof(fat32_bpb_t)) {
+        return false;
+    }
+
     // 读取引导扇区
     fat32_bpb_t bpb;
     if (fs::Blockdev::read(dev, 0, 1, (uint8_t *)&bpb) != 0) {
@@ -2016,11 +2083,11 @@ bool fs::Fat32::probe(fs::Blockdev *dev) {
         return false;
     }
     
-    // 检查每扇区字节数（必须是 512 的倍数）
-    if (bpb.bytes_per_sector == 0 || (bpb.bytes_per_sector & (bpb.bytes_per_sector - 1)) != 0) {
+    // 检查每扇区字节数（必须与块设备的块大小一致）
+    if (bpb.bytes_per_sector != fs::Blockdev::get_block_size(dev)) {
         return false;
     }
-    
+
     return true;
 }
 
@@ -2054,7 +2121,13 @@ fs_node_t *fs::Fat32::init(fs::Blockdev *dev) {
         return NULL;
     }
     
-    // 计算关键扇区位置
+    if (!fat32_validate_bpb(&fs->bpb, dev)) {
+        fs::Blockdev::release(fs->dev);  // 释放设备引用
+        kfree(fs);
+        return NULL;
+    }
+    
+    // 计算关键扇区位置（上面已校验过，不会回绕）
     fs->fat_start_sector = fs->bpb.reserved_sectors;
     fs->data_start_sector = fs->fat_start_sector + 
                            (fs->bpb.fat_count * fs->bpb.sectors_per_fat_32);
@@ -2089,14 +2162,15 @@ fs_node_t *fs::Fat32::init(fs::Blockdev *dev) {
     fs->fsinfo_sector = fs->bpb.fs_info_sector;
     fs->next_free_cluster = 2;  // 默认从簇 2 开始
     
-    if (fs->fsinfo_sector > 0 && fs->fsinfo_sector < 100) {
+    if (fs->fsinfo_sector > 0 && fs->fsinfo_sector < fs->bpb.reserved_sectors) {
         uint8_t *fsinfo_buffer = (uint8_t *)kmalloc(fs->bpb.bytes_per_sector);
         if (fsinfo_buffer) {
             if (fs::Blockdev::read(fs->dev, fs->fsinfo_sector, 1, fsinfo_buffer) == 0) {
                 fat32_fsinfo_t *fsinfo = (fat32_fsinfo_t *)fsinfo_buffer;
                 // 检查 FSInfo 签名
                 if (fsinfo->lead_sig == 0x41615252 && fsinfo->struct_sig == 0x61417272) {
-                    if (fsinfo->next_free_cluster != 0xFFFFFFFF && fsinfo->next_free_cluster >= 2) {
+                    if (fsinfo->next_free_cluster >= 2 &&
+                        fsinfo->next_free_cluster <= fs->total_clusters + 1) {
                         fs->next_free_cluster = fsinfo->next_free_cluster;
                         LOG_INFO_MSG("fat32: FSInfo next_free_cluster: %u\n", fs->next_free_cluster);
                     }
