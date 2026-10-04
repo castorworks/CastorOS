@@ -39,9 +39,12 @@ MULTIBOOT_FLAGS         equ (MULTIBOOT_PAGE_ALIGN | MULTIBOOT_MEMORY_INFO | MULT
 MULTIBOOT_CHECKSUM      equ -(MULTIBOOT_MAGIC + MULTIBOOT_FLAGS)
 MULTIBOOT_BOOTLOADER_MAGIC equ 0x2BADB002
 
-BOOT_PML4_PHYS          equ 0x200000
-BOOT_PDPT_PHYS          equ 0x201000
-BOOT_PD_PHYS            equ 0x202000
+; 引导页表放在内核映像内部（.text.boot 段末尾的 boot_page_tables），而不是固定的
+; 物理地址 2MB：内核映像一旦长过 2MB，.bss（例如 task_pool）就会与固定地址重叠，
+; 清零 .bss 时把正在使用的 PML4 一起清掉，导致三重故障。
+BOOT_PML4_PHYS          equ boot_page_tables
+BOOT_PDPT_PHYS          equ boot_page_tables + 0x1000
+BOOT_PD_PHYS            equ boot_page_tables + 0x2000
 
 ; ============================================================================
 ; Multiboot1 头部
@@ -190,6 +193,12 @@ gdt64_low_end:
 gdt64_ptr_low:
     dw gdt64_low_end - gdt64_low - 1
     dd gdt64_low
+
+; 引导页表：PML4、PDPT、PD 各一页。位于 .text.boot（按物理地址链接），
+; 所以 32 位代码可以直接用符号地址，并且随内核映像一起被 PMM 保留。
+align 4096
+boot_page_tables:
+    times 4096 * 3 db 0
 
 ; ============================================================================
 ; 64 位入口 (物理地址，在 .text.boot 段)
