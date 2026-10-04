@@ -7,29 +7,52 @@
 ## 0. 修复状态（2026-10-04 更新）
 
 本报告第 1、3 节描述的是审计时（`50dc9eb`）的状态。之后在分支 `fix/audit-critical` 上做了修复，
-下面是截至该分支当前提交的情况。
+下面是截至该分支提交 `480c8c1` 的情况。
 
 | | 数量 |
 |---|---|
 | 已复核的问题 | 124 |
-| 已修复 | 114 |
-| 未修复 | 10 |
-| 未复核的 medium/low（见附录） | 446，未处理 |
+| 已修复 | 115 |
+| 未修复 | 9 |
+| 未复核的 medium/low（见附录） | 446，其中 1 条已修复，其余未处理 |
 
 修复后的回归结果：内核测试 i686 669/669、x86_64 650/650，arm64 无失败；三个架构都能从用户 shell 运行程序；
-x86_64 不再随 exec 泄漏内存；i686 上 ping 正常。
+x86_64 不再随 exec 泄漏内存；i686 和 x86_64 开机自动通过 DHCP 获得地址，ping 正常。
 
 第 5 节每个条目的标题里标了"已修复"或"未修复"。由后期批量修复处理的条目附有修复说明和验证方式；
 其余"已修复"条目是按第 4 节顺序在前七项里修掉的，说明见对应提交。
 
-未修复的 10 项归为四类：
+未修复的 9 项归为四类：
 
-1. **arm64 内核仍运行在低地址恒等映射里**（3 项）。arm64 上 `mmap` 因此不可用。需要把内核重新链接到高半区。
-2. **socket 没有接入文件描述符表**（2 项）。`close(sockfd)` 走不到 socket。
-3. **内核抢占**（1 项）。用户态死循环仍会冻结系统。
-4. 其余 4 项：没有权限模型；x86_64 启动时仍跳过 e1000/USB；arm64 的 virtio-gpu 设备类型；`Scheduler::free` 中页目录释放顺序。
+1. **arm64 内核仍运行在低地址恒等映射里**（3 项：V009、V010、V124）。arm64 上 `mmap` 因此不可用。需要把内核重新链接到高半区。
+2. **socket 没有接入文件描述符表**（2 项：V092、V093）。`close(sockfd)` 走不到 socket。
+3. **内核抢占**（1 项：V052）。用户态死循环仍会冻结系统。
+4. 其余 3 项：没有权限模型（V054）；arm64 的 virtio-gpu 设备类型（V115）；`Scheduler::free` 中页目录释放顺序（V038）。
 
-验证上的限制：约 30 项修复只有启动回归和代码审查，没有专门的测试；TCP 和 DHCP 的改动只在测试用的假网卡上验证过。
+### 端到端验证
+
+在修复之后补做的实测（QEMU）：
+
+| 项目 | 结果 |
+|---|---|
+| DHCP 对真实服务器 | i686、x86_64 开机都从 QEMU 的 DHCP 服务器获得 10.0.2.15 |
+| TCP 对真实对端 | 用户态程序连宿主机上的测试服务器，发 6000 字节、收 12000 字节，逐字节一致，连接正常关闭；两个 x86 架构各两次 |
+| x86_64 网卡 | 已启用，ping 网关 3/3 |
+| USB | i686、x86_64 开机时挂载的 USB 存储设备能枚举、读出容量并注册为块设备 |
+| `mmap`/`munmap`/`brk` | 用户态测试新增"映射互不重叠"和"fork 后写时复制"两项检查，i686、x86_64 通过 |
+
+这轮验证中发现并修复了三个不在已复核清单里的问题：共享中断线导致有网卡和 USB 控制器时启动挂死
+（附录中的 `x-concurrency-10`）；内核与用户库的 `ifreq` 硬件地址布局差 2 字节，`ifconfig` 显示错误的 MAC
+（第 3 节实测记录过）；用户库的 `usleep` 只有声明没有实现。
+
+### 验证上仍有的限制
+
+- 约 30 项修复只有启动回归和代码审查，没有专门的测试。
+- kprintf 模块的 63 个测试断言数仍为 0（只打印、不检查输出）。
+- TCP 只实测了内核作为客户端；监听和 accept 只有测试用假网卡上的单元测试。
+- USB 只验证了开机时已插入的设备，运行中热插拔没有实测。
+- arm64 没有网络和 USB，`mmap` 不可用，上述实测都不适用。
+- TCP 实测用的程序和宿主机脚本没有纳入仓库。
 
 ## 1. 结论
 
@@ -1111,9 +1134,9 @@ if (fat32_mark_entry_deleted(fs, lookup->cluster, lookup->offset) != 0) { kfree(
 - 复核意见：src/drivers/x86/e1000.cpp:390 用 sync::MutexGuard 保护发送，而 e1000_irq_handler(:509) -> E1000::receive -> Netdev::receive (netdev.cpp:268) 在中断里同步调用 Ethernet::input，ARP reply (arp.cpp:150) 等回包会再次进入 transmit。mutex.cpp:64 的递归判定只比较 owner_pid_ 与 current->pid，中断里 current 就是被打断的持锁线程，所以直接放行；Mutex::lock 返回前恢复了中断状态，i686 系统调用走陷阱门 (syscall.cpp:46, IF=1)，且 Makefile:88 为 -O0，memcpy 期间窗口不小。两次都用同一个 cur，第二次 `desc->status = 0` 后 TDT 值不变，该槽 DD 位不再置位，32 个描述符绕回后 :398 的等待必然超时且 tx_cur 不前进，发送永久失败。 更正：只在 i686 可达（x86_64 上 E1000::init 被 kernel.cpp:538 跳过，arm64 无网络栈）。永久卡死这一环节依赖网卡在 TDT 未变化时不再处理该描述符，属于静态推断，未在 QEMU 上复现。修复建议可行：TX 环改用关中断自旋锁，并在 Mutex::lock 中对中断上下文断言。
 - 被 2 个独立审计者重复报告（x-concurrency-4, x-cpp-migration-1）
 
-#### V109 [high·已确认·x86_64·未修复] e1000/UHCI 等驱动把内核虚拟地址和 MMIO 映射地址存进 uint32_t，x86_64 上无法使用，导致 x86_64 完全没有网卡和 USB
+#### V109 [high·已确认·x86_64·已修复] e1000/UHCI 等驱动把内核虚拟地址和 MMIO 映射地址存进 uint32_t，x86_64 上无法使用，导致 x86_64 完全没有网卡和 USB
 
-- **未修复**：Partly done. Driver side: e1000 no longer truncates (uintptr_t MMIO address, paddr_t ring addresses, 64-bit BAR, RDBAH/TDBAH written) and UHCI no longer casts pointers to uint32_t (DMA memory is guaranteed below 4GB). But x86_64 still has no NIC or USB: src/kernel/kernel.cpp still skips E1000::init and the USB subsystem under ARCH_X86_64. Removing that skip is outside my ownership and would bring up the whole network stack and USB core on x86_64 for the first time, which I could not validate within the test budget. Pci::get_bar_address still returns uint32_t (e1000 reads the high half of a 64-bit BAR itself).
+- **修复**：驱动侧不再截断地址（e1000 的 MMIO 基址、描述符环物理地址和 64 位 BAR；UHCI 不再把指针转成 uint32_t）。x86_64 启动时不再跳过 e1000 和 USB 的初始化（`6b59f72`）。验证方式：x86_64 上 DHCP 获得地址、ping 3/3、TCP 双向字节流实测通过；USB 存储设备枚举成功。
 - 位置：`src/drivers/x86/e1000.cpp:579`；相关：`src/drivers/x86/e1000.cpp:135`、`src/drivers/x86/e1000.cpp:150`、`src/drivers/x86/e1000.cpp:188`、`src/drivers/x86/usb/uhci.cpp:69`、`src/drivers/x86/usb/uhci.cpp:117`、`src/drivers/x86/usb/uhci.cpp:494`
 - 证据：`uint32_t mmio_virt = mm::Vmm::map_mmio(bar0, dev->mmio_size); ... dev->mmio_base = (volatile uint32_t *)mmio_virt;`（map_mmio 在 x86_64 返回 0xFFFF8000_4xxxxxxx）；`dev->rx_descs_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)dev->rx_descs);`（e1000.cpp:135,150,188,203）；uhci.cpp:69/93/117/174/494 同样 `(uint32_t)(uintptr_t)ptr`。kernel.cpp:538-544、590-616 因此在 x86_64 上直接跳过 E1000::init 和整个 USB 子系统（注释：`x86_64 VMM MMIO not ready`），但 map_mmio 本身已支持 64 位，真正的问题是驱动里的截断。
 - 触发场景：x86_64 用 `make run-disk`（带 -device e1000）启动：网卡不初始化，netdev 列表为空，socket/DHCP/DNS/ping 等全部网络功能不可用；若去掉 kernel.cpp 的跳过，mmio_base 被截断为低 32 位用户地址，第一次读写寄存器就缺页，virt_to_phys(截断地址) 返回 0 使描述符环初始化失败。

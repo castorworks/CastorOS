@@ -1,6 +1,6 @@
 # CastorOS 分析报告附录：未复核的 medium / low 发现（446 项）
 
-这些条目来自静态审计，**没有经过复核**，可能包含误报和重复。主报告见 [bug-analysis-report.md](bug-analysis-report.md)。
+这些条目来自静态审计，**没有经过复核**，可能包含误报和重复。标注"已修复"的条目是在后续实测中撞上并修掉的。主报告见 [bug-analysis-report.md](bug-analysis-report.md)。
 
 ### 架构层：arm64（32 项）
 
@@ -70,8 +70,8 @@
 | 级别 | 架构 | 位置 | 问题 | 修复方向 |
 |---|---|---|---|---|
 | medium | i686,x86_64 | `src/arch/i686/hal.cpp:110` | hal::Interrupt::register_handler 在 x86 与 ARM64 上语义完全不同（data 被丢弃、IRQ 编号空间、是否使能线路） | x86 实现保存 {handler,data} 表并用统一的蹦床函数调用 handler(data)（hal_irq.cpp 的 wrapper 已有类似做法），返回 hal_error_t；明确定义 HAL IRQ 编号空间和“注册是否使能”的语义并在三个架构保持一致；中断全局使能不要作为 init 的副作用。 |
-| medium | i686 | `src/arch/i686/interrupt/irq.cpp:151` | 每条 IRQ 线只能注册一个处理函数：共享中断线的设备后注册者静默顶替先注册者（e1000 与 UHCI 同为 IRQ 11） | 让每条 IRQ 线支持处理函数链（数组或链表，处理函数返回是否已处理），irq_handler 依次调用全部已注册函数；注销时按 (handler, dev) 摘除而不是整条线置 NULL；重复注册至少要打印警告。 |
-| medium | i686,x86_64 | `src/arch/i686/interrupt/irq.cpp:151` | 每条 IRQ 线只能注册一个处理函数，后注册者静默覆盖前者；PCI 设备共享中断线时会丢失处理并产生中断风暴 | IRQ 分发支持共享：每条线维护处理函数链表，处理函数返回 handled/not-handled，全部调用；注册冲突时至少报错。 |
+| medium | i686 | `src/arch/i686/interrupt/irq.cpp:151` | **（已修复，`0d27e38`）** 每条 IRQ 线只能注册一个处理函数：共享中断线的设备后注册者静默顶替先注册者（e1000 与 UHCI 同为 IRQ 11） | 让每条 IRQ 线支持处理函数链（数组或链表，处理函数返回是否已处理），irq_handler 依次调用全部已注册函数；注销时按 (handler, dev) 摘除而不是整条线置 NULL；重复注册至少要打印警告。 |
+| medium | i686,x86_64 | `src/arch/i686/interrupt/irq.cpp:151` | **（已修复，`0d27e38`）** 每条 IRQ 线只能注册一个处理函数，后注册者静默覆盖前者；PCI 设备共享中断线时会丢失处理并产生中断风暴 | IRQ 分发支持共享：每条线维护处理函数链表，处理函数返回 handled/not-handled，全部调用；注册冲突时至少报错。 |
 | medium | i686 | `src/arch/i686/interrupt/irq.cpp:151` | IRQ 线只能注册一个处理函数：共享 PCI 中断线的 e1000 与 UHCI 互相覆盖 | 每条 IRQ 线维护处理函数链表（带 dev 指针），irq_handler 依次调用所有处理函数；注册冲突时至少应报错而不是静默覆盖。 |
 | medium | i686 | `src/arch/i686/interrupt/isr_asm.asm:77` | ISR/IRQ/系统调用入口都没有 cld，内核 C++ 代码在用户可控的方向标志（DF）下运行 | 在三个入口桩装载内核段之后、调用 C 函数之前各加一条 `cld`（x86_64 入口同理检查）。 |
 | medium | i686 | `src/arch/i686/mm/paging.cpp:239` | hal_flags_to_i686 未翻译 HAL_PAGE_WRITECOMB,帧缓冲 Write-Combining 映射被静默降级为 Write-Back | 在 hal_flags_to_i686 增加:`if (hal_flags & HAL_PAGE_WRITECOMB) i686_flags \|= PAGE_PAT \| PAGE_CACHE_DISABLE \| PAGE_WRITE_THROUGH;`(即 bit7\|bit4\|bit3,对应 PAT 索引7) |
@@ -341,7 +341,7 @@
 | medium | i686 | `src/drivers/x86/e1000.cpp:374` | e1000_netdev_close 把 RCTL/TCTL 清零，但 e1000_netdev_open 从不恢复，网卡 down 再 up 后永久失效 | 在 e1000_netdev_open 中重新调用 e1000_init_rx()/e1000_init_tx()（必要时重置环指针 rx_cur/tx_cur 与 RDH/RDT/TDH/TDT 并把 TX 描述符 status 重新置 DD），或在 close 中只屏蔽中断而保留 RCTL/TCTL 配置并在 op |
 | medium | x86_64 | `src/drivers/x86/e1000.cpp:579` | e1000 驱动到处是 32 位假设（虚拟地址/MMIO 地址/物理地址截断为 uint32_t），在 x86_64 上无法工作 | mmio_virt 及 virt_to_phys 的参数使用 uintptr_t，物理地址使用 paddr_t/uint64_t，RDBAL/RDBAH、TDBAL/TDBAH 分别写低/高 32 位；BAR 解析支持 64 位内存 BAR；DMA 内存限制在设备可寻址范围。 |
 | medium | i686 | `src/drivers/x86/e1000.cpp:621` | 中断处理函数注册和 IMS 使能早于 e1000_device_count++，且失败路径不关中断：窗口期/失败后中断原因永远不被清除导致 IRQ 风暴 | 先完成 netdev 注册并递增 e1000_device_count，再注册 IRQ 并写 IMS；所有失败路径写 IMC=0xFFFFFFFF、清 RCTL/TCTL 并注销处理函数。 |
-| medium | i686 | `src/drivers/x86/e1000.cpp:621` | 每条 IRQ 线只能注册一个处理函数，e1000 与共享同一 PCI 中断线的设备（如 UHCI）互相覆盖 | 在 IRQ 层支持同一 IRQ 的处理函数链表（共享中断），各驱动处理函数通过读自身中断状态判断是否是自己的中断；或者 e1000 注册前检测已有处理函数并链式调用。 |
+| medium | i686 | `src/drivers/x86/e1000.cpp:621` | **（已修复，`0d27e38`）** 每条 IRQ 线只能注册一个处理函数，e1000 与共享同一 PCI 中断线的设备（如 UHCI）互相覆盖 | 在 IRQ 层支持同一 IRQ 的处理函数链表（共享中断），各驱动处理函数通过读自身中断状态判断是否是自己的中断；或者 e1000 注册前检测已有处理函数并链式调用。 |
 | medium | all | `src/drivers/x86/framebuffer.cpp:795` | 帧缓冲终端的 ANSI 解析/光标状态没有任何锁，任务上下文的 devconsole_write 可被中断上下文的 klog 输出重入，导致状态错乱甚至 ansi_params[-1] 越界写 | 给帧缓冲终端加一把 irqsave 自旋锁，覆盖 terminal_putchar/terminal_write/flush/clear；或者禁止中断上下文向屏幕输出（IRQ 中的日志只走串口或环形缓冲延后输出）。 |
 | medium | i686,x86_64 | `src/drivers/x86/pci.cpp:214` | PCI 枚举把桥设备 (Header Type 1/2) 也当作 Type 0 探测 6 个 BAR，向总线号/窗口寄存器写入 0xFFFFFFFF | 按 `header_type & 0x7F` 决定 BAR 数量：Type 0 为 6 个，Type 1 为 2 个，Type 2 (CardBus) 为 1 个；其余寄存器不要探测。 |
 | medium | i686,x86_64 | `src/drivers/x86/timer.cpp:55` | 定时器回调在 IRQ0 硬中断上下文中直接执行，注册/注销接口没有任何并发保护 | IRQ 中只标记到期，把回调推迟到软中断/专用内核线程执行；注册/注销用 SpinlockIrqGuard 保护表项与计数；间隔换算用 64 位。 |
