@@ -556,6 +556,65 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_protect) {
 }
 
 /**
+ * protect() must change only the attributes named in set/clear.
+ *
+ * The COW paths call protect(clear WRITE, set COW) and later
+ * protect(set WRITE, clear COW). Neither mentions EXEC, so a
+ * non-executable page must stay non-executable (NX kept) and an
+ * executable one must stay executable.
+ */
+TEST_CASE(test_x86_64_hal_mmu_protect_keeps_unrelated_flags) {
+    hal_addr_space_t space = hal::Mmu::current_space();
+    const uint32_t exec_variants[] = { 0, HAL_PAGE_EXEC };
+
+    for (uint32_t v = 0; v < 2; v++) {
+        vaddr_t virt = KTEST_FREE_VADDR_BASE + 0x40000 + v * PAGE_SIZE;
+        ASSERT_FALSE(hal::Mmu::query(space, virt, NULL, NULL));
+
+        paddr_t phys = mm::Pmm::alloc_frame();
+        ASSERT_TRUE(phys != PADDR_INVALID);
+        ASSERT_TRUE(hal::Mmu::map(space, virt, phys,
+                                  HAL_PAGE_PRESENT | HAL_PAGE_USER | HAL_PAGE_WRITE |
+                                  exec_variants[v]));
+
+        /* fork: write-protect and mark COW */
+        ASSERT_TRUE(hal::Mmu::protect(space, virt, HAL_PAGE_COW, HAL_PAGE_WRITE));
+        hal::Mmu::flush_tlb(virt);
+        uint32_t flags = 0;
+        paddr_t got = 0;
+        ASSERT_TRUE(hal::Mmu::query(space, virt, &got, &flags));
+        ASSERT_TRUE(got == phys);
+        ASSERT_TRUE((flags & HAL_PAGE_COW) != 0);
+        ASSERT_TRUE((flags & HAL_PAGE_WRITE) == 0);
+        ASSERT_TRUE((flags & HAL_PAGE_USER) != 0);
+        ASSERT_TRUE((flags & HAL_PAGE_EXEC) == exec_variants[v]);
+
+        /* COW fault with refcount 1: restore write, drop COW */
+        ASSERT_TRUE(hal::Mmu::protect(space, virt, HAL_PAGE_WRITE, HAL_PAGE_COW));
+        hal::Mmu::flush_tlb(virt);
+        flags = 0;
+        ASSERT_TRUE(hal::Mmu::query(space, virt, &got, &flags));
+        ASSERT_TRUE(got == phys);
+        ASSERT_TRUE((flags & HAL_PAGE_COW) == 0);
+        ASSERT_TRUE((flags & HAL_PAGE_WRITE) != 0);
+        ASSERT_TRUE((flags & HAL_PAGE_USER) != 0);
+        ASSERT_TRUE((flags & HAL_PAGE_EXEC) == exec_variants[v]);
+
+        /* EXEC itself can still be changed explicitly */
+        ASSERT_TRUE(hal::Mmu::protect(space, virt, 0, HAL_PAGE_EXEC));
+        ASSERT_TRUE(hal::Mmu::query(space, virt, NULL, &flags));
+        ASSERT_TRUE((flags & HAL_PAGE_EXEC) == 0);
+        ASSERT_TRUE(hal::Mmu::protect(space, virt, HAL_PAGE_EXEC, 0));
+        ASSERT_TRUE(hal::Mmu::query(space, virt, NULL, &flags));
+        ASSERT_TRUE((flags & HAL_PAGE_EXEC) != 0);
+
+        ASSERT_TRUE(hal::Mmu::unmap(space, virt) == phys);
+        hal::Mmu::flush_tlb(virt);
+        mm::Pmm::free_frame(phys);
+    }
+}
+
+/**
  * @brief Test HAL MMU unmap returns correct physical address
  * 
  * **Feature: mm-refactor, Property 8: HAL MMU Map-Query Round-Trip (x86_64)**
@@ -901,11 +960,10 @@ TEST_CASE(test_pbt_x86_64_destroy_space_frees_memory) {
         /* The increase should be at least the number of mapped pages + page tables */
         ASSERT_TRUE(info_after_destroy.free_frames > info_after_map.free_frames);
         
-        /* Property: Should recover most of the allocated frames */
-        /* Note: We may not recover all frames due to reference counting */
-        /* but we should recover at least the page table frames */
-        uint64_t frames_recovered = info_after_destroy.free_frames - info_after_map.free_frames;
-        ASSERT_TRUE(frames_recovered >= 1);  /* At least PML4 should be freed */
+        /* Property: every frame comes back - the PML4, the intermediate
+         * tables and the mapped pages themselves (they had refcount 1).
+         * Anything less is a leak on every process exit. */
+        ASSERT_TRUE(info_after_destroy.free_frames == info_before.free_frames);
         
         success_count++;
     }
@@ -1011,6 +1069,7 @@ TEST_SUITE(paging64_page_fault_tests) {
 TEST_SUITE(paging64_hal_mmu_tests) {
     RUN_TEST(test_pbt_x86_64_hal_mmu_map_query_roundtrip);
     RUN_TEST(test_pbt_x86_64_hal_mmu_protect);
+    RUN_TEST(test_x86_64_hal_mmu_protect_keeps_unrelated_flags);
     RUN_TEST(test_pbt_x86_64_hal_mmu_unmap_returns_phys);
 }
 
