@@ -18,9 +18,8 @@ endif
 # KTEST=1: 把 src/tests 编进内核，启动时运行（make test 会自动设置）
 KTEST ?= 0
 
-# 测试超时时间 (秒) 和输出行数限制
+# 测试超时时间 (秒)
 TEST_TIMEOUT ?= 60
-OUTPUT_LINES ?= 400
 # timeout 命令 (macOS 需要安装 coreutils: brew install coreutils)
 TIMEOUT_CMD = timeout
 
@@ -154,7 +153,7 @@ OBJECTS = $(ASM_OBJECTS) $(C_OBJECTS) $(INIT_OBJECT)
 # 构建
 # ============================================================================
 
-.PHONY: all clean clean-all run debug test test-all build-all check init info sources compile-db help
+.PHONY: all clean clean-all run debug test run-test test-all build-all check init info sources compile-db help
 
 all: $(BOOT_IMAGE)
 
@@ -212,13 +211,21 @@ run: $(BOOT_IMAGE)
 debug: $(BOOT_IMAGE)
 	$(QEMU_RUN) -s -S
 
-# 构建带内核测试的版本并运行，超时后结束
+# 构建带内核测试的版本并运行。内核不会自己关机：到超时为止，完整日志写入
+# $(BUILD_DIR)/test.log，这里只汇总各测试模块的计数。
 test:
-	@$(MAKE) --no-print-directory run-timeout ARCH=$(ARCH) KTEST=1
+	@$(MAKE) --no-print-directory run-test ARCH=$(ARCH) KTEST=1
 
-run-timeout: $(BOOT_IMAGE)
-	@echo "━━━ $(ARCH) (KTEST=$(KTEST), timeout: $(TEST_TIMEOUT)s) ━━━"
-	@$(TIMEOUT_CMD) $(TEST_TIMEOUT) $(QEMU_RUN) 2>&1 < /dev/null | head -$(OUTPUT_LINES) || true
+run-test: $(BOOT_IMAGE)
+	@echo "━━━ $(ARCH): running kernel tests (timeout $(TEST_TIMEOUT)s) ━━━"
+	-@$(TIMEOUT_CMD) $(TEST_TIMEOUT) $(QEMU_RUN) < /dev/null > $(BUILD_DIR)/test.log 2>&1
+	@awk 'function num(key,  s) { if (!match($$0, key ": *[0-9]+")) return 0; \
+	         s = substr($$0, RSTART, RLENGTH); sub(/.*: */, "", s); return s + 0 } \
+	     { t += num("Total tests"); p += num("Passed tests"); f += num("Failed tests") } \
+	     /init: ready/ { booted = 1 } \
+	     END { printf "$(ARCH): %d tests, %d passed, %d failed; init %s (log: $(BUILD_DIR)/test.log)\n", \
+	               t, p, f, booted ? "started" : "NOT started"; \
+	           exit (t == 0 || f > 0 || !booted) }' $(BUILD_DIR)/test.log
 
 test-all:
 	@for arch in $(VALID_ARCHS); do \
@@ -241,8 +248,9 @@ clean-all:
 # 工具
 # ============================================================================
 
+# 生成 compile_commands.json（需要 compiledb: pip3 install compiledb）
 compile-db:
-	@ARCH=$(ARCH) bash scripts/merge-compile-commands.sh
+	compiledb -o compile_commands.json $(MAKE) -Bn ARCH=$(ARCH) KTEST=1
 
 info:
 	@echo "Architecture:  $(ARCH)"

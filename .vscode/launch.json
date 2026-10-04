@@ -5,7 +5,7 @@
             "name": "(gdb) 启动",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceRoot}/build/castor.bin",
+            "program": "${workspaceRoot}/build/i686/castor.bin",
             "stopAtEntry": false,
             "cwd": "${workspaceRoot}",
             "externalConsole": false,

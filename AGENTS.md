@@ -4,27 +4,22 @@
 
 ## Product Overview
 
-CastorOS is an educational operating system designed for learning and experimentation.
+CastorOS is an educational microkernel for learning and experimentation.
 
-- Hobby OS targeting i686 (x86 32-bit) with planned support for x86_64 and ARM64
-- Higher-half kernel design with virtual address base at 0x80000000
-- Multiboot-compliant bootloader support (GRUB)
+- Targets i686, x86_64 and ARM64; all three build, boot and pass the kernel tests in QEMU
+- The kernel contains only CPU/interrupt setup, memory management, scheduling, sync
+  primitives and a 14-call syscall interface (process, memory, debug console)
+- File systems, networking, device drivers and shells are **not** in the kernel; they are
+  meant to come back as user-space modules (see `docs/microkernel.md`). Do not add them
+  to `src/`.
+- Higher-half kernel (i686 virtual base 0x80000000)
 - Written in freestanding C++20 with NASM / GNU as assembly for architecture-specific code
-
-### Key Features
-
-- Physical and virtual memory management with paging
-- Preemptive multitasking with process/thread support
-- VFS layer with FAT32, ramfs, devfs, procfs support
-- User-mode execution with system calls
-- Synchronization primitives (spinlocks, mutexes, semaphores)
-- Network stack (Ethernet, IP, TCP, UDP, DHCP, DNS)
-- Device drivers (VGA, keyboard, timer, ATA, PCI, E1000, USB/UHCI)
 
 ### Documentation Language
 
 Project documentation is primarily in Chinese (简体中文). Code comments mix Chinese and English.
-Historical feature specs (requirements / design / tasks) live in `docs/specs/`.
+`docs/microkernel.md` describes the current structure; the numbered chapters in `docs/` are a
+development log written before the microkernel cut and mention things that no longer exist.
 
 ## Technology Stack
 
@@ -50,69 +45,48 @@ CXXFLAGS = -std=gnu++20 -ffreestanding -O0 -g -Wall -Wextra \
 
 ### Target Architectures
 
-| Arch   | Toolchain Prefix | Assembler | Status      |
-|--------|------------------|-----------|-------------|
-| i686   | i686-elf-        | NASM      | Primary     |
-| x86_64 | x86_64-elf-      | NASM      | Planned     |
-| arm64  | aarch64-elf-     | GNU as    | Planned     |
+| Arch   | Toolchain Prefix | Assembler | Boot                          |
+|--------|------------------|-----------|-------------------------------|
+| i686   | i686-elf-        | NASM      | Multiboot1, `qemu -kernel`    |
+| x86_64 | x86_64-elf-      | NASM      | Multiboot1 via `castor32.elf` |
+| arm64  | aarch64-elf-     | GNU as    | `-M virt -kernel`, DTB        |
 
 ### Common Commands
 
 ```bash
-# Build kernel (default i686)
-make
-
-# Build for specific architecture
-make ARCH=i686
+make                    # Build kernel (default i686); also builds and embeds user/init
 make ARCH=x86_64
 make ARCH=arm64
+make build-all
 
-# Run in QEMU
-make run
+make run                # Run in QEMU, serial console on stdio
+make debug              # Same, waiting for GDB on :1234
 
-# Run without GUI
-make run-silent
+make test               # Build with in-kernel tests (KTEST=1) and run with a timeout
+make test-all
 
-# Debug with GDB (waits for connection)
-# Use gtimeout on macOS: gtimeout 30 make debug-silent
-make debug
-
-# Build bootable disk image
-make disk
-
-# Run from disk image (includes networking)
-make run-disk
-
-# Clean build artifacts
-make clean          # Current arch only
-make clean-all      # All architectures
-
-# Generate compile_commands.json for IDE
-make compile-db
-
-# Show build configuration
+make clean              # Current arch only
+make clean-all          # Everything, including user/ builds
+make compile-db         # compile_commands.json (needs compiledb)
 make info
 ```
 
 ### User Space
 
-User programs are in `user/` directory with their own Makefiles:
-
-```bash
-make shell    # Build user shell
-make hello    # Build hello world
-make tests    # Build user tests
-```
+`user/lib` is the user library (syscall wrappers, printf, string). `user/init` is the first
+process; its ELF is embedded into the kernel image by `src/kernel/init_image.S` (`.incbin`),
+so there is no disk image. The kernel Makefile rebuilds it when `user/` changes.
 
 ### Testing
 
-Kernel includes a built-in test framework (`ktest`). Tests run automatically during boot.
+Kernel tests (`src/tests`, `ktest` framework) are compiled in only with `KTEST=1` and run during
+boot, before init starts. `make test` builds into `build/<arch>-ktest/`.
 
 ### Dependencies
 
 - QEMU for emulation
 - Cross-compiler toolchain (see `scripts/cross-compiler-install.sh`)
-- GRUB tools for bootable images
+- `timeout` (coreutils) for `make test`
 
 ## Project Structure
 
@@ -122,43 +96,28 @@ Kernel includes a built-in test framework (`ktest`). Tests run automatically dur
 CastorOS/
 ├── src/                    # Kernel source code
 │   ├── arch/               # Architecture-specific code
-│   │   ├── i686/           # x86 32-bit implementation
-│   │   │   ├── boot/       # Boot code (multiboot, early init)
-│   │   │   ├── cpu/        # GDT, IDT setup
-│   │   │   ├── interrupt/  # ISR, IRQ handlers
-│   │   │   ├── mm/         # Paging implementation
-│   │   │   ├── task/       # Context switching
-│   │   │   ├── syscall/    # System call entry
-│   │   │   └── hal.cpp     # HAL implementation
-│   │   ├── x86_64/         # 64-bit x86 (placeholder)
-│   │   └── arm64/          # ARM64 (placeholder)
-│   ├── drivers/            # Device drivers
-│   │   └── usb/            # USB subsystem
-│   ├── fs/                 # File systems (VFS, FAT32, ramfs, etc.)
-│   ├── kernel/             # Core kernel (task, syscall, shell)
+│   │   ├── i686/           # boot, cpu (GDT/IDT), interrupt, mm, task, syscall, hal.cpp
+│   │   ├── x86_64/
+│   │   └── arm64/          # also dtb/ (device tree parsing)
+│   ├── drivers/            # Only serial (console) and timer (tick)
+│   │   ├── x86/            # COM1, PIT
+│   │   └── arm/            # PL011, ARM Generic Timer
+│   ├── kernel/             # task.cpp (scheduler), syscall.cpp, elf.cpp, loader.cpp, ...
 │   │   ├── sync/           # Synchronization primitives
-│   │   └── syscalls/       # System call implementations
-│   ├── lib/                # Kernel library (kprintf, string, etc.)
+│   │   └── syscalls/       # process.cpp, mm.cpp
+│   ├── lib/                # Kernel library (kprintf, klog, string, cxxrt)
 │   ├── mm/                 # Memory management (PMM, VMM, heap)
-│   ├── net/                # Network stack
 │   ├── include/            # Header files (mirrors src/ structure)
-│   └── tests/              # Kernel unit tests
+│   └── tests/              # Kernel unit tests (KTEST=1)
 ├── user/                   # User-space programs
-│   ├── lib/                # User-space C library
-│   │   ├── include/        # POSIX-like headers
-│   │   └── src/            # Library implementation
-│   ├── shell/              # User shell
-│   ├── helloworld/         # Example program
-│   └── tests/              # User-space tests
+│   ├── lib/                # User library
+│   ├── init/               # First user process, embedded in the kernel
+│   └── linker/             # User linker scripts
 ├── docs/                   # Documentation (Chinese)
-│   ├── concepts/           # OS concept explanations
-│   └── specs/              # Historical feature specs
-├── scripts/                # Build and utility scripts
-├── build/                  # Build output (per-architecture)
-│   └── $(ARCH)/            # e.g., build/i686/
-├── Makefile                # Main build file
-├── linker.ld               # i686 linker script
-└── grub.cfg                # GRUB configuration
+├── scripts/                # cross-compiler-install.sh
+├── build/                  # Build output: build/<arch>/, build/<arch>-ktest/
+├── Makefile
+└── linker.ld, linker_x86_64.ld, linker_arm64.ld
 ```
 
 ### Key Conventions
@@ -177,17 +136,13 @@ CastorOS/
 
 #### Naming Conventions
 
-- Kernel subsystems: namespace + class, e.g. `mm::Pmm::alloc_frame()`, `fs::Vfs::open()`,
-  `net::Tcp::input()`, `kernel::Scheduler::yield()`, `drivers::Timer::get_uptime_ms()`.
+- Kernel subsystems: namespace + class, e.g. `mm::Pmm::alloc_frame()`,
+  `kernel::Scheduler::yield()`, `syscall::Process::fork()`, `drivers::Timer::get_uptime_ms()`.
   Singleton modules use static member functions; `sync::Spinlock`/`Mutex`/`Semaphore` use real members.
-- Data types with operations keep their functions as static members of the struct
-  (`net::Netbuf::alloc()`, `net::Netdev::transmit(dev, buf)`, `fs::Blockdev::read(dev, ...)`,
-  `kernel::FdTable::alloc(table, ...)`); pointer parameters stay NULL-tolerant.
-- Polymorphism uses virtual interfaces with stateless singleton implementations:
-  `fs::NodeOps` (VFS nodes), `fs::BlockdevOps` (block devices), `net::NetdevOps` (NICs).
 - Prefer RAII guards (`sync::SpinlockIrqGuard`, `sync::MutexGuard`) over manual lock/unlock pairs.
-- Still C-style free functions: syscall handlers (`sys_*`), `socket_*`, `interrupts_*`, kernel shell,
-  `kprintf`/`klog`/string library, `kmalloc()`/`kfree()`, and all of user space (POSIX-style API).
+- Still C-style free functions: syscall wrappers (`sys_*_wrapper`), `kprintf`/`klog`/string library,
+  `kmalloc()`/`kfree()`, and all of user space (POSIX-style API).
+- Syscall numbers live in `src/include/kernel/syscall.h` and must match `user/lib/include/syscall.h`.
 - Inside a member function, call a same-named global function with `::name()` (unqualified names
   bind to the class member first).
 - Do not declare functions with block-scope `extern` inside member functions; include the header.
@@ -203,56 +158,37 @@ CastorOS/
 
 ## 调试指南
 
-### 超时配置
-
-- 默认测试超时: 8 秒 (可通过 `TEST_TIMEOUT` 调整)
-- 统一使用 `timeout` 命令 (macOS 需安装 coreutils)
-- 输出限制: 200 行 (可通过 `OUTPUT_LINES` 调整)
-
-### 快速测试命令
+### 测试
 
 ```bash
-# 单架构测试 (推荐)
-make test                      # 测试 i686 (默认)
-make test ARCH=x86_64          # 测试 x86_64
-make test ARCH=arm64           # 测试 ARM64
-
-# 测试所有架构
+make test                      # i686：构建 KTEST=1 内核并运行（默认 60 秒超时）
+make test ARCH=x86_64
+make test ARCH=arm64
 make test-all
-
-# 自定义超时
-make test TEST_TIMEOUT=15      # 15秒超时
+make test TEST_TIMEOUT=120     # 自定义超时
 ```
 
-### 调试命令
+内核不会自己关机，QEMU 运行到超时为止。`make test` 把完整日志写到
+`build/<arch>-ktest/test.log`，并汇总各模块的 `Total/Passed/Failed tests` 计数；
+有失败用例或 init 没有启动（日志里没有 `init: ready`）时返回非零。
+
+### 手动运行
 
 ```bash
-# 捕获输出到文件
-make debug-capture             # 输出保存到 build/$(ARCH)/debug.log
+# 控制台是串口；向 QEMU 的标准输入写入即可给 init 发送输入
+timeout 20 qemu-system-i386 -kernel build/i686/castor.bin -serial stdio -display none
+timeout 20 qemu-system-x86_64 -kernel build/x86_64/castor32.elf -serial stdio -display none
+timeout 20 qemu-system-aarch64 -M virt -cpu cortex-a72 -kernel build/arm64/castor.bin -serial stdio -display none
 
-# GDB 调试 (等待连接)
-make debug                     # 带 GUI
-make debug-silent              # 无 GUI
-
-# 手动调试命令 (参考，需先运行 make disk ARCH=xxx)
-# i686: 使用 GRUB 磁盘镜像
-timeout 8 qemu-system-i386 -hda build/i686/bootable.img -serial stdio -display none 2>&1 | head -200
-
-# x86_64: 使用 GRUB 磁盘镜像
-timeout 15 qemu-system-x86_64 -hda build/x86_64/bootable.img -serial stdio -display none 2>&1 | head -200
-
-# arm64: 使用 -M virt 机器类型 (直接 -kernel)
-timeout 8 qemu-system-aarch64 -M virt -cpu cortex-a72 -kernel build/arm64/castor.bin -nographic 2>&1 | head -200
+# GDB
+make debug                     # QEMU 等待连接，另一个终端: gdb build/i686/castor.bin -ex 'target remote :1234'
 ```
 
 ### 构建验证
 
 ```bash
-# 仅编译检查
 make check                     # 当前架构
 make build-all                 # 所有架构
-
-# 查看配置
 make info                      # 显示当前配置
 make sources                   # 列出源文件
 ```
@@ -262,13 +198,4 @@ make sources                   # 列出源文件
 1. **timeout 未找到**: `brew install coreutils` (macOS)
 2. **交叉编译器未找到**: 运行 `scripts/cross-compiler-install.sh`
 3. **QEMU 未找到**: `brew install qemu`
-
-### 架构特定说明
-
-| 架构 | QEMU | 启动方式 | 状态 |
-|------|------|----------|------|
-| i686 | qemu-system-i386 | -hda 磁盘镜像 | 主要 |
-| x86_64 | qemu-system-x86_64 | -hda 磁盘镜像 | 开发中 |
-| arm64 | qemu-system-aarch64 | -M virt -kernel | 开发中 |
-
-**注意**: i686/x86_64 测试时会自动构建 GRUB 磁盘镜像。
+4. **QEMU 无输出或卡住**: 先看主机负载（`uptime`），不要并行跑构建和测试

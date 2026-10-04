@@ -2,101 +2,69 @@
 
 > CastorOS is an operating system designed for learning and fun.
 
+一个用于学习的微内核：内核只做 CPU/中断、内存管理、任务调度和系统调用，其余功能都放在用户态。
+结构说明见 [docs/microkernel.md](./docs/microkernel.md)。
+
 ## 支持的架构
 
-CastorOS 支持以下 CPU 架构：
-
-| 架构 | 描述 | 状态 |
-|------|------|------|
-| i686 | Intel x86 32位 | ✅ 完整支持 |
-| x86_64 | AMD64/Intel 64位 | ✅ 基础支持 |
-| arm64 | ARM AArch64 | ✅ 基础支持 |
+| 架构 | 描述 | 启动方式 |
+|------|------|----------|
+| i686 | Intel x86 32位 | Multiboot1 |
+| x86_64 | AMD64/Intel 64位 | Multiboot1（ELF32 外壳） |
+| arm64 | ARM AArch64 | QEMU `-M virt`，DTB |
 
 ## 开发语言
 
 内核与用户态程序均使用 freestanding C++20 编写（`-std=gnu++20 -fno-exceptions -fno-rtti`），引导与中断入口等少量代码使用汇编。
 与汇编互相调用的符号需声明为 `extern "C"`；内核的最小 C++ 运行时位于 `src/lib/cxxrt.cpp`。
 
-## 构建系统
+## 构建与运行
 
-### 安装开发环境
-
-参考 [docs/00-environment.md](./docs/00-environment.md) 安装开发环境和交叉编译器。
-
-### 基本构建命令
+参考 [docs/00-environment.md](./docs/00-environment.md) 安装交叉编译器和 QEMU（不需要 GRUB）。
 
 ```bash
-# 构建内核 (默认 i686 架构)
-make
+make                    # 构建内核（默认 i686），自动构建并内嵌 user/init
+make ARCH=x86_64
+make ARCH=arm64
+make build-all          # 所有架构
 
-# 指定架构构建
-make ARCH=i686      # x86 32位
-make ARCH=x86_64    # x86 64位
-make ARCH=arm64     # ARM64
+make run                # 在 QEMU 中运行，串口控制台接到当前终端
+make debug              # 同上，等待 GDB 连接 :1234
 
-# 运行内核
-make run                    # 带 GUI
-make run-silent             # 无 GUI (仅串口输出)
+make test               # 构建带内核测试的版本 (KTEST=1) 并运行
+make test-all           # 所有架构
 
-# 调试模式 (等待 GDB 连接)
-make debug
-make debug-silent
-
-# 清理构建文件
-make clean                  # 清理当前架构
-make clean-all              # 清理所有架构
-
-# 查看构建配置
-make info
-
-# 查看帮助
+make clean              # 清理当前架构
+make clean-all
 make help
 ```
 
-### 用户空间程序
+内核启动后加载内嵌的 `user/init`：它演示 `mmap`、`fork`/`waitpid`，然后回显串口输入。
 
-```bash
-# 构建用户程序
-make shell        # 用户 Shell
-make hello        # Hello World 示例
-make tests        # 用户态测试
+## 目录
 
-# 创建可启动磁盘镜像
-make disk
-
-# 从磁盘镜像运行 (包含网络支持)
-make run-disk
+```
+src/arch/      架构相关代码 (i686, x86_64, arm64)
+src/mm/        PMM / VMM / 内核堆
+src/kernel/    调度、系统调用、ELF 加载、同步原语
+src/drivers/   串口和时钟
+src/lib/       kprintf / klog / 字符串 / C++ 运行时
+src/tests/     内核测试 (KTEST=1)
+user/lib/      用户态库
+user/init/     第一个用户进程
+docs/          文档
 ```
 
-### IDE 支持
+## 文档
 
-```bash
-# 生成 compile_commands.json (用于 clangd 等 IDE 插件)
-make compile-db
-```
++ [微内核结构](./docs/microkernel.md)：内核边界、启动流程、系统调用表、如何加模块
++ [概念讲解](./docs/concepts/00-overview.md)
++ 开发过程记录（写于精简为微内核之前，其中提到的 GRUB 磁盘镜像、VGA、shell 等已不在代码里）：
+  [环境](./docs/00-environment.md)、[引导](./docs/01-boot.md)、[基础设施](./docs/02-infrastructure.md)、
+  [内存管理](./docs/03-mm.md)、[任务管理](./docs/05-task.md)、[用户模式](./docs/09-usermode.md)、
+  [同步机制](./docs/10-sync.md)、[C++ 重构](./docs/19-cpp-migration.md)
 
-## 当前进展
-
-+ [x] [开发环境搭建](./docs/00-environment.md)
-+ [x] [系统引导](./docs/01-boot.md)
-+ [x] [基础设施](./docs/02-infrastructure.md)
-+ [x] [内存管理](./docs/03-mm.md)
-+ [x] [补充驱动](./docs/04-drivers.md)
-+ [x] [任务管理](./docs/05-task.md)
-+ [x] [内核 Shell](./docs/06-kernel-shell.md)
-+ [x] [文件系统](./docs/07-fs.md)
-+ [x] [FAT32 文件系统](./docs/08-fat32.md)
-+ [x] [用户模式](./docs/09-usermode.md)
-+ [x] [同步机制](./docs/10-sync.md)
-+ [x] [系统增强](./docs/11-system-enhancement.md)
-+ [x] [C++ 重构](./docs/19-cpp-migration.md)
-
-## 下一步安排
-
-+ [ ] [网络栈](./docs/12-network.md)
-+ [ ] [intel E1000 网卡驱动](./docs/13-intel-e1000-network-card-driver.md)
-+ [ ] [IBM ThinkPad T41 显卡驱动](./docs/14-ibm-thinkpad-t41-graphics.md)
-+ [ ] [USB 1.1 驱动](./docs/15-usb-1.1-driver.md)
+文件系统、网络、USB、图形等子系统的实现保留在 git 历史里（`ef63e55` 及之前）。
 
 ## Git 提交格式
 
