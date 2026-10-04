@@ -81,6 +81,17 @@ typedef enum vmm_error {
  */
 #define PAGE_COW        0x200
 
+/**
+ * @brief 用户地址范围的上界（不含）
+ *
+ * 带 PAGE_USER 的映射只允许建立在这个地址以下。
+ */
+#if defined(ARCH_X86_64) || defined(ARCH_ARM64)
+#define VMM_USER_VADDR_END 0x0000800000000000ULL
+#else
+#define VMM_USER_VADDR_END KERNEL_VIRTUAL_BASE
+#endif
+
 /* Architecture-specific page table types */
 #if defined(ARCH_X86_64) || defined(ARCH_ARM64)
 /* x86_64/ARM64: 4-level paging with 64-bit entries, 512 entries per level */

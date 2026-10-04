@@ -551,6 +551,105 @@ TEST_SUITE(cow_refcount_tests) {
 }
 
 // ============================================================================
+// VMM 映射保护测试
+// 放在这个模块里是因为它在所有架构上运行（vmm_test 只在 i686 上运行）
+// ============================================================================
+
+/**
+ * @brief 内核地址上不允许建立用户可访问的映射
+ *
+ * 回归测试：map_page_in_directory 以前不检查地址范围，ELF 段跨过内核基址时
+ * 会把共享的内核页表项换成用户可访问的帧。
+ */
+TEST_CASE(test_vmm_user_mapping_rejected_in_kernel_space) {
+    paddr_t frame = mm::Pmm::alloc_frame();
+    ASSERT_NE_U(frame, PADDR_INVALID);
+
+    uintptr_t dir = mm::Vmm::get_page_directory();
+    uintptr_t kvirt = (uintptr_t)KERNEL_VIRTUAL_BASE + 0x00400000;
+    paddr_t before = 0;
+    bool was_mapped = hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)kvirt, &before, NULL);
+
+    ASSERT_FALSE(mm::Vmm::map_page_in_directory(dir, kvirt, (uintptr_t)frame,
+                                                PAGE_PRESENT | PAGE_WRITE | PAGE_USER));
+    ASSERT_FALSE(mm::Vmm::map_page(kvirt, (uintptr_t)frame,
+                                   PAGE_PRESENT | PAGE_WRITE | PAGE_USER));
+    ASSERT_FALSE(mm::Vmm::map_page_in_directory(dir, (uintptr_t)VMM_USER_VADDR_END,
+                                                (uintptr_t)frame,
+                                                PAGE_PRESENT | PAGE_USER));
+
+    // 原有的内核映射没有被改动
+    paddr_t after = 0;
+    ASSERT_EQ(hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)kvirt, &after, NULL), was_mapped);
+    if (was_mapped) {
+        ASSERT_TRUE(after == before);
+    }
+
+    mm::Pmm::free_frame(frame);
+}
+
+#if !defined(ARCH_I686)
+// 2MB 对齐、位于用户地址范围内且其它测试不使用的地址
+#define TEST_VIRT_HUGE  0x30000000
+
+/**
+ * @brief unmap_page_in_directory 对大页/块映射必须返回 0
+ *
+ * 回归测试：以前先 query 再 unmap 并忽略 unmap 的结果，对块映射会返回其
+ * 物理地址，调用者（munmap）随后把不属于进程的帧释放掉（arm64 的用户地址
+ * 空间里有内核的块映射）。
+ */
+TEST_CASE(test_vmm_unmap_block_mapping_returns_zero) {
+    paddr_t huge = PADDR_INVALID;
+    paddr_t before = 0;
+
+#if defined(ARCH_ARM64)
+    // arm64 的低地址范围已经由引导时的 1GB 块恒等映射覆盖，直接用它
+    bool have_block = hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)TEST_VIRT_HUGE,
+                                      &before, NULL);
+#else
+    bool have_block = false;
+#endif
+    if (!have_block) {
+        huge = mm::Pmm::alloc_huge_page();
+        if (huge == PADDR_INVALID) {
+            return;  // 没有连续的 2MB 物理内存，无法构造场景
+        }
+        if (!hal::Mmu::map_huge(HAL_ADDR_SPACE_CURRENT, (vaddr_t)TEST_VIRT_HUGE, huge,
+                                HAL_PAGE_PRESENT | HAL_PAGE_WRITE)) {
+            mm::Pmm::free_huge_page(huge);
+            return;
+        }
+        hal::Mmu::flush_tlb((vaddr_t)TEST_VIRT_HUGE);
+        before = huge;
+    }
+
+    uintptr_t dir = mm::Vmm::get_page_directory();
+    uintptr_t inside = (uintptr_t)TEST_VIRT_HUGE + 3 * PAGE_SIZE;
+    ASSERT_TRUE(mm::Vmm::unmap_page_in_directory(dir, (uintptr_t)TEST_VIRT_HUGE) == 0);
+    ASSERT_TRUE(mm::Vmm::unmap_page_in_directory(dir, inside) == 0);
+
+    // 块映射保持原样
+    paddr_t after = 0;
+    ASSERT_TRUE(hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)TEST_VIRT_HUGE, &after, NULL));
+    ASSERT_TRUE(after == before);
+
+    if (huge != PADDR_INVALID) {
+        hal::Mmu::unmap_huge(HAL_ADDR_SPACE_CURRENT, (vaddr_t)TEST_VIRT_HUGE);
+        hal::Mmu::flush_tlb((vaddr_t)TEST_VIRT_HUGE);
+        mm::Pmm::free_huge_page(huge);
+    }
+}
+#endif
+
+TEST_SUITE(vmm_mapping_guard_tests) {
+    RUN_TEST(test_vmm_user_mapping_rejected_in_kernel_space);
+#if !defined(ARCH_I686)
+    RUN_TEST(test_vmm_unmap_block_mapping_returns_zero);
+#endif
+}
+
+// ============================================================================
 // 运行所有 COW 测试
 // ============================================================================
 
@@ -570,6 +669,9 @@ void run_cow_flag_tests(void) {
     
     // COW Reference Count Tests - 测试引用计数管理
     RUN_SUITE(cow_refcount_tests);
+
+    // VMM 映射保护：用户映射的地址范围、块映射的取消映射
+    RUN_SUITE(vmm_mapping_guard_tests);
     
     // 打印测试摘要
     unittest_print_summary();
