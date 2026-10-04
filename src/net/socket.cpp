@@ -710,12 +710,9 @@ int net::Socket::select(int nfds, fd_set *readfds, fd_set *writefds,
                 
                 if (sock->type == SOCK_STREAM) {
                     tcp_pcb_t *pcb = sock->pcb.tcp;
-                    // 发送窗口有空间
-                    if (pcb->state == TCP_ESTABLISHED) {
-                        uint32_t in_flight = pcb->snd_nxt - pcb->snd_una;
-                        uint32_t effective_window = (pcb->snd_wnd < pcb->cwnd) ? 
-                                                    pcb->snd_wnd : pcb->cwnd;
-                        writable = (in_flight < effective_window);
+                    // 发送缓冲区有空间（write 把数据放进缓冲区，由窗口决定何时发出）
+                    if (pcb->state == TCP_ESTABLISHED || pcb->state == TCP_CLOSE_WAIT) {
+                        writable = (pcb->send_len < pcb->send_buf_size);
                     }
                 } else {
                     // UDP 总是可写
