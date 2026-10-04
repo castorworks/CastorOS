@@ -530,8 +530,12 @@ uint32_t kernel::Scheduler::create_kernel_thread(void (*entry)(void), const char
     // 设置栈指针
     task->context.sp = task->kernel_stack;
     
-    // 设置入口点 - ARM64 使用 X30 (LR) 作为返回地址
-    task->context.pc = (uintptr_t)entry;
+    // 入口经 task_enter_kernel_thread 包装（真实入口放在 X19）：
+    // 它负责开中断，并在入口函数返回后调用 task_exit。
+    // 直接把 pc 指向 entry 的话线程会继承调度时的中断屏蔽状态，
+    // 入口函数返回时 X30 仍是 entry，会重新执行自身。
+    task->context.pc = (uintptr_t)task_enter_kernel_thread;
+    task->context.x[19] = (uintptr_t)entry;
     
     // 设置 PSTATE (EL1h, 中断使能)
     task->context.pstate = ARM64_PSTATE_EL1h;
@@ -869,7 +873,9 @@ static bool task_create_idle(void) {
 #if defined(ARCH_ARM64)
     // ARM64: 设置内核模式上下文
     idle_task->context.sp = idle_task->kernel_stack;
-    idle_task->context.pc = (uintptr_t)idle_task_loop;
+    // 同内核线程：经包装入口开中断，否则 idle 在屏蔽中断下 wfi，时钟永远进不来
+    idle_task->context.pc = (uintptr_t)task_enter_kernel_thread;
+    idle_task->context.x[19] = (uintptr_t)idle_task_loop;
     idle_task->context.pstate = ARM64_PSTATE_EL1h;
     idle_task->context.ttbr0 = idle_task->page_dir_phys;
 #else
