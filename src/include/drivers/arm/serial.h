@@ -99,7 +99,9 @@ public:
     /**
      * @brief Read a character from the serial port (blocking)
      * 
-     * Waits for a character to be available in the receive FIFO.
+     * Waits until a character has been received. Other tasks and
+     * interrupts keep running meanwhile; before the scheduler runs it
+     * simply polls.
      * 
      * @return Character read from serial port
      */
@@ -116,6 +118,14 @@ public:
      * @return Character read, or -1 if no character available
      */
     static int getchar_nonblock();
+
+    /**
+     * @brief Queue a character as if it had been received
+     * 
+     * Puts @p c into the receive buffer, behind anything already queued.
+     * Used by tests and by anything that wants to feed console input.
+     */
+    static void rx_inject(char c);
 
     /**
      * @brief Flush the transmit FIFO
