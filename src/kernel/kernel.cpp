@@ -231,7 +231,11 @@ void kernel_main(void *dtb_addr) {
     
     // 4.2 Initialize framebuffer console (virtio-gpu)
     drivers::Framebuffer::terminal_init();
-    LOG_INFO_MSG("  [4.2] Framebuffer console initialized\n");
+    if (drivers::Framebuffer::is_initialized()) {
+        LOG_INFO_MSG("  [4.2] Framebuffer console initialized\n");
+    } else {
+        LOG_WARN_MSG("  [4.2] No framebuffer (virtio-gpu not found), console on serial only\n");
+    }
     
     // Note: ARM64 doesn't have VGA, keyboard, ATA, PCI, ACPI, E1000, USB
     // These are x86-specific devices

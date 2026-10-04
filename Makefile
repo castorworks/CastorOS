@@ -345,7 +345,7 @@ check: $(KERNEL)
 
 run: $(KERNEL)
 ifeq ($(ARCH),arm64)
-	$(QEMU) $(QEMU_FLAGS) $(KERNEL) -device virtio-gpu-pci -serial mon:stdio
+	$(QEMU) $(QEMU_FLAGS) $(KERNEL) -device virtio-gpu-device -serial mon:stdio
 else ifeq ($(ARCH),x86_64)
 	@$(MAKE) run-disk ARCH=x86_64
 else
@@ -456,7 +456,7 @@ else ifeq ($(ARCH),x86_64)
 	qemu-system-x86_64 -hda $(DISK_IMAGE) -serial stdio -netdev user,id=net0 -device e1000,netdev=net0
 else ifeq ($(ARCH),arm64)
 	@echo "ARM64 uses direct kernel boot with disk as secondary storage"
-	qemu-system-aarch64 $(QEMU_MACHINE) -kernel $(KERNEL) -drive file=$(DISK_IMAGE),format=raw,if=virtio -device virtio-gpu-pci -serial mon:stdio
+	qemu-system-aarch64 $(QEMU_MACHINE) -kernel $(KERNEL) -drive file=$(DISK_IMAGE),format=raw,if=virtio -device virtio-gpu-device -serial mon:stdio
 endif
 
 debug-disk: disk
