@@ -62,8 +62,14 @@ static bool scheduler_initialized = false;
 /** @brief 任务管理全局锁 - 保护任务池、就绪队列和 PID 分配 */
 static sync::Spinlock task_lock;
 
-/** @brief 待清理的 terminated 任务（用于延迟清理） */
-static task_t *pending_cleanup_task = NULL;
+/**
+ * @brief 待清理的 terminated 任务链表（延迟清理，通过 task->next 串联）
+ *
+ * 任务不能在自己的内核栈上释放自己，所以退出时只挂到这里，
+ * 由之后调用 schedule() 的任务在它自己的栈上回收。
+ * 只在关中断的 schedule() 中访问。
+ */
+static task_t *pending_cleanup_head = NULL;
 
 /* ============================================================================
  * 辅助函数：就绪队列操作
@@ -535,17 +541,18 @@ uint32_t kernel::Scheduler::create_kernel_thread(void (*entry)(void), const char
     // 设置栈指针
     task->context.sp = task->kernel_stack;
     
-    // 设置入口点 - ARM64 使用 X30 (LR) 作为返回地址
+    // 入口点：和 x86 一样经过 task_enter_kernel_thread 蹦床（入口函数放在
+    // callee-saved 的 X19 里）。上下文切换的内核态恢复路径不恢复 DAIF，而
+    // schedule() 是关着中断切过来的：直接跳到入口函数的话线程会一直在屏蔽
+    // 中断的状态下运行，入口函数返回时还会跳回自己的开头（LR == 入口）。
+    // 蹦床负责打开中断，并在入口函数返回后调用 task_exit。
     task->context.pc = (uintptr_t)entry;
-    
+
     // 设置 PSTATE (EL1h, 中断使能)
     task->context.pstate = ARM64_PSTATE_EL1h;
-    
+
     // 设置页表基址
     task->context.ttbr0 = task->page_dir_phys;
-    
-    // ARM64 不需要在栈上压入入口函数地址
-    // 因为 PC 直接指向入口点
 #else
     // x86: 设置段寄存器（内核段）
     task->context.cs = GDT_KERNEL_CODE_SEGMENT;  // 0x08
@@ -932,49 +939,19 @@ void kernel::Scheduler::schedule() {
     
     // 【关键修复】先清理上一次延迟的 terminated 任务
     // 现在我们已经在新任务的栈上了，可以安全地释放旧任务的资源
-    if (pending_cleanup_task) {
-        task_t *task_to_cleanup = pending_cleanup_task;
-        pending_cleanup_task = NULL;  // 清空待清理指针
-        
-        LOG_INFO_MSG("Cleaning up terminated task %u (%s)\n", 
+    // 调用者不是这些任务中的任何一个（它们退出后不会再运行），其 fd 已在
+    // 退出时关闭，这里只剩内核栈、地址空间和 PCB，释放过程不会睡眠
+    while (pending_cleanup_head) {
+        task_t *task_to_cleanup = pending_cleanup_head;
+        pending_cleanup_head = task_to_cleanup->next;
+        task_to_cleanup->next = NULL;
+
+        LOG_INFO_MSG("Cleaning up terminated task %u (%s)\n",
                      task_to_cleanup->pid, task_to_cleanup->name);
-        
-        // 保存需要释放的资源信息（在 kernel::Scheduler::free 会清空 PCB）
-        uintptr_t kernel_stack_base = task_to_cleanup->kernel_stack_base;
-        bool is_user = task_to_cleanup->is_user_process;
-        uintptr_t page_dir_phys = task_to_cleanup->page_dir_phys;
-        kernel::FdTable *fd_table = task_to_cleanup->fd_table;
-        
-        // 先在锁内清空 PCB
-        {
-            sync::SpinlockIrqGuard guard(task_lock);
-            memset(task_to_cleanup, 0, sizeof(task_t));
-            task_to_cleanup->state = TASK_UNUSED;
-            active_task_count--;
-        }
-        
-        // 然后在锁外释放资源（避免死锁）
-        if (kernel_stack_base) {
-            kfree((void*)kernel_stack_base);
-        }
-        
-        if (fd_table) {
-            // 关闭所有打开的文件描述符
-            for (int i = 0; i < MAX_FDS; i++) {
-                if (fd_table->entries[i].in_use) {
-                    kernel::FdTable::free(fd_table, i);
-                }
-            }
-            kfree(fd_table);
-        }
-        
-        if (is_user && page_dir_phys) {
-            mm::Vmm::free_page_directory(page_dir_phys);  // ✅ 释放页目录
-        }
-        
-        LOG_DEBUG_MSG("Terminated task cleanup complete\n");
+
+        kernel::Scheduler::free(task_to_cleanup);
     }
-    
+
     // 保存当前任务
     task_t *prev_task = current_task;
     
@@ -1028,9 +1005,12 @@ void kernel::Scheduler::schedule() {
     // 关键修复：在上下文切换前，先同步 VMM 的 current_dir_phys
     // task_switch_context 会直接修改 CR3，但不会更新 current_dir_phys
     // 我们必须在切换前就更新，因为切换后不能再调用任何函数
-    if (prev_task != next_task && next_task->is_user_process) {
-        mm::Vmm::sync_current_dir(next_task->page_dir_phys);
-        
+    // 内核线程也要同步：切换代码会装入它 context 里保存的 CR3/TTBR0（内核
+    // 页目录）。不同步的话 VMM 仍以为刚退出的用户进程的页目录是“当前页目录”，
+    // 延迟清理时 free_page_directory 会拒绝释放它。
+    if (prev_task != next_task) {
+        mm::Vmm::sync_current_dir(next_task->is_user_process ? next_task->page_dir_phys
+                                                             : (uintptr_t)next_task->context.cr3);
     }
     
     // 执行上下文切换
@@ -1042,8 +1022,11 @@ void kernel::Scheduler::schedule() {
         // 但我们不能在切换前释放，因为还在使用 prev_task 的栈和上下文
         // 解决方案：标记为待清理，下次调度时清理（那时已在新栈上）
         if (should_free_prev_task) {
-            // ✅ 将任务标记为待清理，下次调度时会在新栈上安全清理
-            pending_cleanup_task = prev_task;
+            // ✅ 将任务挂到待清理链表，下次调度时会在新栈上安全清理。
+            // 用链表而不是单个指针：连续退出的任务不能互相覆盖。
+            prev_task->next = pending_cleanup_head;
+            prev_task->prev = NULL;
+            pending_cleanup_head = prev_task;
             LOG_DEBUG_MSG("Task %u (%s) marked for deferred cleanup\n",
                         prev_task->pid, prev_task->name);
         }
@@ -1155,24 +1138,56 @@ void kernel::Scheduler::timer_tick() {
  * @brief 任务退出
  */
 void task_exit(uint32_t exit_code) {
-    bool prev_state = kernel::Interrupts::disable();
-    
+    // 异常处理路径（arm64）可能在调用前已经写好 exit_signaled/exit_signal，
+    // 这里原样保留；PCB 分配时清零，普通退出时它们就是 false/0
+    task_t *task = current_task;
+    kernel::Scheduler::exit_current(exit_code,
+                                    task ? task->exit_signaled : false,
+                                    task ? task->exit_signal : 0);
+}
+
+void kernel::Scheduler::exit_current(uint32_t exit_code, bool signaled, uint32_t signal) {
     if (!current_task) {
         LOG_ERROR_MSG("task_exit: No current task\n");
-        kernel::Interrupts::restore(prev_state);
         // 无限循环，因为函数标记为 noreturn
         while (1) {
             hal::Cpu::halt();
         }
     }
-    
-    LOG_INFO_MSG("Task %u (%s) exiting with code %u\n", 
+
+    LOG_INFO_MSG("Task %u (%s) exiting with code %u\n",
                  current_task->pid, current_task->name, exit_code);
-    
+
+    // 用户态异常（x86 的 ISR 存根）是带着 interrupt_enter 的计数进来的，而退出
+    // 的任务不会再回到存根执行 interrupt_exit。这里是任务自己的上下文（同步异常
+    // 或系统调用，下面没有被打断的内核代码），把计数清掉；否则此后所有任务的
+    // Mutex::lock 都会被当成“在中断里睡眠”。
+    while (in_interrupt()) {
+        interrupt_exit();
+    }
+
+    // 先关闭全部文件描述符，再变成僵尸。管道的 EOF/broken pipe 取决于对端的
+    // 读写者计数，不能等到父进程 waitpid 回收时才关——父进程往往要先读到 EOF
+    // 才会去 waitpid。关闭可能睡眠（管道/文件系统的锁），所以放在关中断之前。
+    kernel::FdTable *fd_table = current_task->fd_table;
+    if (fd_table) {
+        current_task->fd_table = NULL;
+        for (int i = 0; i < MAX_FDS; i++) {
+            if (fd_table->entries[i].in_use) {
+                kernel::FdTable::free(fd_table, i);
+            }
+        }
+        kfree(fd_table);
+    }
+
+    kernel::Interrupts::disable();
+
     // 设置退出信息
     current_task->exit_code = exit_code;
-    current_task->exit_signaled = false;
-    
+    current_task->exit_signaled = signaled;
+    current_task->exit_signal = signal;
+    current_task->kill_pending = false;
+
     // 处理所有子进程
     // 遍历任务池，查找当前进程的子进程
     task_t *zombie_children[MAX_TASKS];
@@ -1227,9 +1242,10 @@ void task_exit(uint32_t exit_code) {
     // 释放资源
     // 注意：不能在这里调用 kernel::Scheduler::free，因为我们还在使用当前任务的栈
     // 清理工作由调度器或父进程的 wait/waitpid 完成
-    
-    // 切换到其他任务
-    current_task = NULL;
+
+    // 切换到其他任务。current_task 必须保持指向本任务：schedule() 靠它看到
+    // TERMINATED 状态并把任务挂到延迟清理链表；清成 NULL 的话无父进程的任务
+    // （孤儿、返回的内核线程）永远不会被回收。
     kernel::Scheduler::schedule();
     
     // 永远不会执行到这里
@@ -1328,8 +1344,63 @@ void kernel::Scheduler::wakeup(void *wait_object) {
 }
 
 /**
+ * @brief 请求终止另一个任务（只记录，不动目标的状态和资源）
+ */
+bool kernel::Scheduler::request_kill(task_t *target, uint32_t signal) {
+    if (!target) {
+        return false;
+    }
+
+    bool wake = false;
+    {
+        sync::SpinlockIrqGuard guard(task_lock);
+
+        if (target->state == TASK_UNUSED || target->state == TASK_ZOMBIE ||
+            target->state == TASK_TERMINATED) {
+            return false;
+        }
+
+        // 已有待处理的请求时保留第一个信号
+        if (!target->kill_pending) {
+            target->kill_pending = true;
+            target->kill_signal = signal;
+        }
+
+        // 正在 sleep 的任务提前唤醒，让它尽快走到系统调用出口。
+        // 阻塞在 Mutex/Semaphore 上的任务不能唤醒：它们醒来后会重新检查条件
+        // 并再次阻塞，要等到被正常唤醒后才会走到出口。
+        if (target->state == TASK_BLOCKED && target->sleep_until_ms > 0) {
+            target->sleep_until_ms = 0;
+            target->state = TASK_READY;
+            wake = true;
+        }
+    }
+
+    // 在锁外添加到就绪队列
+    if (wake) {
+        kernel::Scheduler::ready_queue_add(target);
+    }
+    return true;
+}
+
+/**
+ * @brief 若当前任务有待处理的 kill，就地退出
+ */
+void kernel::Scheduler::deliver_pending_kill() {
+    task_t *task = current_task;
+    if (!task || !task->kill_pending) {
+        return;
+    }
+
+    uint32_t signal = task->kill_signal;
+    task->kill_pending = false;
+    LOG_INFO_MSG("Task %u (%s) terminated by signal %u\n", task->pid, task->name, signal);
+    kernel::Scheduler::exit_current(128 + signal, true, signal);
+}
+
+/**
  * @brief 从中断上下文调度
- * 
+ *
  * 这个函数由 IRQ 处理程序调用，用于在中断返回时可能触发调度
  * 
  * @param regs 中断寄存器状态（未使用）

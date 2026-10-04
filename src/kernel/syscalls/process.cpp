@@ -277,7 +277,7 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
     child->context.ebp = user_ebp;
     child->context.esp = user_esp;  // 使用父进程当前的用户栈指针
     child->context.eip = user_eip;  // 从 fork() 调用返回处继续
-    
+
     // 清理 EFLAGS 中的敏感位，防止权限提升
     // 保留：CF, PF, AF, ZF, SF, OF, DF, IF
     // 清除：IOPL, NT, RF, VM, AC, VIF, VIP, ID
@@ -774,11 +774,20 @@ uint32_t syscall::Process::nanosleep(const struct timespec *req, struct timespec
     return 0;
 }
 
+/* kill 接受的信号号上限（不含）。退出状态用低 7 位编码信号号 */
+#define KILL_SIGNAL_MAX 64
+
 /**
  * syscall::Process::kill - 向进程发送信号
- * 
- * 简化实现：目前所有信号都直接终止目标进程
- * 未来可以扩展为支持信号处理和不同的信号行为
+ *
+ * 简化实现：没有信号处理函数，除 0 以外的信号都终止目标进程；
+ * 信号 0 只检查目标是否存在。
+ *
+ * 终止不是由调用者就地完成的。调度是协作式的，别的任务一定停在内核里的
+ * 某个 yield/block 点上，可能正持有互斥锁、正排在等待队列里；在这里改它的
+ * 状态或释放它的内核栈都会破坏内核。所以只给目标记一个待处理的信号，
+ * 由目标自己在系统调用返回用户态前退出（kernel::Scheduler::deliver_pending_kill）。
+ * 阻塞在管道/锁上的目标要等到被正常唤醒后才会退出。
  */
 uint32_t syscall::Process::kill(uint32_t pid, uint32_t signal) {
     task_t *current = kernel::Scheduler::get_current();
@@ -786,139 +795,57 @@ uint32_t syscall::Process::kill(uint32_t pid, uint32_t signal) {
         LOG_ERROR_MSG("syscall::Process::kill: no current task\n");
         return (uint32_t)-1;
     }
-    
-    LOG_DEBUG_MSG("syscall::Process::kill: PID %u sending signal %u to PID %u\n", 
+
+    LOG_DEBUG_MSG("syscall::Process::kill: PID %u sending signal %u to PID %u\n",
                   current->pid, signal, pid);
-    
+
     // 不能杀死 idle 进程（PID 0）
     if (pid == 0) {
         LOG_WARN_MSG("syscall::Process::kill: cannot kill idle process (PID 0)\n");
         return (uint32_t)-1;
     }
-    
+
+    if (signal >= KILL_SIGNAL_MAX) {
+        LOG_WARN_MSG("syscall::Process::kill: invalid signal %u\n", signal);
+        return (uint32_t)-1;
+    }
+
     // 查找目标进程
     task_t *target = kernel::Scheduler::get_by_pid(pid);
-    if (!target) {
+    if (!target || target->state == TASK_UNUSED || target->state == TASK_TERMINATED) {
         LOG_WARN_MSG("syscall::Process::kill: process %u not found\n", pid);
         return (uint32_t)-1;
     }
-    
-    // 检查进程状态
-    if (target->state == TASK_UNUSED || target->state == TASK_TERMINATED) {
-        LOG_WARN_MSG("syscall::Process::kill: process %u is already terminated\n", pid);
+
+    // 内核线程（网络接收线程、kworker 等）不是用户进程能终止的对象
+    if (!target->is_user_process) {
+        LOG_WARN_MSG("syscall::Process::kill: PID %u is a kernel thread, refused\n", pid);
         return (uint32_t)-1;
     }
-    
-    // 如果进程已经是僵尸状态，说明它已经退出了，不需要再 kill
-    // 只是返回成功（kill 一个已经死亡的进程被认为是成功的）
+
+    // 信号 0：只探测目标是否存在
+    if (signal == 0) {
+        return 0;
+    }
+
+    // 已经是僵尸：进程已退出，等待父进程回收，视为成功
     if (target->state == TASK_ZOMBIE) {
         LOG_DEBUG_MSG("syscall::Process::kill: process %u is already zombie\n", pid);
         return 0;
     }
-    
-    // 简化实现：所有信号都直接终止进程
-    // 未来可以扩展为：
-    // - SIGTERM: 设置终止标志，让进程优雅退出
-    // - SIGKILL: 强制立即终止
-    // - SIGINT: 中断信号
-    // - 其他信号: 根据信号类型处理
-    
-    // 安全地访问进程名称（避免在日志中访问可能无效的内存）
-    const char *proc_name = (target->name[0] != '\0') ? target->name : "unknown";
-    LOG_DEBUG_MSG("syscall::Process::kill: terminating process %u (%s) with signal %u\n", 
-                  pid, proc_name, signal);
-    
-    // 设置进程为终止状态
-    // 注意：不能直接调用 task_exit，因为那是给当前进程用的
-    // 我们需要直接修改目标进程的状态
-    // 但是要小心：如果目标进程正在运行，我们需要确保安全地修改它
-    bool prev_state = kernel::Interrupts::disable();
-    
-    // 再次检查进程状态（在禁用中断后，状态可能已经改变）
-    if (target->state == TASK_UNUSED || target->state == TASK_TERMINATED) {
-        kernel::Interrupts::restore(prev_state);
-        LOG_DEBUG_MSG("syscall::Process::kill: process %u already terminated\n", pid);
-        return 0;  // 已经终止，返回成功
+
+    // 杀死自己：这里就是自己的上下文，直接走正常的退出路径（不返回）
+    if (target == current) {
+        kernel::Scheduler::exit_current(128 + signal, true, signal);
     }
-    
-    // 设置退出信息
-    target->exit_code = 128 + signal;  // 标准退出码：128 + 信号号
-    target->exit_signaled = true;
-    target->exit_signal = signal;
-    
-    // 处理目标进程的所有子进程
-    // 遍历任务池，查找目标进程的子进程
-    for (uint32_t i = 0; i < MAX_TASKS; i++) {
-        task_t *task = kernel::Scheduler::get_by_pid(i);
-        if (!task || task->state == TASK_UNUSED) {
-            continue;
-        }
-        
-        // 检查是否为目标进程的子进程
-        if (task->parent == target) {
-            if (task->state == TASK_ZOMBIE) {
-                // 僵尸子进程：直接清理（没有父进程来回收了）
-                LOG_DEBUG_MSG("syscall::Process::kill: cleaning up zombie child %u of process %u\n", 
-                             task->pid, target->pid);
-                // 直接释放资源，因为僵尸进程不在就绪队列中
-                kernel::Scheduler::free(task);
-            } else {
-                // 运行中的子进程：变成孤儿进程
-                LOG_DEBUG_MSG("syscall::Process::kill: orphaning child %u of process %u\n", 
-                             task->pid, target->pid);
-                task->parent = NULL;
-            }
-        }
+
+    if (!kernel::Scheduler::request_kill(target, signal)) {
+        // 目标在此期间已经退出
+        return 0;
     }
-    
-    // 如果目标进程在就绪队列中，需要移除它
-    if (target->state == TASK_READY) {
-        kernel::Scheduler::ready_queue_remove(target);
-        LOG_DEBUG_MSG("syscall::Process::kill: removed process %u from ready queue\n", pid);
-    }
-    
-    // 根据是否有父进程，决定进程状态
-    // 如果有父进程，变成僵尸进程等待父进程回收
-    // 否则直接终止（孤儿进程）
-    
-    // 调试日志：显示父进程信息
-    if (target->parent) {
-        LOG_DEBUG_MSG("syscall::Process::kill: process %u has parent PID %u (state=%d)\n", 
-                     target->pid, target->parent->pid, target->parent->state);
-    } else {
-        LOG_DEBUG_MSG("syscall::Process::kill: process %u has NO parent\n", target->pid);
-    }
-    
-    if (target->parent && target->parent->state != TASK_UNUSED) {
-        target->state = TASK_ZOMBIE;
-        LOG_DEBUG_MSG("syscall::Process::kill: process %u becomes zombie, waiting for parent %u\n", 
-                     target->pid, target->parent->pid);
-        
-        kernel::Interrupts::restore(prev_state);
-        LOG_DEBUG_MSG("syscall::Process::kill: process %u marked as zombie\n", pid);
-    } else {
-        // 没有父进程的进程，直接清理
-        // 注意：如果目标进程是当前进程（自己 kill 自己），不能立即清理
-        // 但这种情况很少见，应该使用 exit() 而不是 kill(自己)
-        if (target->parent) {
-            LOG_WARN_MSG("syscall::Process::kill: process %u parent is UNUSED, treating as orphan\n", pid);
-        }
-        
-        if (target == current) {
-            // 进程 kill 自己，标记为 TERMINATED，让调度器清理
-            target->state = TASK_TERMINATED;
-            kernel::Interrupts::restore(prev_state);
-            LOG_DEBUG_MSG("syscall::Process::kill: process %u killed itself\n", pid);
-        } else {
-            // kill 其他没有父进程的进程，可以安全地立即清理
-            LOG_DEBUG_MSG("syscall::Process::kill: process %u has no valid parent, freeing immediately\n", 
-                         target->pid);
-            kernel::Scheduler::free(target);
-            kernel::Interrupts::restore(prev_state);
-            LOG_DEBUG_MSG("syscall::Process::kill: process %u freed\n", pid);
-        }
-    }
-    
+
+    LOG_DEBUG_MSG("syscall::Process::kill: signal %u queued for process %u (%s)\n",
+                  signal, pid, target->name);
     return 0;
 }
 
@@ -986,8 +913,8 @@ uint32_t syscall::Process::waitpid(int32_t pid, uint32_t *wstatus, uint32_t opti
             
             // 构造退出状态
             if (found_child->exit_signaled) {
-                // 被信号终止：低 8 位 = 信号号
-                status = found_child->exit_signal & 0xFF;
+                // 被信号终止：低 7 位 = 信号号（与用户库的 WTERMSIG 一致）
+                status = found_child->exit_signal & 0x7F;
             } else {
                 // 正常退出：低 8 位 = 0，高 8 位 = 退出码
                 status = (found_child->exit_code & 0xFF) << 8;
@@ -1026,6 +953,11 @@ uint32_t syscall::Process::waitpid(int32_t pid, uint32_t *wstatus, uint32_t opti
             return 0;
         }
         
+        // 自己被 kill 了：不再等下去，返回到系统调用出口去执行退出
+        if (current->kill_pending) {
+            return (uint32_t)-1;
+        }
+
         // 阻塞等待：让出 CPU，稍后重试
         // 这里使用简单的轮询 + yield 策略
         // 更好的实现应该让进程进入 BLOCKED 状态，并在子进程退出时唤醒
