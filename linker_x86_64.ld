@@ -27,6 +27,13 @@ SECTIONS
         *(.text.boot)
     }
 
+    /* 引导页表 (PML4/PDPT/PD)：32 位代码按物理地址填写，之后一直作为
+       内核 PML4 使用。放在镜像内部，保证不会和其它段重叠。 */
+    .boot.pagetables ALIGN(4K) : AT(ADDR(.boot.pagetables))
+    {
+        *(.boot.pagetables)
+    }
+
     /* 切换到高半核虚拟地址 */
     . = KERNEL_VIRTUAL_BASE + .;
 
@@ -41,6 +48,7 @@ SECTIONS
     .rodata ALIGN(4K) : AT(ADDR(.rodata) - KERNEL_VIRTUAL_BASE)
     {
         *(.rodata*)
+        *(.lrodata .lrodata.*)      /* -mcmodel=large 的大对象 */
 
         /* C++ 全局构造函数表 */
         . = ALIGN(8);
@@ -59,6 +67,7 @@ SECTIONS
     {
         *(.data)
         *(.data.*)
+        *(.ldata .ldata.*)          /* -mcmodel=large 的大对象 */
     }
 
     /* .bss 段：未初始化数据 */
@@ -68,6 +77,7 @@ SECTIONS
         *(COMMON)
         *(.bss)
         *(.bss.*)
+        *(.lbss .lbss.*)            /* -mcmodel=large 的大对象（task_pool 等） */
         *(.bootstrap_stack)
         _bss_end = .;
     }

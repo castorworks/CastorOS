@@ -39,9 +39,13 @@ MULTIBOOT_FLAGS         equ (MULTIBOOT_PAGE_ALIGN | MULTIBOOT_MEMORY_INFO | MULT
 MULTIBOOT_CHECKSUM      equ -(MULTIBOOT_MAGIC + MULTIBOOT_FLAGS)
 MULTIBOOT_BOOTLOADER_MAGIC equ 0x2BADB002
 
-BOOT_PML4_PHYS          equ 0x200000
-BOOT_PDPT_PHYS          equ 0x201000
-BOOT_PD_PHYS            equ 0x202000
+; 引导页表（PML4/PDPT/PD）放在内核镜像自己的 .boot.pagetables 段里，
+; 链接在物理地址上（见 linker_x86_64.ld），32 位代码可以直接用符号。
+; 不能用固定物理地址：0x200000 一带就是内核自己的 .bss，
+; 镜像一长大，这三页就会和内核数据互相覆盖。
+BOOT_PML4_PHYS          equ boot_pml4_table
+BOOT_PDPT_PHYS          equ boot_pdpt_table
+BOOT_PD_PHYS            equ boot_pd_table
 
 ; ============================================================================
 ; Multiboot1 头部
@@ -190,6 +194,21 @@ gdt64_low_end:
 gdt64_ptr_low:
     dw gdt64_low_end - gdt64_low - 1
     dd gdt64_low
+
+; ============================================================================
+; 引导页表 (物理地址，属于内核镜像，PMM 按内核占用处理)
+; ============================================================================
+
+section .boot.pagetables progbits alloc noexec write align=4096
+
+boot_pml4_table:
+    times 4096 db 0
+boot_pdpt_table:
+    times 4096 db 0
+boot_pd_table:
+    times 4096 db 0
+
+section .text.boot
 
 ; ============================================================================
 ; 64 位入口 (物理地址，在 .text.boot 段)
