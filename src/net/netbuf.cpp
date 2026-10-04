@@ -8,10 +8,11 @@
 #include <lib/string.h>
 
 net::Netbuf *net::Netbuf::alloc(uint32_t size) {
-    uint32_t total_size = NETBUF_HEADROOM + size;
-    if (total_size > NETBUF_MAX_SIZE) {
-        total_size = NETBUF_MAX_SIZE;
+    // 放不下就失败：静默截断会让调用者随后的 put() 返回 NULL
+    if (size > NETBUF_MAX_SIZE - NETBUF_HEADROOM) {
+        return NULL;
     }
+    uint32_t total_size = NETBUF_HEADROOM + size;
     
     net::Netbuf *buf = (net::Netbuf *)kmalloc(sizeof(net::Netbuf));
     if (!buf) {
@@ -51,7 +52,7 @@ void net::Netbuf::free(net::Netbuf *buf) {
 }
 
 uint8_t *net::Netbuf::push(net::Netbuf *buf, uint32_t len) {
-    if (!buf || buf->data - buf->head < (int)len) {
+    if (!buf || (uint32_t)(buf->data - buf->head) < len) {
         return NULL;  // 没有足够的 headroom
     }
     buf->data -= len;
@@ -69,7 +70,7 @@ uint8_t *net::Netbuf::pull(net::Netbuf *buf, uint32_t len) {
 }
 
 uint8_t *net::Netbuf::put(net::Netbuf *buf, uint32_t len) {
-    if (!buf || buf->end - buf->tail < (int)len) {
+    if (!buf || (uint32_t)(buf->end - buf->tail) < len) {
         return NULL;  // 没有足够的 tailroom
     }
     uint8_t *old_tail = buf->tail;

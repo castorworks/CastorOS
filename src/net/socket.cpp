@@ -342,6 +342,10 @@ ssize_t net::Socket::send(int sockfd, const void *buf, size_t len, int flags) {
         }
         
         uint8_t *data = net::Netbuf::put(nbuf, len);
+        if (!data) {
+            net::Netbuf::free(nbuf);
+            return -1;
+        }
         memcpy(data, buf, len);
         
         int ret = net::Udp::send(sock->pcb.udp, nbuf);
@@ -387,6 +391,10 @@ ssize_t net::Socket::sendto(int sockfd, const void *buf, size_t len, int flags,
     }
     
     uint8_t *data = net::Netbuf::put(nbuf, len);
+    if (!data) {
+        net::Netbuf::free(nbuf);
+        return -1;
+    }
     memcpy(data, buf, len);
     
     int ret = net::Udp::sendto(sock->pcb.udp, nbuf, sin->sin_addr, ntohs(sin->sin_port));

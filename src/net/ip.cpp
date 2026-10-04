@@ -115,9 +115,16 @@ static void ip_reass_free(ip_reassembly_t *r) {
  */
 static int ip_reass_add_fragment(ip_reassembly_t *r, uint16_t offset, 
                                   uint8_t *data, uint16_t len, bool more_frags) {
+    // 分片必须落在 IP 报文的最大长度内。用 32 位计算，
+    // 否则 offset + len 在 uint16_t 上回绕（Ping of Death）。
+    uint32_t frag_end = (uint32_t)offset + len;
+    if (len == 0 || frag_end > 65535) {
+        return -1;
+    }
+    
     // 检查是否为最后一个分片
     if (!more_frags) {
-        r->total_len = offset + len;
+        r->total_len = (uint16_t)frag_end;
     }
     
     // 分配分片结构
@@ -162,10 +169,10 @@ static net::Netbuf *ip_reass_complete(ip_reassembly_t *r, net::Netdev *dev, uint
     if (r->total_len == 0) return NULL;
     
     // 检查是否有空洞
-    uint16_t expected_offset = 0;
+    uint32_t expected_offset = 0;
     for (ip_fragment_t *f = r->fragments; f != NULL; f = f->next) {
         if (f->offset != expected_offset) {
-            return NULL;  // 有空洞
+            return NULL;  // 有空洞（或重叠）
         }
         expected_offset += f->len;
     }
@@ -179,6 +186,10 @@ static net::Netbuf *ip_reass_complete(ip_reassembly_t *r, net::Netdev *dev, uint
     if (!buf) return NULL;
     
     uint8_t *dest = net::Netbuf::put(buf, r->total_len);
+    if (!dest) {
+        net::Netbuf::free(buf);
+        return NULL;
+    }
     for (ip_fragment_t *f = r->fragments; f != NULL; f = f->next) {
         memcpy(dest + f->offset, f->data, f->len);
     }

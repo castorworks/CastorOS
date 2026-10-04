@@ -79,13 +79,22 @@ TEST_CASE(test_netbuf_alloc_zero_size) {
 
 /**
  * 测试大缓冲区分配
- * 超过 NETBUF_MAX_SIZE 应被截断
+ * 放不下的请求必须失败，而不是静默截断（调用者随后的 put() 会拿到 NULL）
  */
 TEST_CASE(test_netbuf_alloc_large_size) {
-    net::Netbuf *buf = net::Netbuf::alloc(NETBUF_MAX_SIZE + 1000);
+    ASSERT_NULL(net::Netbuf::alloc(NETBUF_MAX_SIZE + 1000));
+    ASSERT_NULL(net::Netbuf::alloc(NETBUF_MAX_SIZE - NETBUF_HEADROOM + 1));
+    // 接近 32 位上限的请求不能因为加上 headroom 回绕而成功
+    ASSERT_NULL(net::Netbuf::alloc(0xFFFFFFF0u));
+    
+    // 恰好放得下的最大请求成功，且能全部 put
+    net::Netbuf *buf = net::Netbuf::alloc(NETBUF_MAX_SIZE - NETBUF_HEADROOM);
     ASSERT_NOT_NULL(buf);
-    // total_size 应该被限制在 NETBUF_MAX_SIZE
-    ASSERT_TRUE(buf->total_size <= NETBUF_MAX_SIZE);
+    ASSERT_NOT_NULL(net::Netbuf::put(buf, NETBUF_MAX_SIZE - NETBUF_HEADROOM));
+    // 再 put 就没有空间了；长度的最高位为 1 时也不能被当成负数放行
+    ASSERT_NULL(net::Netbuf::put(buf, 1));
+    ASSERT_NULL(net::Netbuf::put(buf, 0x80000000u));
+    ASSERT_NULL(net::Netbuf::push(buf, 0x80000000u));
     net::Netbuf::free(buf);
 }
 

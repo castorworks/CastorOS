@@ -136,7 +136,7 @@ static uint32_t procfs_meminfo_read(fs_node_t *node, uint32_t offset, uint32_t s
     }
     
     uint32_t bytes_to_read = size;
-    if (offset + bytes_to_read > file_size) {
+    if (bytes_to_read > file_size - offset) {
         bytes_to_read = file_size - offset;
     }
     
@@ -257,7 +257,7 @@ static uint32_t procfs_pci_read(fs_node_t *node, uint32_t offset, uint32_t size,
     }
     
     uint32_t bytes_to_read = size;
-    if (offset + bytes_to_read > file_size) {
+    if (bytes_to_read > file_size - offset) {
         bytes_to_read = file_size - offset;
     }
     
@@ -396,7 +396,7 @@ static uint32_t procfs_usb_read(fs_node_t *node, uint32_t offset, uint32_t size,
     }
     
     uint32_t bytes_to_read = size;
-    if (offset + bytes_to_read > file_size) {
+    if (bytes_to_read > file_size - offset) {
         bytes_to_read = file_size - offset;
     }
     
@@ -430,7 +430,7 @@ static uint32_t procfs_net_tcp_read(fs_node_t *node, uint32_t offset, uint32_t s
     }
     
     uint32_t bytes_to_read = size;
-    if (offset + bytes_to_read > file_size) {
+    if (bytes_to_read > file_size - offset) {
         bytes_to_read = file_size - offset;
     }
     
@@ -464,7 +464,7 @@ static uint32_t procfs_net_udp_read(fs_node_t *node, uint32_t offset, uint32_t s
     }
     
     uint32_t bytes_to_read = size;
-    if (offset + bytes_to_read > file_size) {
+    if (bytes_to_read > file_size - offset) {
         bytes_to_read = file_size - offset;
     }
     
@@ -498,7 +498,7 @@ static uint32_t procfs_net_route_read(fs_node_t *node, uint32_t offset, uint32_t
     }
     
     uint32_t bytes_to_read = size;
-    if (offset + bytes_to_read > file_size) {
+    if (bytes_to_read > file_size - offset) {
         bytes_to_read = file_size - offset;
     }
     
@@ -658,7 +658,7 @@ static uint32_t procfs_status_read(fs_node_t *node, uint32_t offset, uint32_t si
     
     // 计算可读取的字节数
     uint32_t bytes_to_read = size;
-    if (offset + bytes_to_read > file_size) {
+    if (bytes_to_read > file_size - offset) {
         bytes_to_read = file_size - offset;
     }
     

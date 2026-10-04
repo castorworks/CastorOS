@@ -136,7 +136,7 @@ static uint32_t ramfs_read(fs_node_t *node, uint32_t offset, uint32_t size, uint
     
     // 调整读取大小
     uint32_t to_read = size;
-    if (offset + to_read > file->size) {
+    if (to_read > file->size - offset) {
         to_read = file->size - offset;
     }
     
@@ -162,8 +162,12 @@ static uint32_t ramfs_write(fs_node_t *node, uint32_t offset, uint32_t size, uin
     // 加锁保护文件写入
     file->lock.lock();
     
-    // 计算需要的总大小
+    // 计算需要的总大小（回绕说明请求超出 32 位文件大小，拒绝）
     uint32_t new_size = offset + size;
+    if (new_size < offset || new_size > 0xFFFFF000u) {
+        file->lock.unlock();
+        return 0;
+    }
     
     // 如果需要扩容
     if (new_size > file->capacity) {

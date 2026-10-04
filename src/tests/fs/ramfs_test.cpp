@@ -43,6 +43,31 @@ static bool ramfs_test_setup(void) {
     return true;
 }
 
+/**
+ * @brief 测试读取长度极大时不会因 offset + size 回绕而越界
+ */
+TEST_CASE(test_ramfs_read_size_wraparound) {
+    fs_node_t *dir = fs::Ramfs::create("wrap_test");
+    ASSERT_NOT_NULL(dir);
+    ASSERT_EQ(dir->ops->create(dir, "WRAP.TMP"), 0);
+    fs_node_t *file = fs::Vfs::finddir(dir, "WRAP.TMP");
+    ASSERT_NOT_NULL(file);
+    
+    const char *text = "0123456789";
+    ASSERT_EQ_U(fs::Vfs::write(file, 0, 10, (uint8_t *)text), 10);
+    
+    // offset + size 在 32 位上回绕为 3；正确结果是读到文件末尾的 6 字节
+    char buf[16];
+    memset(buf, 0, sizeof(buf));
+    ASSERT_EQ_U(fs::Vfs::read(file, 4, 0xFFFFFFFFu, (uint8_t *)buf), 6);
+    ASSERT_STR_EQ(buf, "456789");
+    
+    // 写入位置加长度回绕时必须拒绝
+    ASSERT_EQ_U(fs::Vfs::write(file, 0xFFFFFFF0u, 0x20, (uint8_t *)text), 0);
+    
+    ASSERT_EQ(dir->ops->unlink(dir, "WRAP.TMP"), 0);
+}
+
 // ============================================================================
 // 测试套件 1: ramfs_file_tests - 文件操作测试
 // ============================================================================
@@ -619,6 +644,7 @@ TEST_SUITE(ramfs_edge_tests) {
     RUN_TEST(test_ramfs_finddir);
     RUN_TEST(test_ramfs_unlink_while_open);
     RUN_TEST(test_ramfs_unpin_without_unlink);
+    RUN_TEST(test_ramfs_read_size_wraparound);
 }
 
 // ============================================================================

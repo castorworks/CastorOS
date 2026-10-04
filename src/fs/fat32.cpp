@@ -1418,7 +1418,7 @@ static uint32_t fat32_file_read(fs_node_t *node, uint32_t offset, uint32_t size,
     if (offset >= file->size) {
         return 0;
     }
-    if (offset + size > file->size) {
+    if (size > file->size - offset) {
         size = file->size - offset;
     }
     

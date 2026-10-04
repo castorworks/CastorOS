@@ -32,8 +32,10 @@ static sync::Spinlock heap_lock;       ///< 堆自旋锁，保护堆的内部状
  * **Validates: Requirements 3.1**
  */
 static bool expand(size_t size) {
+    // 先和剩余空间比较，避免 size 取整或 heap_end 相加时回绕
+    if (size > heap_max - heap_end) return false;
     size_t pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
-    if (heap_end + pages * PAGE_SIZE > heap_max) return false;
+    if (pages * PAGE_SIZE > heap_max - heap_end) return false;
     
 #if defined(ARCH_X86_64)
     // x86_64: 引导时已经映射了前 1GB 物理内存到高半核
@@ -258,6 +260,11 @@ void* kmalloc(size_t size) {
                      (uintptr_t)first_block < KERNEL_VIRTUAL_BASE ? 0 : first_block->magic, HEAP_MAGIC);
         LOG_ERROR_MSG("kmalloc: heap_start=0x%llx, heap_end=0x%llx\n",
                      (unsigned long long)heap_start, (unsigned long long)heap_end);
+        return NULL;
+    }
+    
+    // 请求不可能超过整个堆；同时避免下面的对齐和块头相加回绕
+    if (size > heap_max - heap_start) {
         return NULL;
     }
     

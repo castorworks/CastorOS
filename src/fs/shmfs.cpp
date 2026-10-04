@@ -150,7 +150,7 @@ static uint32_t shmfs_read(fs_node_t *node, uint32_t offset,
     
         // 调整读取大小
         uint32_t to_read = size;
-        if (offset + to_read > file->size) {
+        if (to_read > file->size - offset) {
             to_read = file->size - offset;
         }
     
@@ -198,6 +198,9 @@ static uint32_t shmfs_write(fs_node_t *node, uint32_t offset,
         sync::LockGuard guard(file->lock);
         // 扩展文件大小（如果需要）
         uint32_t new_size = offset + size;
+        if (new_size < offset) {
+            return 0;  // 回绕：请求超出 32 位文件大小
+        }
         if (new_size > file->size) {
             if (shmfs_alloc_pages(file, new_size) != 0) {
                 return 0;

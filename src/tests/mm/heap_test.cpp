@@ -814,6 +814,20 @@ TEST_CASE(test_heap_mixed_operations) {
     }
 }
 
+/**
+ * @brief 超大请求必须失败，不能因大小计算回绕而返回一块小内存
+ */
+TEST_CASE(test_heap_alloc_huge_size) {
+    ASSERT_NULL(kmalloc((size_t)-1));
+    ASSERT_NULL(kmalloc((size_t)-8));
+    ASSERT_NULL(kmalloc(((size_t)-1) / 2));
+    
+    // 失败之后堆仍然可用
+    void *p = kmalloc(64);
+    ASSERT_NOT_NULL(p);
+    kfree(p);
+}
+
 // ============================================================================
 // 测试套件定义
 // ============================================================================
@@ -905,6 +919,7 @@ TEST_SUITE(heap_comprehensive_tests) {
     RUN_TEST(test_heap_interleaved);
     RUN_TEST(test_heap_data_integrity);
     RUN_TEST(test_heap_mixed_operations);
+    RUN_TEST(test_heap_alloc_huge_size);
 }
 
 // ============================================================================
