@@ -277,6 +277,19 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
     child->context.ebp = user_ebp;
     child->context.esp = user_esp;  // 使用父进程当前的用户栈指针
     child->context.eip = user_eip;  // 从 fork() 调用返回处继续
+#if defined(ARCH_X86_64)
+    // x86_64 还有 R8-R15。其中 R12-R15 是被调用者保存的寄存器，子进程从
+    // fork() 返回后调用者保存在里面的值必须和父进程一致。
+    // 帧布局（syscall64_asm.asm）：frame[0..7] = r15, r14, r13, r12, r11, r10, r9, r8
+    child->context.r15 = frame[0];
+    child->context.r14 = frame[1];
+    child->context.r13 = frame[2];
+    child->context.r12 = frame[3];
+    child->context.r11 = frame[4];
+    child->context.r10 = frame[5];
+    child->context.r9  = frame[6];
+    child->context.r8  = frame[7];
+#endif
 
     // 清理 EFLAGS 中的敏感位，防止权限提升
     // 保留：CF, PF, AF, ZF, SF, OF, DF, IF
