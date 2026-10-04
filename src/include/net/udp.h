@@ -146,7 +146,7 @@ public:
      * @param buf 数据缓冲区
      * @param dst_ip 目的 IP（网络字节序）
      * @param dst_port 目的端口（主机字节序）
-     * @return 0 成功，-1 失败
+     * @return 0 成功，-1 失败（两种情况下 buf 都仍归调用者，由调用者释放）
      */
     static int sendto(udp_pcb_t *pcb, net::Netbuf *buf, uint32_t dst_ip, uint16_t dst_port);
 

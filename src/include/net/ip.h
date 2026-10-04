@@ -188,7 +188,11 @@ public:
      * @param buf 发送缓冲区（应包含上层协议数据）
      * @param dst_ip 目的 IP 地址（网络字节序）
      * @param protocol 上层协议号
-     * @return 0 成功，-1 失败
+     * @return 0 成功（已发送，或已复制一份等待 ARP 解析），-1 失败
+     *
+     * 所有权：整条发送路径（Udp::sendto、Ip::output、Ethernet::output、
+     * Netdev::transmit）都只是借用 buf，无论成功、失败还是排队，
+     * buf 始终归调用者，调用者在返回后负责释放。
      */
     static int output(net::Netdev *dev, net::Netbuf *buf, uint32_t dst_ip, uint8_t protocol);
 

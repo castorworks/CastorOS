@@ -451,8 +451,8 @@ static int tcp_send_segment(tcp_pcb_t *pcb, uint8_t flags, uint8_t *data, uint32
     
     // 发送
     int ret = net::Ip::output(dev, buf, pcb->remote_ip, IP_PROTO_TCP);
+    net::Netbuf::free(buf);  // 发送只是借用 buf
     if (ret < 0) {
-        net::Netbuf::free(buf);
         return ret;
     }
     
@@ -500,10 +500,8 @@ static void tcp_send_rst(uint32_t src_ip, uint32_t dst_ip,
     tcp->checksum = net::Tcp::checksum(src_ip, dst_ip, tcp, TCP_HEADER_MIN_LEN);
     
     // 发送
-    int ret = net::Ip::output(dev, buf, dst_ip, IP_PROTO_TCP);
-    if (ret < 0) {
-        net::Netbuf::free(buf);
-    }
+    net::Ip::output(dev, buf, dst_ip, IP_PROTO_TCP);
+    net::Netbuf::free(buf);  // 发送只是借用 buf
 }
 
 void net::Tcp::init() {
@@ -1398,10 +1396,8 @@ void net::Tcp::timer() {
                             uint32_t src_ip = (pcb->local_ip != 0) ? pcb->local_ip : dev->ip_addr;
                             tcp->checksum = net::Tcp::checksum(src_ip, pcb->remote_ip, tcp, tcp_len);
                             
-                            int ret = net::Ip::output(dev, buf, pcb->remote_ip, IP_PROTO_TCP);
-                            if (ret < 0) {
-                                net::Netbuf::free(buf);
-                            }
+                            net::Ip::output(dev, buf, pcb->remote_ip, IP_PROTO_TCP);
+                            net::Netbuf::free(buf);  // 发送只是借用 buf
                         }
                     }
                     

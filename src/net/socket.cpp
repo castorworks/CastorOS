@@ -349,8 +349,8 @@ ssize_t net::Socket::send(int sockfd, const void *buf, size_t len, int flags) {
         memcpy(data, buf, len);
         
         int ret = net::Udp::send(sock->pcb.udp, nbuf);
+        net::Netbuf::free(nbuf);  // 发送只是借用 nbuf
         if (ret < 0) {
-            net::Netbuf::free(nbuf);
             return -1;
         }
         
@@ -398,8 +398,8 @@ ssize_t net::Socket::sendto(int sockfd, const void *buf, size_t len, int flags,
     memcpy(data, buf, len);
     
     int ret = net::Udp::sendto(sock->pcb.udp, nbuf, sin->sin_addr, ntohs(sin->sin_port));
+    net::Netbuf::free(nbuf);  // 发送只是借用 nbuf
     if (ret < 0) {
-        net::Netbuf::free(nbuf);
         return -1;
     }
     

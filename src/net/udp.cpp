@@ -210,9 +210,7 @@ int net::Udp::output(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
     
     // 发送
     int ret = net::Ip::output(dev, buf, dst_ip, IP_PROTO_UDP);
-    if (ret < 0) {
-        net::Netbuf::free(buf);
-    }
+    net::Netbuf::free(buf);  // 发送只是借用 buf
     
     return ret;
 }

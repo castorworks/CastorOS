@@ -594,9 +594,9 @@ int net::Ip::output(net::Netdev *dev, net::Netbuf *buf, uint32_t dst_ip, uint8_t
         // ARP 解析成功，发送
         return net::Ethernet::output(dev, buf, dst_mac, ETH_TYPE_IP);
     } else if (ret == -1) {
-        // 正在 ARP 解析中，将数据包加入等待队列
+        // 正在 ARP 解析中，把数据包的副本加入等待队列（buf 仍归调用者）
         if (net::Arp::queue_packet(next_hop, buf) == 0) {
-            return 0;  // 返回成功，数据包会在 ARP 解析完成后发送
+            return 0;  // 返回成功，副本会在 ARP 解析完成后发送
         } else {
             // 队列失败，可能 ARP 已经解析完成（竞态条件），重试一次
             ret = net::Arp::cache_lookup(next_hop, dst_mac);
@@ -605,7 +605,7 @@ int net::Ip::output(net::Netdev *dev, net::Netbuf *buf, uint32_t dst_ip, uint8_t
                 return net::Ethernet::output(dev, buf, dst_mac, ETH_TYPE_IP);
             }
             LOG_WARN_MSG("ip: Failed to queue packet for ARP resolution\n");
-            return -1;  // 调用者需要释放 buf
+            return -1;
         }
     } else {
         // ARP 解析失败
