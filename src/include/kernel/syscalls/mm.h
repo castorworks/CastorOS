@@ -27,25 +27,25 @@ public:
     static uintptr_t brk(uint32_t addr);
 
     /**
-     * syscall::Mm::mmap - 内存映射（简化版：仅支持匿名映射）
+     * syscall::Mm::mmap - 内存映射（匿名映射和私有文件映射）
      * @param addr 建议的映射地址（0 表示由内核选择）
      * @param length 映射长度（字节，会被页对齐）
      * @param prot 保护标志（PROT_READ, PROT_WRITE, PROT_EXEC）
-     * @param flags 映射标志（必须包含 MAP_ANONYMOUS）
+     * @param flags 映射标志（MAP_ANONYMOUS，或 MAP_PRIVATE 的文件映射）
      * @param fd 文件描述符（匿名映射时忽略，应传 -1）
-     * @param offset 文件偏移（匿名映射时忽略，应传 0）
+     * @param offset 文件偏移（必须页对齐；匿名映射时应传 0）
      * @return 成功返回映射的虚拟地址，失败返回 (uintptr_t)-1 (MAP_FAILED)
      * 
      * 当前限制：
-     * - 仅支持匿名映射（flags 必须包含 MAP_ANONYMOUS）
-     * - 不支持文件映射
-     * - 不支持共享映射（MAP_SHARED）
+     * - 文件映射在映射时把文件内容拷贝到进程私有的页，写入不会写回文件
+     * - 不支持共享文件映射：带 MAP_SHARED 的文件映射（包括 /shm）返回失败
+     * - 映射地址由内核在各架构的 mmap 区域内选择，addr 只是建议
      * 
      * 用法示例：
      *   void *p = mmap(NULL, 4096, PROT_READ|PROT_WRITE, 
      *                  MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
      */
-    static uintptr_t mmap(uint32_t addr, uint32_t length, uint32_t prot,
+    static uintptr_t mmap(uintptr_t addr, size_t length, uint32_t prot,
                       uint32_t flags, int32_t fd, uint32_t offset);
 
     /**
@@ -58,7 +58,7 @@ public:
      * - addr 必须是页对齐的地址
      * - 会释放指定范围内的所有物理页
      */
-    static uintptr_t munmap(uint32_t addr, uint32_t length);
+    static uintptr_t munmap(uintptr_t addr, size_t length);
 };
 
 } // namespace syscall
