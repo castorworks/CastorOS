@@ -86,6 +86,7 @@ section .text
 
 global syscall_entry
 extern syscall_dispatcher
+extern task_exit
 
 syscall_entry:
     ; ========================================================================
@@ -186,6 +187,16 @@ syscall_entry:
 
     ; Store return value
     mov [rsp + 0x70], rax   ; Save return value to rax position in frame
+
+    ; SYSRET loads RIP from RCX without checking it. On Intel CPUs a
+    ; non-canonical RCX faults in Ring 0 *after* RSP already holds the user
+    ; stack pointer. The saved RIP can be anything: execve stores the ELF
+    ; entry point here, and a syscall at the very top of the user half
+    ; returns to 0x0000800000000000. Refuse to return there and end the
+    ; process instead (it would fault on its first instruction anyway).
+    mov rax, [rsp + 0x60]   ; saved user RIP
+    shr rax, 47
+    jnz .bad_return_rip
     
     ; Restore general purpose registers
     pop r15
@@ -211,6 +222,15 @@ syscall_entry:
     ; RCX = return address, R11 = RFLAGS
     ; SYSRET restores RFLAGS from R11, which re-enables interrupts in user mode.
     o64 sysret
+
+.bad_return_rip:
+    ; Still on the kernel stack with interrupts off (16-byte aligned:
+    ; 16 saved qwords). task_exit does not return.
+    mov edi, 128 + 11       ; killed by SIGSEGV
+    call task_exit
+.bad_return_hang:
+    hlt
+    jmp .bad_return_hang
 
 
 ; ============================================================================
@@ -437,10 +457,13 @@ syscall_init_msr:
     shr rdx, 32
     wrmsr
     
-    ; Set SFMASK to clear IF, TF, DF on SYSCALL
-    ; This ensures interrupts are disabled during syscall entry
+    ; Set SFMASK to clear IF, TF, DF, NT, AC on SYSCALL
+    ; This ensures interrupts are disabled during syscall entry.
+    ; NT (bit 14) must be cleared too: SYSCALL does not go through a gate,
+    ; so a user-set NT would stay in RFLAGS and the next IRETQ executed in
+    ; the kernel (context switch to a user task) would raise #GP in Ring 0.
     mov ecx, MSR_SFMASK
-    mov eax, 0x00000700     ; Clear IF (bit 9), TF (bit 8), DF (bit 10)
+    mov eax, 0x00044700     ; IF (9), TF (8), DF (10), NT (14), AC (18)
     xor edx, edx
     wrmsr
     
@@ -524,6 +547,10 @@ enter_usermode64:
     ; Clear rdi and rsi (they contained parameters)
     xor rdi, rdi
     xor rsi, rsi
+    
+    ; Start from clean kernel flags (IF=0, NT=0): IRETQ with NT set is #GP
+    push 0x2
+    popfq
     
     ; Return to user mode
     iretq
