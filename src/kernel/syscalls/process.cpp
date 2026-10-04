@@ -204,6 +204,11 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
     child->priority = parent->priority;
     child->time_slice = DEFAULT_TIME_SLICE;
     
+    // 以下错误路径的约定：一旦资源记录到子进程 PCB（page_dir_phys、
+    // kernel_stack_base、fd_table），就只由 kernel::Scheduler::free(child) 释放。
+    // 不要在调用它之前再手动释放一次——那会二次释放内核栈，并把与父进程
+    // COW 共享的物理页的引用计数多减一次。
+
     // 克隆页目录（深拷贝，完全复制物理页）
     child->page_dir_phys = mm::Vmm::clone_page_directory(parent->page_dir_phys);
     if (!child->page_dir_phys) {
@@ -218,7 +223,6 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
     child->kernel_stack_base = (uintptr_t)kmalloc(KERNEL_STACK_SIZE);
     if (!child->kernel_stack_base) {
         LOG_ERROR_MSG("syscall::Process::fork: Failed to allocate kernel stack\n");
-        mm::Vmm::free_page_directory(child->page_dir_phys);
         kernel::Scheduler::free(child);
         kernel::Interrupts::restore(prev_state);
         return (uint32_t)-12;
@@ -308,8 +312,6 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
         child->fd_table = (kernel::FdTable*)kmalloc(sizeof(kernel::FdTable));
         if (!child->fd_table) {
             LOG_ERROR_MSG("syscall::Process::fork: Failed to allocate fd_table\n");
-            kfree((void*)child->kernel_stack_base);
-            mm::Vmm::free_page_directory(child->page_dir_phys);
             kernel::Scheduler::free(child);
             kernel::Interrupts::restore(prev_state);
             return (uint32_t)-12;
@@ -320,9 +322,6 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
         
         if (kernel::FdTable::copy(parent->fd_table, child->fd_table) != 0) {
             LOG_ERROR_MSG("syscall::Process::fork: failed to copy fd_table\n");
-            kfree(child->fd_table);
-            kfree((void*)child->kernel_stack_base);
-            mm::Vmm::free_page_directory(child->page_dir_phys);
             kernel::Scheduler::free(child);
             kernel::Interrupts::restore(prev_state);
             return (uint32_t)-1;

@@ -192,7 +192,12 @@ void kernel::Scheduler::free(task_t *task) {
     uintptr_t kernel_stack_base = task->kernel_stack_base;
     bool is_user = task->is_user_process;
     uintptr_t page_dir_phys = task->page_dir_phys;
-    
+
+    // 被释放的任务不再算作其地址空间的使用者。fork 失败路径上的子进程
+    // 还处于 READY 状态，不改的话 i686 的 free_page_directory 会认为页目录
+    // “仍被任务使用”而拒绝释放（泄漏整个克隆出来的地址空间）。
+    task->state = TASK_TERMINATED;
+
     // 释放内核栈（在锁外执行）
     if (kernel_stack_base) {
         kfree((void*)kernel_stack_base);
@@ -653,7 +658,10 @@ uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entr
     // 设置用户栈
     if (!kernel::Scheduler::setup_user_stack(task)) {
         LOG_ERROR_MSG("kernel::Scheduler::create_user_process: Failed to setup user stack\n");
-        kfree((void*)task->kernel_stack_base);
+        // 失败时地址空间仍归调用者所有（由调用者销毁），这里只交还 PCB 自己
+        // 分配的资源；内核栈由 kernel::Scheduler::free 释放，不能再手动 kfree
+        task->page_dir_phys = 0;
+        task->page_dir = NULL;
         kernel::Scheduler::free(task);
         return 0;
     }
@@ -719,7 +727,9 @@ uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entr
     task->fd_table = (kernel::FdTable*)kmalloc(sizeof(kernel::FdTable));
     if (!task->fd_table) {
         LOG_ERROR_MSG("kernel::Scheduler::create_user_process: Failed to allocate fd_table\n");
-        kfree((void*)task->kernel_stack_base);
+        // 同上：地址空间（连同已映射的用户栈页）由调用者销毁
+        task->page_dir_phys = 0;
+        task->page_dir = NULL;
         kernel::Scheduler::free(task);
         return 0;
     }
