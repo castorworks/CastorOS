@@ -195,6 +195,11 @@ static uint32_t ramfs_write(fs_node_t *node, uint32_t offset, uint32_t size, uin
         file->capacity = new_capacity;
     }
     
+    // 写入位置超过文件末尾时，中间的空洞必须读出 0，而不是堆里的旧内容
+    if (offset > file->size) {
+        memset(file->data + file->size, 0, offset - file->size);
+    }
+    
     // 写入数据
     memcpy(file->data + offset, buffer, size);
     
@@ -206,6 +211,47 @@ static uint32_t ramfs_write(fs_node_t *node, uint32_t offset, uint32_t size, uin
     
     file->lock.unlock();
     return size;
+}
+
+/**
+ * 截断或扩展文件
+ *
+ * 缩小时只改大小（容量保留，之后扩展会重新清零）；扩大时新增区域清零。
+ */
+static int ramfs_truncate(fs_node_t *node, uint32_t new_size) {
+    if (node->type != FS_FILE) {
+        return -1;
+    }
+    
+    ramfs_file_t *file = (ramfs_file_t *)node->impl;
+    if (!file || new_size > 0xFFFFF000u) {
+        return -1;
+    }
+    
+    sync::MutexGuard guard(file->lock);
+    
+    if (new_size > file->size) {
+        if (new_size > file->capacity) {
+            uint32_t new_capacity = (new_size + 4095) & ~4095u;
+            uint8_t *new_data = (uint8_t *)kmalloc(new_capacity);
+            if (!new_data) {
+                return -1;
+            }
+            if (file->data && file->size > 0) {
+                memcpy(new_data, file->data, file->size);
+            }
+            if (file->data) {
+                kfree(file->data);
+            }
+            file->data = new_data;
+            file->capacity = new_capacity;
+        }
+        memset(file->data + file->size, 0, new_size - file->size);
+    }
+    
+    file->size = new_size;
+    node->size = new_size;
+    return 0;
 }
 
 /**
@@ -346,9 +392,12 @@ static void ramfs_destroy_node(fs_node_t *target) {
 
 class RamfsFileOps final : public fs::NodeOps {
 public:
-    uint32_t supported() const override { return OP_READ | OP_WRITE | OP_OPEN | OP_CLOSE; }
+    uint32_t supported() const override { return OP_READ | OP_WRITE | OP_OPEN | OP_CLOSE | OP_TRUNCATE; }
     uint32_t read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
         return ramfs_read(node, offset, size, buffer);
+    }
+    int truncate(fs_node_t *node, uint32_t new_size) const override {
+        return ramfs_truncate(node, new_size);
     }
     uint32_t write(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) const override {
         return ramfs_write(node, offset, size, buffer);

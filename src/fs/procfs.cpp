@@ -849,9 +849,11 @@ static struct dirent *procfs_root_readdir(fs_node_t *node, uint32_t index) {
     
     // 遍历所有任务，找到第 pid_index 个有效进程
     uint32_t found_count = 0;
+    // 按任务槽位遍历，而不是把 0..MAX_TASKS-1 当作 PID 去查：PID 单调递增、
+    // 槽位复用时不回收，PID >= MAX_TASKS 的进程按 PID 查永远列不出来
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
-        task_t *task = kernel::Scheduler::get_by_pid(i);
-        if (task && task->state != TASK_UNUSED) {
+        task_t *task = &task_pool[i];
+        if (task->state != TASK_UNUSED) {
             if (found_count == pid_index) {
                 // 找到对应的进程，返回其 PID 目录名
                 char pid_str[32];

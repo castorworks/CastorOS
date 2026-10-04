@@ -601,6 +601,53 @@ TEST_CASE(test_ramfs_unpin_without_unlink) {
     ASSERT_NULL(fs::Vfs::finddir(dir, "KEEP.TMP"));
 }
 
+/**
+ * @brief 测试 truncate 真正改变 ramfs 文件的大小（O_TRUNC / ftruncate）
+ */
+TEST_CASE(test_ramfs_truncate) {
+    fs_node_t *dir = fs::Ramfs::create("trunc_test");
+    ASSERT_NOT_NULL(dir);
+    ASSERT_EQ(dir->ops->create(dir, "TRUNC.TMP"), 0);
+    fs_node_t *file = fs::Vfs::finddir(dir, "TRUNC.TMP");
+    ASSERT_NOT_NULL(file);
+    
+    const char *text = "0123456789";
+    ASSERT_EQ_U(fs::Vfs::write(file, 0, 10, (uint8_t *)text), 10);
+    
+    // 截断到 0 后写入更短的内容：不能读到旧文件的尾部
+    ASSERT_EQ(fs::Vfs::truncate(file, 0), 0);
+    ASSERT_EQ_U(file->size, 0);
+    ASSERT_EQ_U(fs::Vfs::write(file, 0, 2, (uint8_t *)"ab"), 2);
+    ASSERT_EQ_U(file->size, 2);
+    char buf[16];
+    memset(buf, 0x55, sizeof(buf));
+    ASSERT_EQ_U(fs::Vfs::read(file, 0, sizeof(buf), (uint8_t *)buf), 2);
+    ASSERT_EQ(buf[0], 'a');
+    ASSERT_EQ(buf[1], 'b');
+    
+    // 扩展：新增区域读出 0，而不是旧数据
+    ASSERT_EQ(fs::Vfs::truncate(file, 8), 0);
+    ASSERT_EQ_U(file->size, 8);
+    memset(buf, 0x55, sizeof(buf));
+    ASSERT_EQ_U(fs::Vfs::read(file, 0, sizeof(buf), (uint8_t *)buf), 8);
+    ASSERT_EQ(buf[1], 'b');
+    for (int i = 2; i < 8; i++) {
+        ASSERT_EQ(buf[i], 0);
+    }
+    
+    // 越过文件末尾写入：空洞读出 0
+    ASSERT_EQ(fs::Vfs::truncate(file, 1), 0);
+    ASSERT_EQ_U(fs::Vfs::write(file, 4, 1, (uint8_t *)"z"), 1);
+    memset(buf, 0x55, sizeof(buf));
+    ASSERT_EQ_U(fs::Vfs::read(file, 0, sizeof(buf), (uint8_t *)buf), 5);
+    ASSERT_EQ(buf[0], 'a');
+    ASSERT_EQ(buf[1], 0);
+    ASSERT_EQ(buf[3], 0);
+    ASSERT_EQ(buf[4], 'z');
+    
+    ASSERT_EQ(dir->ops->unlink(dir, "TRUNC.TMP"), 0);
+}
+
 // ============================================================================
 // 测试套件定义
 // ============================================================================
@@ -645,6 +692,7 @@ TEST_SUITE(ramfs_edge_tests) {
     RUN_TEST(test_ramfs_unlink_while_open);
     RUN_TEST(test_ramfs_unpin_without_unlink);
     RUN_TEST(test_ramfs_read_size_wraparound);
+    RUN_TEST(test_ramfs_truncate);
 }
 
 // ============================================================================
