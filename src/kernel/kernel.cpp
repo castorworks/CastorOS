@@ -359,6 +359,24 @@ void kernel_main(void *dtb_addr) {
 
 #else /* x86 architectures (i686, x86_64) */
 
+/**
+ * 把堆的起始地址移到所有已分配物理帧之后
+ *
+ * 堆的虚拟区间取自直接映射窗口，[heap_start, heap_start + heap_size) 对应的
+ * 物理帧必须全部空闲：VMM 初始化时已经从 PMM 数据结构之后分配了页表帧，
+ * 如果堆区间盖住它们，i686 上堆扩展会把这些帧的直接映射地址改映射到别的帧
+ * （之后经 PHYS_TO_VIRT 访问页表就写进了堆里），x86_64 上堆则直接与它们重叠。
+ */
+static uintptr_t heap_start_after_used_frames(uintptr_t heap_start, uint32_t heap_size) {
+    uintptr_t start = PAGE_ALIGN_UP(heap_start);
+    for (uintptr_t addr = start; addr - start < heap_size; addr += PAGE_SIZE) {
+        if (mm::Pmm::frame_get_refcount((paddr_t)VIRT_TO_PHYS(addr)) != 0) {
+            start = addr + PAGE_SIZE;
+        }
+    }
+    return start;
+}
+
 
 // ============================================================================
 // x86 Kernel Main Entry Point
@@ -480,10 +498,20 @@ void kernel_main(multiboot_info_t* mbi) {
     }
     
     uint32_t heap_size = 32 * 1024 * 1024;  // 32MB 堆
+    
+    // VMM 初始化已经分配了一些帧（页表），堆必须从它们之后开始
+    uintptr_t heap_start_free = heap_start_after_used_frames(heap_start, heap_size);
+    if (heap_start_free != heap_start) {
+        LOG_INFO_MSG("  Heap start moved past allocated frames: 0x%lx -> 0x%lx\n",
+                     (unsigned long)heap_start, (unsigned long)heap_start_free);
+        heap_start = heap_start_free;
+    }
+    
     mm::Heap::init((uintptr_t)heap_start, heap_size);
     
     // 【关键】通知 PMM 堆的虚拟地址范围，防止分配会与堆重叠的物理帧
     // 这解决了堆扩展时覆盖已分配帧的恒等映射导致的页目录损坏问题
+    // （此时区间内已经没有被占用的帧，见上面的 heap_start_after_used_frames）
     mm::Pmm::set_heap_reserved_range(heap_start, heap_start + heap_size);
     
     mm::Heap::print_info();
