@@ -12,8 +12,8 @@
 | | 数量 |
 |---|---|
 | 已复核的问题 | 124 |
-| 已修复 | 120 |
-| 未修复 | 4 |
+| 已修复 | 121 |
+| 未修复 | 3 |
 | 未复核的 medium/low（见附录） | 446，其中 1 条已修复，其余未处理 |
 
 修复后的回归结果：内核测试 i686 669/669、x86_64 650/650，arm64 无失败；三个架构都能从用户 shell 运行程序；
@@ -22,10 +22,8 @@ x86_64 不再随 exec 泄漏内存；i686 和 x86_64 开机自动通过 DHCP 获
 第 5 节每个条目的标题里标了"已修复"或"未修复"。由后期批量修复处理的条目附有修复说明和验证方式；
 其余"已修复"条目是按第 4 节顺序在前七项里修掉的，说明见对应提交。
 
-未修复的 4 项：
-
-1. **arm64 内核仍运行在低地址恒等映射里**（V009、V010、V124）。arm64 上 `mmap` 因此不可用。需要把内核重新链接到高半区。
-2. **没有权限模型**（V054）。任何进程都能重启系统、修改网络配置、kill 其他用户进程。这是设计上的取舍，需要先确定模型。
+未修复的 3 项是同一件事：**arm64 内核仍运行在低地址恒等映射里**（V009、V010、V124）。
+arm64 上 `mmap` 因此不可用。需要把内核重新链接到高半区。
 
 ### 端到端验证
 
@@ -40,6 +38,7 @@ x86_64 不再随 exec 泄漏内存；i686 和 x86_64 开机自动通过 DHCP 获
 | `mmap`/`munmap`/`brk` | 用户态测试新增"映射互不重叠"和"fork 后写时复制"两项检查，i686、x86_64 通过 |
 | socket 作为进程 fd | socket 得到 fd 3；`close(fd)` 生效；进程不关 socket 直接退出时对端看到正常关闭。i686、x86_64 通过 |
 | 用户态抢占 | 后台跑死循环程序时 shell 仍响应、可被 kill。i686、x86_64、arm64 通过 |
+| 权限模型 | 从 shell 启动的程序不能重启系统、不能 kill 父进程，能 kill 自己的子进程。i686、x86_64 通过 |
 | arm64 图形控制台 | 带 virtio-gpu-device 启动，截屏确认控制台正常绘制 |
 
 这轮验证中发现并修复了三个不在已复核清单里的问题：共享中断线导致有网卡和 USB 控制器时启动挂死
@@ -626,9 +625,9 @@ x86_64 不再随 exec 泄漏内存；i686 和 x86_64 开机自动通过 DHCP 获
 - 修复方向：x86_64 分支按帧布局完整复制：r15=frame[0] … r8=frame[7]，rbp=frame[8]，rdi=frame[9]，rsi=frame[10]，rdx=frame[11]，rbx=frame[13]，rax=0；最好让 fork 直接以统一的 trap frame 结构拷贝而不是逐字段手写。
 - 复核意见：process.cpp:236 先 memset 清零 child->context，x86 分支（process.cpp:262-272）只赋值 eax/ebx/ecx/edx/esi/edi/ebp/esp/eip/eflags，x86_64 的 cpu_context_t（src/include/kernel/task.h:71-106）另有 r8-r15，而陷入帧 frame[0..7] 中保存的用户 r15..r8（syscall64_asm.asm:36-43）从未被读取；context64_asm.asm:192-195 恢复用户上下文时会把这些 0 装入寄存器。子进程从 fork 返回后被调用者保存的 r12-r15 确实为 0，违反 SysV ABI。 更正：仓库内所有用户程序都以 -O0 编译（user/*/Makefile:42-45），编译器基本不把局部变量放进 r12-r15，实测 x86_64 上 fork/exec 可正常工作，所以当前是潜伏的 ABI 缺陷，定级 medium；一旦用户态开启优化或使用手写汇编就会出错。另外子进程的 rcx 被设为 user_ecx=frame[12]（即用户 RIP）、r11 为 0，这两个按 SYSCALL 约定本就是被破坏的寄存器，无影响。
 
-#### V054 [medium·已确认·all·未修复] 没有任何权限模型：重启、关机、kill 任意 PID、网络配置对所有进程开放
+#### V054 [medium·已确认·all·已修复] 没有任何权限模型：重启、关机、kill 任意 PID、网络配置对所有进程开放
 
-- **未修复**：Only the kill part is addressed (kernel threads refused, deferred self-exit; see kernel-proc-syscalls-10). There is still no credential model: reboot/poweroff wrappers (src/kernel/syscall.cpp) and the net ioctl (src/kernel/syscalls/net.cpp) remain open to every process and belong to other areas. Any user process can still kill any other user process, including the shell.
+- **修复**：采用最小权限模型：任务带 `privileged` 标志，第一个用户进程（init shell）有特权，fork 继承，execve 之后失去；重启、关机和修改接口/ARP 的 ioctl 要求特权；非特权进程只能向自己和自己的子孙进程发信号。没有 uid，文件没有属主检查。验证方式：从 shell 启动的程序调用 reboot 返回 -1、kill 父进程返回 -1、kill 自己的子进程成功；shell 自身的网络配置和 kill 仍可用；i686、x86_64 实测通过。
 - 位置：`src/kernel/syscalls/process.cpp:786`；相关：`src/kernel/syscall.cpp:281`、`src/kernel/syscall.cpp:288`、`src/kernel/syscalls/process.cpp:902`、`src/kernel/syscalls/net.cpp:290`、`src/kernel/syscalls/net.cpp:135`
 - 证据：kill 只排除 pid == 0，随后对 get_by_pid(pid) 得到的任何任务（包括内核线程和其他进程）修改状态或直接 Scheduler::free。sys_reboot_wrapper / sys_poweroff_wrapper 无条件调用。syscall::Net::ioctl 忽略 fd，直接修改 IP、掩码、网关、接口状态和 ARP 缓存。task_t 中没有 uid 或能力位。
 - 触发场景：任意用户进程都能结束内核线程或其他进程、重启或关闭系统、改写网络配置；被 kill 的任务若正处于内核路径中（持锁或阻塞），其内核栈被立即释放。
