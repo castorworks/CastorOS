@@ -21,7 +21,12 @@ PAGE_SIZE_2MB           equ (1 << 7)
 
 CR0_PG                  equ (1 << 31)
 CR0_WP                  equ (1 << 16)
+CR0_NE                  equ (1 << 5)    ; x87 错误走 #MF 而不是 IRQ13
+CR0_EM                  equ (1 << 2)    ; 置位时所有 x87/SSE 指令 #UD/#NM
+CR0_MP                  equ (1 << 1)
 CR4_PAE                 equ (1 << 5)
+CR4_OSFXSR              equ (1 << 9)    ; 允许 SSE 指令和 FXSAVE/FXRSTOR
+CR4_OSXMMEXCPT          equ (1 << 10)   ; SIMD 浮点异常走 #XM
 
 MSR_EFER                equ 0xC0000080
 EFER_LME                equ (1 << 8)
@@ -39,9 +44,13 @@ MULTIBOOT_FLAGS         equ (MULTIBOOT_PAGE_ALIGN | MULTIBOOT_MEMORY_INFO | MULT
 MULTIBOOT_CHECKSUM      equ -(MULTIBOOT_MAGIC + MULTIBOOT_FLAGS)
 MULTIBOOT_BOOTLOADER_MAGIC equ 0x2BADB002
 
-BOOT_PML4_PHYS          equ 0x200000
-BOOT_PDPT_PHYS          equ 0x201000
-BOOT_PD_PHYS            equ 0x202000
+; 引导页表（PML4/PDPT/PD）放在内核镜像自己的 .boot.pagetables 段里，
+; 链接在物理地址上（见 linker_x86_64.ld），32 位代码可以直接用符号。
+; 不能用固定物理地址：0x200000 一带就是内核自己的 .bss，
+; 镜像一长大，这三页就会和内核数据互相覆盖。
+BOOT_PML4_PHYS          equ boot_pml4_table
+BOOT_PDPT_PHYS          equ boot_pdpt_table
+BOOT_PD_PHYS            equ boot_pd_table
 
 ; ============================================================================
 ; Multiboot1 头部
@@ -85,8 +94,11 @@ _start:
 
     call setup_page_tables
 
+    ; PAE 是长模式的前提。同时打开 SSE：x86_64 用户程序按 SysV ABI 编译，
+    ; 变参函数序言、浮点运算都会用 xmm 寄存器，OSFXSR=0 时这些指令是 #UD。
+    ; （内核自身用 -mno-sse 编译，不使用这些寄存器。）
     mov eax, cr4
-    or eax, CR4_PAE
+    or eax, CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT
     mov cr4, eax
 
     mov eax, BOOT_PML4_PHYS
@@ -98,7 +110,8 @@ _start:
     wrmsr
 
     mov eax, cr0
-    or eax, CR0_PG | CR0_WP
+    and eax, ~CR0_EM
+    or eax, CR0_PG | CR0_WP | CR0_MP | CR0_NE
     mov cr0, eax
 
     ; 使用绝对地址加载 GDT
@@ -192,6 +205,21 @@ gdt64_ptr_low:
     dd gdt64_low
 
 ; ============================================================================
+; 引导页表 (物理地址，属于内核镜像，PMM 按内核占用处理)
+; ============================================================================
+
+section .boot.pagetables progbits alloc noexec write align=4096
+
+boot_pml4_table:
+    times 4096 db 0
+boot_pdpt_table:
+    times 4096 db 0
+boot_pd_table:
+    times 4096 db 0
+
+section .text.boot
+
+; ============================================================================
 ; 64 位入口 (物理地址，在 .text.boot 段)
 ; ============================================================================
 
@@ -236,6 +264,9 @@ long_mode_entry_high:
     ; 刷新 TLB
     mov rax, cr3
     mov cr3, rax
+
+    ; x87 进入已知的初始状态（控制字 0x37F）
+    fninit
 
     ; 设置栈
     mov rax, stack_top

@@ -156,13 +156,43 @@ static bool parse_reg_property(const uint32_t *data, uint32_t len,
  * Node Parsing State
  * ========================================================================== */
 
+/** Deepest node nesting tracked for #address-cells/#size-cells scoping */
+#define DTB_MAX_DEPTH           16
+
+/** Devicetree defaults when a parent does not declare the cells */
+#define DTB_DEFAULT_ADDR_CELLS  2
+#define DTB_DEFAULT_SIZE_CELLS  1
+
 /** Current parsing context */
 typedef struct {
-    uint32_t addr_cells;    /**< #address-cells for current node */
-    uint32_t size_cells;    /**< #size-cells for current node */
-    int      depth;         /**< Current node depth */
+    /**
+     * Cells used to decode the current node's "reg". Per the devicetree
+     * spec these are the #address-cells/#size-cells declared by the
+     * *parent* node, not by the node itself and not by whichever node
+     * happened to be parsed last.
+     */
+    uint32_t addr_cells;
+    uint32_t size_cells;
+    int      depth;         /**< Current node depth (root node = 1) */
     char     path[256];     /**< Current node path */
+    /** Cells each open node declares for its children, indexed by depth
+     *  (index 0 is the implicit parent of the root node). */
+    uint32_t child_addr_cells[DTB_MAX_DEPTH];
+    uint32_t child_size_cells[DTB_MAX_DEPTH];
 } parse_context_t;
+
+/** Index into the per-depth cell arrays (nodes deeper than the table share the last slot) */
+static inline int cells_slot(int depth) {
+    if (depth < 0) return 0;
+    return depth < DTB_MAX_DEPTH ? depth : DTB_MAX_DEPTH - 1;
+}
+
+/** Load the cells that apply to the "reg" of the node at ctx->depth */
+static void select_reg_cells(parse_context_t *ctx) {
+    int parent = cells_slot(ctx->depth - 1);
+    ctx->addr_cells = ctx->child_addr_cells[parent];
+    ctx->size_cells = ctx->child_size_cells[parent];
+}
 
 /* ============================================================================
  * Structure Block Parsing
@@ -181,12 +211,13 @@ static void parse_property(parse_context_t *ctx, const char *node_name,
                           const char *prop_name, const uint32_t *data, 
                           uint32_t len) {
     /* Handle #address-cells and #size-cells */
+    /* They describe this node's children, not this node's own reg */
     if (dtb_strcmp(prop_name, "#address-cells") == 0 && len >= 4) {
-        ctx->addr_cells = be32_to_cpu(data[0]);
+        ctx->child_addr_cells[cells_slot(ctx->depth)] = be32_to_cpu(data[0]);
         return;
     }
     if (dtb_strcmp(prop_name, "#size-cells") == 0 && len >= 4) {
-        ctx->size_cells = be32_to_cpu(data[0]);
+        ctx->child_size_cells[cells_slot(ctx->depth)] = be32_to_cpu(data[0]);
         return;
     }
     
@@ -197,7 +228,8 @@ static void parse_property(parse_context_t *ctx, const char *node_name,
         uint32_t offset = 0;
         uint32_t entry_size = (ctx->addr_cells + ctx->size_cells) * 4;
         
-        while (offset + entry_size <= len && 
+        /* entry_size 0 would never advance and fill the table with garbage */
+        while (entry_size != 0 && offset + entry_size <= len && 
                g_dtb_info.num_memory_regions < DTB_MAX_MEMORY_REGIONS) {
             if (parse_reg_property(&data[offset / 4], len - offset,
                                    ctx->addr_cells, ctx->size_cells,
@@ -342,10 +374,14 @@ static void parse_property(parse_context_t *ctx, const char *node_name,
 static bool parse_structure_block(const uint8_t *struct_block, 
                                   uint32_t struct_size) {
     parse_context_t ctx;
-    ctx.addr_cells = 2;  /* Default for ARM64 */
-    ctx.size_cells = 1;
+    ctx.addr_cells = DTB_DEFAULT_ADDR_CELLS;
+    ctx.size_cells = DTB_DEFAULT_SIZE_CELLS;
     ctx.depth = 0;
     ctx.path[0] = '\0';
+    for (int i = 0; i < DTB_MAX_DEPTH; i++) {
+        ctx.child_addr_cells[i] = DTB_DEFAULT_ADDR_CELLS;
+        ctx.child_size_cells[i] = DTB_DEFAULT_SIZE_CELLS;
+    }
     
     const uint32_t *p = (const uint32_t *)struct_block;
     const uint32_t *end = (const uint32_t *)(struct_block + struct_size);
@@ -369,11 +405,18 @@ static bool parse_structure_block(const uint8_t *struct_block,
                 *at = '\0';
                 
                 ctx.depth++;
+                /* reg of this node is decoded with the parent's cells; until
+                 * this node says otherwise its children get the defaults
+                 * (cells are not inherited from grandparents). */
+                select_reg_cells(&ctx);
+                ctx.child_addr_cells[cells_slot(ctx.depth)] = DTB_DEFAULT_ADDR_CELLS;
+                ctx.child_size_cells[cells_slot(ctx.depth)] = DTB_DEFAULT_SIZE_CELLS;
                 break;
             }
             
             case FDT_END_NODE:
                 ctx.depth--;
+                select_reg_cells(&ctx);
                 current_node[0] = '\0';
                 break;
             

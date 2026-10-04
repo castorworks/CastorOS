@@ -432,6 +432,34 @@ static uint32_t x64_flags_to_hal(uint64_t x64_flags) {
 }
 
 /**
+ * @brief 在现有页表项上应用 HAL 标志的增量（protect 用）
+ *
+ * 只改动 set/clear 中提到的属性。不能用 hal_flags_to_x64() 编码增量：
+ * 它编码的是完整页表项，没带 HAL_PAGE_EXEC 时会加上 NX，于是
+ * protect(WRITE, COW) 这类调用的 clear 掩码里也带 NX，
+ * 把原本不可执行的数据页/栈页变成可执行。
+ */
+static pte64_t pte64_apply_flag_delta(pte64_t entry, uint32_t set_flags, uint32_t clear_flags) {
+    static const struct { uint32_t hal; uint64_t x64; } direct[] = {
+        { HAL_PAGE_PRESENT,  PTE64_PRESENT },
+        { HAL_PAGE_WRITE,    PTE64_WRITE },
+        { HAL_PAGE_USER,     PTE64_USER },
+        { HAL_PAGE_NOCACHE,  PTE64_CACHE_DISABLE },
+        { HAL_PAGE_COW,      PTE64_COW },
+        { HAL_PAGE_DIRTY,    PTE64_DIRTY },
+        { HAL_PAGE_ACCESSED, PTE64_ACCESSED },
+    };
+    for (const auto &m : direct) {
+        if (set_flags & m.hal)   entry |= m.x64;
+        if (clear_flags & m.hal) entry &= ~m.x64;
+    }
+    /* EXEC 是反向编码：NX=1 表示不可执行 */
+    if (set_flags & HAL_PAGE_EXEC)   entry &= ~PTE64_NX;
+    if (clear_flags & HAL_PAGE_EXEC) entry |= PTE64_NX;
+    return entry;
+}
+
+/**
  * @brief 获取指定地址空间的 PML4 虚拟地址
  * @param space 地址空间句柄 (HAL_ADDR_SPACE_CURRENT 表示当前)
  * @return PML4 的虚拟地址
@@ -776,16 +804,7 @@ bool hal::Mmu::protect(hal_addr_space_t space, vaddr_t virt,
     
     /* Handle 1GB huge page */
     if (pte64_is_huge(pdpte)) {
-        uint64_t x64_set = hal_flags_to_x64(set_flags);
-        uint64_t x64_clear = hal_flags_to_x64(clear_flags);
-        
-        paddr_t frame = pte64_get_frame(pdpte);
-        uint64_t current_flags = pdpte & ~PTE64_ADDR_MASK;
-        
-        current_flags |= x64_set;
-        current_flags &= ~x64_clear;
-        
-        pdpt[pdpt_idx] = frame | current_flags;
+        pdpt[pdpt_idx] = pte64_apply_flag_delta(pdpte, set_flags, clear_flags);
         return true;
     }
     
@@ -798,16 +817,7 @@ bool hal::Mmu::protect(hal_addr_space_t space, vaddr_t virt,
     
     /* Handle 2MB huge page */
     if (pte64_is_huge(pde)) {
-        uint64_t x64_set = hal_flags_to_x64(set_flags);
-        uint64_t x64_clear = hal_flags_to_x64(clear_flags);
-        
-        paddr_t frame = pte64_get_frame(pde);
-        uint64_t current_flags = pde & ~PTE64_ADDR_MASK;
-        
-        current_flags |= x64_set;
-        current_flags &= ~x64_clear;
-        
-        pd[pd_idx] = frame | current_flags;
+        pd[pd_idx] = pte64_apply_flag_delta(pde, set_flags, clear_flags);
         return true;
     }
     
@@ -818,18 +828,8 @@ bool hal::Mmu::protect(hal_addr_space_t space, vaddr_t virt,
         return false;
     }
     
-    /* Convert HAL flags to x86_64 flags */
-    uint64_t x64_set = hal_flags_to_x64(set_flags);
-    uint64_t x64_clear = hal_flags_to_x64(clear_flags);
-    
-    /* Modify flags: set new flags, clear specified flags */
-    paddr_t frame = pte64_get_frame(*pte);
-    uint64_t current_flags = *pte & ~PTE64_ADDR_MASK;
-    
-    current_flags |= x64_set;
-    current_flags &= ~x64_clear;
-    
-    *pte = frame | current_flags;
+    /* Only touch the attributes the caller named */
+    *pte = pte64_apply_flag_delta(*pte, set_flags, clear_flags);
     
     return true;
 }

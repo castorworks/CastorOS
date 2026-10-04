@@ -137,6 +137,11 @@ hal_context_switch_asm:
     ; User mode restore (using IRETQ)
     ; ========================================================================
 .restore_user:
+    ; Start from clean kernel flags (IF=0, NT=0). The RFLAGS of whoever
+    ; called schedule() are still live here; IRETQ with NT set raises #GP.
+    push 0x2
+    popfq
+
     ; Build IRETQ stack frame (in reverse order)
     push qword [rax + 152]   ; SS
     push qword [rax + 144]   ; RSP

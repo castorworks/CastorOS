@@ -426,6 +426,11 @@ bool mm::Vmm::handle_kernel_page_fault(uintptr_t addr) {
     // 检查主内核页目录中是否存在该映射
     // 注意：我们检查 PDE 是否存在 (Present 位)
     if (k_dir->entries[pd_idx] & PAGE_PRESENT) {
+        // 当前页目录已经有同样的 PDE：缺的是页表项而不是页目录项，
+        // 同步解决不了，交给调用者按真正的缺页处理（否则会无限重试）
+        if (current_dir->entries[pd_idx] == k_dir->entries[pd_idx]) {
+            return false;
+        }
         // 将条目复制到当前页目录
         current_dir->entries[pd_idx] = k_dir->entries[pd_idx];
         

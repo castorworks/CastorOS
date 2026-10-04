@@ -225,7 +225,14 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
          * The syscall handler will extract arguments from the saved frame
          * and call syscall_dispatcher
          */
+        /* 异常入口硬件会屏蔽 DAIF。系统调用可能长时间运行或轮询等待
+         * （waitpid、控制台读），期间必须能收到时钟中断，否则睡眠任务
+         * 永远不会被唤醒。ELR/SPSR 已保存在异常帧里，嵌套 IRQ 是安全的；
+         * 与 x86_64 的 SYSCALL 入口 sti 行为一致。 */
+        __asm__ volatile("msr daifclr, #2" ::: "memory");
         arm64_syscall_handler(regs);
+        /* kernel_exit 恢复 ELR/SPSR 到 eret 之间不能被打断 */
+        __asm__ volatile("msr daifset, #2" ::: "memory");
         
         /* NOTE: For SVC exceptions, ARM64 hardware already sets ELR_EL1 to PC+4
          * (the preferred return address), so we do NOT need to advance it here.
