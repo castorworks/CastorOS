@@ -583,6 +583,21 @@ static uint32_t vmm_flags_to_hal(uint32_t vmm_flags) {
 }
 
 /**
+ * @brief 用户可访问的映射只能建在用户地址范围内
+ *
+ * 内核半区的页表由所有地址空间共享，在那里建立带 PAGE_USER 的映射会改写
+ * 每个进程的内核映射并把它暴露给用户态。
+ */
+static bool user_mapping_allowed(uintptr_t virt, uint32_t flags) {
+    if ((flags & PAGE_USER) && virt >= VMM_USER_VADDR_END) {
+        LOG_ERROR_MSG("VMM: refusing user mapping at kernel address 0x%llx\n",
+                      (unsigned long long)virt);
+        return false;
+    }
+    return true;
+}
+
+/**
  * @brief 将 HAL 页标志转换为 VMM 页标志
  * @param hal_flags HAL 页标志 (HAL_PAGE_*)
  * @return VMM 页标志 (PAGE_*)
@@ -693,6 +708,7 @@ const char *mm::Vmm::error_string(vmm_error_t err) {
 bool mm::Vmm::map_page(uintptr_t virt, uintptr_t phys, uint32_t flags) {
     // 检查页对齐
     if ((virt | phys) & (PAGE_SIZE-1)) return false;
+    if (!user_mapping_allowed(virt, flags)) return false;
     
     sync::SpinlockIrqGuard guard(vmm_lock);
     
@@ -1204,6 +1220,7 @@ bool mm::Vmm::map_page_in_directory(uintptr_t dir_phys, uintptr_t virt,
                                 uintptr_t phys, uint32_t flags) {
     // 检查页对齐
     if ((virt | phys) & (PAGE_SIZE-1)) return false;
+    if (!user_mapping_allowed(virt, flags)) return false;
     
     bool result;
     {
@@ -1234,17 +1251,16 @@ uintptr_t mm::Vmm::unmap_page_in_directory(uintptr_t dir_phys, uintptr_t virt) {
     paddr_t old_phys;
     {
         sync::SpinlockIrqGuard guard(vmm_lock);
-        // 使用 HAL 接口查询原物理地址
         hal_addr_space_t space = (dir_phys == current_dir_phys) 
                                  ? HAL_ADDR_SPACE_CURRENT 
                                  : (hal_addr_space_t)dir_phys;
     
-        if (!hal::Mmu::query(space, (vaddr_t)virt, &old_phys, NULL)) {
+        // 以 unmap 的结果为准：query 对大页/块映射也会成功，但 unmap 不会
+        // 拆除它们，此时不能把物理地址交给调用者去释放
+        old_phys = hal::Mmu::unmap(space, (vaddr_t)virt);
+        if (old_phys == PADDR_INVALID) {
             return 0;
         }
-
-        // 使用 HAL 接口取消映射
-        hal::Mmu::unmap(space, (vaddr_t)virt);
 
         // 如果是当前页目录，刷新 TLB
         if (dir_phys == current_dir_phys) {

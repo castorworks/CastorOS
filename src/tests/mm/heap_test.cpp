@@ -23,6 +23,8 @@
 #include <tests/mm/heap_test.h>
 #include <tests/test_module.h>
 #include <mm/heap.h>
+#include <mm/vmm.h>
+#include <mm/mm_types.h>
 #include <lib/string.h>
 #include <types.h>
 
@@ -828,6 +830,92 @@ TEST_CASE(test_heap_alloc_huge_size) {
     kfree(p);
 }
 
+/**
+ * @brief 分裂尾块之后再扩展堆，块链表必须保持首尾相接
+ *
+ * 回归测试：split() 分裂尾块时没有更新 last_block，下一次扩展把新块直接
+ * 接在旧尾块后面，分裂出的余块（以及从中切出的在用块）从链表中丢失，
+ * 之后的合并会让空闲块覆盖仍在使用的内存。
+ */
+TEST_CASE(test_heap_split_tail_then_expand) {
+    ASSERT_TRUE(mm::Heap::verify());
+
+    // 让一个大的空闲块出现在堆的末尾
+    void *tail = kmalloc(256 * 1024);
+    ASSERT_NOT_NULL(tail);
+    kfree(tail);
+    ASSERT_TRUE(mm::Heap::verify());
+
+    // 从它里面切出一块（分裂），余块成为新的尾块
+    void *part = kmalloc(128 * 1024);
+    ASSERT_NOT_NULL(part);
+    void *small = kmalloc(64);
+    ASSERT_NOT_NULL(small);
+    memset(small, 0x5A, 64);
+
+    // 任何空闲块都放不下，只能扩展堆
+    void *big = kmalloc(512 * 1024);
+    ASSERT_NOT_NULL(big);
+    ASSERT_TRUE(mm::Heap::verify());
+
+    // 释放并合并之后，新分配不能与仍在使用的块重叠
+    kfree(part);
+    kfree(big);
+    ASSERT_TRUE(mm::Heap::verify());
+
+    void *again = kmalloc(600 * 1024);
+    ASSERT_NOT_NULL(again);
+    memset(again, 0, 600 * 1024);
+    for (int i = 0; i < 64; i++) {
+        ASSERT_EQ(((uint8_t *)small)[i], 0x5A);
+    }
+
+    kfree(again);
+    kfree(small);
+    ASSERT_TRUE(mm::Heap::verify());
+}
+
+/**
+ * @brief kmalloc_aligned 的大小加上对齐开销回绕时必须失败
+ */
+TEST_CASE(test_kmalloc_aligned_overflow) {
+    ASSERT_NULL(kmalloc_aligned((size_t)-1, 16));
+    ASSERT_NULL(kmalloc_aligned((size_t)-8, 4096));
+    ASSERT_NULL(kmalloc_aligned(16, ((size_t)-1 >> 1) + 1));
+
+    void *p = kmalloc_aligned(100, 64);
+    ASSERT_NOT_NULL(p);
+    ASSERT_TRUE(((uintptr_t)p & 63) == 0);
+    kfree_aligned(p);
+    ASSERT_TRUE(mm::Heap::verify());
+}
+
+#if defined(ARCH_I686)
+/**
+ * @brief i686：内核页表帧的直接映射别名不能落在堆的虚拟地址范围内
+ *
+ * 堆会把自己范围内的直接映射页改映射到别的帧。内核通过 PHYS_TO_VIRT 访问
+ * 页表，如果页表帧的别名在堆范围内，堆增长到那里之后页表读写就落到堆数据上。
+ */
+TEST_CASE(test_heap_range_excludes_page_tables) {
+    uintptr_t start = 0, max = 0;
+    mm::Heap::get_range(&start, &max);
+    ASSERT_TRUE(start >= KERNEL_VIRTUAL_BASE);
+    ASSERT_TRUE(max > start);
+
+    page_directory_t *dir =
+        (page_directory_t *)PHYS_TO_VIRT(mm::Vmm::get_page_directory());
+    for (uint32_t i = 512; i < 1024; i++) {
+        pde_t pde = dir->entries[i];
+        if (!(pde & PAGE_PRESENT) || (pde & 0x80)) {
+            continue;  // 未映射，或 4MB 大页（没有页表）
+        }
+        uintptr_t table_virt = PHYS_TO_VIRT((uintptr_t)(pde & ~0xFFFU));
+        ASSERT_TRUE(table_virt < start || table_virt >= max);
+    }
+}
+#endif
+
 // ============================================================================
 // 测试套件定义
 // ============================================================================
@@ -920,6 +1008,11 @@ TEST_SUITE(heap_comprehensive_tests) {
     RUN_TEST(test_heap_data_integrity);
     RUN_TEST(test_heap_mixed_operations);
     RUN_TEST(test_heap_alloc_huge_size);
+    RUN_TEST(test_heap_split_tail_then_expand);
+    RUN_TEST(test_kmalloc_aligned_overflow);
+#if defined(ARCH_I686)
+    RUN_TEST(test_heap_range_excludes_page_tables);
+#endif
 }
 
 // ============================================================================
