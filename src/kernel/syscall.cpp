@@ -85,6 +85,18 @@ static inline syscall_arg_t syscall_arg6(const syscall_arg_t *frame) {
 #define USER_PATH_MAX       256     /* 含结尾 NUL */
 #define USER_SOCKADDR_MAX   128
 
+/* 单次 read/write 的长度上限：结果要能用有符号 32 位表示 */
+#define USER_RW_MAX         ((syscall_arg_t)0x7FFFFFFF)
+
+/**
+ * 实现函数用 32 位值表示结果，出错时是负数（如 (uint32_t)-1、(uint32_t)-12）。
+ * syscall_arg_t 在 64 位架构上是 64 位，直接返回会被零扩展成一个很大的正数，
+ * 用户态的 `if (n < 0)` 就失效了，所以统一在这里做符号扩展。
+ */
+static inline syscall_arg_t sys_ret32(uint32_t value) {
+    return (syscall_arg_t)(intptr_t)(int32_t)value;
+}
+
 static inline bool user_str(syscall_arg_t p) {
     return kernel::UAccess::strnlen((const char *)(uintptr_t)p, USER_PATH_MAX) >= 0;
 }
@@ -132,7 +144,7 @@ static syscall_arg_t sys_fork_wrapper(syscall_arg_t *frame, syscall_arg_t p1, sy
                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
     
-    return syscall::Process::fork(frame);
+    return sys_ret32(syscall::Process::fork(frame));
 }
 
 /**
@@ -157,7 +169,7 @@ static syscall_arg_t sys_execve_wrapper(syscall_arg_t *frame, syscall_arg_t path
     }
     
     // 传递 frame 指针给 syscall::Process::execve
-    return syscall::Process::execve(frame, path);
+    return sys_ret32(syscall::Process::execve(frame, path));
 }
 
 /**
@@ -172,55 +184,56 @@ static syscall_arg_t sys_open_wrapper(syscall_arg_t *frame, syscall_arg_t path, 
                                       syscall_arg_t mode, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
     if (!(user_str(path))) return SYSCALL_FAIL;
-    return syscall::Fs::open((const char *)(uintptr_t)path, (int32_t)flags, (uint32_t)mode);
+    return sys_ret32(syscall::Fs::open((const char *)(uintptr_t)path, (int32_t)flags, (uint32_t)mode));
 }
 
 static syscall_arg_t sys_close_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t p2, 
                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
-    // Sign-extend the 32-bit result to 64-bit for proper error handling
-    return (syscall_arg_t)(int32_t)syscall::Fs::close((int32_t)fd);
+    return sys_ret32(syscall::Fs::close((int32_t)fd));
 }
 
 static syscall_arg_t sys_read_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t buffer, 
                                       syscall_arg_t size, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
+    if (size > USER_RW_MAX) size = USER_RW_MAX;
     if (!(user_wr(buffer, (size_t)size))) return SYSCALL_FAIL;
-    return syscall::Fs::read((int32_t)fd, (void *)(uintptr_t)buffer, (size_t)size);
+    return sys_ret32(syscall::Fs::read((int32_t)fd, (void *)(uintptr_t)buffer, (uint32_t)size));
 }
 
 static syscall_arg_t sys_write_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t buffer, 
                                        syscall_arg_t size, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
+    if (size > USER_RW_MAX) size = USER_RW_MAX;
     if (!(user_rd(buffer, (size_t)size))) return SYSCALL_FAIL;
-    return syscall::Fs::write((int32_t)fd, (const void *)(uintptr_t)buffer, (size_t)size);
+    return sys_ret32(syscall::Fs::write((int32_t)fd, (const void *)(uintptr_t)buffer, (uint32_t)size));
 }
 
 static syscall_arg_t sys_lseek_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t offset, 
                                        syscall_arg_t whence, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
-    return syscall::Fs::lseek((int32_t)fd, (int32_t)offset, (int32_t)whence);
+    return sys_ret32(syscall::Fs::lseek((int32_t)fd, (int32_t)offset, (int32_t)whence));
 }
 
 static syscall_arg_t sys_mkdir_wrapper(syscall_arg_t *frame, syscall_arg_t path, syscall_arg_t mode, 
                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
     if (!(user_str(path))) return SYSCALL_FAIL;
-    return syscall::Fs::mkdir((const char *)(uintptr_t)path, (uint32_t)mode);
+    return sys_ret32(syscall::Fs::mkdir((const char *)(uintptr_t)path, (uint32_t)mode));
 }
 
 static syscall_arg_t sys_unlink_wrapper(syscall_arg_t *frame, syscall_arg_t path, syscall_arg_t p2, 
                                         syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
     if (!(user_str(path))) return SYSCALL_FAIL;
-    return syscall::Fs::unlink((const char *)(uintptr_t)path);
+    return sys_ret32(syscall::Fs::unlink((const char *)(uintptr_t)path));
 }
 
 static syscall_arg_t sys_chdir_wrapper(syscall_arg_t *frame, syscall_arg_t path, syscall_arg_t p2, 
                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
     if (!(user_str(path))) return SYSCALL_FAIL;
-    return syscall::Fs::chdir((const char *)(uintptr_t)path);
+    return sys_ret32(syscall::Fs::chdir((const char *)(uintptr_t)path));
 }
 
 static syscall_arg_t sys_getcwd_wrapper(syscall_arg_t *frame, syscall_arg_t buffer, syscall_arg_t size, 
@@ -234,46 +247,46 @@ static syscall_arg_t sys_getdents_wrapper(syscall_arg_t *frame, syscall_arg_t fd
                                           syscall_arg_t dirent, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
     if (!(user_wr(dirent, sizeof(struct dirent)))) return SYSCALL_FAIL;
-    return syscall::Fs::getdents((int32_t)fd, (uint32_t)index, (void *)(uintptr_t)dirent);
+    return sys_ret32(syscall::Fs::getdents((int32_t)fd, (uint32_t)index, (void *)(uintptr_t)dirent));
 }
 
 static syscall_arg_t sys_stat_wrapper(syscall_arg_t *frame, syscall_arg_t path, syscall_arg_t buf, 
                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
     if (!(user_str(path) && user_wr(buf, sizeof(struct stat)))) return SYSCALL_FAIL;
-    return syscall::Fs::stat((const char *)(uintptr_t)path, (struct stat *)(uintptr_t)buf);
+    return sys_ret32(syscall::Fs::stat((const char *)(uintptr_t)path, (struct stat *)(uintptr_t)buf));
 }
 
 static syscall_arg_t sys_fstat_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t buf, 
                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
     if (!(user_wr(buf, sizeof(struct stat)))) return SYSCALL_FAIL;
-    return syscall::Fs::fstat((int32_t)fd, (struct stat *)(uintptr_t)buf);
+    return sys_ret32(syscall::Fs::fstat((int32_t)fd, (struct stat *)(uintptr_t)buf));
 }
 
 static syscall_arg_t sys_ftruncate_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t length, 
                                            syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    return syscall::Fs::ftruncate((int32_t)fd, (uint32_t)length);
+    return sys_ret32(syscall::Fs::ftruncate((int32_t)fd, (uint32_t)length));
 }
 
 static syscall_arg_t sys_pipe_wrapper(syscall_arg_t *frame, syscall_arg_t fds, syscall_arg_t p2, 
                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
     if (!(user_wr(fds, 2 * sizeof(int32_t)))) return SYSCALL_FAIL;
-    return syscall::Fs::pipe((int32_t *)(uintptr_t)fds);
+    return sys_ret32(syscall::Fs::pipe((int32_t *)(uintptr_t)fds));
 }
 
 static syscall_arg_t sys_dup_wrapper(syscall_arg_t *frame, syscall_arg_t oldfd, syscall_arg_t p2, 
                                      syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
-    return syscall::Fs::dup((int32_t)oldfd);
+    return sys_ret32(syscall::Fs::dup((int32_t)oldfd));
 }
 
 static syscall_arg_t sys_dup2_wrapper(syscall_arg_t *frame, syscall_arg_t oldfd, syscall_arg_t newfd, 
                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    return syscall::Fs::dup2((int32_t)oldfd, (int32_t)newfd);
+    return sys_ret32(syscall::Fs::dup2((int32_t)oldfd, (int32_t)newfd));
 }
 
 #if defined(ARCH_ARM64)
@@ -311,19 +324,19 @@ static syscall_arg_t sys_ioctl_wrapper(syscall_arg_t *frame, syscall_arg_t fd, s
 static syscall_arg_t sys_getpid_wrapper(syscall_arg_t *frame, syscall_arg_t p1, syscall_arg_t p2, 
                                         syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
-    return syscall::Process::getpid();
+    return sys_ret32(syscall::Process::getpid());
 }
 
 static syscall_arg_t sys_getppid_wrapper(syscall_arg_t *frame, syscall_arg_t p1, syscall_arg_t p2, 
                                          syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
-    return syscall::Process::getppid();
+    return sys_ret32(syscall::Process::getppid());
 }
 
 static syscall_arg_t sys_yield_wrapper(syscall_arg_t *frame, syscall_arg_t p1, syscall_arg_t p2, 
                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
-    return syscall::Process::yield();
+    return sys_ret32(syscall::Process::yield());
 }
 
 static syscall_arg_t sys_nanosleep_wrapper(syscall_arg_t *frame, syscall_arg_t req_ptr, 
@@ -333,7 +346,7 @@ static syscall_arg_t sys_nanosleep_wrapper(syscall_arg_t *frame, syscall_arg_t r
     const struct timespec *req = (const struct timespec *)(uintptr_t)req_ptr;
     struct timespec *rem = (struct timespec *)(uintptr_t)rem_ptr;
     if (!(user_rd(req_ptr, sizeof(struct timespec)) && user_wr_opt(rem_ptr, sizeof(struct timespec)))) return SYSCALL_FAIL;
-    return syscall::Process::nanosleep(req, rem);
+    return sys_ret32(syscall::Process::nanosleep(req, rem));
 }
 
 static syscall_arg_t sys_time_wrapper(syscall_arg_t *frame, syscall_arg_t p1, syscall_arg_t p2, 
@@ -359,14 +372,14 @@ static syscall_arg_t sys_poweroff_wrapper(syscall_arg_t *frame, syscall_arg_t p1
 static syscall_arg_t sys_kill_wrapper(syscall_arg_t *frame, syscall_arg_t pid, syscall_arg_t signal,
                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    return syscall::Process::kill((uint32_t)pid, (uint32_t)signal);
+    return sys_ret32(syscall::Process::kill((uint32_t)pid, (uint32_t)signal));
 }
 
 static syscall_arg_t sys_waitpid_wrapper(syscall_arg_t *frame, syscall_arg_t pid, syscall_arg_t wstatus_ptr,
                                          syscall_arg_t options, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
     if (!(user_wr_opt(wstatus_ptr, sizeof(uint32_t)))) return SYSCALL_FAIL;
-    return syscall::Process::waitpid((int32_t)pid, (uint32_t *)(uintptr_t)wstatus_ptr, (uint32_t)options);
+    return sys_ret32(syscall::Process::waitpid((int32_t)pid, (uint32_t *)(uintptr_t)wstatus_ptr, (uint32_t)options));
 }
 
 static syscall_arg_t sys_brk_wrapper(syscall_arg_t *frame, syscall_arg_t addr, syscall_arg_t p2,
@@ -393,14 +406,14 @@ static syscall_arg_t sys_uname_wrapper(syscall_arg_t *frame, syscall_arg_t buf, 
                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
     if (!(user_wr(buf, sizeof(struct utsname)))) return SYSCALL_FAIL;
-    return syscall::System::uname((struct utsname *)(uintptr_t)buf);
+    return sys_ret32(syscall::System::uname((struct utsname *)(uintptr_t)buf));
 }
 
 static syscall_arg_t sys_rename_wrapper(syscall_arg_t *frame, syscall_arg_t oldpath, syscall_arg_t newpath,
                                         syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
     if (!(user_str(oldpath) && user_str(newpath))) return SYSCALL_FAIL;
-    return syscall::Fs::rename((const char *)(uintptr_t)oldpath, (const char *)(uintptr_t)newpath);
+    return sys_ret32(syscall::Fs::rename((const char *)(uintptr_t)oldpath, (const char *)(uintptr_t)newpath));
 }
 
 /* ============================================================================
