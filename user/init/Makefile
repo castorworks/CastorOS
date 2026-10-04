@@ -1,119 +1,14 @@
-# CastorOS init Example - Makefile
-# 支持多架构编译: i686, x86_64, arm64
-
-# ============================================================================
-# 架构配置
-# ============================================================================
-
-# 默认架构
-ARCH ?= i686
-
-# 架构特定配置
-ifeq ($(ARCH),i686)
-    CC = i686-elf-gcc
-    CXX = i686-elf-g++
-    LD = i686-elf-ld
-    OBJCOPY = i686-elf-objcopy
-    ARCH_CFLAGS = -m32 -DARCH_I686
-    LDSCRIPT = ../linker/user_i686.ld
-else ifeq ($(ARCH),x86_64)
-    CC = x86_64-elf-gcc
-    CXX = x86_64-elf-g++
-    LD = x86_64-elf-ld
-    OBJCOPY = x86_64-elf-objcopy
-    ARCH_CFLAGS = -m64 -DARCH_X86_64 -mcmodel=large -mno-red-zone -mno-mmx -mno-sse -mno-sse2
-    LDSCRIPT = ../linker/user_x86_64.ld
-else ifeq ($(ARCH),arm64)
-    CC = aarch64-elf-gcc
-    CXX = aarch64-elf-g++
-    LD = aarch64-elf-ld
-    OBJCOPY = aarch64-elf-objcopy
-    ARCH_CFLAGS = -DARCH_ARM64 -mgeneral-regs-only
-    LDSCRIPT = ../linker/user_arm64.ld
-else
-    $(error Unsupported architecture: $(ARCH). Use i686, x86_64, or arm64)
-endif
-
-# ============================================================================
-# 编译标志
-# ============================================================================
-
-CXXFLAGS = -std=gnu++20 -ffreestanding -nostdlib -nostartfiles \
-         -fno-builtin -fno-stack-protector -O0 -g -Wall -Wextra \
-         -I../lib/include $(ARCH_CFLAGS) \
-           -fno-exceptions -fno-rtti -fno-threadsafe-statics \
-           -fno-asynchronous-unwind-tables -fno-unwind-tables
-
-# ============================================================================
-# 目录和文件
-# ============================================================================
-
-BUILD_DIR = build/$(ARCH)
-LIB_DIR = ../lib
-LIBRARY = $(LIB_DIR)/build/$(ARCH)/libuser.a
-
-# 源文件
-SOURCES = init.cpp
-OBJECTS = $(patsubst %.cpp, $(BUILD_DIR)/%.o, $(SOURCES))
-
-# 目标文件
+# init - 第一个用户进程；把它要启动的模块（驱动）以 .incbin 的方式带在自己的映像里
 TARGET = init
-ELF = $(BUILD_DIR)/$(TARGET).elf
-BINARY = $(BUILD_DIR)/$(TARGET).bin
+SOURCES = init.cpp
+ASM_SOURCES = modules.S
+INCLUDES = -I../uart
 
-# ============================================================================
-# 目标
-# ============================================================================
+UART_ELF = ../uart/build/$(ARCH)/uart.elf
+MODULES = $(UART_ELF)
+ASM_DEFINES = -DUART_IMAGE='"$(UART_ELF)"'
 
-.PHONY: all clean clean-all lib info
+include ../program.mk
 
-all: lib $(ELF)
-	@echo ""
-	@echo "[OK] init compiled for $(ARCH): $(ELF)"
-	@echo ""
-
-# 构建库
-lib:
-	@$(MAKE) -C $(LIB_DIR) ARCH=$(ARCH)
-
-$(LIBRARY): lib
-
-# 编译 C++ 文件
-$(BUILD_DIR)/%.o: %.cpp
-	@mkdir -p $(dir $@)
-	@echo "[CXX] $< -> $@"
-	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
-
-# 链接为 ELF
-$(ELF): $(OBJECTS) $(LIBRARY)
-	@mkdir -p $(dir $@)
-	@echo "[LD] $@"
-	$(LD) -T $(LDSCRIPT) -nostdlib -u _start -o $@ $(OBJECTS) $(LIBRARY)
-
-# 转换为纯二进制（可选）
-$(BINARY): $(ELF)
-	@echo "[OBJCOPY] $@"
-	$(OBJCOPY) -O binary $< $@
-
--include $(OBJECTS:.o=.d)
-
-# 清理当前架构
-clean:
-	rm -rf $(BUILD_DIR)
-	@echo "[OK] Cleaned init build files for $(ARCH)"
-
-# 清理所有架构
-clean-all:
-	rm -rf build
-	@echo "[OK] Cleaned all init build files"
-
-# 显示配置信息
-info:
-	@echo "=== init Build Configuration ==="
-	@echo "Architecture: $(ARCH)"
-	@echo "Compiler:     $(CXX)"
-	@echo "Linker:       $(LD)"
-	@echo "CXXFLAGS:     $(CXXFLAGS)"
-	@echo "Linker Script: $(LDSCRIPT)"
-	@echo "Library:      $(LIBRARY)"
-	@echo "Output:       $(ELF)"
+$(UART_ELF): $(wildcard ../uart/*.cpp ../uart/*.h ../uart/Makefile) $(LIBRARY)
+	@$(MAKE) --no-print-directory -C ../uart ARCH=$(ARCH)

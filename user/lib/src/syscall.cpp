@@ -108,15 +108,11 @@ int munmap(void *addr, size_t length) {
 }
 
 // ============================================================================
-// 调试控制台
+// 调试输出
 // ============================================================================
 
 ssize_t console_write(const void *buf, size_t count) {
     return (ssize_t)syscall2(SYS_CONSOLE_WRITE, PTR_TO_ARG(buf), (syscall_arg_t)count);
-}
-
-ssize_t console_read(void *buf, size_t count) {
-    return (ssize_t)syscall2(SYS_CONSOLE_READ, PTR_TO_ARG(buf), (syscall_arg_t)count);
 }
 
 // ============================================================================
@@ -133,4 +129,28 @@ int ipc_recv(int from, struct ipc_msg *msg) {
 
 int ipc_call(int dest, struct ipc_msg *msg) {
     return (int)syscall2(SYS_IPC_CALL, (syscall_arg_t)dest, PTR_TO_ARG(msg));
+}
+
+// ============================================================================
+// 硬件访问
+// ============================================================================
+
+int io_read(uintptr_t addr, int width, uint32_t *value) {
+    return (int)syscall3(SYS_IO_READ, (syscall_arg_t)addr, (syscall_arg_t)width, PTR_TO_ARG(value));
+}
+
+int io_write(uintptr_t addr, int width, uint32_t value) {
+    return (int)syscall3(SYS_IO_WRITE, (syscall_arg_t)addr, (syscall_arg_t)width, (syscall_arg_t)value);
+}
+
+int irq_claim(int irq) {
+    return (int)syscall1(SYS_IRQ_CLAIM, (syscall_arg_t)irq);
+}
+
+int irq_ack(int irq) {
+    return (int)syscall1(SYS_IRQ_ACK, (syscall_arg_t)irq);
+}
+
+void drop_privilege(void) {
+    syscall0(SYS_DROP_PRIVILEGE);
 }

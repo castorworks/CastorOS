@@ -12,6 +12,7 @@
 
 #include "../include/gic.h"
 #include <hal/hal.h>
+#include <kernel/user_irq.h>
 #include <types.h>
 
 /* Forward declaration for serial output */
@@ -186,58 +187,27 @@ void gic_init(void) {
  */
 void gic_enable_irq(uint32_t irq) {
     if (irq >= gic_num_interrupts) {
-        serial_puts("GIC: IRQ ");
-        serial_put_hex64(irq);
-        serial_puts(" out of range (max=");
-        serial_put_hex64(gic_num_interrupts);
-        serial_puts(")\n");
         return;
     }
-    
+
     uint32_t reg = irq / 32;
     uint32_t bit = irq % 32;
-    
-    serial_puts("GIC: Enabling IRQ ");
-    serial_put_hex64(irq);
-    serial_puts(" (reg=");
-    serial_put_hex64(reg);
-    serial_puts(", bit=");
-    serial_put_hex64(bit);
-    serial_puts(")\n");
-    
+
     /* For PPIs (16-31), set high priority */
     if (irq >= GIC_PPI_BASE && irq < GIC_SPI_BASE) {
         gic_set_priority(irq, GIC_PRIORITY_HIGH);
-        serial_puts("GIC: Set PPI priority to HIGH (0x40)\n");
     }
-    
+
     /* Ensure interrupt is in Group 0 */
-    uint32_t group_reg = irq / 32;
-    uint32_t group_bit = irq % 32;
-    uint32_t group = gicd_read(GICD_IGROUPR(group_reg));
-    group &= ~(1 << group_bit);  /* Clear bit = Group 0 */
-    gicd_write(GICD_IGROUPR(group_reg), group);
-    
-    /* Enable the interrupt */
+    uint32_t group = gicd_read(GICD_IGROUPR(reg));
+    group &= ~(1 << bit);
+    gicd_write(GICD_IGROUPR(reg), group);
+
     gicd_write(GICD_ISENABLER(reg), 1 << bit);
-    
-    /* Verify it was enabled */
-    uint32_t enabled = gicd_read(GICD_ISENABLER(reg));
-    serial_puts("GIC: ISENABLER[");
-    serial_put_hex64(reg);
-    serial_puts("] = ");
-    serial_put_hex64(enabled);
-    serial_puts("\n");
-    
-    /* Check group */
-    group = gicd_read(GICD_IGROUPR(group_reg));
-    serial_puts("GIC: IGROUPR[");
-    serial_put_hex64(group_reg);
-    serial_puts("] = ");
-    serial_put_hex64(group);
-    serial_puts(" (bit ");
-    serial_put_hex64(group_bit);
-    serial_puts(" should be 0 for Group 0)\n");
+}
+
+bool gic_has_handler(uint32_t irq) {
+    return irq < GIC_MAX_INTERRUPTS && irq_handlers[irq].handler != NULL;
 }
 
 /**
@@ -299,54 +269,15 @@ void gic_handle_irq(void) {
     
     /* Check for spurious interrupt (1022 or 1023) */
     if (irq >= 1020) {
-        /* Debug: Check why we're getting spurious interrupts */
-        static int spurious_count = 0;
-        if (spurious_count < 3) {
-            serial_puts("GIC: Spurious IRQ ");
-            serial_put_hex64(irq);
-            serial_puts(", checking state...\n");
-            
-            /* Check GICD state */
-            uint32_t pending = gicd_read(GICD_ISPENDR(0));
-            serial_puts("  GICD_ISPENDR[0] = ");
-            serial_put_hex64(pending);
-            serial_puts("\n");
-            
-            uint32_t enabled = gicd_read(GICD_ISENABLER(0));
-            serial_puts("  GICD_ISENABLER[0] = ");
-            serial_put_hex64(enabled);
-            serial_puts("\n");
-            
-            uint32_t ctlr = gicd_read(GICD_CTLR);
-            serial_puts("  GICD_CTLR = ");
-            serial_put_hex64(ctlr);
-            serial_puts("\n");
-            
-            /* Check GICC state */
-            uint32_t gicc_ctlr = gicc_read(GICC_CTLR);
-            serial_puts("  GICC_CTLR = ");
-            serial_put_hex64(gicc_ctlr);
-            serial_puts("\n");
-            
-            uint32_t pmr = gicc_read(GICC_PMR);
-            serial_puts("  GICC_PMR = ");
-            serial_put_hex64(pmr);
-            serial_puts("\n");
-            
-            uint32_t hppir = gicc_read(GICC_HPPIR);
-            serial_puts("  GICC_HPPIR = ");
-            serial_put_hex64(hppir);
-            serial_puts("\n");
-            
-            spurious_count++;
-        }
         return;
     }
     
     /* Dispatch to registered handler */
     if (irq < GIC_MAX_INTERRUPTS && irq_handlers[irq].handler != NULL) {
         irq_handlers[irq].handler(irq_handlers[irq].data);
-    } else {
+    } else if (!kernel::UserIrq::raise(irq)) {
+        /* Neither the kernel nor a user-space driver owns it: keep it quiet */
+        gic_disable_irq(irq);
         serial_puts("Unhandled IRQ: ");
         serial_put_hex64(irq);
         serial_puts("\n");

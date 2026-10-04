@@ -468,9 +468,6 @@ uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size
     current->user_entry = entry_point;
     current->is_user_process = true;
     
-    // 换成了另一个程序：不再继承 init 的特权
-    current->privileged = false;
-
     // 设置用户态上下文
 #if defined(ARCH_ARM64)
     // ARM64: 设置用户模式上下文

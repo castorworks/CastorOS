@@ -8,7 +8,8 @@ CastorOS is an educational microkernel for learning and experimentation.
 
 - Targets i686, x86_64 and ARM64; all three build, boot and pass the kernel tests in QEMU
 - The kernel contains only CPU/interrupt setup, memory management, scheduling, sync
-  primitives and a 17-call syscall interface (process, memory, debug console, synchronous IPC)
+  primitives and a 21-call syscall interface (process, memory, debug output, synchronous IPC,
+  and device register / IRQ access for privileged user-space drivers)
 - File systems, networking, device drivers and shells are **not** in the kernel; they are
   meant to come back as user-space modules (see `docs/microkernel.md`). Do not add them
   to `src/`.
@@ -75,7 +76,10 @@ make info
 
 `user/lib` is the user library (syscall wrappers, printf, string). `user/init` is the first
 process; its ELF is embedded into the kernel image by `src/kernel/init_image.S` (`.incbin`),
-so there is no disk image. The kernel Makefile rebuilds it when `user/` changes.
+so there is no disk image. Modules started by init (currently `user/uart`, the serial input
+driver) are embedded into init the same way (`user/init/modules.S`). Every user program's
+Makefile just sets `TARGET`/`SOURCES` and includes `user/program.mk`. The kernel Makefile
+rebuilds all of it when `user/` changes.
 
 ### Testing
 
@@ -99,10 +103,10 @@ CastorOS/
 │   │   ├── i686/           # boot, cpu (GDT/IDT), interrupt, mm, task, syscall, hal.cpp
 │   │   ├── x86_64/
 │   │   └── arm64/          # also dtb/ (device tree parsing)
-│   ├── drivers/            # Only serial (console) and timer (tick)
+│   ├── drivers/            # Only serial (debug output) and timer (tick)
 │   │   ├── x86/            # COM1, PIT
 │   │   └── arm/            # PL011, ARM Generic Timer
-│   ├── kernel/             # task.cpp (scheduler), syscall.cpp, elf.cpp, loader.cpp, ...
+│   ├── kernel/             # task.cpp (scheduler), syscall.cpp, ipc.cpp, user_irq.cpp, elf.cpp, ...
 │   │   ├── sync/           # Synchronization primitives
 │   │   └── syscalls/       # process.cpp, mm.cpp
 │   ├── lib/                # Kernel library (kprintf, klog, string, cxxrt)
@@ -112,6 +116,8 @@ CastorOS/
 ├── user/                   # User-space programs
 │   ├── lib/                # User library
 │   ├── init/               # First user process, embedded in the kernel
+│   ├── uart/               # Serial input driver (user-space module, started by init)
+│   ├── program.mk          # Shared build rules for user programs
 │   └── linker/             # User linker scripts
 ├── docs/                   # Documentation (Chinese)
 ├── scripts/                # cross-compiler-install.sh

@@ -665,6 +665,17 @@ public:
     static void eoi(uint32_t irq);
 
     /**
+     * @brief 设备中断线 irq 能否交给用户态驱动：线号有效，且内核自己没有在用
+     */
+    static bool irq_is_free(uint32_t irq);
+
+    /** @brief 在中断控制器上屏蔽一条中断线 */
+    static void mask_irq(uint32_t irq);
+
+    /** @brief 在中断控制器上打开一条中断线 */
+    static void unmask_irq(uint32_t irq);
+
+    /**
      * @brief Check if interrupt system has been initialized via HAL
      * @return true if hal::Interrupt::init() has completed successfully
      */

@@ -21,10 +21,14 @@ enum {
     SYS_MMAP            = 10,
     SYS_MUNMAP          = 11,
     SYS_CONSOLE_WRITE   = 12,
-    SYS_CONSOLE_READ    = 13,
-    SYS_IPC_SEND        = 14,
-    SYS_IPC_RECV        = 15,
-    SYS_IPC_CALL        = 16,
+    SYS_IPC_SEND        = 13,
+    SYS_IPC_RECV        = 14,
+    SYS_IPC_CALL        = 15,
+    SYS_IO_READ         = 16,
+    SYS_IO_WRITE        = 17,
+    SYS_IRQ_CLAIM       = 18,
+    SYS_IRQ_ACK         = 19,
+    SYS_DROP_PRIVILEGE  = 20,
 };
 
 typedef uintptr_t syscall_arg_t;
@@ -72,12 +76,10 @@ void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
 int munmap(void *addr, size_t length);
 
 // ============================================================================
-// 调试控制台（串口）
+// 调试输出（内核串口控制台）
 // ============================================================================
 
 ssize_t console_write(const void *buf, size_t count);
-/** 非阻塞：返回读到的字节数，没有输入时返回 0 */
-ssize_t console_read(void *buf, size_t count);
 
 // ============================================================================
 // 进程间通信：同步、定长消息、按 PID 寻址
@@ -87,6 +89,8 @@ ssize_t console_read(void *buf, size_t count);
 // ============================================================================
 
 #define IPC_ANY         0
+#define IPC_KERNEL      0       // 内核发来的消息的 sender
+#define IPC_LABEL_IRQ   1       // 内核消息：设备中断，data[0] 是中断号
 #define IPC_MSG_WORDS   6
 
 struct ipc_msg {
@@ -101,5 +105,29 @@ int ipc_send(int dest, const struct ipc_msg *msg);
 int ipc_recv(int from, struct ipc_msg *msg);
 /** 发送请求并等待 dest 的应答（写回 *msg） */
 int ipc_call(int dest, struct ipc_msg *msg);
+
+// ============================================================================
+// 硬件访问（仅特权进程）
+//
+// 特权从 init 开始，fork 和 exec 都保留，drop_privilege 之后永久失去。
+// ============================================================================
+
+/**
+ * 读/写设备寄存器。addr 在 x86 上是 I/O 端口号，在 arm64 上是寄存器的物理地址；
+ * width 是 1、2 或 4 字节。
+ */
+int io_read(uintptr_t addr, int width, uint32_t *value);
+int io_write(uintptr_t addr, int width, uint32_t value);
+
+/**
+ * 认领一条设备中断线。之后每次中断，内核屏蔽这条线并发来一条
+ * sender == IPC_KERNEL、label == IPC_LABEL_IRQ、data[0] == irq 的消息；
+ * 处理完设备后调用 irq_ack 重新打开它。
+ */
+int irq_claim(int irq);
+int irq_ack(int irq);
+
+/** 放弃特权（不可恢复） */
+void drop_privilege(void);
 
 #endif // _USERLAND_LIB_SYSCALL_H_

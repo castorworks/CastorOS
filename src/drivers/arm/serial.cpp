@@ -234,24 +234,6 @@ void serial_puts(const char *str) {
 }
 
 /* ============================================================================
- * Input (polled)
- * ========================================================================== */
-
-static sync::Spinlock rx_lock;
-
-/**
- * @brief Read a character without blocking
- * @return Character read, or -1 if no character available
- */
-int drivers::Serial::getchar_nonblock() {
-    sync::SpinlockIrqGuard guard(rx_lock);
-    if (pl011_read(PL011_FR) & PL011_FR_RXFE) {
-        return -1;
-    }
-    return (int)(pl011_read(PL011_DR) & 0xFF);
-}
-
-/* ============================================================================
  * Hex Output Helpers (for debugging)
  * ========================================================================== */
 

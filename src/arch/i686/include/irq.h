@@ -51,6 +51,9 @@ void irq_add_shared_handler(uint8_t irq, isr_handler_t handler);
  * 禁用（屏蔽）指定 IRQ 线路
  * @param irq IRQ 号（0-15）
  */
+/** 内核自己是否在这条 IRQ 线上注册了处理函数 */
+bool irq_has_handler(uint8_t irq);
+
 void irq_disable_line(uint8_t irq);
 
 /**

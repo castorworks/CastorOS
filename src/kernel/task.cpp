@@ -4,6 +4,7 @@
 
 #include <kernel/task.h>
 #include <kernel/interrupt.h>
+#include <kernel/user_irq.h>
 #include <kernel/sync/spinlock.h>
 #include <hal/hal.h>
 #include <mm/heap.h>
@@ -1063,6 +1064,7 @@ void kernel::Scheduler::exit_current(uint32_t exit_code, bool signaled, uint32_t
 
     // 等着和本任务通信的任务不会再等到结果
     kernel::Ipc::on_exit(current_task);
+    kernel::UserIrq::on_exit(current_task);
 
     kernel::Interrupts::disable();
 

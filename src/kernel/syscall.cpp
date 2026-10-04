@@ -16,8 +16,8 @@
 #include <kernel/syscalls/mm.h>
 #include <kernel/uaccess.h>
 #include <kernel/ipc.h>
+#include <kernel/user_irq.h>
 #include <kernel/task.h>
-#include <drivers/serial.h>
 #include <hal/hal.h>
 #include <lib/klog.h>
 #include <lib/kprintf.h>
@@ -69,7 +69,7 @@ static inline syscall_arg_t syscall_arg6(const syscall_arg_t *frame) {
  * ============================================================================ */
 
 #define SYSCALL_FAIL        ((syscall_arg_t)-1)
-/* 单次控制台读写的长度上限 */
+/* 单次控制台写的长度上限 */
 #define CONSOLE_IO_MAX      ((syscall_arg_t)4096)
 
 /**
@@ -193,21 +193,6 @@ static syscall_arg_t sys_console_write_wrapper(syscall_arg_t *frame, syscall_arg
     return len;
 }
 
-static syscall_arg_t sys_console_read_wrapper(syscall_arg_t *frame, syscall_arg_t buf, syscall_arg_t len,
-                                              syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p3; (void)p4; (void)p5;
-    if (len > CONSOLE_IO_MAX) len = CONSOLE_IO_MAX;
-    if (!user_wr(buf, (size_t)len)) return SYSCALL_FAIL;
-    char *p = (char *)(uintptr_t)buf;
-    size_t n = 0;
-    while (n < (size_t)len) {
-        int c = drivers::Serial::getchar_nonblock();
-        if (c < 0) break;
-        p[n++] = (char)c;
-    }
-    return (syscall_arg_t)n;
-}
-
 static syscall_arg_t sys_ipc_send_wrapper(syscall_arg_t *frame, syscall_arg_t dest, syscall_arg_t msg,
                                           syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
@@ -227,6 +212,83 @@ static syscall_arg_t sys_ipc_call_wrapper(syscall_arg_t *frame, syscall_arg_t de
     (void)frame; (void)p3; (void)p4; (void)p5;
     if (!user_wr(msg, sizeof(ipc_msg))) return SYSCALL_FAIL;
     return sys_ret32((uint32_t)kernel::Ipc::call((uint32_t)dest, (ipc_msg *)(uintptr_t)msg));
+}
+
+/* ============================================================================
+ * 硬件访问：只对特权进程开放
+ * ============================================================================ */
+
+#if defined(ARCH_ARM64)
+/* QEMU virt：RAM 从 1GB 开始，之下全是设备；内核的直接映射覆盖这一段 */
+#define DEVICE_MMIO_END     0x40000000ULL
+#endif
+
+/** addr/width 是否是一次合法的设备寄存器访问 */
+static bool io_access_ok(syscall_arg_t addr, syscall_arg_t width) {
+    if (!kernel::Scheduler::current_is_privileged()) return false;
+    if (width != 1 && width != 2 && width != 4) return false;
+#if defined(ARCH_ARM64)
+    return (addr & (width - 1)) == 0 && addr < DEVICE_MMIO_END && addr + width <= DEVICE_MMIO_END;
+#else
+    return addr <= 0xFFFF && addr + width <= 0x10000;
+#endif
+}
+
+static syscall_arg_t sys_io_read_wrapper(syscall_arg_t *frame, syscall_arg_t addr, syscall_arg_t width,
+                                         syscall_arg_t value_ptr, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p4; (void)p5;
+    if (!io_access_ok(addr, width) || !user_wr(value_ptr, sizeof(uint32_t))) return SYSCALL_FAIL;
+    uint32_t value;
+#if defined(ARCH_ARM64)
+    volatile void *reg = (volatile void *)PHYS_TO_VIRT((uintptr_t)addr);
+    value = width == 1 ? hal::Mmio::read8(reg) : width == 2 ? hal::Mmio::read16(reg) : hal::Mmio::read32(reg);
+#else
+    uint16_t port = (uint16_t)addr;
+    value = width == 1 ? hal::Port::read8(port) : width == 2 ? hal::Port::read16(port) : hal::Port::read32(port);
+#endif
+    *(uint32_t *)(uintptr_t)value_ptr = value;
+    return 0;
+}
+
+static syscall_arg_t sys_io_write_wrapper(syscall_arg_t *frame, syscall_arg_t addr, syscall_arg_t width,
+                                          syscall_arg_t value, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p4; (void)p5;
+    if (!io_access_ok(addr, width)) return SYSCALL_FAIL;
+#if defined(ARCH_ARM64)
+    volatile void *reg = (volatile void *)PHYS_TO_VIRT((uintptr_t)addr);
+    if (width == 1) hal::Mmio::write8(reg, (uint8_t)value);
+    else if (width == 2) hal::Mmio::write16(reg, (uint16_t)value);
+    else hal::Mmio::write32(reg, (uint32_t)value);
+#else
+    uint16_t port = (uint16_t)addr;
+    if (width == 1) hal::Port::write8(port, (uint8_t)value);
+    else if (width == 2) hal::Port::write16(port, (uint16_t)value);
+    else hal::Port::write32(port, (uint32_t)value);
+#endif
+    return 0;
+}
+
+static syscall_arg_t sys_irq_claim_wrapper(syscall_arg_t *frame, syscall_arg_t irq, syscall_arg_t p2,
+                                           syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
+    if (!kernel::Scheduler::current_is_privileged()) return SYSCALL_FAIL;
+    return sys_ret32((uint32_t)kernel::UserIrq::claim((uint32_t)irq));
+}
+
+static syscall_arg_t sys_irq_ack_wrapper(syscall_arg_t *frame, syscall_arg_t irq, syscall_arg_t p2,
+                                         syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
+    return sys_ret32((uint32_t)kernel::UserIrq::ack((uint32_t)irq));
+}
+
+static syscall_arg_t sys_drop_privilege_wrapper(syscall_arg_t *frame, syscall_arg_t p1, syscall_arg_t p2,
+                                                syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
+    task_t *current = kernel::Scheduler::get_current();
+    if (current) {
+        current->privileged = false;
+    }
+    return 0;
 }
 
 syscall_arg_t syscall_dispatcher(syscall_arg_t syscall_num, syscall_arg_t p1, syscall_arg_t p2, 
@@ -272,10 +334,14 @@ void syscall_init(void) {
     syscall_table[SYS_MMAP]          = sys_mmap_wrapper;
     syscall_table[SYS_MUNMAP]        = sys_munmap_wrapper;
     syscall_table[SYS_CONSOLE_WRITE] = sys_console_write_wrapper;
-    syscall_table[SYS_CONSOLE_READ]  = sys_console_read_wrapper;
     syscall_table[SYS_IPC_SEND]      = sys_ipc_send_wrapper;
     syscall_table[SYS_IPC_RECV]      = sys_ipc_recv_wrapper;
     syscall_table[SYS_IPC_CALL]      = sys_ipc_call_wrapper;
+    syscall_table[SYS_IO_READ]       = sys_io_read_wrapper;
+    syscall_table[SYS_IO_WRITE]      = sys_io_write_wrapper;
+    syscall_table[SYS_IRQ_CLAIM]     = sys_irq_claim_wrapper;
+    syscall_table[SYS_IRQ_ACK]       = sys_irq_ack_wrapper;
+    syscall_table[SYS_DROP_PRIVILEGE] = sys_drop_privilege_wrapper;
 
     /* 架构相关的系统调用入口（INT 0x80 / SYSCALL / SVC） */
     hal::Syscall::init(NULL);

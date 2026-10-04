@@ -190,6 +190,19 @@ void hal::Interrupt::eoi(uint32_t irq) {
     hal::Port::write8(PIC1_COMMAND, PIC_EOI);
 }
 
+bool hal::Interrupt::irq_is_free(uint32_t irq) {
+    /* IRQ 2 is the cascade line of the slave PIC */
+    return irq < 16 && irq != 2 && !irq_has_handler((uint8_t)irq);
+}
+
+void hal::Interrupt::mask_irq(uint32_t irq) {
+    irq_disable_line((uint8_t)irq);
+}
+
+void hal::Interrupt::unmask_irq(uint32_t irq) {
+    irq_enable_line((uint8_t)irq);
+}
+
 /* ============================================================================
  * MMU Initialization
  * ========================================================================== */

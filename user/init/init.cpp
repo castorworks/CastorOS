@@ -1,10 +1,16 @@
 // init - 第一个用户进程
 //
 // 以 ELF 映像的形式嵌入内核（src/kernel/init_image.S），由内核在启动时加载。
-// 内核只提供进程、内存、调试控制台和 IPC；这里依次演示它们，然后回显控制台输入。
+// 内核只提供进程、内存、IPC 和给驱动用的硬件访问。init 依次演示它们，
+// 启动用户态串口驱动（user/uart），然后把驱动送来的输入回显到控制台。
 
 #include <syscall.h>
 #include <stdio.h>
+#include <uart.h>
+
+// 模块映像（modules.S）
+extern "C" const char uart_image_start[];
+extern "C" const char uart_image_end[];
 
 // 演示用的“服务”协议
 enum {
@@ -52,6 +58,7 @@ static void demo_memory_and_fork(void) {
 static void demo_ipc(void) {
     int server = fork();
     if (server == 0) {
+        drop_privilege();   // 普通服务不需要碰硬件
         add_server();
     }
 
@@ -89,15 +96,50 @@ static void demo_ipc(void) {
     printf("init: kill of blocked receiver: %s\n", WIFSIGNALED(status) ? "ok" : "FAILED");
 }
 
+static void demo_privilege(void) {
+    // 放弃特权的进程不能访问设备寄存器，也不能认领中断
+    int pid = fork();
+    if (pid == 0) {
+        drop_privilege();
+        uint32_t v;
+        exit(io_read(0x80, 1, &v) == -1 && irq_claim(5) == -1 && irq_claim(40) == -1 ? 0 : 1);
+    }
+    int status = 0;
+    waitpid(pid, &status, 0);
+    printf("init: hardware access after drop_privilege: %s\n",
+           WEXITSTATUS(status) == 0 ? "refused" : "FAILED");
+}
+
+// 启动一个模块：fork 之后用模块的 ELF 映像替换子进程（特权随之保留）
+static int start_module(const char *name, const char *image, const char *image_end) {
+    int pid = fork();
+    if (pid == 0) {
+        exec(image, (size_t)(image_end - image));
+        printf("init: exec %s failed\n", name);
+        exit(1);
+    }
+    return pid;
+}
+
 int main() {
     printf("init: started, pid=%d\n", getpid());
 
     demo_memory_and_fork();
     demo_ipc();
+    demo_privilege();
+
+    int uart = start_module("uart", uart_image_start, uart_image_end);
 
     printf("init: ready, echoing console input\n");
     for (;;) {
-        char c = (char)getchar();
-        console_write(&c, 1);
+        struct ipc_msg m = {};
+        m.label = UART_READ;
+        if (ipc_call(uart, &m) != 0) {
+            printf("init: uart driver is gone\n");
+            for (;;) {
+                sleep(60);
+            }
+        }
+        console_write(&m.data[1], (size_t)m.data[0]);
     }
 }

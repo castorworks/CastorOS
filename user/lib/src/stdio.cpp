@@ -357,14 +357,6 @@ void print(const char *msg) {
     }
 }
 
-int getchar(void) {
-    char c;
-    while (console_read(&c, 1) != 1) {
-        usleep(10000);
-    }
-    return (unsigned char)c;
-}
-
 // snprintf 实现
 // 支持格式符: %s, %d, %i, %u, %c, %x, %X, %o, %p, %ld, %lu, %lld, %llu, %%
 // 支持标志: -, 0 (左对齐, 零填充)

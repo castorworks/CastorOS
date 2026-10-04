@@ -8,12 +8,13 @@
 //   - 接收者先到：状态 IPC_RECEIVING；发送者到来时把消息写进接收者的
 //     ipc_buf 并唤醒它，接收者醒来后再拷回自己的用户缓冲区。
 //
-// 并发：内核不可抢占，这里的状态只在任务上下文里访问（中断处理函数不碰），
-// 关中断只是为了让“检查条件 + 进入阻塞”与唤醒不交错。
+// 并发：内核不可抢占，任务之间不会交错；但设备中断会从中断上下文调用
+// notify() 来唤醒接收者，所以“检查条件 + 进入阻塞”必须全程关中断。
 // ============================================================================
 
 #include <kernel/ipc.h>
 #include <kernel/task.h>
+#include <kernel/user_irq.h>
 #include <kernel/interrupt.h>
 
 namespace kernel {
@@ -91,6 +92,11 @@ int Ipc::recv(uint32_t from, ipc_msg *msg) {
 
     InterruptGuard guard;
 
+    // 待处理的设备中断优先于普通消息
+    if (from == IPC_ANY && UserIrq::take_pending(current, msg)) {
+        return 0;
+    }
+
     // 已经有发送者在等：取走它的消息
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         task_t *sender = &task_pool[i];
@@ -124,6 +130,15 @@ int Ipc::call(uint32_t dest, ipc_msg *msg) {
         return -1;
     }
     return recv(dest, msg);
+}
+
+void Ipc::notify(task_t *task) {
+    InterruptGuard guard;
+
+    if (task->state == TASK_BLOCKED && task->ipc_state == IPC_RECEIVING &&
+        task->ipc_peer == IPC_ANY && UserIrq::take_pending(task, &task->ipc_buf)) {
+        finish_wait(task, 0);
+    }
 }
 
 void Ipc::on_exit(task_t *task) {

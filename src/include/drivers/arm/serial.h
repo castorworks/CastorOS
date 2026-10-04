@@ -21,11 +21,6 @@ public:
     /** Print a NUL-terminated string ('\n' becomes "\r\n") */
     static void print(const char *msg);
 
-    /**
-     * Read a character without blocking (polls the receive FIFO)
-     * @return the character, or -1 if none is pending
-     */
-    static int getchar_nonblock();
 };
 
 } // namespace drivers

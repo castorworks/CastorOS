@@ -168,6 +168,19 @@ void hal::Interrupt::eoi(uint32_t irq) {
     gic_end_irq(irq);
 }
 
+bool hal::Interrupt::irq_is_free(uint32_t irq) {
+    /* Only shared peripheral interrupts; SGIs/PPIs belong to the kernel */
+    return irq >= 32 && irq < 1020 && !gic_has_handler(irq);
+}
+
+void hal::Interrupt::mask_irq(uint32_t irq) {
+    gic_disable_irq(irq);
+}
+
+void hal::Interrupt::unmask_irq(uint32_t irq) {
+    gic_enable_irq(irq);
+}
+
 /* ============================================================================
  * MMU Functions (delegated to mmu.c)
  * ========================================================================== */

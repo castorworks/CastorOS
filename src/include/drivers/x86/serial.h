@@ -33,11 +33,6 @@ public:
      */
     static void print(const char *msg);
 
-    /**
-     * 非阻塞读取一个字符（轮询 LSR）
-     * @return 读到的字符，没有数据时返回 -1
-     */
-    static int getchar_nonblock();
 };
 
 } // namespace drivers

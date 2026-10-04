@@ -58,6 +58,9 @@ void irq64_add_shared_handler(uint8_t irq, isr_handler_t handler);
  * @brief Disable (mask) an IRQ line
  * @param irq IRQ number (0-15)
  */
+/** Whether the kernel itself has a handler on this IRQ line */
+bool irq64_has_handler(uint8_t irq);
+
 void irq64_disable_line(uint8_t irq);
 
 /**
@@ -83,6 +86,7 @@ uint64_t irq64_get_timer_ticks(void);
 #define irq_init() irq64_init()
 #define irq_register_handler(irq, h) irq64_register_handler(irq, h)
 #define irq_add_shared_handler(irq, h) irq64_add_shared_handler(irq, h)
+#define irq_has_handler(irq) irq64_has_handler(irq)
 #define irq_disable_line(irq) irq64_disable_line(irq)
 #define irq_enable_line(irq) irq64_enable_line(irq)
 #define irq_get_count(irq) irq64_get_count(irq)

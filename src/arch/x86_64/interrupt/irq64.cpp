@@ -17,6 +17,7 @@
 #include <kernel/sync/spinlock.h>
 #include <lib/klog.h>
 #include <kernel/interrupt.h>
+#include <kernel/user_irq.h>
 
 /* ============================================================================
  * PIC Constants
@@ -152,7 +153,7 @@ void irq64_handler(registers_t *regs) {
                 irq_shared_handlers[irq][i](regs);
             }
         }
-    } else {
+    } else if (!kernel::UserIrq::raise(irq)) {
         LOG_WARN_MSG("Unhandled IRQ %u (interrupt %llu)\n", irq, regs->int_no);
     }
     /* Send EOI signal */
@@ -224,6 +225,10 @@ void irq64_add_shared_handler(uint8_t irq, isr_handler_t handler) {
 /**
  * @brief Get port for IRQ line
  */
+bool irq64_has_handler(uint8_t irq) {
+    return irq < 16 && irq_handlers[irq] != 0;
+}
+
 static inline uint16_t irq_get_port(uint8_t irq) {
     return (irq < 8) ? PIC1_DATA : PIC2_DATA;
 }

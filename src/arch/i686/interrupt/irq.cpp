@@ -10,6 +10,7 @@
 #include <kernel/sync/spinlock.h>
 #include <lib/klog.h>
 #include <kernel/interrupt.h>
+#include <kernel/user_irq.h>
 
 /* PIC 端口 */
 #define PIC1_COMMAND    0x20
@@ -131,8 +132,8 @@ void irq_handler(registers_t *regs) {
                 irq_shared_handlers[irq][i](regs);
             }
         }
-    } else {
-        /* 未处理的 IRQ */
+    } else if (!kernel::UserIrq::raise(irq)) {
+        /* 内核和用户态驱动都没有认领的 IRQ */
         LOG_WARN_MSG("Unhandled IRQ %u (interrupt %u)\n", irq, regs->int_no);
     }
     /* 发送 EOI 信号 */
@@ -196,6 +197,10 @@ void irq_add_shared_handler(uint8_t irq, isr_handler_t handler) {
         }
     }
     LOG_ERROR_MSG("IRQ %u: too many shared handlers\n", irq);
+}
+
+bool irq_has_handler(uint8_t irq) {
+    return irq < 16 && irq_handlers[irq] != 0;
 }
 
 static inline uint16_t irq_get_port(uint8_t irq) {

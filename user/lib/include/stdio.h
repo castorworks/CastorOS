@@ -13,8 +13,6 @@ void num_to_str_oct(unsigned long long val, char *tmp, int *len);
 void printf(const char *format, ...);
 /** 把字符串写到控制台 */
 void print(const char *msg);
-/** 从控制台读一个字符（阻塞） */
-int getchar(void);
 
 // snprintf 函数声明
 int snprintf(char *str, size_t size, const char *format, ...);

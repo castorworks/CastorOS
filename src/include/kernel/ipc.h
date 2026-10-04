@@ -16,6 +16,12 @@
 /** recv 的 from 参数：接收任何进程发来的消息 */
 #define IPC_ANY         0
 
+/** 内核发来的消息的 sender（PID 0 是 idle，不会是真正的发送者） */
+#define IPC_KERNEL      0
+
+/** 内核消息的 label：设备中断，data[0] 是中断号（见 kernel/user_irq.h） */
+#define IPC_LABEL_IRQ   1
+
 #define IPC_MSG_WORDS   6
 
 /** 消息布局在所有架构上相同（与 user/lib/include/syscall.h 保持一致） */
@@ -53,6 +59,12 @@ public:
 
     /** send(dest) 之后 recv(dest)：请求-应答，结果写回 *msg */
     static int call(uint32_t dest, ipc_msg *msg);
+
+    /**
+     * task 有了待处理的内核消息（设备中断）：如果它正阻塞在 recv(IPC_ANY) 上，
+     * 把消息交给它并唤醒。可以在中断上下文调用。
+     */
+    static void notify(struct task *task);
 
     /** task 正在退出：让等它的发送者/接收者带着错误返回 */
     static void on_exit(struct task *task);

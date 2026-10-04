@@ -9,8 +9,8 @@ typedef uintptr_t syscall_arg_t;
 // ============================================================================
 // 系统调用号（与 user/lib/include/syscall.h 保持一致）
 //
-// 内核只提供进程、内存、调试控制台和进程间通信；文件系统、网络、设备驱动
-// 不在内核里。
+// 内核只提供进程、内存、调试输出、进程间通信，以及给用户态驱动用的硬件访问；
+// 文件系统、网络、设备驱动不在内核里。
 // ============================================================================
 
 enum {
@@ -30,14 +30,20 @@ enum {
     SYS_MMAP            = 10,  // 只支持匿名映射
     SYS_MUNMAP          = 11,
 
-    // 调试控制台（串口）
+    // 调试输出（内核串口控制台）
     SYS_CONSOLE_WRITE   = 12,  // console_write(buf, len)
-    SYS_CONSOLE_READ    = 13,  // console_read(buf, len)：非阻塞，返回读到的字节数
 
     // 进程间通信（同步、定长消息，见 kernel/ipc.h）
-    SYS_IPC_SEND        = 14,  // ipc_send(dest, msg)
-    SYS_IPC_RECV        = 15,  // ipc_recv(from, msg)：from 为 IPC_ANY 或指定 PID
-    SYS_IPC_CALL        = 16,  // ipc_call(dest, msg)：发送后等待 dest 的应答
+    SYS_IPC_SEND        = 13,  // ipc_send(dest, msg)
+    SYS_IPC_RECV        = 14,  // ipc_recv(from, msg)：from 为 IPC_ANY 或指定 PID
+    SYS_IPC_CALL        = 15,  // ipc_call(dest, msg)：发送后等待 dest 的应答
+
+    // 硬件访问（仅特权进程，供用户态驱动使用）
+    SYS_IO_READ         = 16,  // io_read(addr, width, value*)：x86 是 I/O 端口，arm64 是设备寄存器物理地址
+    SYS_IO_WRITE        = 17,  // io_write(addr, width, value)
+    SYS_IRQ_CLAIM       = 18,  // irq_claim(irq)：中断以 IPC 消息的形式投递（见 kernel/user_irq.h）
+    SYS_IRQ_ACK         = 19,  // irq_ack(irq)：处理完毕，重新打开中断线
+    SYS_DROP_PRIVILEGE  = 20,  // drop_privilege()：放弃特权，不可恢复
 
     SYS_MAX
 };

@@ -251,10 +251,12 @@ typedef struct task {
     uint32_t ipc_peer;               ///< SENDING: 目标 PID；RECEIVING: 期望的发送者或 IPC_ANY
     int ipc_result;                  ///< 等待结束时对方（或退出路径）写入的结果
     ipc_msg ipc_buf;                 ///< SENDING: 待取走的消息；RECEIVING: 投递进来的消息
+    uint32_t irq_pending;            ///< 已到达、还没被 recv 取走的设备中断（kernel/user_irq.h）
 
     /**
-     * 特权进程：可以 kill 任意用户进程。
-     * 第一个用户进程（init）有特权，fork 继承，exec 之后失去。
+     * 特权进程：可以 kill 任意用户进程、访问设备寄存器、认领设备中断。
+     * 第一个用户进程（init）有特权，fork 和 exec 都保留，
+     * 直到进程自己调用 drop_privilege（不可恢复）。
      */
     bool privileged;
 } task_t;

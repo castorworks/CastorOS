@@ -146,6 +146,9 @@ void gic_enable_irq(uint32_t irq);
  */
 void gic_disable_irq(uint32_t irq);
 
+/** Whether the kernel itself has a handler registered for this interrupt */
+bool gic_has_handler(uint32_t irq);
+
 /**
  * @brief Set interrupt priority
  * @param irq Interrupt number
