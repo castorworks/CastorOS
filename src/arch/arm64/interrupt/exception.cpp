@@ -12,6 +12,7 @@
  * **Validates: Requirements 6.2, 2.3, 6.3**
  */
 
+#include <kernel/interrupt.h>
 #include "exception.h"
 #include <hal/hal.h>
 #include <types.h>
@@ -437,7 +438,9 @@ static void handle_irq(arm64_regs_t *regs, uint32_t source) {
     }
     
     /* Acknowledge and handle IRQ via GIC */
+    interrupt_enter();
     gic_handle_irq();
+    interrupt_exit();
 }
 
 /**

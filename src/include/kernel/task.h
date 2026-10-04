@@ -244,6 +244,9 @@ typedef struct task {
     /* 链表指针（用于就绪队列） */
     struct task *next;               ///< 下一个任务（链表）
     struct task *prev;               ///< 上一个任务（链表）
+
+    /* 阻塞时等待的对象（Mutex/Semaphore 等的地址）；Scheduler::wakeup 按它匹配 */
+    void *wait_object;
 } task_t;
 
 /* ============================================================================

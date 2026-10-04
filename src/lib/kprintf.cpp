@@ -7,6 +7,7 @@
 #include <drivers/vga.h>
 #include <drivers/serial.h>
 #include <drivers/framebuffer.h>
+#include <kernel/interrupt.h>
 #include <stdarg.h>
 
 /* 输出目标标志 */
@@ -53,15 +54,21 @@ static void output_string(const char *msg, output_target_t target) {
     }
 }
 
+/* 控制台状态（帧缓冲终端的光标和 ANSI 解析器、VGA 光标）没有自己的锁，
+ * 而中断处理函数也会打日志。下面每个公共输出入口都整体关中断，
+ * 保证一次输出不会被另一次输出从中间插入。 */
+
 /* ============================================================================
  * 公共 API - 同时输出到 serial 和 VGA（向后兼容）
  * ============================================================================ */
 
 void kputchar(char c) {
+    kernel::InterruptGuard guard;
     output_char(c, OUTPUT_BOTH);
 }
 
 void kprint(const char *msg) {
+    kernel::InterruptGuard guard;
     output_string(msg, OUTPUT_BOTH);
 }
 
@@ -70,10 +77,12 @@ void kprint(const char *msg) {
  * ============================================================================ */
 
 void kputchar_serial(char c) {
+    kernel::InterruptGuard guard;
     output_char(c, OUTPUT_SERIAL);
 }
 
 void kprint_serial(const char *msg) {
+    kernel::InterruptGuard guard;
     output_string(msg, OUTPUT_SERIAL);
 }
 
@@ -82,10 +91,12 @@ void kprint_serial(const char *msg) {
  * ============================================================================ */
 
 void kputchar_vga(char c) {
+    kernel::InterruptGuard guard;
     output_char(c, OUTPUT_VGA);
 }
 
 void kprint_vga(const char *msg) {
+    kernel::InterruptGuard guard;
     output_string(msg, OUTPUT_VGA);
 }
 
@@ -392,14 +403,17 @@ static void vkprintf_internal(const char *fmt, va_list args, output_target_t tar
  * ============================================================================ */
 
 void vkprintf(const char *fmt, va_list args) {
+    kernel::InterruptGuard guard;
     vkprintf_internal(fmt, args, OUTPUT_BOTH);
 }
 
 void vkprintf_serial(const char *fmt, va_list args) {
+    kernel::InterruptGuard guard;
     vkprintf_internal(fmt, args, OUTPUT_SERIAL);
 }
 
 void vkprintf_vga(const char *fmt, va_list args) {
+    kernel::InterruptGuard guard;
     vkprintf_internal(fmt, args, OUTPUT_VGA);
 }
 

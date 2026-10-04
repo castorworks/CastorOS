@@ -16,6 +16,7 @@
 #include <kernel/io.h>
 #include <kernel/sync/spinlock.h>
 #include <lib/klog.h>
+#include <kernel/interrupt.h>
 
 /* ============================================================================
  * PIC Constants
@@ -137,12 +138,14 @@ void irq64_handler(registers_t *regs) {
     }
 
     /* Call registered handler if present */
+    interrupt_enter();
     if (irq < 16 && irq_handlers[irq] != 0) {
         isr_handler_t handler = irq_handlers[irq];
         handler(regs);
     } else {
         LOG_WARN_MSG("Unhandled IRQ %u (interrupt %llu)\n", irq, regs->int_no);
     }
+    interrupt_exit();
 
     /* Send EOI signal */
     pic_send_eoi(irq);

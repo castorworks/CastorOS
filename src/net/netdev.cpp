@@ -9,6 +9,8 @@
 #include <lib/string.h>
 #include <lib/klog.h>
 #include <lib/kprintf.h>
+#include <kernel/task.h>
+#include <kernel/interrupt.h>
 
 // 已注册的网络设备
 static net::Netdev *netdevs[MAX_NETDEV];
@@ -20,9 +22,19 @@ static net::Netdev *default_netdev = NULL;
 // 设备编号计数器（用于自动命名）
 static int eth_dev_num = 0;
 
+/* 接收队列（说明见 netdev_deliver 上方） */
+#define NETDEV_RX_QUEUE_MAX 256
+
+static sync::Spinlock rx_queue_lock;
+static net::Netbuf *rx_queue_head = NULL;
+static net::Netbuf *rx_queue_tail = NULL;
+static uint32_t rx_queue_len = 0;
+static bool rx_thread_started = false;
+
 void net::Netdev::init() {
     memset(netdevs, 0, sizeof(netdevs));
     netdev_count = 0;
+    rx_queue_lock.init();
     default_netdev = NULL;
     eth_dev_num = 0;
     
@@ -246,11 +258,16 @@ int net::Netdev::transmit(net::Netdev *dev, net::Netbuf *buf) {
     return ret;
 }
 
-void net::Netdev::receive(net::Netdev *dev, net::Netbuf *buf) {
-    if (!dev || !buf) {
-        return;
-    }
-    
+/* ----------------------------------------------------------------------------
+ * 接收队列
+ *
+ * 中断处理函数只把数据包挂到队列上并唤醒接收线程；以太网/IP/TCP 等协议处理
+ * 全部在任务上下文进行（接收线程，或调用 poll()/wait_tick() 的任务）。
+ * 这样协议栈可以使用 Mutex、可以发包，也不会和被打断的任务重入同一段代码。
+ * -------------------------------------------------------------------------- */
+
+/** 把一个数据包交给协议栈（任务上下文） */
+static void netdev_deliver(net::Netdev *dev, net::Netbuf *buf) {
     if (dev->state != NETDEV_UP) {
         net::Netbuf::free(buf);
         dev->rx_dropped++;
@@ -266,6 +283,91 @@ void net::Netdev::receive(net::Netdev *dev, net::Netbuf *buf) {
     
     // 传递给以太网层处理
     net::Ethernet::input(dev, buf);
+}
+
+void net::Netdev::receive(net::Netdev *dev, net::Netbuf *buf) {
+    if (!dev || !buf) {
+        return;
+    }
+    
+    // 任务上下文（环回、测试）直接处理
+    if (!in_interrupt()) {
+        netdev_deliver(dev, buf);
+        return;
+    }
+    
+    // 中断上下文：入队，由接收线程处理
+    buf->dev = dev;
+    buf->next = NULL;
+    bool dropped = false;
+    {
+        sync::SpinlockIrqGuard guard(rx_queue_lock);
+        if (rx_queue_len >= NETDEV_RX_QUEUE_MAX) {
+            dropped = true;
+        } else {
+            if (rx_queue_tail) {
+                rx_queue_tail->next = buf;
+            } else {
+                rx_queue_head = buf;
+            }
+            rx_queue_tail = buf;
+            rx_queue_len++;
+        }
+    }
+    if (dropped) {
+        dev->rx_dropped++;
+        net::Netbuf::free(buf);
+        return;
+    }
+    kernel::Scheduler::wakeup(&rx_queue_head);
+}
+
+void net::Netdev::poll() {
+    while (true) {
+        net::Netbuf *buf;
+        {
+            sync::SpinlockIrqGuard guard(rx_queue_lock);
+            buf = rx_queue_head;
+            if (!buf) {
+                return;
+            }
+            rx_queue_head = buf->next;
+            if (!rx_queue_head) {
+                rx_queue_tail = NULL;
+            }
+            rx_queue_len--;
+        }
+        buf->next = NULL;
+        netdev_deliver(buf->dev, buf);
+    }
+}
+
+void net::Netdev::wait_tick() {
+    net::Netdev::poll();
+    if (kernel::Scheduler::get_current()) {
+        kernel::Scheduler::sleep(10);
+    }
+}
+
+static void netdev_rx_thread(void) {
+    while (true) {
+        net::Netdev::poll();
+        
+        // 关中断后再检查一次队列，为空才阻塞：检查和阻塞之间不能插进一次入队
+        bool irq_state = kernel::Interrupts::disable();
+        if (rx_queue_head == NULL) {
+            kernel::Scheduler::block(&rx_queue_head);
+        }
+        kernel::Interrupts::restore(irq_state);
+    }
+}
+
+void net::Netdev::start_rx_thread() {
+    if (rx_thread_started) {
+        return;
+    }
+    rx_thread_started = true;
+    kernel::Scheduler::create_kernel_thread(netdev_rx_thread, "net_rx");
 }
 
 void net::Netdev::set_ipaddr(net::Netdev *dev, uint32_t ip) {

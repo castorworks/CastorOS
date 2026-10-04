@@ -1242,12 +1242,14 @@ void kernel::Scheduler::sleep(uint32_t ms) {
     if (!current_task || ms == 0) {
         return;
     }
+    assert_may_sleep("Scheduler::sleep");
     
     bool prev_state = kernel::Interrupts::disable();
     
     // 计算唤醒时间
     uint64_t wake_time = drivers::Timer::get_uptime_ms() + ms;
     current_task->sleep_until_ms = wake_time;
+    current_task->wait_object = NULL;
     current_task->state = TASK_BLOCKED;
     
     // 切换到其他任务
@@ -1262,7 +1264,7 @@ void kernel::Scheduler::sleep(uint32_t ms) {
  * @param wait_object 等待对象指针（用于调试）
  */
 void kernel::Scheduler::block(void *wait_object) {
-    (void)wait_object;  // 暂不使用
+    assert_may_sleep("Scheduler::block");
     
     if (!current_task) {
         return;
@@ -1270,6 +1272,7 @@ void kernel::Scheduler::block(void *wait_object) {
     
     bool prev_state = kernel::Interrupts::disable();
     
+    current_task->wait_object = wait_object;
     current_task->state = TASK_BLOCKED;
     
     LOG_DEBUG_MSG("Task %u (%s) blocked on %p\n", 
@@ -1284,22 +1287,21 @@ void kernel::Scheduler::block(void *wait_object) {
 /**
  * @brief 唤醒等待在指定对象上的一个任务
  * 
- * @param wait_object 等待对象指针（用于调试）
+ * @param wait_object 等待对象指针，只唤醒阻塞在同一对象上的任务
  */
-void kernel::Scheduler::wakeup(void *wait_object) {
-    (void)wait_object;  // 暂不使用
-    
+void kernel::Scheduler::wakeup(void *wait_object) {    
     task_t *task_to_wake = NULL;
     
     bool irq_state;
     task_lock.lock_irqsave(irq_state);
     
-    // 简化实现：唤醒第一个阻塞的任务
-    // 完整实现应该维护每个等待对象的等待队列
+    // 唤醒一个阻塞在该对象上的任务（睡眠中的任务由定时器唤醒，不在此列）
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         task_t *task = &task_pool[i];
         
-        if (task->state == TASK_BLOCKED && task->sleep_until_ms == 0) {
+        if (task->state == TASK_BLOCKED && task->sleep_until_ms == 0 &&
+            task->wait_object == wait_object) {
+            task->wait_object = NULL;
             task->state = TASK_READY;
             task_to_wake = task;
             LOG_DEBUG_MSG("Task %u (%s) woken up\n", task->pid, task->name);

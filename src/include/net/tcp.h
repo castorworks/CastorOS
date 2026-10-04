@@ -213,7 +213,8 @@ typedef struct tcp_pcb {
     sync::Mutex lock;
 
     // 链表指针
-    struct tcp_pcb *next;
+    struct tcp_pcb *next;           ///< 活动/监听 PCB 全局链表
+    struct tcp_pcb *queue_next;     ///< 监听 PCB 的 pending/accept 队列（与 next 相互独立）
 } tcp_pcb_t;
 
 namespace net {

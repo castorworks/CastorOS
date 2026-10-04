@@ -19,6 +19,7 @@ bool Semaphore::try_consume() {
 }
 
 void Semaphore::wait() {
+    assert_may_sleep("Semaphore::wait");
 task_t *current = kernel::Scheduler::get_current();
     if (current == NULL) {
         return;
@@ -38,6 +39,7 @@ task_t *current = kernel::Scheduler::get_current();
 
         // 无法获取，在持有锁的情况下设置任务状态为阻塞
         // 这样可以防止 Lost Wakeup
+        current->wait_object = this;
         current->state = TASK_BLOCKED;
         
         lock_.unlock();

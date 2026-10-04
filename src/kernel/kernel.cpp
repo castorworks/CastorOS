@@ -30,6 +30,7 @@
 #include <drivers/usb/usb_mass_storage.h>
 #include <kernel/multiboot.h>
 #include <net/netdev.h>
+#include <kernel/deferred.h>
 #endif
 
 #include <kernel/version.h>
@@ -638,6 +639,11 @@ void kernel_main(multiboot_info_t* mbi) {
     // 5.1 初始化进程管理
     kernel::Scheduler::init();
     LOG_INFO_MSG("  [5.1] Task management initialized\n");
+
+    // 网络接收线程：中断只把数据包入队，协议栈在这个线程里运行
+    net::Netdev::start_rx_thread();
+    // kworker：执行中断里登记的延迟工作（TCP 定时器、USB 热插拔等）
+    kernel::Deferred::start();
 
     // 5.2 初始化文件系统
     fs_init();

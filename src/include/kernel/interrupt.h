@@ -20,6 +20,15 @@ extern "C" void interrupt_exit(void);
  */
 bool in_interrupt(void);
 
+/**
+ * 在可能睡眠的操作入口调用（Mutex::lock、Semaphore::wait、Scheduler::block/sleep）。
+ * 中断上下文里不允许睡眠：被打断的任务还没有保存成可恢复的状态，
+ * 而且按任务身份判定持有者的锁会把中断误认成被打断的任务。
+ *
+ * @param what 操作名，用于诊断输出
+ */
+void assert_may_sleep(const char *what);
+
 namespace kernel {
 
 /**
@@ -70,6 +79,21 @@ public:
             kernel::Interrupts::enable();
         }
     }
+};
+
+/**
+ * @brief 作用域内关中断，离开时恢复进入前的状态
+ *
+ * 用于必须不被中断处理函数打断的短临界区（例如一次完整的控制台输出）。
+ */
+class InterruptGuard {
+public:
+    InterruptGuard() : was_enabled_(Interrupts::disable()) {}
+    ~InterruptGuard() { Interrupts::restore(was_enabled_); }
+    InterruptGuard(const InterruptGuard &) = delete;
+    InterruptGuard &operator=(const InterruptGuard &) = delete;
+private:
+    bool was_enabled_;
 };
 
 } // namespace kernel

@@ -3,6 +3,7 @@
  * @brief 网络栈初始化
  */
 
+#include <kernel/deferred.h>
 #include <net/net.h>
 #include <lib/klog.h>
 #include <lib/kprintf.h>
@@ -14,9 +15,17 @@ static uint32_t tcp_timer_id = 0;
 /**
  * @brief TCP 定时器回调函数
  */
+static int tcp_timer_work = -1;
+
+/* 在 kworker 线程里运行：重传会走驱动的发送路径（Mutex），不能在中断里做 */
+static void net_tcp_timer_work(void) {
+    net::Tcp::timer();
+}
+
+/* 定时器中断里只置位，实际工作交给 kworker */
 static void net_tcp_timer_callback(void *data) {
     (void)data;
-    net::Tcp::timer();
+    kernel::Deferred::raise(tcp_timer_work);
 }
 
 void net::Stack::init() {
@@ -47,6 +56,7 @@ void net::Stack::init() {
     net::Socket::init();
     
     // 9. 注册 TCP 定时器（每 100ms 调用一次）
+    tcp_timer_work = kernel::Deferred::add(net_tcp_timer_work, "tcp_timer");
     tcp_timer_id = drivers::Timer::register_callback(net_tcp_timer_callback, NULL, 100, true);
     if (tcp_timer_id == 0) {
         LOG_WARN_MSG("net: Failed to register TCP timer\n");
@@ -139,8 +149,8 @@ int net::Stack::ping(const char *ip_str, int count) {
         uint32_t start = (uint32_t)drivers::Timer::get_uptime_ms();
         while (!ping_result.received && 
                (uint32_t)drivers::Timer::get_uptime_ms() - start < 1000) {
-            // 忙等待（简单实现）
-            // 实际应该使用事件等待
+            // 处理接收队列并让出 CPU，回应由接收路径填入 ping_result
+            net::Netdev::wait_tick();
         }
         
         if (ping_result.received) {

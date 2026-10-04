@@ -4,6 +4,7 @@
 
 #include <lib/klog.h>
 #include <lib/kprintf.h>
+#include <kernel/interrupt.h>
 #include <stdarg.h>
 
 /* 当前日志等级阈值（默认 INFO，过滤 DEBUG） */
@@ -98,6 +99,9 @@ void klog(log_level_t level, const char *fmt, ...) {
             prefix = "[????]  ";
             break;
     }
+    
+    // 整条日志（颜色码、前缀、正文、复位）作为一个整体输出
+    kernel::InterruptGuard guard;
     
     // 输出：颜色码 + 前缀
     log_output(color_code);

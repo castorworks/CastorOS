@@ -20,6 +20,9 @@ static tcp_pcb_t *tcp_pcbs = NULL;          // 活动连接
 static tcp_pcb_t *tcp_listen_pcbs = NULL;   // 监听连接
 static sync::Spinlock tcp_lock;
 
+static tcp_pcb_t *tcp_pcb_alloc(void);
+static void tcp_pcb_link_locked(tcp_pcb_t *pcb);
+
 // 临时端口分配
 #define TCP_EPHEMERAL_PORT_MIN  49152
 #define TCP_EPHEMERAL_PORT_MAX  65535
@@ -603,10 +606,12 @@ void net::Tcp::input(net::Netdev *dev, net::Netbuf *buf, uint32_t src_ip, uint32
                 }
                 
                 // 创建新的 PCB 用于这个连接
-                tcp_pcb_t *new_pcb = net::Tcp::pcb_new();
+                // 这里已经持有 tcp_lock：不能调用会再次加锁的 pcb_new()
+                tcp_pcb_t *new_pcb = tcp_pcb_alloc();
                 if (!new_pcb) {
                     break;
                 }
+                tcp_pcb_link_locked(new_pcb);
                 
                 new_pcb->local_ip = dst_ip;
                 new_pcb->local_port = dst_port;
@@ -621,7 +626,7 @@ void net::Tcp::input(net::Netdev *dev, net::Netbuf *buf, uint32_t src_ip, uint32
                 new_pcb->listen_pcb = pcb;
                 
                 // 加入待处理队列
-                new_pcb->next = pcb->pending_queue;
+                new_pcb->queue_next = pcb->pending_queue;
                 pcb->pending_queue = new_pcb;
                 pcb->pending_count++;
                 
@@ -707,15 +712,15 @@ void net::Tcp::input(net::Netdev *dev, net::Netbuf *buf, uint32_t src_ip, uint32
                         // 从待处理队列移除
                         tcp_pcb_t **pp = &listen->pending_queue;
                         while (*pp && *pp != pcb) {
-                            pp = &(*pp)->next;
+                            pp = &(*pp)->queue_next;
                         }
                         if (*pp == pcb) {
-                            *pp = pcb->next;
+                            *pp = pcb->queue_next;
                             listen->pending_count--;
                         }
                         
                         // 加入 accept 队列
-                        pcb->next = listen->accept_queue;
+                        pcb->queue_next = listen->accept_queue;
                         listen->accept_queue = pcb;
                         pcb->listen_pcb = NULL;
                         
@@ -853,7 +858,10 @@ void net::Tcp::input(net::Netdev *dev, net::Netbuf *buf, uint32_t src_ip, uint32
     net::Netbuf::free(buf);
 }
 
-tcp_pcb_t *net::Tcp::pcb_new() {
+/**
+ * 分配并初始化一个 PCB，不加入任何链表。不获取 tcp_lock。
+ */
+static tcp_pcb_t *tcp_pcb_alloc(void) {
     tcp_pcb_t *pcb = (tcp_pcb_t *)kmalloc(sizeof(tcp_pcb_t));
     if (!pcb) {
         return NULL;
@@ -886,10 +894,25 @@ tcp_pcb_t *net::Tcp::pcb_new() {
     
     pcb->lock.init();
     
-    // 添加到活动链表
-    sync::SpinlockIrqGuard guard(tcp_lock);
+    return pcb;
+}
+
+/**
+ * 把 PCB 加入活动链表。调用者必须持有 tcp_lock。
+ */
+static void tcp_pcb_link_locked(tcp_pcb_t *pcb) {
     pcb->next = tcp_pcbs;
     tcp_pcbs = pcb;
+}
+
+tcp_pcb_t *net::Tcp::pcb_new() {
+    tcp_pcb_t *pcb = tcp_pcb_alloc();
+    if (!pcb) {
+        return NULL;
+    }
+    
+    sync::SpinlockIrqGuard guard(tcp_lock);
+    tcp_pcb_link_locked(pcb);
     
     return pcb;
 }
@@ -1027,8 +1050,8 @@ tcp_pcb_t *net::Tcp::accept(tcp_pcb_t *pcb) {
     
     tcp_pcb_t *new_pcb = pcb->accept_queue;
     if (new_pcb) {
-        pcb->accept_queue = new_pcb->next;
-        new_pcb->next = NULL;
+        pcb->accept_queue = new_pcb->queue_next;
+        new_pcb->queue_next = NULL;
     }
     
     return new_pcb;

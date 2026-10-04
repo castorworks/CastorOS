@@ -162,6 +162,27 @@ struct Netdev {
     static void receive(Netdev *dev, net::Netbuf *buf);
 
     /**
+     * @brief 在当前（任务）上下文处理接收队列里的所有数据包
+     *
+     * 驱动在中断里调用 receive() 只是把包放进队列；协议栈在这里运行。
+     * 不得在中断上下文调用。
+     */
+    static void poll();
+
+    /**
+     * @brief 等待网络事件的一个时间片
+     *
+     * 供轮询式等待（ping、DNS、select）使用：先处理接收队列，再让出 CPU。
+     * 不得在中断上下文调用。
+     */
+    static void wait_tick();
+
+    /**
+     * @brief 创建网络接收内核线程（调度器初始化之后调用一次）
+     */
+    static void start_rx_thread();
+
+    /**
      * @brief 设置网络设备 IP 地址
      * @param dev 设备结构
      * @param ip IP 地址（网络字节序）

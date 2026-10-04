@@ -9,6 +9,7 @@
 #include <kernel/task.h>
 #include <kernel/sync/spinlock.h>
 #include <lib/klog.h>
+#include <kernel/interrupt.h>
 
 /* PIC 端口 */
 #define PIC1_COMMAND    0x20
@@ -116,6 +117,7 @@ void irq_handler(registers_t *regs) {
     }
 
     /* 如果注册了处理函数，调用它 */
+    interrupt_enter();
     if (irq < 16 && irq_handlers[irq] != 0) {
         isr_handler_t handler = irq_handlers[irq];
         handler(regs);
@@ -123,6 +125,7 @@ void irq_handler(registers_t *regs) {
         /* 未处理的 IRQ */
         LOG_WARN_MSG("Unhandled IRQ %u (interrupt %u)\n", irq, regs->int_no);
     }
+    interrupt_exit();
 
     /* 发送 EOI 信号 */
     pic_send_eoi(irq);

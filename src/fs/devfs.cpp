@@ -2,6 +2,7 @@
 // devfs.c - 设备文件系统实现
 // ============================================================================
 
+#include <kernel/interrupt.h>
 #include <fs/devfs.h>
 #include <drivers/keyboard.h>
 #include <drivers/vga.h>
@@ -194,6 +195,9 @@ static uint32_t devconsole_write(fs_node_t *node, uint32_t offset,
     // 写入到控制台（优先使用图形终端，回退到 VGA 文本模式）
 #if !defined(ARCH_ARM64)
 #endif
+    
+    // 与 kprintf/klog 共用同一个终端状态，整次写入期间关中断
+    kernel::InterruptGuard guard;
     
     for (uint32_t i = 0; i < size; i++) {
         // 同时输出到串口，确保在所有架构上都能看到输出

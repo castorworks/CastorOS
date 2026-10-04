@@ -752,8 +752,8 @@ int net::Socket::select(int nfds, fd_set *readfds, fd_set *writefds,
         uint32_t elapsed = (uint32_t)drivers::Timer::get_uptime_ms() - start;
         if (elapsed >= timeout_ms) break;
         
-        // 让出 CPU（简单忙等待，实际应该使用调度器）
-        // 这里可以调用 kernel::Scheduler::yield() 但为了简单起见先忙等
+        // 处理接收队列并让出 CPU，再重新检查各描述符
+        net::Netdev::wait_tick();
     }
     
     // 复制结果

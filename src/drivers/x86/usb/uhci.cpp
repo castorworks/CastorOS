@@ -5,6 +5,7 @@
  * Intel USB 1.x 主机控制器驱动
  */
 
+#include <kernel/deferred.h>
 #include <drivers/usb/uhci.h>
 #include <drivers/pci.h>
 #include <drivers/timer.h>
@@ -1116,9 +1117,16 @@ static uint32_t uhci_hotplug_timer_id = 0;
 /**
  * @brief 热插拔轮询定时器回调
  */
+static int uhci_hotplug_work_id = -1;
+
+/* 在 kworker 线程里运行 */
+static void uhci_hotplug_work(void) {
+    drivers::Uhci::poll_port_changes();
+}
+
 static void uhci_hotplug_timer_callback(void *data) {
     (void)data;
-    drivers::Uhci::poll_port_changes();
+    kernel::Deferred::raise(uhci_hotplug_work_id);
 }
 
 /**
@@ -1135,6 +1143,10 @@ void drivers::Uhci::start_hotplug_monitor() {
     if (uhci_hotplug_timer_id != 0) {
         return;  // 已经启动
     }
+    
+    // 端口复位和设备枚举要等待时间流逝，必须在任务上下文做：
+    // 定时器中断里只置位，由 kworker 调用 uhci_hotplug_work
+    uhci_hotplug_work_id = kernel::Deferred::add(uhci_hotplug_work, "uhci_hotplug");
     
     uhci_hotplug_timer_id = drivers::Timer::register_callback(
         uhci_hotplug_timer_callback,

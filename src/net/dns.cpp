@@ -420,8 +420,8 @@ static int dns_do_query(uint32_t server_ip, const char *hostname, uint32_t *ip) 
         // 检查是否收到响应
         net::Netbuf *resp = net::Udp::recv_poll(pcb);
         if (!resp) {
-            // 短暂延迟
-            for (int i = 0; i < 10000; i++) { __asm__ volatile (""); }
+            // 处理接收队列并让出 CPU
+            net::Netdev::wait_tick();
             continue;
         }
         

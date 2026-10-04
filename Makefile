@@ -147,6 +147,7 @@ ifeq ($(ARCH),arm64)
         $(SRC_DIR)/kernel/task.cpp \
         $(SRC_DIR)/kernel/syscall.cpp \
         $(SRC_DIR)/kernel/uaccess.cpp \
+        $(SRC_DIR)/kernel/deferred.cpp \
         $(SRC_DIR)/kernel/panic.cpp \
         $(SRC_DIR)/kernel/fd_table.cpp \
         $(SRC_DIR)/kernel/interrupt.cpp \

@@ -249,15 +249,15 @@ static int32_t ping_ioctl(struct ping_req *req) {
                 break;
             }
             
-            // 简单延迟
-            for (int j = 0; j < 10000; j++) { __asm__ volatile (""); }
+            // 处理接收队列并让出 CPU，等待回应到达
+            net::Netdev::wait_tick();
         }
         
         // 间隔 1 秒
         if (i < count - 1) {
             uint32_t delay_start = (uint32_t)drivers::Timer::get_uptime_ms();
             while ((uint32_t)drivers::Timer::get_uptime_ms() - delay_start < 1000) {
-                for (int j = 0; j < 10000; j++) { __asm__ volatile (""); }
+                net::Netdev::wait_tick();
             }
         }
     }
