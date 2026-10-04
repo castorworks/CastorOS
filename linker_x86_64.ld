@@ -27,6 +27,13 @@ SECTIONS
         *(.text.boot)
     }
 
+    /* 引导页表（PML4/PDPT/PD），由 boot64.asm 在进入长模式前填写。
+     * 按物理地址链接，放在内核镜像内部，不会与其他段重叠 */
+    .boot_pt ALIGN(4K) (NOLOAD) : AT(ADDR(.boot_pt))
+    {
+        *(.boot_pt)
+    }
+
     /* 切换到高半核虚拟地址 */
     . = KERNEL_VIRTUAL_BASE + .;
 

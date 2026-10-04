@@ -39,9 +39,17 @@ MULTIBOOT_FLAGS         equ (MULTIBOOT_PAGE_ALIGN | MULTIBOOT_MEMORY_INFO | MULT
 MULTIBOOT_CHECKSUM      equ -(MULTIBOOT_MAGIC + MULTIBOOT_FLAGS)
 MULTIBOOT_BOOTLOADER_MAGIC equ 0x2BADB002
 
-BOOT_PML4_PHYS          equ 0x200000
-BOOT_PDPT_PHYS          equ 0x201000
-BOOT_PD_PHYS            equ 0x202000
+; 引导页表（PML4 / PDPT / PD 各一页）在内核镜像里占有自己的空间：
+; 链接脚本把 .boot_pt 段按物理地址放在 .text.boot 之后。
+; 以前它们写死在物理地址 0x200000，而内核镜像本身已经长到 2MB 以上，
+; 一旦某个会被写入的对象（例如 task_pool）排到那里，页表就被覆盖。
+section .boot_pt nobits alloc noexec write align=4096
+boot_pt_area:
+    resb 4096 * 3
+
+%define BOOT_PML4_PHYS  (boot_pt_area)
+%define BOOT_PDPT_PHYS  (boot_pt_area + 0x1000)
+%define BOOT_PD_PHYS    (boot_pt_area + 0x2000)
 
 ; ============================================================================
 ; Multiboot1 头部
