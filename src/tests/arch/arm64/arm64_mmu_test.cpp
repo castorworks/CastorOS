@@ -18,6 +18,7 @@
 
 #include <hal/hal.h>
 #include <mm/mm_types.h>
+#include <mm/pmm.h>
 
 /* ARM64 specific constants */
 #define KERNEL_VIRTUAL_BASE_ARM64   0xFFFF000000000000ULL
@@ -254,6 +255,89 @@ TEST_CASE(pbt_arm64_address_translation_roundtrip) {
 }
 
 /* ============================================================================
+ * hal::Mmu regression tests
+ * ============================================================================ */
+
+/**
+ * protect() must change only the attributes named in set/clear, and the page
+ * must stay usable afterwards (AF, memory attributes and shareability kept).
+ */
+TEST_CASE(test_arm64_hal_mmu_protect_keeps_unrelated_flags) {
+    hal_addr_space_t space = HAL_ADDR_SPACE_CURRENT;
+    vaddr_t virt = KTEST_FREE_VADDR_BASE + 0x40000;
+    ASSERT_FALSE(hal::Mmu::query(space, virt, NULL, NULL));
+
+    paddr_t phys = mm::Pmm::alloc_frame();
+    ASSERT_TRUE(phys != PADDR_INVALID);
+    /* Kernel-only page so the test can touch it from EL1 */
+    ASSERT_TRUE(hal::Mmu::map(space, virt, phys, HAL_PAGE_PRESENT | HAL_PAGE_WRITE));
+    hal::Mmu::flush_tlb(virt);
+
+    volatile uint64_t *p = (volatile uint64_t *)virt;
+    *p = 0x1122334455667788ULL;
+
+    /* fork: write-protect and mark COW */
+    ASSERT_TRUE(hal::Mmu::protect(space, virt, HAL_PAGE_COW, HAL_PAGE_WRITE));
+    hal::Mmu::flush_tlb(virt);
+    uint32_t flags = 0;
+    paddr_t got = 0;
+    ASSERT_TRUE(hal::Mmu::query(space, virt, &got, &flags));
+    ASSERT_TRUE(got == phys);
+    ASSERT_TRUE((flags & HAL_PAGE_COW) != 0);
+    ASSERT_TRUE((flags & HAL_PAGE_WRITE) == 0);
+    ASSERT_TRUE((flags & HAL_PAGE_EXEC) == 0);
+    /* Still readable: an access-flag fault here would halt the kernel */
+    ASSERT_TRUE(*p == 0x1122334455667788ULL);
+
+    /* COW fault with refcount 1: restore write, drop COW */
+    ASSERT_TRUE(hal::Mmu::protect(space, virt, HAL_PAGE_WRITE, HAL_PAGE_COW));
+    hal::Mmu::flush_tlb(virt);
+    flags = 0;
+    ASSERT_TRUE(hal::Mmu::query(space, virt, &got, &flags));
+    ASSERT_TRUE(got == phys);
+    ASSERT_TRUE((flags & HAL_PAGE_COW) == 0);
+    ASSERT_TRUE((flags & HAL_PAGE_WRITE) != 0);
+    ASSERT_TRUE((flags & HAL_PAGE_EXEC) == 0);
+    *p = 0xA5A5A5A55A5A5A5AULL;
+    ASSERT_TRUE(*p == 0xA5A5A5A55A5A5A5AULL);
+
+    ASSERT_TRUE(hal::Mmu::unmap(space, virt) == phys);
+    hal::Mmu::flush_tlb(virt);
+    mm::Pmm::free_frame(phys);
+}
+
+/**
+ * A new address space must carry every device window the kernel touches
+ * while running on that space's TTBR0 (GIC, UART, virtio-mmio), mapped
+ * kernel-only and never executable.
+ */
+TEST_CASE(test_arm64_create_space_maps_kernel_devices) {
+    mm::PmmInfo before = mm::Pmm::get_info();
+
+    hal_addr_space_t space = hal::Mmu::create_space();
+    ASSERT_TRUE(space != HAL_ADDR_SPACE_INVALID);
+
+    const paddr_t devices[] = {
+        0x08000000ULL,  /* GIC distributor */
+        0x09000000ULL,  /* PL011 UART */
+        0x0a000000ULL,  /* virtio-mmio transports */
+        0x0a003e00ULL,  /* last virtio-mmio transport */
+    };
+    for (uint32_t i = 0; i < sizeof(devices) / sizeof(devices[0]); i++) {
+        paddr_t phys = 0;
+        uint32_t flags = 0;
+        ASSERT_TRUE(hal::Mmu::query(space, (vaddr_t)devices[i], &phys, &flags));
+        ASSERT_TRUE(phys == devices[i]);
+        ASSERT_TRUE((flags & HAL_PAGE_USER) == 0);
+        ASSERT_TRUE((flags & HAL_PAGE_EXEC) == 0);
+    }
+
+    hal::Mmu::destroy_space(space);
+    mm::PmmInfo after = mm::Pmm::get_info();
+    ASSERT_TRUE(after.free_frames == before.free_frames);
+}
+
+/* ============================================================================
  * Test Suite Definition
  * ============================================================================ */
 
@@ -268,6 +352,11 @@ TEST_SUITE(arm64_mmu_kernel_range_tests) {
     RUN_TEST(pbt_arm64_address_translation_roundtrip);
 }
 
+TEST_SUITE(arm64_mmu_hal_tests) {
+    RUN_TEST(test_arm64_hal_mmu_protect_keeps_unrelated_flags);
+    RUN_TEST(test_arm64_create_space_maps_kernel_devices);
+}
+
 /**
  * @brief Run all ARM64 MMU property tests
  */
@@ -277,6 +366,9 @@ void run_arm64_mmu_tests(void) {
     /* Property 4: VMM Kernel Mapping Range Correctness (ARM64) */
     /* **Validates: Requirements 5.3** */
     RUN_SUITE(arm64_mmu_kernel_range_tests);
+
+    /* hal::Mmu regressions: protect() deltas, device windows in new spaces */
+    RUN_SUITE(arm64_mmu_hal_tests);
     
     unittest_print_summary();
 }

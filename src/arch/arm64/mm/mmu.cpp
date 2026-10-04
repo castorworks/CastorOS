@@ -1070,15 +1070,21 @@ hal_addr_space_t hal::Mmu::create_space() {
         /* Actually 0x08000000 >> 21 = 64, 0x09000000 >> 21 = 72 */
         
         /* Device block descriptor: valid, block, AF, device memory attributes */
+        /* MMIO is data only: never executable, at EL0 or EL1 */
         uint64_t dev_block_flags = DESC_VALID | DESC_AF | 
                                    ((uint64_t)MAIR_IDX_DEVICE_nGnRnE << DESC_ATTR_INDEX_SHIFT) |
-                                   DESC_AP_RW_EL1;
+                                   DESC_AP_RW_EL1 | DESC_UXN | DESC_PXN;
         
-        /* Map 0x08000000-0x09FFFFFF (GIC and serial region) as 2MB blocks */
-        /* L2[64] = 0x08000000 (GIC distributor) */
+        /* Every device the kernel touches while this address space is live
+         * must be mapped here: system calls and interrupts run on the
+         * process's TTBR0, and a missing window is an EL1 translation fault.
+         * (QEMU virt layout; user images load at 0x10000000 and above.) */
+        /* L2[64] = 0x08000000 (GIC distributor + CPU interface) */
         new_l2[64] = 0x08000000ULL | dev_block_flags | DESC_TYPE_BLOCK;
-        /* L2[72] = 0x09000000 (serial port) */
+        /* L2[72] = 0x09000000 (PL011 serial port, RTC, fw_cfg) */
         new_l2[72] = 0x09000000ULL | dev_block_flags | DESC_TYPE_BLOCK;
+        /* L2[80] = 0x0a000000 (virtio-mmio transports: virtio-gpu console) */
+        new_l2[80] = 0x0a000000ULL | dev_block_flags | DESC_TYPE_BLOCK;
         
         /* Point L1[0] to our new L2 table */
         new_l1[0] = new_l2_phys | DESC_VALID | DESC_TABLE;
