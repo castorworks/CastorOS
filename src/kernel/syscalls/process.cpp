@@ -15,6 +15,7 @@
 #include <kernel/gdt.h>
 #endif
 #include <kernel/interrupt.h>
+#include <hal/hal.h>
 #include <kernel/user.h>
 #include <fs/vfs.h>
 #include <mm/vmm.h>
@@ -250,6 +251,7 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
     child->context.pc = user_pc;      // 从 fork() 调用返回处继续
     child->context.pstate = ARM64_PSTATE_EL0t;  // 用户模式，中断使能
     child->context.ttbr0 = child->page_dir_phys;
+    child->context.kernel_sp = child->kernel_stack;  // 子进程自己的内核栈
     
     LOG_DEBUG_MSG("syscall::Process::fork: Child ARM64 context:\n");
     LOG_DEBUG_MSG("  PC=0x%llx SP=0x%llx PSTATE=0x%llx TTBR0=0x%llx\n",
@@ -1016,5 +1018,15 @@ uint32_t syscall::Process::waitpid(int32_t pid, uint32_t *wstatus, uint32_t opti
         // 这里使用简单的轮询 + yield 策略
         // 更好的实现应该让进程进入 BLOCKED 状态，并在子进程退出时唤醒
         kernel::Scheduler::yield();
+
+        // 回到这里说明暂时没有别的任务可运行。开中断等下一次中断再重试：
+        // arm64 的系统调用全程屏蔽中断，不这样做时钟中断进不来，
+        // 正在 sleep 的子进程永远不会被唤醒。
+        bool irq_was_enabled = kernel::Interrupts::disable();
+        kernel::Interrupts::enable();
+        hal::Cpu::halt();
+        if (!irq_was_enabled) {
+            kernel::Interrupts::disable();
+        }
     }
 }

@@ -17,6 +17,29 @@
 #include <mm/mm_types.h>
 #include <lib/klog.h>
 #include <lib/string.h>
+#include <hal/hal.h>
+
+/**
+ * 取消当前进程一个用户页的映射并释放其物理帧。
+ *
+ * 只处理以用户权限映射的页：用户地址范围内也可能存在内核自己的映射
+ * （arm64 的内核恒等映射块就在 TTBR0 一侧），那些页帧不属于进程，不能释放。
+ *
+ * @return 是否释放了一页
+ */
+static bool unmap_user_page(task_t *task, uintptr_t page) {
+    uint32_t flags = 0;
+    if (!hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)page, NULL, &flags) ||
+        !(flags & HAL_PAGE_USER)) {
+        return false;
+    }
+    uintptr_t phys = mm::Vmm::unmap_page_in_directory(task->page_dir_phys, page);
+    if (!phys) {
+        return false;
+    }
+    mm::Pmm::free_frame(phys);
+    return true;
+}
 
 /* mmap 区域的起始和结束地址（在堆和栈之间） */
 #define MMAP_REGION_START   0x40000000  /* 1GB 起始 */
@@ -103,10 +126,8 @@ uintptr_t syscall::Mm::brk(uint32_t addr) {
                       old_end_aligned, new_end_aligned);
         
         for (uint32_t page = new_end_aligned; page < old_end_aligned; page += PAGE_SIZE) {
-            uint32_t phys = mm::Vmm::unmap_page_in_directory(current->page_dir_phys, page);
-            if (phys) {
-                mm::Pmm::free_frame(phys);
-                LOG_DEBUG_MSG("syscall::Mm::brk: unmapped page 0x%x (phys 0x%x)\n", page, phys);
+            if (unmap_user_page(current, page)) {
+                LOG_DEBUG_MSG("syscall::Mm::brk: unmapped page 0x%x\n", page);
             }
         }
     }
@@ -466,9 +487,7 @@ uintptr_t syscall::Mm::munmap(uint32_t addr, uint32_t length) {
     // 取消映射并释放物理页
     uint32_t pages_freed = 0;
     for (uint32_t page = aligned_addr; page < aligned_addr + length; page += PAGE_SIZE) {
-        uint32_t phys = mm::Vmm::unmap_page_in_directory(current->page_dir_phys, page);
-        if (phys) {
-            mm::Pmm::free_frame(phys);
+        if (unmap_user_page(current, page)) {
             pages_freed++;
         }
     }

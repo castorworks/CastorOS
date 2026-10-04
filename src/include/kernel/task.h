@@ -134,7 +134,14 @@ typedef struct {
 
     /* User page table base register (TTBR0_EL1) */
     uint64_t ttbr0;
+
+    /* Kernel stack top loaded into SP_EL1 before returning to EL0.
+     * Layout must match arm64_context_t (arch/arm64/include/context.h). */
+    uint64_t kernel_sp;
 } __attribute__((packed, aligned(16))) cpu_context_t;
+
+static_assert(sizeof(cpu_context_t) == 288, "cpu_context_t must match arm64_context_t");
+static_assert(__builtin_offsetof(cpu_context_t, kernel_sp) == 280, "kernel_sp offset mismatch");
 
 /* Compatibility aliases for ARM64 */
 #define eip pc

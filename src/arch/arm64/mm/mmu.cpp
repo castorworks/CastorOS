@@ -292,7 +292,12 @@ void hal::Mmu::switch_space(paddr_t space) {
     dsb_ish();
     write_ttbr0_el1((uint64_t)space);
     isb();
-    /* TLB invalidation is typically done by the caller if needed */
+    /* ASIDs are not used, so every address space shares ASID 0: entries cached
+     * from the previous TTBR0 must be dropped here or the new space would keep
+     * executing the old one's pages (x86 gets this for free from the CR3 load). */
+    tlbi_vmalle1is();
+    dsb_ish();
+    isb();
 }
 
 /**
@@ -506,6 +511,35 @@ static uint64_t hal_flags_to_arm64(uint32_t hal_flags) {
     }
     
     return arm64_flags;
+}
+
+/**
+ * @brief 在现有描述符上应用 HAL 标志的增量（protect 用）
+ *
+ * 只改动 set/clear 中提到的属性，其余位（AF、AttrIndx、SH、nG、地址）保持不变。
+ * 不能用 hal_flags_to_arm64() 编码增量：它编码的是完整描述符，
+ * 会把 AF/AttrIndx/SH 等也算进要清除的位里。
+ */
+static uint64_t desc_apply_flag_delta(uint64_t desc, uint32_t set_flags, uint32_t clear_flags) {
+    /* AP[2] (bit 7) = 只读，AP[1] (bit 6) = EL0 可访问 */
+    if (set_flags & HAL_PAGE_WRITE)   desc &= ~(1ULL << 7);
+    if (clear_flags & HAL_PAGE_WRITE) desc |= (1ULL << 7);
+    if (set_flags & HAL_PAGE_USER)    desc |= (1ULL << 6) | DESC_NG;
+    if (clear_flags & HAL_PAGE_USER)  desc &= ~((1ULL << 6) | DESC_NG);
+
+    if (set_flags & HAL_PAGE_EXEC)    desc &= ~(DESC_UXN | DESC_PXN);
+    if (clear_flags & HAL_PAGE_EXEC)  desc |= (DESC_UXN | DESC_PXN);
+
+    if (set_flags & HAL_PAGE_COW)     desc |= DESC_COW;
+    if (clear_flags & HAL_PAGE_COW)   desc &= ~DESC_COW;
+
+    if (set_flags & HAL_PAGE_DIRTY)   desc |= DESC_DIRTY;
+    if (clear_flags & HAL_PAGE_DIRTY) desc &= ~DESC_DIRTY;
+
+    if (set_flags & HAL_PAGE_ACCESSED)   desc |= DESC_AF;
+    if (clear_flags & HAL_PAGE_ACCESSED) desc &= ~DESC_AF;
+
+    return desc;
 }
 
 /**
@@ -861,16 +895,7 @@ bool hal::Mmu::protect(hal_addr_space_t space, vaddr_t virt,
     
     /* Handle 1GB block */
     if (desc_is_block(l1e)) {
-        uint64_t arm64_set = hal_flags_to_arm64(set_flags);
-        uint64_t arm64_clear = hal_flags_to_arm64(clear_flags);
-        
-        paddr_t frame = desc_get_addr(l1e);
-        uint64_t current_flags = l1e & ~DESC_ADDR_MASK;
-        
-        current_flags |= arm64_set;
-        current_flags &= ~arm64_clear;
-        
-        l1[l1_idx] = frame | current_flags;
+        l1[l1_idx] = desc_apply_flag_delta(l1e, set_flags, clear_flags);
         return true;
     }
     
@@ -887,16 +912,7 @@ bool hal::Mmu::protect(hal_addr_space_t space, vaddr_t virt,
     
     /* Handle 2MB block */
     if (desc_is_block(l2e)) {
-        uint64_t arm64_set = hal_flags_to_arm64(set_flags);
-        uint64_t arm64_clear = hal_flags_to_arm64(clear_flags);
-        
-        paddr_t frame = desc_get_addr(l2e);
-        uint64_t current_flags = l2e & ~DESC_ADDR_MASK;
-        
-        current_flags |= arm64_set;
-        current_flags &= ~arm64_clear;
-        
-        l2[l2_idx] = frame | current_flags;
+        l2[l2_idx] = desc_apply_flag_delta(l2e, set_flags, clear_flags);
         return true;
     }
     
@@ -911,18 +927,7 @@ bool hal::Mmu::protect(hal_addr_space_t space, vaddr_t virt,
         return false;
     }
     
-    /* Convert HAL flags to ARM64 flags */
-    uint64_t arm64_set = hal_flags_to_arm64(set_flags);
-    uint64_t arm64_clear = hal_flags_to_arm64(clear_flags);
-    
-    /* Modify flags */
-    paddr_t frame = desc_get_addr(*l3e);
-    uint64_t current_flags = *l3e & ~DESC_ADDR_MASK;
-    
-    current_flags |= arm64_set;
-    current_flags &= ~arm64_clear;
-    
-    *l3e = frame | current_flags;
+    *l3e = desc_apply_flag_delta(*l3e, set_flags, clear_flags);
     
     return true;
 }

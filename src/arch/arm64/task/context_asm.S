@@ -57,6 +57,7 @@
 .equ CTX_PC,        256
 .equ CTX_PSTATE,    264
 .equ CTX_TTBR0,     272
+.equ CTX_KERNEL_SP, 280
 
 /* PSTATE values */
 .equ PSTATE_EL0t,   0x00
@@ -213,6 +214,11 @@ hal_context_switch_asm:
     
     msr     ttbr0_el1, x2               /* Switch to new page tables */
     isb                                 /* Ensure TTBR change takes effect */
+    /* No ASIDs: flush again so nothing cached from the old tables between
+     * the invalidation above and the TTBR write survives the switch. */
+    tlbi    vmalle1is
+    dsb     ish
+    isb
     
     /* DEBUG: Print message after TTBR switch */
     stp     x0, x1, [sp, #-16]!
@@ -325,15 +331,16 @@ hal_context_switch_asm:
      * When an exception occurs in user mode (EL0), the CPU will use SP_EL1
      * as the kernel stack. We need to set this to the task's kernel stack.
      * 
-     * The kernel stack top is stored in X28 of the context (callee-saved).
-     * We use X28 as a convention to pass the kernel stack pointer.
+     * The kernel stack top lives in its own context field. It must not be
+     * passed through a general purpose register slot: those hold user
+     * values (fork copies the parent's user X28 into the child).
      */
-    ldr     x2, [x1, #CTX_X28]
-    cbz     x2, .skip_sp_el1_setup      /* Skip if X28 is 0 */
+    ldr     x2, [x1, #CTX_KERNEL_SP]
+    cbz     x2, .skip_sp_el1_setup      /* Skip if not set */
     mov     sp, x2                       /* Set SP_EL1 to kernel stack */
     b       .do_eret_setup
 .skip_sp_el1_setup:
-    /* If no kernel stack in X28, use a default - this shouldn't happen */
+    /* No kernel stack recorded, use a default - this shouldn't happen */
     adrp    x2, stack_top
     add     x2, x2, :lo12:stack_top
     mov     sp, x2

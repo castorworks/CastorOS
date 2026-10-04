@@ -143,8 +143,8 @@ void hal_context_set_kernel_stack_ctx(hal_context_t *ctx, uintptr_t stack_top) {
         return;
     }
     arm64_context_t *arm64_ctx = (arm64_context_t *)ctx;
-    /* Store kernel stack in X28 - context switch will use this to set SP_EL1 */
-    arm64_ctx->x[28] = (uint64_t)stack_top;
+    /* Context switch loads this into SP_EL1 before returning to EL0 */
+    arm64_ctx->kernel_sp = (uint64_t)stack_top;
 }
 
 /**

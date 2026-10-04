@@ -48,7 +48,16 @@ typedef struct arm64_context {
     
     /* User page table base register (offset 272-279) */
     uint64_t ttbr0;              /* offset 272 */
+
+    /* Kernel stack top loaded into SP_EL1 before returning to EL0 (offset 280-287).
+     * Kept out of x[] so it can never be confused with a user register. */
+    uint64_t kernel_sp;          /* offset 280 */
 } __attribute__((packed, aligned(16))) arm64_context_t;
+
+/* context_asm.S hard-codes these offsets */
+static_assert(sizeof(arm64_context_t) == 288, "arm64_context_t size mismatch with context_asm.S");
+static_assert(__builtin_offsetof(arm64_context_t, ttbr0) == 272, "ttbr0 offset mismatch");
+static_assert(__builtin_offsetof(arm64_context_t, kernel_sp) == 280, "kernel_sp offset mismatch");
 
 /* ============================================================================
  * Context Structure Offsets (for assembly code)
@@ -90,7 +99,8 @@ typedef struct arm64_context {
 #define ARM64_CTX_PSTATE    264
 #define ARM64_CTX_TTBR0     272
 
-#define ARM64_CTX_SIZE      280
+#define ARM64_CTX_KERNEL_SP 280
+#define ARM64_CTX_SIZE      288
 
 /* ============================================================================
  * PSTATE/SPSR Bits

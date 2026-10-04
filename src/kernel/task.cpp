@@ -675,9 +675,8 @@ uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entr
     // 设置用户页表基址
     task->context.ttbr0 = task->page_dir_phys;
     
-    // 关键：设置内核栈指针到 X28
-    // 当从用户模式发生异常时，context_asm.S 会使用 X28 来设置 SP_EL1
-    task->context.x[28] = task->kernel_stack;
+    // 内核栈顶：返回用户态前 context_asm.S 用它设置 SP_EL1
+    task->context.kernel_sp = task->kernel_stack;
     
     LOG_DEBUG_MSG("ARM64 user process context:\n");
     LOG_DEBUG_MSG("  PC=0x%llx, SP=0x%llx\n", 
@@ -690,7 +689,7 @@ uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entr
                  (unsigned long long)task->context.pstate,
                  (unsigned long long)task->context.ttbr0);
     LOG_DEBUG_MSG("  Kernel stack (X28)=0x%llx\n",
-                 (unsigned long long)task->context.x[28]);
+                 (unsigned long long)task->context.kernel_sp);
 #else
     // x86: 设置段寄存器（用户段，Ring 3）
     task->context.cs = GDT_USER_CODE_SEGMENT | 3;  // 0x1B
@@ -1022,21 +1021,6 @@ void kernel::Scheduler::schedule() {
     if (prev_task != next_task && next_task->is_user_process) {
         mm::Vmm::sync_current_dir(next_task->page_dir_phys);
         
-        // 【调试】如果是切换到 Shell，验证其页目录完整性
-        if (next_task->pid == 1) {
-            page_directory_t *shell_dir = next_task->page_dir;
-            if (is_present(shell_dir->entries[1])) {
-                uintptr_t phys = get_frame(shell_dir->entries[1]);
-                if (phys == 0 || phys >= KERNEL_VIRTUAL_BASE) {
-                    LOG_ERROR_MSG("Shell PDE[1] corrupted BEFORE switching to it!\n");
-                    LOG_ERROR_MSG("  PDE[0]=0x%llx, PDE[1]=0x%llx, PDE[2]=0x%llx, PDE[3]=0x%llx\n",
-                                 (unsigned long long)shell_dir->entries[0], 
-                                 (unsigned long long)shell_dir->entries[1],
-                                 (unsigned long long)shell_dir->entries[2], 
-                                 (unsigned long long)shell_dir->entries[3]);
-                }
-            }
-        }
     }
     
     // 执行上下文切换

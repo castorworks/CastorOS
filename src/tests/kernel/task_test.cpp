@@ -420,21 +420,22 @@ TEST_CASE(test_pbt_x86_64_address_space_switch_context_size) {
 /**
  * Property Test: ARM64 context structure size is correct
  * 
- * *For any* ARM64 context, the structure size SHALL be 280 bytes,
- * which includes X0-X30 (31 registers), SP, PC, PSTATE, and TTBR0.
+ * *For any* ARM64 context, the structure size SHALL be 288 bytes,
+ * which includes X0-X30 (31 registers), SP, PC, PSTATE, TTBR0 and the kernel SP.
  */
 TEST_CASE(test_pbt_arm64_context_size) {
-    // ARM64 context should be 280 bytes:
+    // ARM64 context should be 288 bytes:
     // - X0-X30: 31 x 8 = 248 bytes
     // - SP: 8 bytes
     // - PC: 8 bytes
     // - PSTATE: 8 bytes
     // - TTBR0: 8 bytes
-    // Total: 280 bytes
-    ASSERT_EQ_U(sizeof(arm64_context_t), 280);
+    // - kernel SP: 8 bytes
+    // Total: 288 bytes
+    ASSERT_EQ_U(sizeof(arm64_context_t), 288);
     
     // Verify this matches what hal::Context::size() returns
-    ASSERT_EQ_U(hal::Context::size(), 280);
+    ASSERT_EQ_U(hal::Context::size(), 288);
 }
 
 /**
