@@ -131,7 +131,11 @@ void isr_handler(registers_t *regs) {
     uint32_t faulting_address = get_cr2();
     
     // 尝试处理内核空间缺页（同步页目录）
-    if (mm::Vmm::handle_kernel_page_fault(faulting_address)) {
+    // 只有内核态访问、且页不存在（err_code: P=0, U=0）才可能是页目录没同步。
+    // 权限违规或用户态访问内核地址时同步毫无意义：PDE 本来就在，
+    // 返回后同一条指令再次缺页，系统会无声地死循环。
+    if ((regs->err_code & 0x5) == 0 &&
+        mm::Vmm::handle_kernel_page_fault(faulting_address)) {
         return;
     }
     
