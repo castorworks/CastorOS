@@ -6,6 +6,7 @@
  * - 防止并发磁盘操作导致 I/O 指令冲突和数据损坏
  */
 
+#include <drivers/timer.h>
 #include <drivers/ata.h>
 #include <fs/blockdev.h>
 #include <kernel/io.h>
@@ -72,8 +73,19 @@ static void ata_io_wait(ata_device_t *dev) {
     inb(dev->ctrl_base);
 }
 
+/* 等待设备的最长时间。按墙钟时间而不是轮询次数计：轮询次数对应的时间
+ * 取决于 CPU/模拟器速度，宿主机繁忙时正常的读写也会被误判为超时。 */
+#define ATA_TIMEOUT_MS      5000
+/* 时钟不走（中断被屏蔽或定时器尚未初始化）时的兜底上限 */
+#define ATA_TIMEOUT_SPINS   50000000u
+
 static int ata_wait_status(ata_device_t *dev, uint8_t mask, uint8_t expected, bool allow_err) {
-    for (uint32_t i = 0; i < 100000; i++) {
+    uint64_t start = drivers::Timer::get_uptime_ms();
+    for (uint32_t i = 0; i < ATA_TIMEOUT_SPINS; i++) {
+        if ((i & 0xFFF) == 0xFFF &&
+            drivers::Timer::get_uptime_ms() - start > ATA_TIMEOUT_MS) {
+            return -1;
+        }
         uint8_t status = inb(dev->io_base + ATA_REG_STATUS);
         if (!allow_err && (status & ATA_SR_ERR)) {
             return -1;
