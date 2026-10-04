@@ -12,8 +12,8 @@
 | | 数量 |
 |---|---|
 | 已复核的问题 | 124 |
-| 已修复 | 121 |
-| 未修复 | 3 |
+| 已修复 | 124 |
+| 未修复 | 0 |
 | 未复核的 medium/low（见附录） | 446，其中 1 条已修复，其余未处理 |
 
 修复后的回归结果：内核测试 i686 669/669、x86_64 650/650，arm64 无失败；三个架构都能从用户 shell 运行程序；
@@ -22,8 +22,7 @@ x86_64 不再随 exec 泄漏内存；i686 和 x86_64 开机自动通过 DHCP 获
 第 5 节每个条目的标题里标了"已修复"或"未修复"。由后期批量修复处理的条目附有修复说明和验证方式；
 其余"已修复"条目是按第 4 节顺序在前七项里修掉的，说明见对应提交。
 
-未修复的 3 项是同一件事：**arm64 内核仍运行在低地址恒等映射里**（V009、V010、V124）。
-arm64 上 `mmap` 因此不可用。需要把内核重新链接到高半区。
+已复核的 124 项全部处理完毕。最后三项（V009、V010、V124）是把 arm64 内核搬到高半区。
 
 ### 端到端验证
 
@@ -39,6 +38,7 @@ arm64 上 `mmap` 因此不可用。需要把内核重新链接到高半区。
 | socket 作为进程 fd | socket 得到 fd 3；`close(fd)` 生效；进程不关 socket 直接退出时对端看到正常关闭。i686、x86_64 通过 |
 | 用户态抢占 | 后台跑死循环程序时 shell 仍响应、可被 kill。i686、x86_64、arm64 通过 |
 | 权限模型 | 从 shell 启动的程序不能重启系统、不能 kill 父进程，能 kill 自己的子进程。i686、x86_64 通过 |
+| arm64 高半区与 `mmap` | 内核运行在高半区，用户地址空间不含内核映射；用户态测试程序的 `brk`/`mmap`/`munmap`/写时复制在 arm64 上通过 |
 | arm64 图形控制台 | 带 virtio-gpu-device 启动，截屏确认控制台正常绘制 |
 
 这轮验证中发现并修复了三个不在已复核清单里的问题：共享中断线导致有网卡和 USB 控制器时启动挂死
@@ -51,7 +51,8 @@ arm64 上 `mmap` 因此不可用。需要把内核重新链接到高半区。
 - kprintf 模块的 63 个测试断言数仍为 0（只打印、不检查输出）。
 - TCP 只实测了内核作为客户端；监听和 accept 只有测试用假网卡上的单元测试。
 - USB 只验证了开机时已插入的设备，运行中热插拔没有实测。
-- arm64 没有网络和 USB，`mmap` 不可用，上述实测都不适用。
+- arm64 没有网络和 USB，相关实测不适用。arm64 的用户态测试程序没有常驻在内置程序里，`mmap` 的实测是临时嵌入后做的。
+- arm64 上内核线程和空闲任务的 TTBR0 仍是引导页表，其中保留着低地址恒等映射；只有用户进程的地址空间是干净的。
 - TCP 实测用的程序和宿主机脚本没有纳入仓库。
 
 ## 1. 结论
@@ -201,18 +202,18 @@ arm64 上 `mmap` 因此不可用。需要把内核重新链接到高半区。
 - 复核意见：src/arch/arm64/mm/mmu.cpp:291-296 的 switch_space 只有 dsb/写 TTBR0/isb，没有 tlbi；hal_flags_to_arm64（mmu.cpp:504）给用户页加 nG，而 TTBR0 从不带 ASID。调用方 vmm.cpp:1180-1190、process.cpp:496（随后立即 free_page_directory(old)，destroy_space 中无 flush）、user.cpp:55 都不刷新 TLB，只有 context_asm.S:209-214 的切换路径做 tlbi vmalle1is。代码缺陷属实，但实际后果依赖 QEMU TCG 在 ASID 不变时不清软 TLB，且 arm64 上 exec 目前在更早处崩溃，无法由运行结果印证。 更正：execve 完成后返回用户态之前不一定经过上下文切换，所以陈旧项窗口确实存在；最小修复是在 switch_space 写 TTBR0 之后加 tlbi vmalle1is + dsb ish + isb。
 - 被 2 个独立审计者重复报告（arch-arm64-mm-4, x-hal-parity-4）
 
-#### V009 [high·已确认·arm64·未修复] 用户地址空间的 1GB–4GB 被内核 1GB 块占据，通用 mmap 区域 0x40000000–0x70000000 在 arm64 上永远无法映射
+#### V009 [high·已确认·arm64·已修复] 用户地址空间的 1GB–4GB 被内核 1GB 块占据，通用 mmap 区域 0x40000000–0x70000000 在 arm64 上永远无法映射
 
-- **未修复**：mmap on arm64 still cannot work: MMAP_REGION_START/END (0x40000000-0x70000000) in src/kernel/syscalls/mm.cpp lie inside the kernel's 1GB identity block. The fix belongs outside this batch: either move the kernel to TTBR1 (see x-hal-parity-6) or move the arm64 mmap region above 4GB, which also needs the uint32_t address types in syscalls/mm.cpp widened.
+- **修复**：arm64 内核除引导段外全部链接到高半区（`KERNEL_VIRTUAL_BASE` + 物理地址），启用 MMU 后跳到高半区运行；GIC 和串口经高半区地址访问；新建的用户地址空间为空，不再包含内核恒等映射和设备窗口；对高半区地址的页表操作一律走 TTBR1 的页表。验证方式：arm64 内核测试 501 个全部通过（含改写后的"用户地址空间无内核映射"测试）；从 shell 运行程序正常；临时嵌入用户态测试程序，`brk`、`mmap`、`munmap` 及 fork 后写时复制全部通过。
 - 位置：`src/arch/arm64/mm/mmu.cpp:720`；相关：`src/arch/arm64/mm/mmu.cpp:1082`、`src/arch/arm64/mm/mmu.cpp:734`、`src/kernel/syscalls/mm.cpp:22`、`src/kernel/syscalls/process.cpp:485`、`linker_arm64.ld:13`
 - 证据：hal::Mmu::map(): `} else if (desc_is_block(l1[l1_idx])) { LOG_ERROR_MSG("hal::Mmu::map: cannot map 4KB page over 1GB block\n"); return false; }`。create_space 把 L1[1..3]（VA 0x40000000–0xFFFFFFFF）设为内核恒等 1GB 块，并在 L2[64]/L2[72] 放了 2MB 设备块。而 src/kernel/syscalls/mm.cpp:22-23 的 `MMAP_REGION_START 0x40000000 / MMAP_REGION_END 0x70000000` 对所有架构通用，正好整体落在 L1[1] 的内核块内；用户堆上限是 user_stack_base-8MB，也会越过 0x40000000。
 - 触发场景：arm64 用户程序调用 mmap(NULL, len, ...)：find_free_vaddr 选出 0x40000000 起的地址，do_mmap_anonymous 调 map_page_in_directory → hal::Mmu::map 命中 1GB 块返回 false，mmap 返回 -1，依赖 mmap 的功能（用户态 malloc 的大块分配、文件映射、共享内存）在 arm64 上全部不可用。同理，brk 堆增长到 0x40000000 或任何映射落到 0x08000000–0x081FFFFF、0x09000000–0x091FFFFF 时也会失败。
 - 修复方向：把内核移到 TTBR1（高半区链接与运行），用户 TTBR0 表只放用户映射；短期内可为 arm64 把 mmap 区域和堆上限移到 4GB 以上（例如 0x100000000 起），并在 ELF 加载/brk/mmap 中显式排除被内核块占用的 VA 区间。
 - 复核意见：src/arch/arm64/mm/mmu.cpp:1082-1084 的 create_space 把 current_l1[1..3]（start.S:351-377 建立的 0x40000000 起 1GB 块）原样拷进每个用户地址空间；mmu.cpp:720-722 的 map() 遇到 L1 块直接报错返回 false。src/kernel/syscalls/mm.cpp:22-23 的 MMAP_REGION_START/END=0x40000000/0x70000000 无架构区分，find_free_vaddr（mm.cpp:165-185）只在该区间内选址，因此 arm64 上匿名/文件 mmap 必然失败。 更正：brk 部分影响较小：用户程序链接在 0x10000000，堆要增长约 768MB 才会碰到 0x40000000；0x08000000/0x09000000 的 2MB 设备块低于用户加载基址，正常程序不会映射到。主要后果是 mmap 在 arm64 上完全不可用。
 
-#### V010 [high·已确认·arm64·未修复] ARM64 地址空间设计：内核和设备 MMIO 位于 TTBR0（用户半区）恒等映射中，hal::Mmu 的 HAL_ADDR_SPACE_CURRENT 只认 TTBR0
+#### V010 [high·已确认·arm64·已修复] ARM64 地址空间设计：内核和设备 MMIO 位于 TTBR0（用户半区）恒等映射中，hal::Mmu 的 HAL_ADDR_SPACE_CURRENT 只认 TTBR0
 
-- **未修复**：Design-level: the arm64 kernel is linked and runs in the TTBR0 identity map. A correct fix relinks the kernel into the TTBR1 high half, reworks start.S, every identity-addressed MMIO driver and the hal::Mmu root-table selection. Too large and risky for this batch. The directly exploitable consequences are already mitigated (munmap/brk free only user pages; device blocks are now UXN/PXN).
+- **修复**：arm64 内核除引导段外全部链接到高半区（`KERNEL_VIRTUAL_BASE` + 物理地址），启用 MMU 后跳到高半区运行；GIC 和串口经高半区地址访问；新建的用户地址空间为空，不再包含内核恒等映射和设备窗口；对高半区地址的页表操作一律走 TTBR1 的页表。验证方式：arm64 内核测试 501 个全部通过（含改写后的"用户地址空间无内核映射"测试）；从 shell 运行程序正常；临时嵌入用户态测试程序，`brk`、`mmap`、`munmap` 及 fork 后写时复制全部通过。
 - 位置：`src/arch/arm64/mm/mmu.cpp:1082`；相关：`src/arch/arm64/mm/mmu.cpp:429`、`src/arch/arm64/mm/mmu.cpp:1118`、`src/arch/arm64/boot/start.S:90`、`linker_arm64.ld:10`、`src/kernel/syscalls/mm.cpp:459`
 - 证据：linker_arm64.ld 把内核链接在物理地址 0x40100000，内核代码、GIC(0x08000000)、UART(0x09000000) 都经 TTBR0 恒等映射访问。create_space 因此把内核块拷进每个用户地址空间：`new_l1[1] = current_l1[1]; new_l1[2] = current_l1[2]; new_l1[3] = current_l1[3];`（0x40000000-0xFFFFFFFF 的 1GB 块，start.S 的 BLOCK_NORMAL 为 AP_RW_EL1 且没有 UXN/PXN）。get_l0_table (mmu.cpp:429) 对 CURRENT 一律返回 TTBR0 的表，l0_index 只取 bit[47:39]，所以内核高地址 0xFFFF0000_xxxxxxxx 被当作低地址别名在用户表里查/改，TTBR1 的表在启动后再也不会被更新；`KERNEL_L0_START 256` 的“内核项拷贝”对 TTBR0 表毫无意义。
 - 触发场景：(1) 用户虚拟地址 0x40000000-0xFFFFFFFF 和两个设备 2MB 块永久被内核占用，ELF 段/mmap/brk 落入该范围时 hal::Mmu::map 返回 false（cannot map 4KB page over 1GB block）。(2) 内核镜像在每个用户地址空间内，且块描述符 UXN=0、AP=EL1-only，EL0 可以“只执行”方式跳入内核代码；所有以 `addr < KERNEL_VIRTUAL_BASE/USER_SPACE_END` 判定“用户地址”的检查（mm.cpp:459、elf.cpp:191）都把 0x40xxxxxx 的内核内存当作合法用户地址。(3) 进入用户进程后，任何 mm::Vmm::map_page/query/unmap 对内核虚拟地址的操作都落到当前用户页表的低地址别名上，而不是内核页表。
@@ -1275,9 +1276,9 @@ if (fat32_mark_entry_deleted(fs, lookup->cluster, lookup->offset) != 0) { kfree(
 
 ### 构建系统与文档（1 项）
 
-#### V124 [high·已确认·arm64·未修复] arm64 内核被链接到低半区物理地址 (TTBR0 范围)，与用户地址空间重叠，mmap 区域起点正好是内核所在的 1GB 块
+#### V124 [high·已确认·arm64·已修复] arm64 内核被链接到低半区物理地址 (TTBR0 范围)，与用户地址空间重叠，mmap 区域起点正好是内核所在的 1GB 块
 
-- **未修复**：The real fix is a true higher-half arm64 kernel (linker_arm64.ld, start.S, arch/arm64/mm/mmu.cpp), and the interim one is moving MMAP_REGION_START and fixing is_vaddr_range_free in src/kernel/syscalls/mm.cpp; all of those are outside this batch and too large to do as a side edit. The dangerous part of the entry (a syscall buffer pointing at the low-half kernel block) is already closed by e99b46d, because UAccess requires HAL_PAGE_USER on every page and the kernel block is not user-mapped. Still open: mmap fails on arm64, and the kernel block lacks UXN.
+- **修复**：arm64 内核除引导段外全部链接到高半区（`KERNEL_VIRTUAL_BASE` + 物理地址），启用 MMU 后跳到高半区运行；GIC 和串口经高半区地址访问；新建的用户地址空间为空，不再包含内核恒等映射和设备窗口；对高半区地址的页表操作一律走 TTBR1 的页表。验证方式：arm64 内核测试 501 个全部通过（含改写后的"用户地址空间无内核映射"测试）；从 shell 运行程序正常；临时嵌入用户态测试程序，`brk`、`mmap`、`munmap` 及 fork 后写时复制全部通过。
 - 位置：`linker_arm64.ld:19`；相关：`linker_arm64.ld:8`、`src/arch/arm64/boot/start.S:259`、`src/arch/arm64/mm/mmu.cpp:1002`、`src/kernel/syscalls/mm.cpp:22`、`src/include/kernel/task.h:32`
 - 证据：linker_arm64.ld: `KERNEL_VIRTUAL_BASE = 0xFFFF000000000000;` 定义后从未使用，`. = KERNEL_PHYS_BASE;`(0x40100000)，所有段 VMA=LMA（readelf: 单个 LOAD 0x40100000 RWE）。start.S:259-260 把同一张 boot_l0_table 同时装入 ttbr0_el1/ttbr1_el1，注释“暂时不使用高半核”。mmu.cpp:1000-1016 明确写着 “The kernel runs at physical addresses (0x40xxxxxx) which are in the TTBR0 region”，每个用户地址空间都复制 L1[1]（0x40000000-0x7FFFFFFF 的 1GB 内核块）。而通用代码 src/kernel/syscalls/mm.cpp:22-23 `#define MMAP_REGION_START 0x40000000 / MMAP_REGION_END 0x70000000`，task.h:32 `USER_SPACE_END 0x0000800000000000`。
 - 触发场景：arm64 用户进程调用 mmap()：内核在 0x40000000 起选择虚拟地址，这正是内核代码/数据/堆所在的 1GB 块映射；要么映射失败（mmap 在 arm64 上不可用），要么拆分/替换该块导致内核自身映射被改写而崩溃（未跟踪 map_page 对 block 描述符的处理，故 confidence=medium）。此外任何基于 `addr < USER_SPACE_END` 的用户指针检查都会把 0x40100000 这类内核地址判为合法用户地址，read(fd, (void*)0x40100000, n) 之类的系统调用可直接覆盖内核；块描述符未设 UXN，EL0 还能执行内核代码页。
