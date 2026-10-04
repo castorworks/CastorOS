@@ -147,19 +147,23 @@ void net::Udp::input(net::Netdev *dev, net::Netbuf *buf, uint32_t src_ip, uint32
             return;  // 回调函数负责释放 buf
         }
         
-        // 如果没有回调，加入接收队列
+        // 如果没有回调，加入接收队列。队列有上限：应用不读（或读得慢）时
+        // 丢弃新到的数据报，而不是让队列无限占用内核堆
+        if (pcb->recv_queue_len >= UDP_RECV_QUEUE_MAX) {
+            udp_lock.unlock_irqrestore(irq_state);
+            net::Netbuf::free(buf);
+            return;
+        }
+
         buf->next = NULL;
         if (!pcb->recv_queue) {
             pcb->recv_queue = buf;
         } else {
-            net::Netbuf *tail = pcb->recv_queue;
-            while (tail->next) {
-                tail = tail->next;
-            }
-            tail->next = buf;
+            pcb->recv_queue_tail->next = buf;
         }
+        pcb->recv_queue_tail = buf;
         pcb->recv_queue_len++;
-        
+
         udp_lock.unlock_irqrestore(irq_state);
         return;
     }
@@ -391,6 +395,9 @@ net::Netbuf *net::Udp::recv_poll(udp_pcb_t *pcb) {
     if (pcb->recv_queue) {
         buf = pcb->recv_queue;
         pcb->recv_queue = buf->next;
+        if (!pcb->recv_queue) {
+            pcb->recv_queue_tail = NULL;
+        }
         pcb->recv_queue_len--;
         buf->next = NULL;  // 断开链表
     }
