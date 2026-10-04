@@ -253,6 +253,7 @@ int net::Socket::accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
     socket_t *new_sock = (socket_t *)kmalloc(sizeof(socket_t));
     if (!new_sock) {
         net::Tcp::pcb_free(new_pcb);
+        socket_free_fd(new_fd);  // 释放预留的 fd
         return -1;
     }
     
