@@ -530,6 +530,10 @@ TEST_SUITE(pci_integrity_tests) {
 // 运行所有测试
 // ============================================================================
 
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
+void run_x86_driver_suites(void);
+#endif
+
 void run_pci_tests(void) {
 #if defined(ARCH_I686) || defined(ARCH_X86_64)
     // 初始化测试框架
@@ -546,6 +550,9 @@ void run_pci_tests(void) {
     RUN_SUITE(pci_bar_tests);
     RUN_SUITE(pci_enable_tests);
     RUN_SUITE(pci_integrity_tests);
+    
+    // 其它 x86 驱动的回归套件（x86_driver_test.cpp）：控制台 ANSI 解析、DMA 内存
+    run_x86_driver_suites();
     
     // 打印测试摘要
     unittest_print_summary();
