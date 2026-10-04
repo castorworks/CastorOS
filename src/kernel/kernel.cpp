@@ -30,6 +30,7 @@
 #include <drivers/usb/usb_mass_storage.h>
 #include <kernel/multiboot.h>
 #include <net/net.h>
+#include <net/dhcp.h>
 #include <kernel/deferred.h>
 #endif
 
@@ -385,6 +386,14 @@ static uintptr_t heap_start_after_used_frames(uintptr_t heap_start, uint32_t hea
 // ============================================================================
 
 extern "C" void kernel_main(multiboot_info_t* mbi);
+/* 在 kworker 线程里运行一次：为 eth0 启动 DHCP 客户端 */
+static void net_autoconfigure(void) {
+    net::Netdev *eth0 = net::Netdev::get_by_name("eth0");
+    if (eth0 && net::Dhcp::start(eth0) != 0) {
+        LOG_WARN_MSG("net: DHCP start failed on eth0\n");
+    }
+}
+
 void kernel_main(multiboot_info_t* mbi) {
     cxx_global_ctors_init();  // 运行 C++ 全局构造函数（必须最先执行）
 
@@ -569,13 +578,7 @@ void kernel_main(multiboot_info_t* mbi) {
     LOG_INFO_MSG("  [4.7] Network stack initialized\n");
 
     // 4.8 初始化 E1000 网卡驱动
-#if defined(ARCH_X86_64)
-    // x86_64: 暂时跳过 E1000 驱动，因为 VMM MMIO 映射尚未支持 64 位
-    LOG_WARN_MSG("  [4.8] E1000 driver skipped (x86_64 VMM MMIO not ready)\n");
-    int e1000_count = 0;
-#else
     int e1000_count = drivers::E1000::init();
-#endif
     if (e1000_count > 0) {
         LOG_INFO_MSG("  [4.8] E1000 driver initialized (%d device(s))\n", e1000_count);
         
@@ -621,10 +624,6 @@ void kernel_main(multiboot_info_t* mbi) {
 #endif
 
     // 4.10 初始化 USB 子系统
-#if defined(ARCH_X86_64)
-    // x86_64: 暂时跳过 USB 子系统，因为 VMM MMIO 映射尚未支持 64 位
-    LOG_WARN_MSG("  [4.10] USB subsystem skipped (x86_64 VMM MMIO not ready)\n");
-#else
     LOG_INFO_MSG("  [4.10] Initializing USB subsystem...\n");
     
     // 4.10.1 初始化 USB 核心层
@@ -647,7 +646,6 @@ void kernel_main(multiboot_info_t* mbi) {
     drivers::Usb::scan_devices();
     drivers::Uhci::sync_port_devices();  // 建立端口到设备的映射（热插拔支持）
     LOG_INFO_MSG("    [4.10.4] USB device scan complete\n");
-#endif
     
 #if !defined(ARCH_X86_64)
     // 4.10.5 启动 USB 热插拔监控
@@ -677,6 +675,13 @@ void kernel_main(multiboot_info_t* mbi) {
     net::Netdev::start_rx_thread();
     // kworker：执行中断里登记的延迟工作（TCP 定时器、USB 热插拔等）
     kernel::Deferred::start();
+
+    // 有网卡时开机自动通过 DHCP 获取地址。放到 kworker 里做：
+    // 发送要走驱动的 Mutex，且此时调度器还没开始运行。
+    if (net::Netdev::get_by_name("eth0")) {
+        int dhcp_work = kernel::Deferred::add(net_autoconfigure, "dhcp_autostart");
+        kernel::Deferred::raise(dhcp_work);
+    }
 
     // 5.2 初始化文件系统
     fs_init();
