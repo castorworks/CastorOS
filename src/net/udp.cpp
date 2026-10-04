@@ -109,6 +109,9 @@ void net::Udp::input(net::Netdev *dev, net::Netbuf *buf, uint32_t src_ip, uint32
         return;
     }
     
+    // 数据报长度以 UDP 头部为准，丢掉其后的多余字节
+    net::Netbuf::trim(buf, udp_len);
+    
     // 验证校验和（如果非零）
     if (udp->checksum != 0) {
         uint16_t orig_checksum = udp->checksum;

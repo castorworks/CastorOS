@@ -162,6 +162,15 @@ struct Netdev {
     static void receive(Netdev *dev, net::Netbuf *buf);
 
     /**
+     * @brief 把一个以太网帧放入接收队列（环回）
+     *
+     * 无论在什么上下文都只入队，由接收线程（或 poll()）稍后处理，
+     * 不会在发送路径里重入协议栈。队列接管 buf；队列满时释放 buf。
+     * @return 0 成功，-1 队列已满
+     */
+    static int loopback(Netdev *dev, net::Netbuf *buf);
+
+    /**
      * @brief 在当前（任务）上下文处理接收队列里的所有数据包
      *
      * 驱动在中断里调用 receive() 只是把包放进队列；协议栈在这里运行。

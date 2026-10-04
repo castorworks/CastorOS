@@ -91,6 +91,13 @@ struct Netbuf {
     static uint8_t *put(Netbuf *buf, uint32_t len);
 
     /**
+     * @brief 把数据截短到 len 字节（丢弃尾部，例如以太网填充）
+     * @param buf 缓冲区
+     * @param len 保留的长度；不小于当前长度时不做任何事
+     */
+    static void trim(Netbuf *buf, uint32_t len);
+
+    /**
      * @brief 复制缓冲区
      * @param buf 源缓冲区
      * @return 新缓冲区的副本，失败返回 NULL
