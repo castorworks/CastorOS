@@ -69,6 +69,13 @@ public:
      * @return 当前的颜色属性字节
      */
     static uint8_t get_color();
+
+    /**
+     * 获取当前光标位置
+     * @param row 输出行号（0 起，可为 NULL）
+     * @param col 输出列号（0 起，可为 NULL）
+     */
+    static void get_cursor(int *row, int *col);
 };
 
 } // namespace drivers
