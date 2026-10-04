@@ -252,6 +252,13 @@ typedef struct task {
      * 系统调用返回用户态前（不持有任何内核锁时）执行退出 */
     bool kill_pending;
     uint32_t kill_signal;            ///< kill_pending 为 true 时的信号号
+
+    /**
+     * 特权进程：可以重启/关机、修改网络配置、kill 任意用户进程。
+     * 第一个用户进程（init shell）有特权，fork 继承，execve 之后失去：
+     * 从 shell 启动的外部程序因此是非特权的。
+     */
+    bool privileged;
 } task_t;
 
 /* ============================================================================
@@ -396,6 +403,16 @@ public:
      * @return 当前任务指针，如果没有则返回 NULL
      */
     static task_t* get_current();
+
+    /**
+     * 当前执行流是否有特权。没有当前任务（启动阶段）和内核线程视为有特权。
+     */
+    static bool current_is_privileged();
+
+    /**
+     * target 是否是 ancestor 的子孙进程（不含 ancestor 自身）
+     */
+    static bool is_descendant(task_t *target, task_t *ancestor);
 
     /**
      * @brief 根据 PID 查找任务

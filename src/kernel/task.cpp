@@ -641,6 +641,7 @@ uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entr
     
     // 用户进程标志
     task->is_user_process = true;
+    task->privileged = true;         // 由内核直接创建的用户进程（init shell）
     task->user_entry = entry_point;
     
     // 分配内核栈
@@ -1394,6 +1395,26 @@ bool kernel::Scheduler::request_kill(task_t *target, uint32_t signal) {
 /**
  * @brief 若当前任务有待处理的 kill，就地退出
  */
+bool kernel::Scheduler::current_is_privileged() {
+    task_t *task = current_task;
+    return !task || !task->is_user_process || task->privileged;
+}
+
+bool kernel::Scheduler::is_descendant(task_t *target, task_t *ancestor) {
+    if (!target || !ancestor) {
+        return false;
+    }
+    // 父链长度不会超过任务表大小；计数只是防止损坏的链表造成死循环
+    task_t *p = target->parent;
+    for (uint32_t depth = 0; p && depth < MAX_TASKS; depth++) {
+        if (p == ancestor) {
+            return true;
+        }
+        p = p->parent;
+    }
+    return false;
+}
+
 void kernel::Scheduler::deliver_pending_kill() {
     task_t *task = current_task;
     if (!task || !task->kill_pending) {

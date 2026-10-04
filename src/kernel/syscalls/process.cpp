@@ -346,6 +346,7 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
     
     // 设置父子关系
     child->parent = parent;
+    child->privileged = parent->privileged;  // fork 继承特权
     
     // 添加到就绪队列
     child->state = TASK_READY;
@@ -587,6 +588,9 @@ uint32_t syscall::Process::execve(uintptr_t *frame, const char *path) {
     LOG_DEBUG_MSG("syscall::Process::execve: loaded '%s' at entry 0x%llx for PID %u\n", 
                   path, (unsigned long long)entry_point, current->pid);
     
+    // 换成了另一个程序：不再继承 shell 的特权
+    current->privileged = false;
+
     // 设置用户态上下文
 #if defined(ARCH_ARM64)
     // ARM64: 设置用户模式上下文
@@ -833,6 +837,13 @@ uint32_t syscall::Process::kill(uint32_t pid, uint32_t signal) {
     // 内核线程（网络接收线程、kworker 等）不是用户进程能终止的对象
     if (!target->is_user_process) {
         LOG_WARN_MSG("syscall::Process::kill: PID %u is a kernel thread, refused\n", pid);
+        return (uint32_t)-1;
+    }
+
+    // 非特权进程只能向自己和自己的子孙进程发信号
+    if (!kernel::Scheduler::current_is_privileged() && target != current &&
+        !kernel::Scheduler::is_descendant(target, current)) {
+        LOG_WARN_MSG("syscall::Process::kill: PID %u may not signal PID %u\n", current->pid, pid);
         return (uint32_t)-1;
     }
 

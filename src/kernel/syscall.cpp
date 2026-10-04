@@ -317,6 +317,11 @@ static syscall_arg_t sys_ioctl_wrapper(syscall_arg_t *frame, syscall_arg_t fd, s
         return SYSCALL_FAIL;
     }
     if (!user_wr(argp, arg_size)) return SYSCALL_FAIL;
+    // 修改网络配置的请求需要特权；查询和 ping 不需要
+    bool modifies = (req == SIOCSIFADDR || req == SIOCSIFNETMASK || req == SIOCSIFFLAGS ||
+                     req == SIOCSIFMTU || req == SIOCSIFGATEWAY || req == SIOCSARP ||
+                     req == SIOCDARP);
+    if (modifies && !kernel::Scheduler::current_is_privileged()) return SYSCALL_FAIL;
     return syscall::Net::ioctl((int32_t)fd, (uint32_t)request, (void *)(uintptr_t)argp);
 #endif
 }
@@ -358,6 +363,7 @@ static syscall_arg_t sys_time_wrapper(syscall_arg_t *frame, syscall_arg_t p1, sy
 static syscall_arg_t sys_reboot_wrapper(syscall_arg_t *frame, syscall_arg_t p1, syscall_arg_t p2, 
                                         syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
+    if (!kernel::Scheduler::current_is_privileged()) return SYSCALL_FAIL;
     syscall::System::reboot();
     return 0;
 }
@@ -365,6 +371,7 @@ static syscall_arg_t sys_reboot_wrapper(syscall_arg_t *frame, syscall_arg_t p1, 
 static syscall_arg_t sys_poweroff_wrapper(syscall_arg_t *frame, syscall_arg_t p1, syscall_arg_t p2, 
                                           syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
+    if (!kernel::Scheduler::current_is_privileged()) return SYSCALL_FAIL;
     syscall::System::poweroff();
     return 0;
 }
