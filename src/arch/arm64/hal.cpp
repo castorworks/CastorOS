@@ -413,88 +413,6 @@ uint32_t hal::Timer::get_frequency() {
  * Requirements: 9.1 - MMIO memory barriers
  * ========================================================================== */
 
-/**
- * @brief Data Memory Barrier - Full System
- * 
- * Ensures that all explicit memory accesses that appear in program order
- * before the DMB instruction are observed before any explicit memory
- * accesses that appear in program order after the DMB instruction.
- */
-void hal_dmb_sy(void) {
-    __asm__ volatile("dmb sy" ::: "memory");
-}
-
-/**
- * @brief Data Memory Barrier - Inner Shareable
- * 
- * Same as DMB SY but only affects observers in the Inner Shareable domain.
- */
-void hal_dmb_ish(void) {
-    __asm__ volatile("dmb ish" ::: "memory");
-}
-
-/**
- * @brief Data Memory Barrier - Inner Shareable, Store only
- * 
- * Ensures ordering of store operations within the Inner Shareable domain.
- */
-void hal_dmb_ishst(void) {
-    __asm__ volatile("dmb ishst" ::: "memory");
-}
-
-/**
- * @brief Data Memory Barrier - Inner Shareable, Load only
- * 
- * Ensures ordering of load operations within the Inner Shareable domain.
- */
-void hal_dmb_ishld(void) {
-    __asm__ volatile("dmb ishld" ::: "memory");
-}
-
-/**
- * @brief Data Synchronization Barrier - Full System
- * 
- * Ensures that all explicit memory accesses that appear in program order
- * before the DSB instruction complete before the DSB instruction completes.
- * Also ensures that any context-altering operations complete.
- */
-void hal_dsb_sy(void) {
-    __asm__ volatile("dsb sy" ::: "memory");
-}
-
-/**
- * @brief Data Synchronization Barrier - Inner Shareable
- * 
- * Same as DSB SY but only affects observers in the Inner Shareable domain.
- */
-void hal_dsb_ish(void) {
-    __asm__ volatile("dsb ish" ::: "memory");
-}
-
-/**
- * @brief Data Synchronization Barrier - Inner Shareable, Store only
- * 
- * Ensures completion of store operations within the Inner Shareable domain.
- */
-void hal_dsb_ishst(void) {
-    __asm__ volatile("dsb ishst" ::: "memory");
-}
-
-/**
- * @brief Instruction Synchronization Barrier
- * 
- * Flushes the pipeline and ensures that all instructions following the ISB
- * are fetched from cache or memory after the ISB has completed.
- * 
- * Required after:
- *   - Modifying instruction memory
- *   - Changing system registers that affect instruction execution
- *   - TLB maintenance operations
- */
-void hal_isb(void) {
-    __asm__ volatile("isb" ::: "memory");
-}
-
 /* ============================================================================
  * I/O Operations
  * ========================================================================== */
@@ -522,10 +440,6 @@ bool hal::Mmu::initialized() {
     uint64_t sctlr;
     __asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
     return (sctlr & 1) != 0;
-}
-
-void hal_set_mmu_initialized(bool state) {
-    g_hal_mmu_initialized = state;
 }
 
 /* ============================================================================

@@ -103,19 +103,6 @@ void idt64_set_trap_gate(uint8_t vector, uint64_t handler) {
 }
 
 /**
- * @brief Set a user-callable interrupt gate (DPL=3)
- * @param vector Interrupt vector number
- * @param handler Handler function address
- * 
- * User interrupt gates can be triggered from Ring 3 (user mode).
- * This is used for system calls via INT instruction.
- */
-void idt64_set_user_interrupt_gate(uint8_t vector, uint64_t handler) {
-    idt64_set_gate(vector, handler, GDT64_KERNEL_CODE_SEGMENT,
-                   IDT64_IST_NONE, IDT64_GATE_USER_INT);
-}
-
-/**
  * @brief Initialize the IDT
  * 
  * Sets up the IDT pointer and clears all entries.

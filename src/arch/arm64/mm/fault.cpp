@@ -147,16 +147,6 @@ bool arm64_is_access_flag_fault(uint32_t fsc) {
 }
 
 /**
- * @brief Check if FSC indicates an address size fault
- * @param fsc Fault Status Code
- * @return true if address size fault
- */
-bool arm64_is_address_size_fault(uint32_t fsc) {
-    /* ARM64_FSC_ADDR_SIZE_L0 is 0, so just check upper bound */
-    return (fsc <= ARM64_FSC_ADDR_SIZE_L3);
-}
-
-/**
  * @brief Check if exception class is a data abort
  * @param ec Exception Class from ESR_EL1
  * @return true if data abort
@@ -195,42 +185,6 @@ static inline bool is_from_user_mode(uint32_t ec) {
  * ========================================================================== */
 
 /**
- * @brief Parse page fault information with provided ESR value
- * 
- * This variant is useful when the ESR value has already been saved
- * (e.g., by the exception handler) and we don't want to re-read it.
- * 
- * @param[out] info Pointer to structure to fill with fault information
- * @param esr ESR_EL1 value (already read by exception handler)
- * 
- * @see Requirements 5.4
- */
-void arm64_parse_fault_with_esr(hal_page_fault_info_t *info, uint64_t esr) {
-    if (info == NULL) {
-        return;
-    }
-    
-    /* Read fault address from FAR_EL1 */
-    info->fault_addr = (vaddr_t)arm64_read_far_el1();
-    info->raw_error = (uint32_t)esr;
-    
-    /* Extract fields */
-    uint32_t ec = (esr & ARM64_ESR_EC_MASK) >> ARM64_ESR_EC_SHIFT;
-    uint32_t iss = esr & ARM64_ESR_ISS_MASK;
-    uint32_t fsc = iss & ARM64_ISS_FSC_MASK;
-    
-    bool data_abort = is_data_abort(ec);
-    bool inst_abort = is_instruction_abort(ec);
-    
-    info->is_present = arm64_is_permission_fault(fsc) || 
-                       arm64_is_access_flag_fault(fsc);
-    info->is_write = data_abort && ((iss & ARM64_ISS_WNR) != 0);
-    info->is_user = is_from_user_mode(ec);
-    info->is_exec = inst_abort;
-    info->is_reserved = false;
-}
-
-/**
  * @brief Check if a page fault is a COW (Copy-on-Write) fault
  * 
  * A COW fault occurs when:
@@ -258,58 +212,6 @@ bool arm64_is_cow_page_fault(uint64_t esr) {
     
     /* Must be a write operation */
     return (iss & ARM64_ISS_WNR) != 0;
-}
-
-/**
- * @brief Get a human-readable description of the fault type
- * 
- * @param esr ESR_EL1 value
- * @return Description string
- */
-const char* arm64_get_fault_description(uint64_t esr) {
-    uint32_t ec = (esr & ARM64_ESR_EC_MASK) >> ARM64_ESR_EC_SHIFT;
-    uint32_t iss = esr & ARM64_ESR_ISS_MASK;
-    uint32_t fsc = iss & ARM64_ISS_FSC_MASK;
-    bool is_write = (iss & ARM64_ISS_WNR) != 0;
-    bool is_user = is_from_user_mode(ec);
-    
-    if (is_instruction_abort(ec)) {
-        if (arm64_is_translation_fault(fsc)) {
-            return is_user ? "User instruction fetch from unmapped page"
-                           : "Kernel instruction fetch from unmapped page";
-        } else if (arm64_is_permission_fault(fsc)) {
-            return is_user ? "User instruction fetch permission denied"
-                           : "Kernel instruction fetch permission denied";
-        }
-        return "Instruction abort";
-    }
-    
-    if (is_data_abort(ec)) {
-        if (arm64_is_translation_fault(fsc)) {
-            if (is_write) {
-                return is_user ? "User write to unmapped page"
-                               : "Kernel write to unmapped page";
-            } else {
-                return is_user ? "User read from unmapped page"
-                               : "Kernel read from unmapped page";
-            }
-        } else if (arm64_is_permission_fault(fsc)) {
-            if (is_write) {
-                return is_user ? "User write permission denied (possible COW)"
-                               : "Kernel write permission denied";
-            } else {
-                return is_user ? "User read permission denied"
-                               : "Kernel read permission denied";
-            }
-        } else if (arm64_is_access_flag_fault(fsc)) {
-            return "Access flag fault";
-        } else if (fsc == ARM64_FSC_ALIGNMENT) {
-            return "Alignment fault";
-        }
-        return "Data abort";
-    }
-    
-    return "Unknown fault";
 }
 
 /**

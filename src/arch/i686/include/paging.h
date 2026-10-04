@@ -83,38 +83,6 @@ bool hal_mmu_is_paging_enabled(void);
  * i686 页表格式验证函数
  * ========================================================================== */
 
-/**
- * @brief 验证 i686 页表项格式
- * @param entry 页表项
- * @return true 如果格式正确
- */
-bool i686_validate_pte_format(uint32_t entry);
-
-/**
- * @brief 验证 i686 页目录项格式
- * @param entry 页目录项
- * @return true 如果格式正确
- */
-bool i686_validate_pde_format(uint32_t entry);
-
-/**
- * @brief 获取 i686 页表级数
- * @return 2
- */
-uint32_t i686_get_page_table_levels(void);
-
-/**
- * @brief 获取 i686 页大小
- * @return 4096
- */
-uint32_t i686_get_page_size(void);
-
-/**
- * @brief 获取 i686 内核虚拟基址
- * @return 0x80000000
- */
-uintptr_t i686_get_kernel_virtual_base(void);
-
 /* ============================================================================
  * HAL MMU 扩展函数声明 (i686 特定)
  * ========================================================================== */

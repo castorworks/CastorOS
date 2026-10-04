@@ -76,48 +76,10 @@ hal_syscall_handler_t hal_get_syscall_handler(void) {
     return g_syscall_handler;
 }
 
-/**
- * @brief Check if syscall system is initialized
- * @return true if initialized, false otherwise
- */
-bool hal_syscall_initialized(void) {
-    return g_syscall_initialized;
-}
-
 /* ============================================================================
  * User Mode Transition
  * ============================================================================ */
 
 /* External assembly function for entering user mode */
 extern "C" void enter_usermode_arm64(uint64_t entry_point, uint64_t user_stack);
-
-/**
- * @brief Enter user mode (HAL interface)
- * @param entry_point User code entry address
- * @param user_stack User stack pointer
- *
- * This function transitions from kernel mode (EL1) to user mode (EL0)
- * using the ERET instruction. It never returns.
- *
- * **Feature: multi-arch-support, Property 11: User Mode Transition Correctness (ARM64)**
- * **Validates: Requirements 7.4**
- */
-void hal_enter_usermode(uintptr_t entry_point, uintptr_t user_stack) {
-    serial_puts("Entering user mode...\n");
-    serial_puts("  Entry point: ");
-    serial_put_hex64((uint64_t)entry_point);
-    serial_puts("\n");
-    serial_puts("  User stack:  ");
-    serial_put_hex64((uint64_t)user_stack);
-    serial_puts("\n");
-    
-    /* Call the assembly function to perform the actual transition */
-    enter_usermode_arm64((uint64_t)entry_point, (uint64_t)user_stack);
-    
-    /* Should never reach here */
-    serial_puts("ERROR: enter_usermode_arm64 returned!\n");
-    while (1) {
-        __asm__ volatile("wfi");
-    }
-}
 

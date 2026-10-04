@@ -195,13 +195,6 @@ void idt64_set_interrupt_gate_ist(uint8_t vector, uint64_t handler, uint8_t ist)
  */
 void idt64_set_trap_gate(uint8_t vector, uint64_t handler);
 
-/**
- * @brief Set a user-callable interrupt gate (DPL=3)
- * @param vector Interrupt vector number
- * @param handler Handler function address
- */
-void idt64_set_user_interrupt_gate(uint8_t vector, uint64_t handler);
-
 /* ============================================================================
  * Assembly Functions (defined in idt64_asm.asm)
  * ========================================================================== */

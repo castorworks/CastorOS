@@ -107,32 +107,6 @@ void kernel::Scheduler::ready_queue_add(task_t *task) {
 }
 
 /**
- * @brief 从就绪队列移除任务
- */
-void kernel::Scheduler::ready_queue_remove(task_t *task) {
-    if (!task) {
-        return;
-    }
-    
-    sync::SpinlockIrqGuard guard(task_lock);
-    
-    if (task->prev) {
-        task->prev->next = task->next;
-    } else {
-        ready_queue_head = task->next;
-    }
-    
-    if (task->next) {
-        task->next->prev = task->prev;
-    } else {
-        ready_queue_tail = task->prev;
-    }
-    
-    task->next = NULL;
-    task->prev = NULL;
-}
-
-/**
  * @brief 从就绪队列获取下一个任务
  * 
  * @return 下一个就绪任务，如果队列为空返回 NULL
@@ -1400,38 +1374,4 @@ void kernel::Scheduler::init() {
 /* ============================================================================
  * 调试和监控
  * ========================================================================== */
-
-/**
- * @brief 打印所有任务信息
- */
-void kernel::Scheduler::print_all() {
-    kprintf("\n=== Task List ===\n");
-    kprintf("PID  State     Priority  Runtime(ms)  Name\n");
-    kprintf("---  --------  --------  -----------  ----\n");
-    
-    sync::SpinlockIrqGuard guard(task_lock);
-    
-    for (uint32_t i = 0; i < MAX_TASKS; i++) {
-        task_t *task = &task_pool[i];
-        
-        if (task->state != TASK_UNUSED) {
-            const char *state_str = "UNKNOWN";
-            switch (task->state) {
-                case TASK_READY:      state_str = "READY"; break;
-                case TASK_RUNNING:    state_str = "RUNNING"; break;
-                case TASK_BLOCKED:    state_str = "BLOCKED"; break;
-                case TASK_ZOMBIE:     state_str = "ZOMBIE"; break;
-                case TASK_TERMINATED: state_str = "TERMINATED"; break;
-                default: break;
-            }
-            
-            kprintf("%-4u %-8s %-9u %-12llu %s%s\n",
-                   task->pid, state_str, task->priority, task->runtime_ms,
-                   task->name,
-                   (task == current_task) ? " (current)" : "");
-        }
-    }
-    
-    kprintf("\nActive tasks: %u / %u\n", active_task_count, MAX_TASKS);
-}
 

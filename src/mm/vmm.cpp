@@ -204,15 +204,6 @@ static void unregister_page_directory(uintptr_t dir_phys) {
 #endif /* !ARCH_X86_64 */
 
 #if defined(ARCH_I686)
-/**
- * @brief 创建新的页表 (i686 only)
- * @return 成功返回页表虚拟地址，失败返回 NULL
- */
-static page_table_t* create_page_table(void) {
-    paddr_t frame = mm::Pmm::alloc_frame();
-    if (frame == PADDR_INVALID) return NULL;
-    return (page_table_t*)PHYS_TO_VIRT(frame);
-}
 #endif
 
 /**
@@ -627,79 +618,6 @@ static uint32_t hal_flags_to_vmm(uint32_t hal_flags) {
  * 
  * @see Requirements 4.4, 12.1
  * ========================================================================== */
-
-/**
- * @brief 将 HAL 错误码转换为 VMM 错误码
- * @param hal_err HAL 错误码
- * @return 对应的 VMM 错误码
- */
-vmm_error_t mm::Vmm::error_from_hal(hal_error_t hal_err) {
-    switch (hal_err) {
-        case HAL_OK:
-            return VMM_OK;
-        case HAL_ERR_INVALID_PARAM:
-            return VMM_ERR_INVALID_PARAM;
-        case HAL_ERR_NO_MEMORY:
-            return VMM_ERR_NO_MEMORY;
-        case HAL_ERR_NOT_SUPPORTED:
-            return VMM_ERR_NOT_SUPPORTED;
-        case HAL_ERR_NOT_FOUND:
-            return VMM_ERR_NOT_FOUND;
-        case HAL_ERR_PERMISSION:
-            return VMM_ERR_PERMISSION;
-        case HAL_ERR_ALREADY_EXISTS:
-            return VMM_ERR_ALREADY_MAPPED;
-        default:
-            return VMM_ERR_INVALID_PARAM;
-    }
-}
-
-/**
- * @brief 将 VMM 错误码转换为 HAL 错误码
- * @param vmm_err VMM 错误码
- * @return 对应的 HAL 错误码
- */
-hal_error_t mm::Vmm::error_to_hal(vmm_error_t vmm_err) {
-    switch (vmm_err) {
-        case VMM_OK:
-            return HAL_OK;
-        case VMM_ERR_INVALID_PARAM:
-            return HAL_ERR_INVALID_PARAM;
-        case VMM_ERR_NO_MEMORY:
-            return HAL_ERR_NO_MEMORY;
-        case VMM_ERR_NOT_SUPPORTED:
-            return HAL_ERR_NOT_SUPPORTED;
-        case VMM_ERR_NOT_FOUND:
-            return HAL_ERR_NOT_FOUND;
-        case VMM_ERR_ALREADY_MAPPED:
-            return HAL_ERR_ALREADY_EXISTS;
-        case VMM_ERR_PERMISSION:
-            return HAL_ERR_PERMISSION;
-        case VMM_ERR_COW_FAILED:
-            return HAL_ERR_IO;
-        default:
-            return HAL_ERR_INVALID_PARAM;
-    }
-}
-
-/**
- * @brief 获取 VMM 错误码的字符串描述
- * @param err VMM 错误码
- * @return 错误描述字符串
- */
-const char *mm::Vmm::error_string(vmm_error_t err) {
-    switch (err) {
-        case VMM_OK:                return "Success";
-        case VMM_ERR_INVALID_PARAM: return "Invalid parameter";
-        case VMM_ERR_NO_MEMORY:     return "Out of memory";
-        case VMM_ERR_NOT_SUPPORTED: return "Operation not supported";
-        case VMM_ERR_NOT_FOUND:     return "Mapping not found";
-        case VMM_ERR_ALREADY_MAPPED:return "Address already mapped";
-        case VMM_ERR_PERMISSION:    return "Permission denied";
-        case VMM_ERR_COW_FAILED:    return "COW operation failed";
-        default:                    return "Unknown error";
-    }
-}
 
 /**
  * @brief 映射虚拟页到物理页
@@ -1494,70 +1412,7 @@ static inline void wrmsr(uint32_t msr, uint64_t value) {
     __asm__ volatile("wrmsr" : : "c"(msr), "a"(low), "d"(high));
 }
 
-/**
- * @brief 检查 CPU 是否支持 PAT (x86 only)
- */
-static bool cpu_has_pat(void) {
-    uint32_t eax, ebx, ecx, edx;
-    __asm__ volatile("cpuid" 
-                     : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
-                     : "a"(1));
-    return (edx & (1 << 16)) != 0;  // PAT 在 EDX bit 16
-}
 #endif /* ARCH_I686 || ARCH_X86_64 */
-
-/**
- * @brief 初始化 PAT (Page Attribute Table)
- * 
- * 配置 PAT 以支持 Write-Combining 内存类型：
- * - PAT[0] = WB  (默认，用于普通内存)
- * - PAT[1] = WT  (Write-Through)
- * - PAT[2] = UC- (Uncacheable)
- * - PAT[3] = UC  (Uncacheable)
- * - PAT[4] = WB  (Write-Back)
- * - PAT[5] = WT  (Write-Through)
- * - PAT[6] = UC- (Uncacheable)
- * - PAT[7] = WC  (Write-Combining - 用于帧缓冲)
- * 
- * 页表项组合：
- * - PAT=0, PCD=0, PWT=0 -> PAT[0] = WB
- * - PAT=0, PCD=0, PWT=1 -> PAT[1] = WT
- * - PAT=0, PCD=1, PWT=0 -> PAT[2] = UC-
- * - PAT=0, PCD=1, PWT=1 -> PAT[3] = UC
- * - PAT=1, PCD=0, PWT=0 -> PAT[4] = WB
- * - PAT=1, PCD=0, PWT=1 -> PAT[5] = WT
- * - PAT=1, PCD=1, PWT=0 -> PAT[6] = UC-
- * - PAT=1, PCD=1, PWT=1 -> PAT[7] = WC  <-- 用于帧缓冲
- */
-void mm::Vmm::init_pat() {
-#if defined(ARCH_I686) || defined(ARCH_X86_64)
-    if (!cpu_has_pat()) {
-        LOG_WARN_MSG("vmm: PAT not supported by CPU, framebuffer will use UC mode\n");
-        return;
-    }
-    
-    // 构建 PAT 值：每个条目 8 位
-    // PAT[7] = WC (1), PAT[6] = UC- (7), PAT[5] = WT (4), PAT[4] = WB (6)
-    // PAT[3] = UC (0), PAT[2] = UC- (7), PAT[1] = WT (4), PAT[0] = WB (6)
-    uint64_t pat_value = 
-        ((uint64_t)PAT_TYPE_WC  << 56) |  // PAT[7] = WC (Write-Combining)
-        ((uint64_t)PAT_TYPE_UC_ << 48) |  // PAT[6] = UC-
-        ((uint64_t)PAT_TYPE_WT  << 40) |  // PAT[5] = WT
-        ((uint64_t)PAT_TYPE_WB  << 32) |  // PAT[4] = WB
-        ((uint64_t)PAT_TYPE_UC  << 24) |  // PAT[3] = UC
-        ((uint64_t)PAT_TYPE_UC_ << 16) |  // PAT[2] = UC-
-        ((uint64_t)PAT_TYPE_WT  <<  8) |  // PAT[1] = WT
-        ((uint64_t)PAT_TYPE_WB  <<  0);   // PAT[0] = WB
-    
-    wrmsr(MSR_IA32_PAT, pat_value);
-    pat_initialized = true;
-    
-    LOG_INFO_MSG("vmm: PAT initialized (WC mode available for framebuffer)\n");
-#else
-    /* ARM64: Memory attributes are configured via MAIR_EL1 in mmu.c */
-    LOG_INFO_MSG("vmm: PAT not applicable on ARM64 (using MAIR_EL1)\n");
-#endif
-}
 
 /**
  * @brief 映射帧缓冲区域（使用 Write-Combining 模式）
@@ -1766,24 +1621,3 @@ void mm::Vmm::dump_page_tables(uintptr_t dir_phys, uintptr_t start_virt, uintptr
     kprintf("==========================================================\n\n");
 }
 
-/**
- * @brief 转储当前页目录的用户空间映射
- */
-void mm::Vmm::dump_user_mappings() {
-    mm::Vmm::dump_page_tables(0, 0x00000000, KERNEL_VIRTUAL_BASE);
-}
-
-/**
- * @brief 转储当前页目录的内核空间映射
- */
-void mm::Vmm::dump_kernel_mappings() {
-#if defined(ARCH_X86_64)
-    // x86_64: 内核空间从 0xFFFF800000000000 开始
-    // 只转储前 1GB 以避免输出过多
-    mm::Vmm::dump_page_tables(0, KERNEL_VIRTUAL_BASE, KERNEL_VIRTUAL_BASE + 0x40000000ULL);
-#else
-    // i686: 内核空间从 0x80000000 开始
-    // 只转储前 256MB 以避免输出过多
-    mm::Vmm::dump_page_tables(0, KERNEL_VIRTUAL_BASE, KERNEL_VIRTUAL_BASE + 0x10000000);
-#endif
-}

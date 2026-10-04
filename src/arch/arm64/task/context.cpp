@@ -128,26 +128,6 @@ void hal::Context::switch_to(hal_context_t **old_ctx, hal_context_t *new_ctx) {
 }
 
 /**
- * @brief Set the kernel stack for a task context
- * 
- * On ARM64, this stores the kernel stack pointer in X28 of the context.
- * The context switch code will use this to set SP_EL1 before ERET to user mode.
- * This ensures that when an exception occurs in user mode, the CPU uses
- * the correct kernel stack for that task.
- * 
- * @param ctx Pointer to the task's context
- * @param stack_top Top of the kernel stack
- */
-void hal_context_set_kernel_stack_ctx(hal_context_t *ctx, uintptr_t stack_top) {
-    if (!ctx) {
-        return;
-    }
-    arm64_context_t *arm64_ctx = (arm64_context_t *)ctx;
-    /* Context switch loads this into SP_EL1 before returning to EL0 */
-    arm64_ctx->kernel_sp = (uint64_t)stack_top;
-}
-
-/**
  * @brief Set the kernel stack for the current CPU
  * 
  * On ARM64, this sets up the stack pointer that will be used when

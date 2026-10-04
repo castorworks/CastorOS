@@ -79,23 +79,4 @@ bool UAccess::can_write(void *addr, size_t len) {
     return range_ok((uintptr_t)addr, len, true);
 }
 
-long UAccess::strnlen(const char *str, size_t max_len) {
-    uintptr_t p = (uintptr_t)str;
-    size_t n = 0;
-    while (n < max_len) {
-        /* 每进入新的一页先校验，再读这一页里的字节 */
-        if (n == 0 || (p & (PAGE_SIZE - 1)) == 0) {
-            if (!range_in_user(p, 1) || !page_ok(PAGE_ALIGN_DOWN(p), false)) {
-                return -1;
-            }
-        }
-        if (*(const char *)p == '\0') {
-            return (long)n;
-        }
-        p++;
-        n++;
-    }
-    return -1;
-}
-
 } // namespace kernel

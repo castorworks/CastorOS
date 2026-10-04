@@ -135,85 +135,6 @@ bool hal_mmu_is_paging_enabled(void) {
  * i686 页表格式验证
  * ========================================================================== */
 
-/**
- * @brief 验证 i686 页表项格式
- * @param entry 页表项
- * @return true 如果格式正确
- * 
- * i686 PTE 格式:
- *   [31:12] - 物理页帧地址 (20 bits)
- *   [11:9]  - Available (3 bits, 用于 COW 等)
- *   [8]     - Global (G)
- *   [7]     - PAT (Page Attribute Table)
- *   [6]     - Dirty (D)
- *   [5]     - Accessed (A)
- *   [4]     - Cache Disable (PCD)
- *   [3]     - Write-Through (PWT)
- *   [2]     - User/Supervisor (U/S)
- *   [1]     - Read/Write (R/W)
- *   [0]     - Present (P)
- */
-bool i686_validate_pte_format(uint32_t entry) {
-    // 如果不存在，格式无关紧要
-    if (!i686_is_present(entry)) {
-        return true;
-    }
-    
-    // 物理地址必须页对齐
-    uint32_t frame = i686_get_frame(entry);
-    if (frame & (PAGE_SIZE - 1)) {
-        return false;
-    }
-    
-    return true;
-}
-
-/**
- * @brief 验证 i686 页目录项格式
- * @param entry 页目录项
- * @return true 如果格式正确
- * 
- * i686 PDE 格式与 PTE 类似，但指向页表而非物理页
- */
-bool i686_validate_pde_format(uint32_t entry) {
-    // 如果不存在，格式无关紧要
-    if (!i686_is_present(entry)) {
-        return true;
-    }
-    
-    // 页表地址必须页对齐
-    uint32_t table_addr = i686_get_frame(entry);
-    if (table_addr & (PAGE_SIZE - 1)) {
-        return false;
-    }
-    
-    return true;
-}
-
-/**
- * @brief 获取 i686 页表级数
- * @return 2 (i686 使用 2 级页表)
- */
-uint32_t i686_get_page_table_levels(void) {
-    return 2;
-}
-
-/**
- * @brief 获取 i686 页大小
- * @return 4096 (4KB)
- */
-uint32_t i686_get_page_size(void) {
-    return PAGE_SIZE;
-}
-
-/**
- * @brief 获取 i686 内核虚拟基址
- * @return 0x80000000 (2GB, 高半核)
- */
-uintptr_t i686_get_kernel_virtual_base(void) {
-    return KERNEL_VIRTUAL_BASE;
-}
-
 
 /* ============================================================================
  * HAL MMU 扩展接口实现 - i686
@@ -688,16 +609,6 @@ paddr_t hal::Mmu::virt_to_phys(vaddr_t virt) {
         return phys;
     }
     return PADDR_INVALID;
-}
-
-/**
- * @brief 创建新页表 (i686, 兼容旧接口)
- * @return 页表物理地址，失败返回 PADDR_INVALID
- * @deprecated 使用 hal::Mmu::create_space() 代替
- */
-paddr_t hal::Mmu::create_page_table() {
-    hal_addr_space_t space = hal::Mmu::create_space();
-    return (space == HAL_ADDR_SPACE_INVALID) ? PADDR_INVALID : space;
 }
 
 /**

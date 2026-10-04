@@ -28,101 +28,34 @@
  *   宽度 - 指定最小字段宽度，例如 %5d 表示至少 5 字符宽度
  *   ll - 长度修饰符，用于 64 位整数
  * 
- * 输出目标：
- *   - kprintf/kputchar/kprint: 同时输出到串口和 VGA（默认，向后兼容）
- *   - kprintf_serial/kputchar_serial/kprint_serial: 仅输出到串口
- *   - kprintf_vga/kputchar_vga/kprint_vga: 仅输出到 VGA
+ * 内核控制台是串口。
  */
 
-/* ============================================================================
- * 同时输出到串口和 VGA（向后兼容）
- * ============================================================================ */
-
 /**
- * 格式化输出到串口和 VGA
+ * 格式化输出到控制台
  * @param fmt 格式字符串
  * @param ... 可变参数
  */
 void kprintf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 /**
- * 格式化输出到串口和 VGA（va_list 版本）
+ * 格式化输出到控制台（va_list 版本）
  * @param fmt 格式字符串
  * @param args 可变参数列表
  */
 void vkprintf(const char *fmt, va_list args);
 
 /**
- * 基本输出函数（同时输出到串口和 VGA）
+ * 基本输出函数
  * @param msg 要输出的字符串
  */
 void kprint(const char *msg);
 
 /**
- * 输出单个字符（同时输出到串口和 VGA）
+ * 输出单个字符
  * @param c 要输出的字符
  */
 void kputchar(char c);
-
-/* ============================================================================
- * 仅输出到串口
- * ============================================================================ */
-
-/**
- * 格式化输出到串口
- * @param fmt 格式字符串
- * @param ... 可变参数
- */
-void kprintf_serial(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-
-/**
- * 格式化输出到串口（va_list 版本）
- * @param fmt 格式字符串
- * @param args 可变参数列表
- */
-void vkprintf_serial(const char *fmt, va_list args);
-
-/**
- * 输出字符串到串口
- * @param msg 要输出的字符串
- */
-void kprint_serial(const char *msg);
-
-/**
- * 输出单个字符到串口
- * @param c 要输出的字符
- */
-void kputchar_serial(char c);
-
-/* ============================================================================
- * 仅输出到 VGA
- * ============================================================================ */
-
-/**
- * 格式化输出到 VGA
- * @param fmt 格式字符串
- * @param ... 可变参数
- */
-void kprintf_vga(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-
-/**
- * 格式化输出到 VGA（va_list 版本）
- * @param fmt 格式字符串
- * @param args 可变参数列表
- */
-void vkprintf_vga(const char *fmt, va_list args);
-
-/**
- * 输出字符串到 VGA
- * @param msg 要输出的字符串
- */
-void kprint_vga(const char *msg);
-
-/**
- * 输出单个字符到 VGA
- * @param c 要输出的字符
- */
-void kputchar_vga(char c);
 
 /**
  * 格式化输出到字符串缓冲区
@@ -135,13 +68,9 @@ void kputchar_vga(char c);
 int ksnprintf(char *str, size_t size, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
 
 /* ============================================================================
- * 控制台颜色和清屏（自动适配 VGA 文本模式和帧缓冲图形模式）
+ * 控制台颜色：串口控制台上是空操作，接口保留给测试框架
  * ============================================================================ */
 
-/**
- * VGA 颜色定义（与 vga.h 中的定义保持一致）
- * 用于 kconsole_set_color() 的颜色参数
- */
 typedef enum {
     KCOLOR_BLACK        = 0,
     KCOLOR_BLUE         = 1,
@@ -163,16 +92,9 @@ typedef enum {
 
 /**
  * 设置控制台颜色
- * 自动适配 VGA 文本模式和帧缓冲图形模式
  * @param fg 前景色（KCOLOR_xxx）
  * @param bg 背景色（KCOLOR_xxx）
  */
 void kconsole_set_color(kcolor_t fg, kcolor_t bg);
-
-/**
- * 清空控制台屏幕
- * 自动适配 VGA 文本模式和帧缓冲图形模式
- */
-void kconsole_clear(void);
 
 #endif /* _LIB_KPRINTF_H_ */

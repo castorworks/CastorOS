@@ -108,14 +108,6 @@ int strcasecmp(const char *s1, const char *s2);
 char *strcpy(char *dest, const char *src);
 
 /**
- * 将源字符串追加到目标字符串的末尾
- * @param dest 目标字符串（必须足够大以容纳结果）
- * @param src 源字符串
- * @return 目标缓冲区指针
- */
-char *strcat(char *dest, const char *src);
-
-/**
  * 复制最多 n 个字符
  * @param dest 目标缓冲区
  * @param src 源字符串
@@ -132,36 +124,6 @@ char *strncpy(char *dest, const char *src, size_t n);
  * @note 该函数会修改原字符串，使用静态变量保存状态，非线程安全
  */
 char *strtok(char *str, const char *delim);
-
-/**
- * 在字符串中查找字符
- * @param str 要搜索的字符串
- * @param c 要查找的字符
- * @return 指向第一次出现的字符的指针，如果未找到则返回 NULL
- */
-char *strchr(const char *str, int c);
-
-/**
- * 在字符串中从右向左查找字符
- * @param str 要搜索的字符串
- * @param c 要查找的字符
- * @return 指向最后一次出现的字符的指针，如果未找到则返回 NULL
- */
-char *strrchr(const char *str, int c);
-
-/**
- * 将字符转换为大写
- * @param c 要转换的字符
- * @return 大写字符，如果不是字母则返回原字符
- */
-int toupper(int c);
-
-/**
- * 将字符转换为小写
- * @param c 要转换的字符
- * @return 小写字符，如果不是字母则返回原字符
- */
-int tolower(int c);
 
 /**
  * 设置内存区域

@@ -146,13 +146,6 @@ public:
     static bool validate(const void *elf_data, size_t size);
 
     /**
-     * 检查 ELF 是否为 64 位
-     * @param elf_data ELF 数据指针
-     * @return 64位返回 true，32位返回 false
-     */
-    static bool is_64bit(const void *elf_data);
-
-    /**
      * 加载 ELF 文件到指定页目录（使用 uintptr_t 支持 32/64 位）
      * @param elf_data ELF 数据指针
      * @param size ELF 文件大小

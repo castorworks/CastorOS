@@ -465,18 +465,6 @@ public:
     static void ready_queue_add(task_t *task);
 
     /**
-     * @brief 从就绪队列移除任务
-     * 
-     * @param task 任务指针
-     */
-    static void ready_queue_remove(task_t *task);
-
-    /**
-     * @brief 打印所有任务信息（用于调试）
-     */
-    static void print_all();
-
-    /**
      * @brief 获取系统中的任务数量
      * 
      * @return 活动任务数量

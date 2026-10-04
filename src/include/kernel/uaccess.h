@@ -28,11 +28,6 @@ public:
      */
     static bool can_write(void *addr, size_t len);
 
-    /**
-     * 用户字符串是否在 max_len 字节内以 NUL 结尾且全部可读。
-     * @return 字符串长度（不含 NUL）；不合法时返回 -1
-     */
-    static long strnlen(const char *str, size_t max_len);
 };
 
 } // namespace kernel

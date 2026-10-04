@@ -342,36 +342,6 @@ bool x86_64_is_cow_fault(uint64_t error_code) {
     return (error_code & 0x3) == 0x3;
 }
 
-/**
- * @brief 获取页错误类型描述字符串
- * @param error_code 错误码
- * @return 描述字符串
- */
-const char* x86_64_page_fault_type_str(uint64_t error_code) {
-    x86_64_page_fault_info_t info = x86_64_parse_page_fault_error(error_code);
-    
-    if (!info.present) {
-        if (info.write) {
-            return info.user ? "User write to non-present page" 
-                             : "Kernel write to non-present page";
-        } else {
-            return info.user ? "User read from non-present page"
-                             : "Kernel read from non-present page";
-        }
-    } else {
-        if (info.write) {
-            return info.user ? "User write protection violation"
-                             : "Kernel write protection violation";
-        } else if (info.instruction) {
-            return info.user ? "User instruction fetch violation"
-                             : "Kernel instruction fetch violation";
-        } else {
-            return info.user ? "User read protection violation"
-                             : "Kernel read protection violation";
-        }
-    }
-}
-
 
 /* ============================================================================
  * HAL MMU 扩展接口实现 - x86_64

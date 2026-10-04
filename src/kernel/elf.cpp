@@ -36,12 +36,6 @@ static inline uint64_t elf_user_image_limit(void) {
 #endif
 }
 
-bool kernel::Elf::is_64bit(const void *elf_data) {
-    if (!elf_data) return false;
-    const uint8_t *ident = (const uint8_t *)elf_data;
-    return ident[4] == ELF_CLASS_64;
-}
-
 bool kernel::Elf::validate_header(const void *elf_data, size_t size) {
     if (!elf_data) return false;
     /* 文件至少要装得下完整的 ELF 头，否则下面读到的就是缓冲区之外的内容 */

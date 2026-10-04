@@ -91,35 +91,12 @@ bool arm64_is_permission_fault(uint32_t fsc);
 bool arm64_is_access_flag_fault(uint32_t fsc);
 
 /**
- * @brief Check if FSC indicates an address size fault
- * @param fsc Fault Status Code
- * @return true if address size fault
- */
-bool arm64_is_address_size_fault(uint32_t fsc);
-
-/**
- * @brief Parse page fault information with provided ESR value
- * 
- * @param[out] info Pointer to structure to fill with fault information
- * @param esr ESR_EL1 value (already read by exception handler)
- */
-void arm64_parse_fault_with_esr(hal_page_fault_info_t *info, uint64_t esr);
-
-/**
  * @brief Check if a page fault is a COW (Copy-on-Write) fault
  * 
  * @param esr ESR_EL1 value
  * @return true if this is a COW fault
  */
 bool arm64_is_cow_page_fault(uint64_t esr);
-
-/**
- * @brief Get a human-readable description of the fault type
- * 
- * @param esr ESR_EL1 value
- * @return Description string
- */
-const char* arm64_get_fault_description(uint64_t esr);
 
 /**
  * @brief Get the page table level where the fault occurred

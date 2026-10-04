@@ -196,25 +196,6 @@ void gdt64_init_with_tss(uint64_t kernel_stack);
  */
 void tss64_set_kernel_stack(uint64_t kernel_stack);
 
-/**
- * @brief Set an IST (Interrupt Stack Table) entry
- * @param ist_index IST index (1-7)
- * @param stack_top Stack top address for this IST entry
- */
-void tss64_set_ist(uint8_t ist_index, uint64_t stack_top);
-
-/**
- * @brief Get TSS address
- * @return Address of the TSS structure
- */
-uint64_t tss64_get_address(void);
-
-/**
- * @brief Get TSS size
- * @return Size of the TSS structure in bytes
- */
-uint32_t tss64_get_size(void);
-
 /* ============================================================================
  * Assembly Functions (defined in gdt64_asm.asm)
  * ========================================================================== */

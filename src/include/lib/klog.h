@@ -6,8 +6,7 @@
  * 
  * 提供分级日志输出功能，支持：
  * - 根据日志等级过滤
- * - ANSI 彩色输出（VGA 和串口终端）
- * - 可配置输出目标（VGA、串口或两者）
+ * - ANSI 彩色输出（串口终端）
  */
 
 /* 日志等级 */
@@ -17,13 +16,6 @@ typedef enum {
     LOG_WARN  = 2,  // 警告信息（黄色）
     LOG_ERROR = 3,  // 错误信息（红色）
 } log_level_t;
-
-/* 日志输出目标 */
-typedef enum {
-    LOG_TARGET_SERIAL = 0x01,  // 仅串口
-    LOG_TARGET_VGA    = 0x02,  // 仅 VGA
-    LOG_TARGET_BOTH   = 0x03,  // 两者都输出（默认）
-} log_target_t;
 
 /**
  * 设置当前日志等级阈值
@@ -37,18 +29,6 @@ void klog_set_level(log_level_t level);
  * @return 当前日志等级阈值
  */
 log_level_t klog_get_level(void);
-
-/**
- * 设置日志输出目标
- * @param target 输出目标（LOG_TARGET_SERIAL, LOG_TARGET_VGA, LOG_TARGET_BOTH）
- */
-void klog_set_target(log_target_t target);
-
-/**
- * 获取当前日志输出目标
- * @return 当前输出目标
- */
-log_target_t klog_get_target(void);
 
 /**
  * 输出日志（带等级和颜色）

@@ -207,11 +207,4 @@ x86_64_page_fault_info_t x86_64_parse_page_fault_error(uint64_t error_code);
  */
 bool x86_64_is_cow_fault(uint64_t error_code);
 
-/**
- * @brief 获取页错误类型描述字符串
- * @param error_code 错误码
- * @return 描述字符串
- */
-const char* x86_64_page_fault_type_str(uint64_t error_code);
-
 #endif /* _ARCH_X86_64_PAGING64_H_ */

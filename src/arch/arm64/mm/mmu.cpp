@@ -1317,16 +1317,6 @@ hal_addr_space_t hal::Mmu::clone_space(hal_addr_space_t src) {
 }
 
 /**
- * @brief 创建新页表 (ARM64, 兼容旧接口)
- * @return 页表物理地址，失败返回 PADDR_INVALID
- * @deprecated 使用 hal::Mmu::create_space() 代替
- */
-paddr_t hal::Mmu::create_page_table() {
-    hal_addr_space_t space = hal::Mmu::create_space();
-    return (space == HAL_ADDR_SPACE_INVALID) ? PADDR_INVALID : space;
-}
-
-/**
  * @brief 销毁页表 (ARM64, 兼容旧接口)
  * @param page_table_phys 页表物理地址
  * @deprecated 使用 hal::Mmu::destroy_space() 代替
@@ -1400,15 +1390,6 @@ void hal::Mmu::destroy_page_table(paddr_t page_table_phys) {
 #define DFSC_TLB_CONFLICT       0x30    /**< TLB conflict abort */
 
 /**
- * @brief 检查 DFSC 是否为翻译错误 (页不存在)
- * @param dfsc Data Fault Status Code
- * @return true 如果是翻译错误
- */
-static bool is_translation_fault(uint32_t dfsc) {
-    return (dfsc >= DFSC_TRANS_L0 && dfsc <= DFSC_TRANS_L3);
-}
-
-/**
  * @brief 检查 DFSC 是否为权限错误 (页存在但权限不足)
  * @param dfsc Data Fault Status Code
  * @return true 如果是权限错误
@@ -1471,43 +1452,6 @@ void hal::Mmu::parse_fault(hal_page_fault_info_t *info) {
     info->is_exec = is_inst_abort;
     
     /* is_reserved: not applicable on ARM64, set to false */
-    info->is_reserved = false;
-}
-
-/**
- * @brief 使用 ESR 值解析页错误信息 (ARM64)
- * 
- * 此函数应由异常处理程序调用，传入保存的 ESR_EL1 值。
- * 
- * @param[out] info 页错误信息结构
- * @param esr ESR_EL1 寄存器值
- * 
- * @see Requirements 6.4
- */
-void hal_mmu_parse_fault_with_esr(hal_page_fault_info_t *info, uint64_t esr) {
-    if (info == NULL) {
-        return;
-    }
-    
-    /* Get fault address from FAR_EL1 */
-    info->fault_addr = (vaddr_t)read_far_el1();
-    info->raw_error = (uint32_t)esr;
-    
-    /* Extract exception class */
-    uint32_t ec = (esr & ESR_EC_MASK) >> ESR_EC_SHIFT;
-    
-    /* Extract ISS */
-    uint32_t iss = esr & ESR_ISS_MASK;
-    uint32_t dfsc = iss & ESR_ISS_DFSC_MASK;
-    
-    /* Determine fault type */
-    bool is_data_abort = (ec == ESR_EC_DABT_LOW || ec == ESR_EC_DABT_CUR);
-    bool is_inst_abort = (ec == ESR_EC_IABT_LOW || ec == ESR_EC_IABT_CUR);
-    
-    info->is_present = is_permission_fault(dfsc) || is_access_flag_fault(dfsc);
-    info->is_write = is_data_abort && ((iss & ESR_ISS_WNR) != 0);
-    info->is_user = (ec == ESR_EC_DABT_LOW || ec == ESR_EC_IABT_LOW);
-    info->is_exec = is_inst_abort;
     info->is_reserved = false;
 }
 
@@ -1675,57 +1619,6 @@ void hal::Cache::clean_invalidate(void *addr, size_t size) {
     dsb_sy();
 }
 
-
-/**
- * @brief 获取页错误类型描述字符串 (ARM64)
- * @param esr ESR_EL1 寄存器值
- * @return 描述字符串
- */
-const char* arm64_page_fault_type_str(uint64_t esr) {
-    uint32_t ec = (esr & ESR_EC_MASK) >> ESR_EC_SHIFT;
-    uint32_t iss = esr & ESR_ISS_MASK;
-    uint32_t dfsc = iss & ESR_ISS_DFSC_MASK;
-    bool is_write = (iss & ESR_ISS_WNR) != 0;
-    bool is_user = (ec == ESR_EC_DABT_LOW || ec == ESR_EC_IABT_LOW);
-    
-    if (ec == ESR_EC_IABT_LOW || ec == ESR_EC_IABT_CUR) {
-        if (is_translation_fault(dfsc)) {
-            return is_user ? "User instruction fetch from unmapped page"
-                           : "Kernel instruction fetch from unmapped page";
-        } else if (is_permission_fault(dfsc)) {
-            return is_user ? "User instruction fetch permission denied"
-                           : "Kernel instruction fetch permission denied";
-        }
-        return "Instruction abort";
-    }
-    
-    if (ec == ESR_EC_DABT_LOW || ec == ESR_EC_DABT_CUR) {
-        if (is_translation_fault(dfsc)) {
-            if (is_write) {
-                return is_user ? "User write to unmapped page"
-                               : "Kernel write to unmapped page";
-            } else {
-                return is_user ? "User read from unmapped page"
-                               : "Kernel read from unmapped page";
-            }
-        } else if (is_permission_fault(dfsc)) {
-            if (is_write) {
-                return is_user ? "User write permission denied"
-                               : "Kernel write permission denied";
-            } else {
-                return is_user ? "User read permission denied"
-                               : "Kernel read permission denied";
-            }
-        } else if (is_access_flag_fault(dfsc)) {
-            return "Access flag fault";
-        } else if (dfsc == DFSC_ALIGNMENT) {
-            return "Alignment fault";
-        }
-        return "Data abort";
-    }
-    
-    return "Unknown fault";
-}
 
 
 /* ============================================================================

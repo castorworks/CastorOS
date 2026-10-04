@@ -154,20 +154,6 @@ void gic_disable_irq(uint32_t irq);
 void gic_set_priority(uint32_t irq, uint8_t priority);
 
 /**
- * @brief Set interrupt target CPU(s)
- * @param irq Interrupt number
- * @param cpu_mask Bitmask of target CPUs
- */
-void gic_set_target(uint32_t irq, uint8_t cpu_mask);
-
-/**
- * @brief Configure interrupt as edge or level triggered
- * @param irq Interrupt number
- * @param edge true for edge-triggered, false for level-triggered
- */
-void gic_set_config(uint32_t irq, bool edge);
-
-/**
  * @brief Acknowledge an interrupt
  * 
  * Reads GICC_IAR to acknowledge the highest priority pending interrupt.
@@ -181,14 +167,6 @@ uint32_t gic_acknowledge_irq(void);
  * @param irq Interrupt number that was handled
  */
 void gic_end_irq(uint32_t irq);
-
-/**
- * @brief Send a Software Generated Interrupt (SGI)
- * @param irq SGI number (0-15)
- * @param target_list Target CPU list
- * @param filter Target filter (0=list, 1=all except self, 2=self only)
- */
-void gic_send_sgi(uint32_t irq, uint8_t target_list, uint8_t filter);
 
 /**
  * @brief Handle IRQ (called from exception handler)
@@ -211,17 +189,5 @@ void gic_register_handler(uint32_t irq, hal_interrupt_handler_t handler, void *d
  * @param irq Interrupt number
  */
 void gic_unregister_handler(uint32_t irq);
-
-/**
- * @brief Get GIC version
- * @return GIC version (2 or 3)
- */
-uint32_t gic_get_version(void);
-
-/**
- * @brief Get number of supported interrupts
- * @return Maximum interrupt number + 1
- */
-uint32_t gic_get_num_interrupts(void);
 
 #endif /* _ARCH_ARM64_GIC_H_ */

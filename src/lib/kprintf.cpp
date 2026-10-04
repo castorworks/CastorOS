@@ -8,84 +8,40 @@
 #include <kernel/interrupt.h>
 #include <stdarg.h>
 
-/* 输出目标标志。内核控制台只有串口；OUTPUT_VGA 保留给 *_vga 接口，
- * 这些接口在没有显示驱动的内核里不产生输出。 */
-typedef enum {
-    OUTPUT_SERIAL = 0x01,
-    OUTPUT_VGA   = 0x02,
-    OUTPUT_BOTH  = OUTPUT_SERIAL | OUTPUT_VGA
-} output_target_t;
-
-
 /**
- * 内部字符输出函数（根据目标输出）
+ * 内部字符输出函数
  */
-static void output_char(char c, output_target_t target) {
-    if (target & OUTPUT_SERIAL) {
-        drivers::Serial::putchar(c);
-    }
+static void output_char(char c) {
+    drivers::Serial::putchar(c);
 }
 
 /**
- * 内部字符串输出函数（根据目标输出）
+ * 内部字符串输出函数
  */
-static void output_string(const char *msg, output_target_t target) {
-    if (target & OUTPUT_SERIAL) {
-        drivers::Serial::print(msg);
-    }
+static void output_string(const char *msg) {
+    drivers::Serial::print(msg);
 }
 
 /* 中断处理函数也会打日志。下面每个公共输出入口都整体关中断，
  * 保证一次输出不会被另一次输出从中间插入。 */
 
-/* ============================================================================
- * 公共 API - 同时输出到 serial 和 VGA（向后兼容）
- * ============================================================================ */
 
 void kputchar(char c) {
     kernel::InterruptGuard guard;
-    output_char(c, OUTPUT_BOTH);
+    output_char(c);
 }
 
 void kprint(const char *msg) {
     kernel::InterruptGuard guard;
-    output_string(msg, OUTPUT_BOTH);
-}
-
-/* ============================================================================
- * 公共 API - 仅输出到 serial
- * ============================================================================ */
-
-void kputchar_serial(char c) {
-    kernel::InterruptGuard guard;
-    output_char(c, OUTPUT_SERIAL);
-}
-
-void kprint_serial(const char *msg) {
-    kernel::InterruptGuard guard;
-    output_string(msg, OUTPUT_SERIAL);
-}
-
-/* ============================================================================
- * 公共 API - 仅输出到 VGA
- * ============================================================================ */
-
-void kputchar_vga(char c) {
-    kernel::InterruptGuard guard;
-    output_char(c, OUTPUT_VGA);
-}
-
-void kprint_vga(const char *msg) {
-    kernel::InterruptGuard guard;
-    output_string(msg, OUTPUT_VGA);
+    output_string(msg);
 }
 
 /**
- * 打印字符串（内部辅助函数，根据目标输出）
+ * 打印字符串（内部辅助函数）
  */
-static void print_string(const char *str, output_target_t target) {
+static void print_string(const char *str) {
     while (*str) {
-        output_char(*str++, target);
+        output_char(*str++);
     }
 }
 
@@ -103,15 +59,15 @@ static int str_len(const char *str) {
 /**
  * 打印格式化的字符串（带宽度和填充）
  */
-static void print_formatted(const char *str, int width, bool zero_pad, bool left_align, bool is_hex, output_target_t target) {
+static void print_formatted(const char *str, int width, bool zero_pad, bool left_align, bool is_hex) {
     int len = str_len(str);
     int pad_count = width > len ? width - len : 0;
     
     // 对于十六进制数，先输出 "0x" 前缀，然后零填充
     bool has_hex_prefix = (is_hex && len >= 2 && str[0] == '0' && str[1] == 'x');
     if (has_hex_prefix && zero_pad && width > 0 && !left_align) {
-        output_char('0', target);
-        output_char('x', target);
+        output_char('0');
+        output_char('x');
         str += 2;
         len -= 2;
         // 重新计算填充数量（宽度应该减去 "0x" 的长度）
@@ -121,68 +77,68 @@ static void print_formatted(const char *str, int width, bool zero_pad, bool left
     // 对于负数，先输出负号，然后零填充
     bool has_minus = (str[0] == '-');
     if (has_minus && zero_pad && !left_align) {
-        output_char('-', target);
+        output_char('-');
         str++;
         len--;
     }
     
     // 左对齐：先输出内容，再填充空格
     if (left_align) {
-        print_string(str, target);
+        print_string(str);
         for (int i = 0; i < pad_count; i++) {
-            output_char(' ', target);
+            output_char(' ');
         }
     } else {
         // 右对齐：先填充，再输出内容
         char pad_char = zero_pad ? '0' : ' ';
         for (int i = 0; i < pad_count; i++) {
-            output_char(pad_char, target);
+            output_char(pad_char);
         }
-        print_string(str, target);
+        print_string(str);
     }
 }
 
 /**
  * 打印整数（内部辅助函数）
  */
-static void print_int(int32_t value, int width, bool zero_pad, bool left_align, output_target_t target) {
+static void print_int(int32_t value, int width, bool zero_pad, bool left_align) {
     char buffer[12];
     int32_to_str(value, buffer);
-    print_formatted(buffer, width, zero_pad, left_align, false, target);
+    print_formatted(buffer, width, zero_pad, left_align, false);
 }
 
 /**
  * 打印无符号整数（内部辅助函数）
  */
-static void print_uint(uint32_t value, int width, bool zero_pad, bool left_align, output_target_t target) {
+static void print_uint(uint32_t value, int width, bool zero_pad, bool left_align) {
     char buffer[12];
     uint32_to_str(value, buffer);
-    print_formatted(buffer, width, zero_pad, left_align, false, target);
+    print_formatted(buffer, width, zero_pad, left_align, false);
 }
 
 /**
  * 打印 64 位整数（内部辅助函数）
  */
-static void print_int64(int64_t value, int width, bool zero_pad, bool left_align, output_target_t target) {
+static void print_int64(int64_t value, int width, bool zero_pad, bool left_align) {
     char buffer[21];
     int64_to_str(value, buffer);
-    print_formatted(buffer, width, zero_pad, left_align, false, target);
+    print_formatted(buffer, width, zero_pad, left_align, false);
 }
 
 /**
  * 打印 64 位无符号整数（内部辅助函数）
  */
-static void print_uint64(uint64_t value, int width, bool zero_pad, bool left_align, output_target_t target) {
+static void print_uint64(uint64_t value, int width, bool zero_pad, bool left_align) {
     char buffer[21];
     uint64_to_str(value, buffer);
-    print_formatted(buffer, width, zero_pad, left_align, false, target);
+    print_formatted(buffer, width, zero_pad, left_align, false);
 }
 
 /**
  * 打印十六进制数（内部辅助函数，标准 printf 行为）
  * 注意：%x 不输出 0x 前缀，只有 %p 才输出
  */
-static void print_hex(uint32_t value, bool uppercase, int width, bool zero_pad, output_target_t target) {
+static void print_hex(uint32_t value, bool uppercase, int width, bool zero_pad) {
     const char *digits = uppercase ? "0123456789ABCDEF" : "0123456789abcdef";
     
     // 生成十六进制数字（从右到左）
@@ -206,12 +162,12 @@ static void print_hex(uint32_t value, bool uppercase, int width, bool zero_pad, 
     // 输出填充（如果需要）
     char pad_char = zero_pad ? '0' : ' ';
     for (int i = 0; i < pad_count; i++) {
-        output_char(pad_char, target);
+        output_char(pad_char);
     }
     
     // 逆序输出数字
     for (int i = len - 1; i >= 0; i--) {
-        output_char(buffer[i], target);
+        output_char(buffer[i]);
     }
 }
 
@@ -219,7 +175,7 @@ static void print_hex(uint32_t value, bool uppercase, int width, bool zero_pad, 
  * 打印 64 位十六进制数（内部辅助函数，标准 printf 行为）
  * 注意：%llx 不输出 0x 前缀
  */
-static void print_hex64(uint64_t value, bool uppercase, int width, bool zero_pad, output_target_t target) {
+static void print_hex64(uint64_t value, bool uppercase, int width, bool zero_pad) {
     const char *digits = uppercase ? "0123456789ABCDEF" : "0123456789abcdef";
     
     // 生成十六进制数字（从右到左）
@@ -243,19 +199,19 @@ static void print_hex64(uint64_t value, bool uppercase, int width, bool zero_pad
     // 输出填充（如果需要）
     char pad_char = zero_pad ? '0' : ' ';
     for (int i = 0; i < pad_count; i++) {
-        output_char(pad_char, target);
+        output_char(pad_char);
     }
     
     // 逆序输出数字
     for (int i = len - 1; i >= 0; i--) {
-        output_char(buffer[i], target);
+        output_char(buffer[i]);
     }
 }
 
 /**
- * 内部格式化输出函数（根据目标输出）
+ * 内部格式化输出函数
  */
-static void vkprintf_internal(const char *fmt, va_list args, output_target_t target) {
+static void vkprintf_internal(const char *fmt, va_list args) {
     while (*fmt) {
         if (*fmt == '%') {
             fmt++;
@@ -299,76 +255,76 @@ static void vkprintf_internal(const char *fmt, va_list args, output_target_t tar
                     if (!s) {
                         s = "(null)";
                     }
-                    print_formatted(s, width, false, left_align, false, target);
+                    print_formatted(s, width, false, left_align, false);
                     break;
                 }
                 case 'c': {  // 字符
                     char c = (char)va_arg(args, int);
-                    output_char(c, target);
+                    output_char(c);
                     break;
                 }
                 case 'd': {  // 有符号十进制整数
                     if (is_long_long) {
                         int64_t val = va_arg(args, int64_t);
-                        print_int64(val, width, zero_pad, left_align, target);
+                        print_int64(val, width, zero_pad, left_align);
                     } else {
                         int val = va_arg(args, int);
-                        print_int(val, width, zero_pad, left_align, target);
+                        print_int(val, width, zero_pad, left_align);
                     }
                     break;
                 }
                 case 'u': {  // 无符号十进制整数
                     if (is_long_long) {
                         uint64_t val = va_arg(args, uint64_t);
-                        print_uint64(val, width, zero_pad, left_align, target);
+                        print_uint64(val, width, zero_pad, left_align);
                     } else {
                         uint32_t val = va_arg(args, uint32_t);
-                        print_uint(val, width, zero_pad, left_align, target);
+                        print_uint(val, width, zero_pad, left_align);
                     }
                     break;
                 }
                 case 'x': {  // 十六进制（小写）
                     if (is_long_long) {
                         uint64_t val = va_arg(args, uint64_t);
-                        print_hex64(val, false, width, zero_pad, target);
+                        print_hex64(val, false, width, zero_pad);
                     } else {
                         uint32_t val = va_arg(args, uint32_t);
-                        print_hex(val, false, width, zero_pad, target);
+                        print_hex(val, false, width, zero_pad);
                     }
                     break;
                 }
                 case 'X': {  // 十六进制（大写）
                     if (is_long_long) {
                         uint64_t val = va_arg(args, uint64_t);
-                        print_hex64(val, true, width, zero_pad, target);
+                        print_hex64(val, true, width, zero_pad);
                     } else {
                         uint32_t val = va_arg(args, uint32_t);
-                        print_hex(val, true, width, zero_pad, target);
+                        print_hex(val, true, width, zero_pad);
                     }
                     break;
                 }
                 case 'p': {  // 指针（带 0x 前缀）
                     void *ptr = va_arg(args, void *);
-                    output_char('0', target);
-                    output_char('x', target);
+                    output_char('0');
+                    output_char('x');
                     // 指针默认 8 位十六进制，零填充
                     int ptr_width = (width > 2) ? (width - 2) : 8;
-                    print_hex((uint32_t)(uintptr_t)ptr, false, ptr_width, true, target);
+                    print_hex((uint32_t)(uintptr_t)ptr, false, ptr_width, true);
                     break;
                 }
                 case '%': {  // 百分号字面值
-                    output_char('%', target);
+                    output_char('%');
                     break;
                 }
                 default: {  // 未知格式说明符
-                    output_char('%', target);
-                    output_char(*fmt, target);
+                    output_char('%');
+                    output_char(*fmt);
                     break;
                 }
             }
             fmt++;
         } else {
-            output_char(*fmt++, target);
+            output_char(*fmt++);
         }
     }
 }
@@ -379,37 +335,13 @@ static void vkprintf_internal(const char *fmt, va_list args, output_target_t tar
 
 void vkprintf(const char *fmt, va_list args) {
     kernel::InterruptGuard guard;
-    vkprintf_internal(fmt, args, OUTPUT_BOTH);
-}
-
-void vkprintf_serial(const char *fmt, va_list args) {
-    kernel::InterruptGuard guard;
-    vkprintf_internal(fmt, args, OUTPUT_SERIAL);
-}
-
-void vkprintf_vga(const char *fmt, va_list args) {
-    kernel::InterruptGuard guard;
-    vkprintf_internal(fmt, args, OUTPUT_VGA);
+    vkprintf_internal(fmt, args);
 }
 
 void kprintf(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     vkprintf(fmt, args);
-    va_end(args);
-}
-
-void kprintf_serial(const char *fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    vkprintf_serial(fmt, args);
-    va_end(args);
-}
-
-void kprintf_vga(const char *fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    vkprintf_vga(fmt, args);
     va_end(args);
 }
 
@@ -685,13 +617,9 @@ int ksnprintf(char *str, size_t size, const char *fmt, ...) {
     return result;
 }
 
-/* ============================================================================
- * 控制台颜色和清屏：串口控制台不支持，保留为空操作
- * ============================================================================ */
+/* 控制台颜色：串口控制台不支持，保留为空操作 */
 
 void kconsole_set_color(kcolor_t fg, kcolor_t bg) {
     (void)fg; (void)bg;
 }
 
-void kconsole_clear(void) {
-}

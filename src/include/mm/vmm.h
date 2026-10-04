@@ -295,14 +295,6 @@ public:
     static void unmap_mmio(uintptr_t virt_addr, size_t size);
 
     /**
-     * @brief 初始化 PAT (Page Attribute Table)
-     * 
-     * 配置 PAT 以支持 Write-Combining 内存类型。
-     * 应在 vmm_init() 后尽早调用。
-     */
-    static void init_pat();
-
-    /**
      * @brief 通过查询页表获取虚拟地址对应的物理地址
      * @param virt 虚拟地址
      * @return 物理地址，如果虚拟地址未映射则返回 0
@@ -328,20 +320,6 @@ public:
      */
     static void dump_page_tables(uintptr_t dir_phys, uintptr_t start_virt, uintptr_t end_virt);
 
-    /**
-     * @brief 转储当前页目录的用户空间映射
-     * 
-     * 便捷函数，转储当前页目录中用户空间（0x00000000 - KERNEL_VIRTUAL_BASE）的所有映射
-     */
-    static void dump_user_mappings();
-
-    /**
-     * @brief 转储当前页目录的内核空间映射
-     * 
-     * 便捷函数，转储当前页目录中内核空间（KERNEL_VIRTUAL_BASE - 0xFFFFFFFF）的所有映射
-     */
-    static void dump_kernel_mappings();
-
     /* ============================================================================
      * 错误码转换函数
      * 
@@ -350,34 +328,6 @@ public:
      * @see Requirements 4.4, 12.1
      * ========================================================================== */
 
-    /**
-     * @brief 将 HAL 错误码转换为 VMM 错误码
-     * @param hal_err HAL 错误码
-     * @return 对应的 VMM 错误码
-     * 
-     * 转换规则：
-     *   HAL_OK              -> VMM_OK
-     *   HAL_ERR_INVALID_PARAM -> VMM_ERR_INVALID_PARAM
-     *   HAL_ERR_NO_MEMORY   -> VMM_ERR_NO_MEMORY
-     *   HAL_ERR_NOT_SUPPORTED -> VMM_ERR_NOT_SUPPORTED
-     *   HAL_ERR_NOT_FOUND   -> VMM_ERR_NOT_FOUND
-     *   其他                -> VMM_ERR_INVALID_PARAM
-     */
-    static vmm_error_t error_from_hal(hal_error_t hal_err);
-
-    /**
-     * @brief 将 VMM 错误码转换为 HAL 错误码
-     * @param vmm_err VMM 错误码
-     * @return 对应的 HAL 错误码
-     */
-    static hal_error_t error_to_hal(vmm_error_t vmm_err);
-
-    /**
-     * @brief 获取 VMM 错误码的字符串描述
-     * @param err VMM 错误码
-     * @return 错误描述字符串
-     */
-    static const char *error_string(vmm_error_t err);
 };
 
 } // namespace mm

@@ -273,43 +273,6 @@ void gic_set_priority(uint32_t irq, uint8_t priority) {
 }
 
 /**
- * @brief Set interrupt target CPU(s)
- */
-void gic_set_target(uint32_t irq, uint8_t cpu_mask) {
-    if (irq < GIC_SPI_BASE || irq >= gic_num_interrupts) {
-        return;  /* Only SPIs can have targets set */
-    }
-    
-    uint32_t reg = irq / 4;
-    uint32_t shift = (irq % 4) * 8;
-    uint32_t mask = 0xFF << shift;
-    
-    uint32_t val = gicd_read(GICD_ITARGETSR(reg));
-    val = (val & ~mask) | ((uint32_t)cpu_mask << shift);
-    gicd_write(GICD_ITARGETSR(reg), val);
-}
-
-/**
- * @brief Configure interrupt as edge or level triggered
- */
-void gic_set_config(uint32_t irq, bool edge) {
-    if (irq < GIC_SPI_BASE || irq >= gic_num_interrupts) {
-        return;  /* Only SPIs can have config changed */
-    }
-    
-    uint32_t reg = irq / 16;
-    uint32_t shift = (irq % 16) * 2 + 1;  /* Config is in bit 1 of each 2-bit field */
-    
-    uint32_t val = gicd_read(GICD_ICFGR(reg));
-    if (edge) {
-        val |= (1 << shift);
-    } else {
-        val &= ~(1 << shift);
-    }
-    gicd_write(GICD_ICFGR(reg), val);
-}
-
-/**
  * @brief Acknowledge an interrupt
  */
 uint32_t gic_acknowledge_irq(void) {
@@ -321,18 +284,6 @@ uint32_t gic_acknowledge_irq(void) {
  */
 void gic_end_irq(uint32_t irq) {
     gicc_write(GICC_EOIR, irq);
-}
-
-/**
- * @brief Send a Software Generated Interrupt (SGI)
- */
-void gic_send_sgi(uint32_t irq, uint8_t target_list, uint8_t filter) {
-    if (irq >= GIC_SGI_COUNT) {
-        return;
-    }
-    
-    uint32_t val = irq | ((uint32_t)target_list << 16) | ((uint32_t)filter << 24);
-    gicd_write(GICD_SGIR, val);
 }
 
 /**
@@ -433,16 +384,3 @@ void gic_unregister_handler(uint32_t irq) {
     irq_handlers[irq].data = NULL;
 }
 
-/**
- * @brief Get GIC version
- */
-uint32_t gic_get_version(void) {
-    return gic_version;
-}
-
-/**
- * @brief Get number of supported interrupts
- */
-uint32_t gic_get_num_interrupts(void) {
-    return gic_num_interrupts;
-}

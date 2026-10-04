@@ -190,60 +190,6 @@ char *strcpy(char *dest, const char *src) {
     return original_dest;
 }
 
-char *strcat(char *dest, const char *src) {
-    char *original_dest = dest;
-    // 找到目标字符串的末尾
-    while (*dest) {
-        dest++;
-    }
-    // 从末尾开始复制源字符串
-    while ((*dest++ = *src++));
-    return original_dest;
-}
-
-char *strchr(const char *str, int c) {
-    while (*str != '\0') {
-        if (*str == (char)c) {
-            return (char *)str;
-        }
-        str++;
-    }
-    // 检查是否查找 '\0'
-    if ((char)c == '\0') {
-        return (char *)str;
-    }
-    return NULL;
-}
-
-char *strrchr(const char *str, int c) {
-    const char *last = NULL;
-    while (*str != '\0') {
-        if (*str == (char)c) {
-            last = str;
-        }
-        str++;
-    }
-    // 检查是否查找 '\0'
-    if ((char)c == '\0') {
-        return (char *)str;
-    }
-    return (char *)last;
-}
-
-int toupper(int c) {
-    if (c >= 'a' && c <= 'z') {
-        return c - ('a' - 'A');
-    }
-    return c;
-}
-
-int tolower(int c) {
-    if (c >= 'A' && c <= 'Z') {
-        return c + ('a' - 'A');
-    }
-    return c;
-}
-
 void *memset(void *ptr, int value, size_t num) {
     unsigned char *p = (unsigned char *)ptr;
     unsigned char v = (unsigned char)value;
