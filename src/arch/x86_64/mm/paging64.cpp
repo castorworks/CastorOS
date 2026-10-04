@@ -1232,18 +1232,11 @@ static void free_page_table_recursive(paddr_t table_phys, int level, bool is_use
         paddr_t frame = pte64_get_frame(entry);
         
         if (level == 1) {
-            /* Level 1 (PT): entries point to physical pages */
-            /* Decrement reference count for shared pages (COW) */
-            uint32_t refcount = mm::Pmm::frame_get_refcount(frame);
-            if (refcount > 0) {
-                mm::Pmm::frame_ref_dec(frame);
-                /* If refcount becomes 0, the frame is freed by mm::Pmm::frame_ref_dec */
-                if (refcount == 1) {
-                    /* This was the last reference, frame is now free */
-                    LOG_DEBUG_MSG("free_page_table_recursive: Freed physical page 0x%llx\n",
-                                  (unsigned long long)frame);
-                }
-            }
+            /* Level 1 (PT): entries point to physical pages.
+             * free_frame() drops one reference and returns the frame to the
+             * allocator when it was the last one (frame_ref_dec() only
+             * decrements the counter and would leak the frame). */
+            mm::Pmm::free_frame(frame);
         } else if (!pte64_is_huge(entry)) {
             /* Not a huge page, recurse into child table */
             free_page_table_recursive(frame, level - 1, is_user);

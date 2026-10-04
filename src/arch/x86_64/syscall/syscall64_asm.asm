@@ -179,6 +179,11 @@ syscall_entry:
     ; ========================================================================
     ; Step 4: Restore user context and return
     ; ========================================================================
+    ; Interrupts must stay off from here until SYSRET: once RSP holds the
+    ; user stack pointer below, an interrupt would push its Ring 0 frame
+    ; to an address chosen by user space.
+    cli
+
     ; Store return value
     mov [rsp + 0x70], rax   ; Save return value to rax position in frame
     
@@ -204,10 +209,7 @@ syscall_entry:
     
     ; Return to user mode
     ; RCX = return address, R11 = RFLAGS
-    ; Note: SYSRET will restore RFLAGS from R11, which includes IF.
-    ; We disable interrupts here for the brief window before SYSRET
-    ; to prevent any race conditions during the return sequence.
-    cli
+    ; SYSRET restores RFLAGS from R11, which re-enables interrupts in user mode.
     o64 sysret
 
 

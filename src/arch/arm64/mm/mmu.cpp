@@ -1161,16 +1161,11 @@ static void free_page_table_recursive(paddr_t table_phys, int level) {
         }
         
         if (level == 1) {
-            /* Level 3 (L3): entries point to physical pages */
-            /* Decrement reference count for shared pages (COW) */
-            uint32_t refcount = mm::Pmm::frame_get_refcount(frame);
-            if (refcount > 0) {
-                mm::Pmm::frame_ref_dec(frame);
-                if (refcount == 1) {
-                    LOG_DEBUG_MSG("free_page_table_recursive: Freed physical page 0x%llx\n",
-                                  (unsigned long long)frame);
-                }
-            }
+            /* Level 3 (L3): entries point to physical pages.
+             * free_frame() drops one reference and returns the frame to the
+             * allocator when it was the last one (frame_ref_dec() only
+             * decrements the counter and would leak the frame). */
+            mm::Pmm::free_frame(frame);
         } else if (desc_is_block(entry)) {
             /* Block descriptor (1GB or 2MB) - decrement refcount */
             uint32_t refcount = mm::Pmm::frame_get_refcount(frame);
