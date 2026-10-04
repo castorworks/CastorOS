@@ -32,6 +32,9 @@ static inline uint32_t get_frame(uint32_t pde) { return pde & 0xFFFFF000; }
 /* 默认时间片（与 task.c 保持一致） */
 #define DEFAULT_TIME_SLICE 10
 
+/* execve 接受的可执行文件大小上限（与 loader.cpp 对 shell 的限制一致） */
+#define EXEC_MAX_FILE_SIZE (16u * 1024 * 1024)
+
 /**
  * syscall::Process::exit - 退出当前进程
  */
@@ -373,8 +376,17 @@ uint32_t syscall::Process::execve(uintptr_t *frame, const char *path) {
         return (uint32_t)-1;
     }
     
-    // 读取整个 ELF 文件到内存
+    // 只有普通文件可以执行；大小为 0 或大得离谱的文件直接拒绝，
+    // 不为它分配内核堆
     uint32_t file_size = file->size;
+    if (file->type != FS_FILE || file_size == 0 || file_size > EXEC_MAX_FILE_SIZE) {
+        LOG_ERROR_MSG("syscall::Process::execve: '%s' is not a loadable file (type=%d, size=%u)\n",
+                      path, (int)file->type, file_size);
+        fs::Vfs::release_node(file);
+        return (uint32_t)-1;
+    }
+
+    // 读取整个 ELF 文件到内存
     void *elf_data = kmalloc(file_size);
     if (!elf_data) {
         LOG_ERROR_MSG("syscall::Process::execve: failed to allocate memory for ELF file\n");
@@ -394,16 +406,17 @@ uint32_t syscall::Process::execve(uintptr_t *frame, const char *path) {
         return (uint32_t)-1;
     }
     
-    // 验证 ELF 文件头
-    if (!kernel::Elf::validate_header(elf_data)) {
+    // 完整校验 ELF 映像（文件头、程序头表、各段的文件范围和地址范围、入口点），
+    // 在创建新地址空间之前就拒绝不合法的文件
+    if (!kernel::Elf::validate(elf_data, file_size)) {
         LOG_ERROR_MSG("syscall::Process::execve: invalid ELF file '%s'\n", path);
         kfree(elf_data);
         fs::Vfs::release_node(file);  // 释放节点
         return (uint32_t)-1;
     }
-    
+
     // 获取入口点
-    uintptr_t entry_point = kernel::Elf::get_entry(elf_data);
+    uintptr_t entry_point = kernel::Elf::get_entry(elf_data, file_size);
     if (entry_point == 0) {
         LOG_ERROR_MSG("syscall::Process::execve: failed to get entry point from '%s'\n", path);
         kfree(elf_data);

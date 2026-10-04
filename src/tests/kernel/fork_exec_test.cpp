@@ -16,6 +16,7 @@
 #include <mm/pmm.h>
 #include <mm/pgtable.h>
 #include <kernel/task.h>
+#include <kernel/elf.h>
 #include <lib/kprintf.h>
 #include <lib/string.h>
 
@@ -545,8 +546,241 @@ TEST_CASE(test_exec_program_code_mapping) {
 }
 
 // ============================================================================
+// ELF 映像校验测试
+// 加载器必须在映射任何页之前拒绝头部/段范围不合法的文件
+// ============================================================================
+
+#if defined(ARCH_X86_64) || defined(ARCH_ARM64)
+typedef elf64_ehdr_t test_ehdr_t;
+typedef elf64_phdr_t test_phdr_t;
+#define TEST_ELF_CLASS ELF_CLASS_64
+#else
+typedef elf32_ehdr_t test_ehdr_t;
+typedef elf32_phdr_t test_phdr_t;
+#define TEST_ELF_CLASS ELF_CLASS_32
+#endif
+
+#if defined(ARCH_X86_64)
+#define TEST_ELF_MACHINE EM_X86_64
+#elif defined(ARCH_ARM64)
+#define TEST_ELF_MACHINE EM_AARCH64
+#else
+#define TEST_ELF_MACHINE EM_386
+#endif
+
+/* 用户映像区上界：与 elf.cpp 中的 elf_user_image_limit() 一致（用户栈底） */
+#if defined(ARCH_ARM64)
+#define TEST_ELF_IMAGE_LIMIT ((uintptr_t)ARM64_USER_STACK_TOP - USER_STACK_SIZE)
+#else
+#define TEST_ELF_IMAGE_LIMIT ((uintptr_t)USER_SPACE_END - USER_STACK_SIZE)
+#endif
+
+#define TEST_ELF_CODE_BYTES 16
+#define TEST_ELF_SIZE (sizeof(test_ehdr_t) + sizeof(test_phdr_t) + TEST_ELF_CODE_BYTES)
+
+static uint8_t g_test_elf[sizeof(test_ehdr_t) + sizeof(test_phdr_t) + TEST_ELF_CODE_BYTES];
+
+static test_ehdr_t *test_elf_ehdr(void) { return (test_ehdr_t *)g_test_elf; }
+static test_phdr_t *test_elf_phdr(void) {
+    return (test_phdr_t *)(g_test_elf + sizeof(test_ehdr_t));
+}
+
+/**
+ * 构造一个最小的合法可执行映像：一个 R+X 的 PT_LOAD 段，
+ * 文件内容 16 字节，内存大小一页，入口在段首
+ */
+static void build_test_elf(void) {
+    memset(g_test_elf, 0, sizeof(g_test_elf));
+    test_ehdr_t *eh = test_elf_ehdr();
+    eh->e_ident[0] = 0x7F;
+    eh->e_ident[1] = 'E';
+    eh->e_ident[2] = 'L';
+    eh->e_ident[3] = 'F';
+    eh->e_ident[4] = TEST_ELF_CLASS;
+    eh->e_ident[5] = ELF_DATA_LSB;
+    eh->e_ident[6] = EV_CURRENT;
+    eh->e_type = ET_EXEC;
+    eh->e_machine = TEST_ELF_MACHINE;
+    eh->e_version = EV_CURRENT;
+    eh->e_entry = KTEST_USER_CODE_VADDR;
+    eh->e_phoff = sizeof(test_ehdr_t);
+    eh->e_ehsize = sizeof(test_ehdr_t);
+    eh->e_phentsize = sizeof(test_phdr_t);
+    eh->e_phnum = 1;
+
+    test_phdr_t *ph = test_elf_phdr();
+    ph->p_type = PT_LOAD;
+    ph->p_flags = PF_R | PF_X;
+    ph->p_offset = sizeof(test_ehdr_t) + sizeof(test_phdr_t);
+    ph->p_vaddr = KTEST_USER_CODE_VADDR;
+    ph->p_filesz = TEST_ELF_CODE_BYTES;
+    ph->p_memsz = PAGE_SIZE;
+    ph->p_align = PAGE_SIZE;
+
+    for (uint32_t i = 0; i < TEST_ELF_CODE_BYTES; i++) {
+        g_test_elf[sizeof(test_ehdr_t) + sizeof(test_phdr_t) + i] = (uint8_t)(0xA0 + i);
+    }
+}
+
+TEST_CASE(test_elf_valid_image_accepted) {
+    build_test_elf();
+    ASSERT_TRUE(kernel::Elf::validate_header(g_test_elf, TEST_ELF_SIZE));
+    ASSERT_TRUE(kernel::Elf::validate(g_test_elf, TEST_ELF_SIZE));
+    ASSERT_EQ_U(kernel::Elf::get_entry(g_test_elf, TEST_ELF_SIZE), KTEST_USER_CODE_VADDR);
+}
+
+/* 文件比 ELF 头还短：魔数正确也必须拒绝，不能去读头部之外的字段 */
+TEST_CASE(test_elf_truncated_header_rejected) {
+    build_test_elf();
+    ASSERT_FALSE(kernel::Elf::validate_header(g_test_elf, 0));
+    ASSERT_FALSE(kernel::Elf::validate_header(g_test_elf, 4));
+    ASSERT_FALSE(kernel::Elf::validate_header(g_test_elf, sizeof(test_ehdr_t) - 1));
+    ASSERT_FALSE(kernel::Elf::validate(g_test_elf, sizeof(test_ehdr_t) - 1));
+    ASSERT_EQ_U(kernel::Elf::get_entry(g_test_elf, 4), 0);
+}
+
+/* 程序头表必须完整落在文件内，表项大小必须是本架构的程序头大小 */
+TEST_CASE(test_elf_phdr_table_bounds) {
+    build_test_elf();
+    // 只给到 ELF 头：程序头表在文件之外
+    ASSERT_FALSE(kernel::Elf::validate(g_test_elf, sizeof(test_ehdr_t)));
+
+    test_elf_ehdr()->e_phoff = TEST_ELF_SIZE + 0x1000;
+    ASSERT_FALSE(kernel::Elf::validate(g_test_elf, TEST_ELF_SIZE));
+
+    build_test_elf();
+    test_elf_ehdr()->e_phoff = (uintptr_t)-1 - 8;   // e_phoff + 表大小 回绕
+    ASSERT_FALSE(kernel::Elf::validate(g_test_elf, TEST_ELF_SIZE));
+
+    build_test_elf();
+    test_elf_ehdr()->e_phnum = 0xFFFF;
+    ASSERT_FALSE(kernel::Elf::validate(g_test_elf, TEST_ELF_SIZE));
+
+    build_test_elf();
+    test_elf_ehdr()->e_phentsize = sizeof(test_phdr_t) - 4;
+    ASSERT_FALSE(kernel::Elf::validate(g_test_elf, TEST_ELF_SIZE));
+}
+
+/* 段的文件范围：越界和 p_offset + p_filesz 回绕都必须拒绝 */
+TEST_CASE(test_elf_segment_file_range) {
+    build_test_elf();
+    test_elf_phdr()->p_filesz = TEST_ELF_CODE_BYTES + 1;
+    ASSERT_FALSE(kernel::Elf::validate(g_test_elf, TEST_ELF_SIZE));
+
+    build_test_elf();
+    test_elf_phdr()->p_offset = (uintptr_t)-1 - 0xFFF;   // 0x...FFFFF000
+    test_elf_phdr()->p_filesz = 0x2000;                  // 相加回绕成一个很小的数
+    test_elf_phdr()->p_memsz = 0x2000;
+    ASSERT_FALSE(kernel::Elf::validate(g_test_elf, TEST_ELF_SIZE));
+
+    build_test_elf();
+    test_elf_phdr()->p_memsz = TEST_ELF_CODE_BYTES - 1;  // p_filesz > p_memsz
+    ASSERT_FALSE(kernel::Elf::validate(g_test_elf, TEST_ELF_SIZE));
+}
+
+/* 段的地址范围：只检查段首不够，段尾越过用户映像区或回绕都必须拒绝 */
+TEST_CASE(test_elf_segment_address_range) {
+    // 段首在用户空间，段尾伸进用户栈/内核半区
+    build_test_elf();
+    test_elf_phdr()->p_vaddr = TEST_ELF_IMAGE_LIMIT - PAGE_SIZE;
+    test_elf_phdr()->p_memsz = 0x400000;
+    test_elf_ehdr()->e_entry = TEST_ELF_IMAGE_LIMIT - PAGE_SIZE;
+    ASSERT_FALSE(kernel::Elf::validate(g_test_elf, TEST_ELF_SIZE));
+
+    // 恰好贴着上界的段是合法的
+    build_test_elf();
+    test_elf_phdr()->p_vaddr = TEST_ELF_IMAGE_LIMIT - PAGE_SIZE;
+    test_elf_ehdr()->e_entry = TEST_ELF_IMAGE_LIMIT - PAGE_SIZE;
+    ASSERT_TRUE(kernel::Elf::validate(g_test_elf, TEST_ELF_SIZE));
+
+    // p_vaddr + p_memsz 回绕
+    build_test_elf();
+    test_elf_phdr()->p_memsz = (uintptr_t)-1 - 0xFFF;
+    ASSERT_FALSE(kernel::Elf::validate(g_test_elf, TEST_ELF_SIZE));
+
+    // 段首就在内核空间
+    build_test_elf();
+    test_elf_phdr()->p_vaddr = KERNEL_VIRTUAL_BASE;
+    test_elf_ehdr()->e_entry = KERNEL_VIRTUAL_BASE;
+    ASSERT_FALSE(kernel::Elf::validate(g_test_elf, TEST_ELF_SIZE));
+}
+
+/* 入口点必须落在某个可执行段内 */
+TEST_CASE(test_elf_entry_point_checked) {
+    build_test_elf();
+    test_elf_ehdr()->e_entry = KTEST_USER_CODE_VADDR + PAGE_SIZE;   // 段尾之后
+    ASSERT_FALSE(kernel::Elf::validate(g_test_elf, TEST_ELF_SIZE));
+
+    build_test_elf();
+    test_elf_ehdr()->e_entry = KERNEL_VIRTUAL_BASE;                 // 内核地址
+    ASSERT_FALSE(kernel::Elf::validate(g_test_elf, TEST_ELF_SIZE));
+
+#if defined(ARCH_X86_64)
+    build_test_elf();
+    test_elf_ehdr()->e_entry = 0x0000800000000000ULL;               // 非规范地址
+    ASSERT_FALSE(kernel::Elf::validate(g_test_elf, TEST_ELF_SIZE));
+#endif
+
+    build_test_elf();
+    test_elf_phdr()->p_flags = PF_R | PF_W;                         // 段不可执行
+    ASSERT_FALSE(kernel::Elf::validate(g_test_elf, TEST_ELF_SIZE));
+}
+
+/* load() 对合法映像建立用户映射；对不合法映像在映射前失败 */
+TEST_CASE(test_elf_load_maps_only_valid_images) {
+    uintptr_t new_dir = mm::Vmm::create_page_directory();
+    ASSERT_NE_U(new_dir, 0);
+#if defined(ARCH_ARM64)
+    page_directory_t *dir = (page_directory_t *)new_dir;
+#else
+    page_directory_t *dir = (page_directory_t *)PHYS_TO_VIRT(new_dir);
+#endif
+    hal_addr_space_t space = (hal_addr_space_t)new_dir;
+    uintptr_t entry = 0;
+    uintptr_t program_end = 0;
+
+    // 段尾越界的映像：load 失败，且没有留下任何映射
+    build_test_elf();
+    test_elf_phdr()->p_vaddr = TEST_ELF_IMAGE_LIMIT - PAGE_SIZE;
+    test_elf_phdr()->p_memsz = 0x400000;
+    test_elf_ehdr()->e_entry = TEST_ELF_IMAGE_LIMIT - PAGE_SIZE;
+    ASSERT_FALSE(kernel::Elf::load(g_test_elf, TEST_ELF_SIZE, dir, &entry, &program_end));
+    ASSERT_FALSE(hal::Mmu::query(space, TEST_ELF_IMAGE_LIMIT - PAGE_SIZE, NULL, NULL));
+
+    // 合法映像
+    build_test_elf();
+    ASSERT_TRUE(kernel::Elf::load(g_test_elf, TEST_ELF_SIZE, dir, &entry, &program_end));
+    ASSERT_EQ_U(entry, KTEST_USER_CODE_VADDR);
+    ASSERT_EQ_U(program_end, KTEST_USER_CODE_VADDR + PAGE_SIZE);
+
+    paddr_t phys = 0;
+    uint32_t flags = 0;
+    ASSERT_TRUE(hal::Mmu::query(space, KTEST_USER_CODE_VADDR, &phys, &flags));
+    ASSERT_TRUE((flags & HAL_PAGE_USER) != 0);
+    ASSERT_TRUE((flags & HAL_PAGE_WRITE) == 0);
+
+    // 文件内容被拷入页首，其余为 0
+    const uint8_t *page = (const uint8_t *)PHYS_TO_VIRT((uintptr_t)phys);
+    ASSERT_EQ_U(page[0], 0xA0);
+    ASSERT_EQ_U(page[TEST_ELF_CODE_BYTES - 1], 0xA0 + TEST_ELF_CODE_BYTES - 1);
+    ASSERT_EQ_U(page[TEST_ELF_CODE_BYTES], 0);
+
+    mm::Vmm::free_page_directory(new_dir);
+}
+
+// ============================================================================
 // Test Suites
 // ============================================================================
+
+TEST_SUITE(elf_validation_tests) {
+    RUN_TEST(test_elf_valid_image_accepted);
+    RUN_TEST(test_elf_truncated_header_rejected);
+    RUN_TEST(test_elf_phdr_table_bounds);
+    RUN_TEST(test_elf_segment_file_range);
+    RUN_TEST(test_elf_segment_address_range);
+    RUN_TEST(test_elf_entry_point_checked);
+    RUN_TEST(test_elf_load_maps_only_valid_images);
+}
 
 TEST_SUITE(fork_cow_tests) {
     RUN_TEST(test_fork_clone_space_creates_valid_space);
@@ -586,6 +820,10 @@ void run_fork_exec_tests(void) {
     // Task 36.2: Exec system call tests
     kprintf("\n--- Task 36.2: Exec System Call Tests ---\n");
     RUN_SUITE(exec_tests);
-    
+
+    // ELF 映像校验
+    kprintf("\n--- ELF Image Validation Tests ---\n");
+    RUN_SUITE(elf_validation_tests);
+
     unittest_print_summary();
 }

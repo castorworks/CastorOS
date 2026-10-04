@@ -128,11 +128,22 @@ namespace kernel {
 class Elf {
 public:
     /**
-     * 验证 ELF 文件头（自动检测32/64位）
+     * 验证 ELF 文件头（魔数、位数、字节序、类型、机器）
      * @param elf_data ELF 数据指针
+     * @param size elf_data 指向的缓冲区长度；小于 ELF 头时直接失败
      * @return 成功返回 true
      */
-    static bool validate_header(const void *elf_data);
+    static bool validate_header(const void *elf_data, size_t size);
+
+    /**
+     * 完整校验一个可执行映像：文件头、程序头表、每个 PT_LOAD 段的
+     * 文件范围与地址范围（必须位于用户栈以下的用户空间）、入口点
+     * （必须在某个可执行段内）。load() 在映射前会做同样的校验。
+     * @param elf_data ELF 数据指针
+     * @param size ELF 文件大小
+     * @return 可以安全加载返回 true
+     */
+    static bool validate(const void *elf_data, size_t size);
 
     /**
      * 检查 ELF 是否为 64 位
@@ -157,9 +168,10 @@ public:
     /**
      * 获取 ELF 入口点地址
      * @param elf_data ELF 数据指针
+     * @param size elf_data 指向的缓冲区长度
      * @return 入口点地址，失败返回 0
      */
-    static uintptr_t get_entry(const void *elf_data);
+    static uintptr_t get_entry(const void *elf_data, size_t size);
 };
 
 } // namespace kernel
