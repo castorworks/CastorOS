@@ -10,7 +10,6 @@
 #include <lib/kprintf.h>
 #include <lib/string.h>
 #include <drivers/serial.h>
-#include <drivers/vga.h>
 #include <types.h>
 
 // ============================================================================

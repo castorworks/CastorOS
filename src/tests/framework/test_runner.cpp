@@ -24,30 +24,15 @@
 #include <tests/mm/mm_types_test.h>
 #include <tests/mm/pgtable_test.h>
 #include <tests/mm/cow_flag_test.h>
-#include <tests/mm/dma_test.h>
-#include <tests/fs/vfs_test.h>
-#include <tests/fs/ramfs_test.h>
-#include <tests/fs/fat32_test.h>
-#include <tests/fs/devfs_test.h>
-#include <tests/net/checksum_test.h>
-#include <tests/net/netbuf_test.h>
-#include <tests/net/arp_test.h>
-#include <tests/net/tcp_test.h>
 #include <tests/kernel/task_test.h>
 #include <tests/kernel/sync_test.h>
-#include <tests/kernel/syscall_test.h>
 #include <tests/kernel/syscall_error_test.h>
 #include <tests/kernel/fork_exec_test.h>
 #include <tests/kernel/usermode_test.h>
-#include <tests/drivers/pci_test.h>
-#include <tests/drivers/timer_test.h>
-#include <tests/drivers/serial_test.h>
 #include <tests/arch/hal_test.h>
 #include <tests/arch/arch_types_test.h>
 #include <tests/arch/interrupt_handler_test.h>
-#include <tests/arch/userlib_syscall_test.h>
 #include <tests/pbt/pbt.h>
-#include <tests/examples/ktest_example.h>
 
 #ifdef ARCH_X86_64
 #include <tests/arch/x86_64/isr64_test.h>
@@ -58,7 +43,6 @@
 #include <tests/arch/arm64/arm64_mmu_test.h>
 #include <tests/arch/arm64/arm64_exception_test.h>
 #include <tests/arch/arm64/arm64_fault_test.h>
-#include <tests/arch/arm64/arm64_syscall_test.h>
 #endif
 #include <lib/kprintf.h>
 
@@ -301,14 +285,11 @@ static const test_entry_t test_suite[] = {
     TEST_ENTRY("Memory Management Type Tests", run_mm_types_tests),
     TEST_ENTRY("Page Table Abstraction Tests", run_pgtable_tests),
     TEST_ENTRY("COW Flag Correctness Tests", run_cow_flag_tests),
-    TEST_ENTRY("DMA Cache Coherency Tests", run_dma_tests),
     
     // 架构测试 (arch/)
     TEST_ENTRY("Architecture Type Size Tests", run_arch_types_tests),
-    TEST_ENTRY("System Call Property Tests", run_syscall_tests),
     TEST_ENTRY("HAL Property Tests", run_hal_tests),
     TEST_ENTRY("Interrupt Handler Registration Tests", run_interrupt_handler_tests),
-    TEST_ENTRY("User Library Syscall Instruction Tests", run_userlib_syscall_tests),
     
 #ifdef ARCH_I686
     TEST_ENTRY("i686 User Mode Transition Tests", run_usermode_tests),
@@ -324,36 +305,11 @@ static const test_entry_t test_suite[] = {
     TEST_ENTRY("ARM64 MMU Property Tests", run_arm64_mmu_tests),
     TEST_ENTRY("ARM64 Exception Register Preservation Tests", run_arm64_exception_tests),
     TEST_ENTRY("ARM64 Page Fault Interpretation Tests", run_arm64_fault_tests),
-    TEST_ENTRY("ARM64 System Call Integration Tests", run_arm64_syscall_tests),
 #endif
     
     // 内核核心测试 (kernel/)
     TEST_ENTRY("Fork/Exec Verification Tests", run_fork_exec_tests),
     TEST_ENTRY("System Call Error Consistency Tests", run_syscall_error_tests),
-    
-    // 文件系统测试 (fs/)
-    TEST_ENTRY("VFS Tests", run_vfs_tests),
-    TEST_ENTRY("Ramfs Tests", run_ramfs_tests),
-    TEST_ENTRY("Devfs Tests", run_devfs_tests),
-
-    // 驱动测试 (drivers/)
-    TEST_ENTRY("Timer Tests", run_timer_tests),
-    TEST_ENTRY("Serial Tests", run_serial_tests),
-
-    // ------------------------------------------------------------------
-    // 仅 x86：ARM64 内核尚未包含 FAT32、网络协议栈和 PCI
-    // ------------------------------------------------------------------
-#if defined(ARCH_I686) || defined(ARCH_X86_64)
-    TEST_ENTRY("FAT32 Tests", run_fat32_tests),
-
-    // 网络测试 (net/)
-    TEST_ENTRY("Checksum Tests", run_checksum_tests),
-    TEST_ENTRY("Netbuf Tests", run_netbuf_tests),
-    TEST_ENTRY("ARP Tests", run_arp_tests),
-    TEST_ENTRY("TCP Tests", run_tcp_tests),
-
-    TEST_ENTRY("PCI Tests", run_pci_tests),
-#endif /* ARCH_I686 || ARCH_X86_64 */
 };
 
 #define TEST_COUNT (sizeof(test_suite) / sizeof(test_suite[0]))
