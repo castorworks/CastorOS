@@ -43,3 +43,11 @@ unsigned int sleep(unsigned int seconds) {
     return rem.tv_sec;
 }
 
+
+int usleep(unsigned int usec) {
+    struct timespec req = {
+        .tv_sec = usec / 1000000u,
+        .tv_nsec = (usec % 1000000u) * 1000u,
+    };
+    return nanosleep(&req, NULL);
+}

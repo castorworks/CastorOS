@@ -252,6 +252,42 @@ static void test_mmap(void) {
         }
     }
     
+    // 测试 3b: 两个同时存在的映射不能重叠，写第二个不能改掉第一个
+    printf("\n[3b] Mappings must not overlap:\n");
+    if (ptr1 != MAP_FAILED && ptr2 != MAP_FAILED) {
+        uintptr_t a1 = (uintptr_t)ptr1, a2 = (uintptr_t)ptr2;
+        bool overlap = (a1 < a2 + 16384) && (a2 < a1 + 4096);
+        uint32_t *first = (uint32_t *)ptr1;
+        if (overlap) {
+            printf("  Error: mappings overlap\n");
+        } else if (first[0] != 0xDEADBEEF) {
+            printf("  Error: first mapping was modified by the second\n");
+        } else {
+            printf("  OK: Mappings are disjoint and independent\n");
+        }
+    }
+    
+    // 测试 3c: fork 之后子进程写映射，父进程的内容不变（写时复制）
+    printf("\n[3c] mmap memory across fork:\n");
+    if (ptr2 != MAP_FAILED) {
+        uint32_t *shared = (uint32_t *)ptr2;
+        int pid = fork();
+        if (pid == 0) {
+            shared[0] = 0x99999999;
+            exit(shared[1024] == 0x22222222 ? 42 : 1);
+        } else if (pid > 0) {
+            int status = 0;
+            waitpid(pid, &status, 0);
+            if (shared[0] == 0x11111111) {
+                printf("  OK: Parent mapping unchanged after child write\n");
+            } else {
+                printf("  Error: child write leaked into parent\n");
+            }
+        } else {
+            printf("  Error: fork failed\n");
+        }
+    }
+    
     // 测试 4: munmap 释放第一个映射
     printf("\n[4] munmap first mapping:\n");
     int ret = munmap(ptr1, 4096);

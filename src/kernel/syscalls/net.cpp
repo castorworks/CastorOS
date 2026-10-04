@@ -90,6 +90,8 @@ static int32_t netif_ioctl(uint32_t request, struct ifreq *ifr) {
             
         case SIOCGIFHWADDR:
             // 获取 MAC 地址
+            ifr->ifr_hwaddr.sa_family = 1;  // ARPHRD_ETHER
+            memset(ifr->ifr_hwaddr.sa_data, 0, sizeof(ifr->ifr_hwaddr.sa_data));
             memcpy(ifr->ifr_hwaddr.sa_data, dev->mac, 6);
             return 0;
             

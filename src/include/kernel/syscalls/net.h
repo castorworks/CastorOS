@@ -69,8 +69,9 @@ struct ifreq {
         struct sockaddr_in ifr_netmask;   // 子网掩码
         struct sockaddr_in ifr_gateway;   // 网关地址
         struct {
+            uint16_t sa_family;           // 硬件类型（ARPHRD_ETHER = 1）
             uint8_t sa_data[14];          // 硬件地址
-        } ifr_hwaddr;
+        } ifr_hwaddr;                     // 布局必须与 user/lib/include/net/if.h 一致
         int32_t ifr_flags;                // 接口标志
         int32_t ifr_mtu;                  // MTU
         int32_t ifr_ifindex;              // 接口索引
