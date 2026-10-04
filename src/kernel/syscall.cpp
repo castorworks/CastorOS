@@ -148,17 +148,13 @@ static syscall_arg_t sys_execve_wrapper(syscall_arg_t *frame, syscall_arg_t path
         return SYSCALL_FAIL;
     }
     
-    // 将路径从用户空间复制到内核空间
-    char path[256];
-    size_t i;
-    
-    for (i = 0; i < sizeof(path) - 1; i++) {
-        path[i] = user_path[i];
-        if (path[i] == '\0') {
-            break;
-        }
+    // 将路径从用户空间复制到内核空间，同时解析成绝对路径
+    // （相对路径以当前进程的工作目录为基准）
+    char path[USER_PATH_MAX + MAX_CWD_LENGTH];
+    task_t *current = kernel::Scheduler::get_current();
+    if (path_resolve(current ? current->cwd : "/", user_path, path, sizeof(path)) != 0) {
+        return SYSCALL_FAIL;
     }
-    path[sizeof(path) - 1] = '\0';
     
     // 传递 frame 指针给 syscall::Process::execve
     return syscall::Process::execve(frame, path);

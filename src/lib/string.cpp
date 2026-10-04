@@ -686,3 +686,99 @@ int snprintf(char *str, size_t size, const char *format, ...) {
     
     return pos;
 }
+
+// ============================================================================
+// 路径处理
+// ============================================================================
+
+/**
+ * 把 src 中的路径组件逐个追加到 out[0..*pos)，同时处理 "." 和 ".."
+ * base 是不可回退的前缀长度（绝对路径为 1，即开头的 '/'）
+ */
+static int path_append(char *out, size_t size, size_t *pos, size_t base, const char *src) {
+    size_t n = *pos;
+    const char *p = src;
+
+    while (*p != '\0') {
+        while (*p == '/') {
+            p++;
+        }
+        if (*p == '\0') {
+            break;
+        }
+
+        const char *comp = p;
+        while (*p != '\0' && *p != '/') {
+            p++;
+        }
+        size_t len = (size_t)(p - comp);
+
+        if (len == 1 && comp[0] == '.') {
+            continue;
+        }
+        if (len == 2 && comp[0] == '.' && comp[1] == '.') {
+            // 回退到上一个组件之前
+            while (n > base && out[n - 1] != '/') {
+                n--;
+            }
+            if (n > base) {
+                n--;  // 去掉分隔符
+            }
+            continue;
+        }
+
+        size_t sep = (n > base) ? 1 : 0;
+        if (len >= size || n + sep >= size - len) {
+            return -1;  // 放不下（还要留一个字节给 '\0'）
+        }
+        if (sep) {
+            out[n++] = '/';
+        }
+        memcpy(out + n, comp, len);
+        n += len;
+    }
+
+    *pos = n;
+    return 0;
+}
+
+int path_normalize(const char *path, char *out, size_t size) {
+    if (!path || !out || size < 2) {
+        return -1;
+    }
+
+    size_t pos = 0;
+    if (path[0] == '/') {
+        out[pos++] = '/';
+    }
+    size_t base = pos;
+
+    if (path_append(out, size, &pos, base, path) != 0) {
+        return -1;
+    }
+    if (pos == 0) {
+        out[pos++] = '.';
+    }
+    out[pos] = '\0';
+    return 0;
+}
+
+int path_resolve(const char *cwd, const char *path, char *out, size_t size) {
+    if (!path || !out || size < 2 || path[0] == '\0') {
+        return -1;
+    }
+
+    size_t pos = 0;
+    out[pos++] = '/';
+
+    if (path[0] != '/' && cwd) {
+        if (path_append(out, size, &pos, 1, cwd) != 0) {
+            return -1;
+        }
+    }
+    if (path_append(out, size, &pos, 1, path) != 0) {
+        return -1;
+    }
+    out[pos] = '\0';
+    return 0;
+}
