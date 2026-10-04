@@ -329,12 +329,15 @@ int net::Udp::send(udp_pcb_t *pcb, net::Netbuf *buf) {
     return net::Udp::sendto(pcb, buf, pcb->remote_ip, pcb->remote_port);
 }
 
-int net::Udp::sendto(udp_pcb_t *pcb, net::Netbuf *buf, uint32_t dst_ip, uint16_t dst_port) {
+int net::Udp::sendto(udp_pcb_t *pcb, net::Netbuf *buf, uint32_t dst_ip, uint16_t dst_port,
+                     net::Netdev *dev) {
     if (!pcb || !buf) {
         return -1;
     }
-    
-    net::Netdev *dev = net::Netdev::get_default();
+
+    if (!dev) {
+        dev = net::Netdev::get_default();
+    }
     if (!dev) {
         return -1;
     }

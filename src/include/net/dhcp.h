@@ -126,6 +126,8 @@ typedef struct {
     uint32_t xid;           // 当前事务 ID
     int socket_fd;          // UDP socket
     uint8_t retries;        // 重试次数
+    uint32_t last_send;     // 上次发送报文的时间（毫秒），用于超时重发
+    uint32_t saved_ip;      // 启动 DHCP 之前接口的 IP，获取失败时恢复
 } dhcp_client_t;
 
 namespace net {
