@@ -262,8 +262,23 @@ static int gpu_get_display_info(void) {
     /* Use first enabled display */
     for (int i = 0; i < VIRTIO_GPU_MAX_SCANOUTS; i++) {
         if (resp->pmodes[i].enabled) {
-            display_width = resp->pmodes[i].r.width;
-            display_height = resp->pmodes[i].r.height;
+            uint32_t w = resp->pmodes[i].r.width;
+            uint32_t h = resp->pmodes[i].r.height;
+            
+            /* The framebuffer is a fixed DEFAULT_WIDTH x DEFAULT_HEIGHT array.
+             * Never take a size from the device that does not fit in it:
+             * everything that draws is bounded by these two values. */
+            if (w == 0 || h == 0) {
+                serial_puts("virtio-gpu: Display reports zero size, using defaults\n");
+                return 0;
+            }
+            if (w > DEFAULT_WIDTH || h > DEFAULT_HEIGHT) {
+                serial_puts("virtio-gpu: Display larger than framebuffer, clamping\n");
+                if (w > DEFAULT_WIDTH) w = DEFAULT_WIDTH;
+                if (h > DEFAULT_HEIGHT) h = DEFAULT_HEIGHT;
+            }
+            display_width = w;
+            display_height = h;
             serial_puts("virtio-gpu: Display ");
             drivers::Serial::put_hex32(i);
             serial_puts(" enabled: ");
@@ -380,7 +395,11 @@ static int gpu_resource_flush(uint32_t resource_id, uint32_t x, uint32_t y,
 
 static volatile uint8_t *find_virtio_gpu(void) {
     for (uint32_t i = 0; i < VIRTIO_MMIO_COUNT; i++) {
-        volatile uint8_t *base = (volatile uint8_t *)(VIRTIO_MMIO_BASE + i * VIRTIO_MMIO_SIZE);
+        /* Access the registers through the kernel (TTBR1) mapping. The
+         * low identity mapping belongs to the current address space, and a
+         * user process only has the GIC and UART blocks in it, so using the
+         * physical address faulted as soon as a process flushed the console. */
+        volatile uint8_t *base = (volatile uint8_t *)PHYS_TO_VIRT(VIRTIO_MMIO_BASE + i * VIRTIO_MMIO_SIZE);
         
         uint32_t magic = *(volatile uint32_t *)(base + VIRTIO_MMIO_MAGIC_VALUE);
         uint32_t device_id = *(volatile uint32_t *)(base + VIRTIO_MMIO_DEVICE_ID);
@@ -540,12 +559,16 @@ int drivers::VirtioGpu::init() {
         /* Continue with defaults */
     }
     
-    /* Allocate framebuffer */
-    fb_size = display_width * display_height * 4;
-    
     /* Use a static buffer for simplicity (in real code, use kmalloc) */
     static uint32_t static_fb[DEFAULT_WIDTH * DEFAULT_HEIGHT] __attribute__((aligned(4096)));
     framebuffer = static_fb;
+    
+    /* gpu_get_display_info() keeps the size within the static buffer */
+    if (display_width > DEFAULT_WIDTH || display_height > DEFAULT_HEIGHT) {
+        serial_puts("virtio-gpu: Display size exceeds framebuffer\n");
+        return -1;
+    }
+    fb_size = display_width * display_height * 4;
     
     /* Clear framebuffer to black */
     memset(framebuffer, 0, fb_size);

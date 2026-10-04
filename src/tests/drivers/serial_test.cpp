@@ -250,6 +250,53 @@ TEST_CASE(test_serial_getchar_nonblock) {
 }
 
 /**
+ * 接收环形缓冲区：注入的字符按顺序读出，缓冲区里有数据时
+ * 阻塞版 getchar 立即返回（不会在关中断下死等硬件 FIFO）
+ */
+TEST_CASE(test_serial_rx_buffer_order) {
+    // 先清掉可能残留的输入
+    while (drivers::Serial::getchar_nonblock() != -1) {
+    }
+    ASSERT_FALSE(drivers::Serial::has_char());
+    
+    drivers::Serial::rx_inject('x');
+    drivers::Serial::rx_inject('y');
+    drivers::Serial::rx_inject((char)0xE9);
+    
+    ASSERT_TRUE(drivers::Serial::has_char());
+    ASSERT_EQ(drivers::Serial::getchar_nonblock(), 'x');
+    ASSERT_EQ(drivers::Serial::getchar(), 'y');
+    // 高位字符不能被符号扩展成负数（-1 表示没有数据）
+    ASSERT_EQ(drivers::Serial::getchar_nonblock(), 0xE9);
+    ASSERT_EQ(drivers::Serial::getchar_nonblock(), -1);
+    ASSERT_FALSE(drivers::Serial::has_char());
+}
+
+/**
+ * 接收环形缓冲区写满后丢弃新字符，不会覆盖未读数据或越界
+ */
+TEST_CASE(test_serial_rx_buffer_overflow) {
+    while (drivers::Serial::getchar_nonblock() != -1) {
+    }
+    
+    for (int i = 0; i < 1000; i++) {
+        drivers::Serial::rx_inject((char)('a' + (i % 26)));
+    }
+    
+    int count = 0;
+    int c;
+    while ((c = drivers::Serial::getchar_nonblock()) != -1) {
+        ASSERT_EQ(c, 'a' + (count % 26));
+        count++;
+        if (count > 1000) {
+            break;
+        }
+    }
+    ASSERT_TRUE(count > 0);
+    ASSERT_TRUE(count < 1000);
+}
+
+/**
  * 测试 drivers::Serial::flush 函数
  * 验证刷新发送缓冲区
  */
@@ -353,6 +400,8 @@ TEST_SUITE(serial_edge_case_tests) {
 TEST_SUITE(serial_arm64_tests) {
     RUN_TEST(test_serial_has_char);
     RUN_TEST(test_serial_getchar_nonblock);
+    RUN_TEST(test_serial_rx_buffer_order);
+    RUN_TEST(test_serial_rx_buffer_overflow);
     RUN_TEST(test_serial_flush);
     RUN_TEST(test_serial_is_initialized);
     RUN_TEST(test_serial_get_base);

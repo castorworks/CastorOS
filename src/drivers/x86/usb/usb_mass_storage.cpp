@@ -129,6 +129,15 @@ static int msc_scsi_command(usb_msc_device_t *msc, uint8_t *cmd, uint8_t cmd_len
     usb_msc_cbw_t cbw;
     usb_msc_csw_t csw;
     
+    /* 一次事务由 CBW、数据、CSW 三个阶段组成，中间会等待传输完成；
+     * 整个事务期间持有设备锁，另一个任务的命令不能插进来 */
+    sync::MutexGuard guard(msc->lock);
+    
+    /* 设备已拔出（或在等锁期间被拔出）：端点和 usb_device 都已失效 */
+    if (!msc->usb_dev || !msc->ep_in || !msc->ep_out) {
+        return -1;
+    }
+    
     /* 构建 CBW */
     memset(&cbw, 0, sizeof(cbw));
     cbw.dCBWSignature = USB_MSC_CBW_SIGNATURE;
@@ -395,6 +404,7 @@ int drivers::UsbMsc::probe(usb_device_t *dev, usb_interface_t *iface) {
         return -1;
     }
     memset(msc, 0, sizeof(usb_msc_device_t));
+    msc->lock.init();
     
     msc->usb_dev = dev;
     msc->iface = iface;
@@ -524,11 +534,29 @@ void drivers::UsbMsc::disconnect(usb_device_t *dev, usb_interface_t *iface) {
         pp = &(*pp)->next;
     }
     
-    /* 注销块设备 */
+    /* 先让设备失效：之后的块设备读写直接返回错误，不再触碰即将释放的
+     * usb_device 和端点（它们在 dev 里，disconnect 返回后就被释放） */
+    {
+        sync::MutexGuard guard(msc->lock);
+        msc->ready = false;
+        msc->usb_dev = NULL;
+        msc->iface = NULL;
+        msc->ep_in = NULL;
+        msc->ep_out = NULL;
+    }
+    
+    /* 注销块设备（放掉注册表持有的那个引用） */
     fs::Blockdev::unregister_device(&msc->blockdev);
     
-    /* 释放 */
-    kfree(msc);
+    /* blockdev 内嵌在 msc 里。如果还有人持有它的引用（例如挂载的文件系统），
+     * msc 不能释放，否则对方手里就是悬空指针；保留这块内存，设备已标记失效，
+     * 后续 I/O 只会得到错误。没有引用时才真正释放。 */
+    if (msc->blockdev.ref_count > 0) {
+        LOG_WARN_MSG("msc: '%s' still has %u reference(s), keeping device structure\n",
+                     msc->blockdev.name, msc->blockdev.ref_count);
+    } else {
+        kfree(msc);
+    }
     iface->driver_data = NULL;
     msc_device_count--;
     

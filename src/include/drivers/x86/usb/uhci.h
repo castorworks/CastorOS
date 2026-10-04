@@ -10,6 +10,7 @@
 
 #include <types.h>
 #include <drivers/usb/usb.h>
+#include <kernel/sync/mutex.h>
 
 /* ============================================================================
  * UHCI PCI 标识
@@ -193,6 +194,9 @@ typedef struct uhci_controller {
     /* USB 核心主机控制器 */
     usb_host_controller_t usb_hc;
     
+    /* 串行化本控制器上的传输（调度表槽位、TD/QH 空闲链表） */
+    sync::Mutex lock;
+
     /* 热插拔支持 */
     uint16_t port_status[UHCI_NUM_PORTS];   // 上次记录的端口状态
     usb_device_t *port_device[UHCI_NUM_PORTS]; // 端口上的设备

@@ -10,6 +10,7 @@
 #define _DRIVERS_X86_E1000_H_
 
 #include <types.h>
+#include <mm/mm_types.h>
 #include <net/netdev.h>
 #include <net/netbuf.h>
 
@@ -243,13 +244,13 @@ typedef struct e1000_device {
     
     /* 接收描述符环 */
     e1000_rx_desc_t *rx_descs;          ///< 描述符数组（物理地址对齐）
-    uint32_t rx_descs_phys;              ///< 描述符数组物理地址
+    paddr_t rx_descs_phys;               ///< 描述符数组物理地址
     uint8_t *rx_buffers[E1000_NUM_RX_DESC]; ///< 接收缓冲区数组
     uint32_t rx_cur;                     ///< 当前接收描述符索引
     
     /* 发送描述符环 */
     e1000_tx_desc_t *tx_descs;          ///< 描述符数组（物理地址对齐）
-    uint32_t tx_descs_phys;              ///< 描述符数组物理地址
+    paddr_t tx_descs_phys;               ///< 描述符数组物理地址
     uint8_t *tx_buffers[E1000_NUM_TX_DESC]; ///< 发送缓冲区数组
     uint32_t tx_cur;                     ///< 当前发送描述符索引
     

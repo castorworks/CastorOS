@@ -64,6 +64,7 @@ typedef enum {
 
 static ansi_state_t ansi_state = ANSI_NORMAL;
 #define ANSI_MAX_PARAMS 8
+#define ANSI_PARAM_MAX 9999     // 单个参数的上限（饱和）
 static int ansi_params[ANSI_MAX_PARAMS];
 static int ansi_param_count = 0;
 static bool ansi_bold = false;
@@ -340,8 +341,12 @@ void drivers::Framebuffer::terminal_putchar(char c) {
                 ansi_param_count = 1;
                 ansi_params[0] = 0;
             }
-            ansi_params[ansi_param_count - 1] = 
-                ansi_params[ansi_param_count - 1] * 10 + (c - '0');
+            // 参数饱和在 ANSI_PARAM_MAX：任意长的数字串不能让 int 回绕成负数，
+            // 否则后面的光标移动会算出屏幕之外的位置
+            if (ansi_params[ansi_param_count - 1] < ANSI_PARAM_MAX) {
+                ansi_params[ansi_param_count - 1] = 
+                    ansi_params[ansi_param_count - 1] * 10 + (c - '0');
+            }
             ansi_state = ANSI_PARAM;
             return;
         } else if (c == ';') {

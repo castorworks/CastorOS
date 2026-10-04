@@ -31,6 +31,7 @@ typedef enum {
 
 static ansi_state_t ansi_state = ANSI_NORMAL;
 #define ANSI_MAX_PARAMS 8
+#define ANSI_PARAM_MAX 9999     // 单个参数的上限（饱和）
 static int ansi_params[ANSI_MAX_PARAMS];  // 参数数组
 static int ansi_param_count = 0;          // 当前参数数量
 
@@ -91,6 +92,12 @@ static inline uint16_t vga_make_entry(char c, uint8_t color) {
  * 更新硬件光标位置
  */
 static void vga_update_cursor(void) {
+    // 把光标收回屏幕内（列可以暂时等于 VGA_WIDTH，表示下一个字符要换行）
+    if (vga_row < 0) vga_row = 0;
+    if (vga_row >= VGA_HEIGHT) vga_row = VGA_HEIGHT - 1;
+    if (vga_col < 0) vga_col = 0;
+    if (vga_col > VGA_WIDTH) vga_col = VGA_WIDTH;
+    
     uint16_t position = vga_row * VGA_WIDTH + vga_col;
     
     // 发送光标位置的低字节
@@ -136,6 +143,10 @@ static void vga_newline(void) {
  * 在指定位置写入字符
  */
 static void vga_putentry_at(char c, uint8_t color, int x, int y) {
+    // 最后一道防线：坐标不在屏幕内就不写，绝不写到显存之外
+    if (x < 0 || x >= VGA_WIDTH || y < 0 || y >= VGA_HEIGHT) {
+        return;
+    }
     volatile uint16_t *vga = (volatile uint16_t *)VGA_ADDRESS;
     const int index = y * VGA_WIDTH + x;
     vga[index] = vga_make_entry(c, color);
@@ -231,6 +242,17 @@ void drivers::Vga::clear() {
     vga_clear_locked();
 }
 
+/**
+ * 光标移动命令的步数：缺省或 0 当作 1，上限为屏幕的长边
+ * （再大也只是停在边缘，同时保证后面的加减不会溢出）
+ */
+static int vga_move_count(int param) {
+    if (param <= 0) {
+        return 1;
+    }
+    return (param > VGA_WIDTH) ? VGA_WIDTH : param;
+}
+
 static void vga_handle_char(char c) {
     // ANSI 转义序列解析
     if (ansi_state == ANSI_NORMAL) {
@@ -255,7 +277,11 @@ static void vga_handle_char(char c) {
                 ansi_param_count = 1;
                 ansi_params[0] = 0;
             }
-            ansi_params[ansi_param_count - 1] = ansi_params[ansi_param_count - 1] * 10 + (c - '0');
+            // 参数饱和在 ANSI_PARAM_MAX：任意长的数字串不能让 int 回绕成负数，
+            // 否则光标移动会把行列算到屏幕之外
+            if (ansi_params[ansi_param_count - 1] < ANSI_PARAM_MAX) {
+                ansi_params[ansi_param_count - 1] = ansi_params[ansi_param_count - 1] * 10 + (c - '0');
+            }
             ansi_state = ANSI_PARAM;
             return;
         } else if (c == ';') {
@@ -299,7 +325,7 @@ static void vga_handle_char(char c) {
         } else if (c == 'A') {
             // 光标上移：\033[nA
             int param = (ansi_param_count > 0) ? ansi_params[0] : 0;
-            int n = (param == 0) ? 1 : param;
+            int n = vga_move_count(param);
             vga_row = (vga_row >= n) ? (vga_row - n) : 0;
             vga_update_cursor();
             ansi_state = ANSI_NORMAL;
@@ -308,7 +334,7 @@ static void vga_handle_char(char c) {
         } else if (c == 'B') {
             // 光标下移：\033[nB
             int param = (ansi_param_count > 0) ? ansi_params[0] : 0;
-            int n = (param == 0) ? 1 : param;
+            int n = vga_move_count(param);
             vga_row = (vga_row + n < VGA_HEIGHT) ? (vga_row + n) : (VGA_HEIGHT - 1);
             vga_update_cursor();
             ansi_state = ANSI_NORMAL;
@@ -317,7 +343,7 @@ static void vga_handle_char(char c) {
         } else if (c == 'C') {
             // 光标右移：\033[nC
             int param = (ansi_param_count > 0) ? ansi_params[0] : 0;
-            int n = (param == 0) ? 1 : param;
+            int n = vga_move_count(param);
             vga_col = (vga_col + n < VGA_WIDTH) ? (vga_col + n) : (VGA_WIDTH - 1);
             vga_update_cursor();
             ansi_state = ANSI_NORMAL;
@@ -326,7 +352,7 @@ static void vga_handle_char(char c) {
         } else if (c == 'D') {
             // 光标左移：\033[nD
             int param = (ansi_param_count > 0) ? ansi_params[0] : 0;
-            int n = (param == 0) ? 1 : param;
+            int n = vga_move_count(param);
             vga_col = (vga_col >= n) ? (vga_col - n) : 0;
             vga_update_cursor();
             ansi_state = ANSI_NORMAL;
@@ -389,6 +415,12 @@ void drivers::Vga::print(const char *msg) {
 void drivers::Vga::set_color(vga_color_t fg, vga_color_t bg) {
     sync::SpinlockIrqGuard guard(vga_lock);
     vga_color = vga_make_color(fg, bg);
+}
+
+void drivers::Vga::get_cursor(int *row, int *col) {
+    sync::SpinlockIrqGuard guard(vga_lock);
+    if (row) *row = vga_row;
+    if (col) *col = vga_col;
 }
 
 uint8_t drivers::Vga::get_color() {

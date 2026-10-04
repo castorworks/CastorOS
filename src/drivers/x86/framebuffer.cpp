@@ -11,6 +11,7 @@
 #include <mm/vmm.h>
 #include <lib/klog.h>
 #include <lib/kprintf.h>
+#include <kernel/interrupt.h>
 #include <lib/string.h>
 
 /* ============================================================================
@@ -74,6 +75,7 @@ typedef enum {
 
 static ansi_state_t ansi_state = ANSI_NORMAL;
 #define ANSI_MAX_PARAMS 8
+#define ANSI_PARAM_MAX 9999     // 单个参数的上限（饱和）
 static int ansi_params[ANSI_MAX_PARAMS];
 static int ansi_param_count = 0;
 static bool ansi_bold = false;
@@ -318,24 +320,33 @@ void drivers::Framebuffer::flush() {
         return;
     }
     
-    if (dirty_line_start < 0 || dirty_line_end < 0) {
+    // 关中断取出并清除脏区域：中断里的日志输出也会标脏和刷新，
+    // 不能让它在这里的检查和计算之间改掉这两个值
+    int start, end;
+    {
+        kernel::InterruptGuard guard;
+        start = dirty_line_start;
+        end = dirty_line_end;
+        dirty_line_start = -1;
+        dirty_line_end = -1;
+    }
+    
+    if (start < 0 || end < 0) {
         return;  // 没有脏区域
     }
     
     // 限制脏区域范围
-    if (dirty_line_start < 0) dirty_line_start = 0;
-    if (dirty_line_end > (int)fb_info.height) dirty_line_end = fb_info.height;
+    if (end > (int)fb_info.height) end = fb_info.height;
+    if (start >= end) {
+        return;
+    }
     
     // 计算脏区域的起始偏移和大小
-    uint32_t offset = dirty_line_start * fb_info.pitch;
-    uint32_t size = (dirty_line_end - dirty_line_start) * fb_info.pitch;
+    uint32_t offset = (uint32_t)start * fb_info.pitch;
+    uint32_t size = (uint32_t)(end - start) * fb_info.pitch;
     
     // 复制脏区域到显存
     memcpy((uint8_t *)fb_info.buffer + offset, back_buffer_mem + offset, size);
-    
-    // 清除脏标记
-    dirty_line_start = -1;
-    dirty_line_end = -1;
 }
 
 /**
@@ -792,8 +803,12 @@ void drivers::Framebuffer::terminal_putchar(char c) {
                 ansi_param_count = 1;
                 ansi_params[0] = 0;
             }
-            ansi_params[ansi_param_count - 1] = 
-                ansi_params[ansi_param_count - 1] * 10 + (c - '0');
+            // 参数饱和在 ANSI_PARAM_MAX：任意长的数字串不能让 int 回绕成负数，
+            // 否则后面的光标移动会算出屏幕之外的位置
+            if (ansi_params[ansi_param_count - 1] < ANSI_PARAM_MAX) {
+                ansi_params[ansi_param_count - 1] = 
+                    ansi_params[ansi_param_count - 1] * 10 + (c - '0');
+            }
             ansi_state = ANSI_PARAM;
             return;
         } else if (c == ';') {

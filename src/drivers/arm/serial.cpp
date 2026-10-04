@@ -20,6 +20,10 @@
 
 #include <drivers/arm/serial.h>
 #include <types.h>
+#include <hal/hal.h>
+#include <kernel/interrupt.h>
+#include <kernel/sync/spinlock.h>
+#include <kernel/task.h>
 
 /* ============================================================================
  * PL011 UART Register Definitions
@@ -257,21 +261,130 @@ void serial_puts(const char *str) {
     drivers::Serial::print(str);
 }
 
+/* ============================================================================
+ * Receive path
+ *
+ * Received characters go through a ring buffer. The PL011 RX interrupt moves
+ * them out of the 16-byte hardware FIFO, so input is not lost while other
+ * tasks run. A task waiting for input gives the CPU away and lets interrupts
+ * in between checks, instead of spinning with interrupts masked (which
+ * stopped the timer tick and every other task until a key was pressed).
+ *
+ * The ring is shared with the interrupt handler, so both sides take rx_lock
+ * with interrupts off.
+ * ========================================================================== */
+
+#define SERIAL_RX_BUF_SIZE  256
+
+static char rx_buf[SERIAL_RX_BUF_SIZE];
+static uint32_t rx_head = 0;            /* next slot to write */
+static uint32_t rx_tail = 0;            /* next slot to read */
+static sync::Spinlock rx_lock;
+static bool rx_irq_registered = false;
+
+/** Append one character to the ring; dropped when the ring is full. rx_lock held. */
+static void rx_push_locked(char c) {
+    uint32_t next = (rx_head + 1) % SERIAL_RX_BUF_SIZE;
+    if (next == rx_tail) {
+        return;
+    }
+    rx_buf[rx_head] = c;
+    rx_head = next;
+}
+
+/** Move everything in the hardware FIFO into the ring. rx_lock held. */
+static bool rx_drain_fifo_locked(void) {
+    bool got = false;
+    while (!(pl011_read(PL011_FR) & PL011_FR_RXFE)) {
+        rx_push_locked((char)(pl011_read(PL011_DR) & 0xFF));
+        got = true;
+    }
+    return got;
+}
+
+/** Take one character from the ring. rx_lock held. */
+static bool rx_pop_locked(char *c) {
+    if (rx_head == rx_tail) {
+        return false;
+    }
+    *c = rx_buf[rx_tail];
+    rx_tail = (rx_tail + 1) % SERIAL_RX_BUF_SIZE;
+    return true;
+}
+
+/** Drain the FIFO and take one character, without blocking. */
+static bool rx_try_get(char *c) {
+    sync::SpinlockIrqGuard guard(rx_lock);
+    rx_drain_fifo_locked();
+    return rx_pop_locked(c);
+}
+
+/** PL011 interrupt handler: only moves the data into the ring. */
+static void serial_rx_irq_handler(void *data) {
+    (void)data;
+    sync::SpinlockIrqGuard guard(rx_lock);
+    /* Acknowledge first: a character arriving after the drain raises the
+     * interrupt again instead of being acknowledged away unread. */
+    pl011_write(PL011_ICR, PL011_INT_RX | PL011_INT_RT | PL011_INT_OE);
+    rx_drain_fifo_locked();
+}
+
+/** Hook up the RX interrupt on first use (the GIC is up by the time a task reads). */
+static void rx_irq_setup(void) {
+    bool irq_state = kernel::Interrupts::disable();
+    if (!rx_irq_registered) {
+        rx_irq_registered = true;
+        hal::Interrupt::register_handler(PL011_IRQ, serial_rx_irq_handler, NULL);
+        drivers::Serial::enable_rx_interrupt();
+    }
+    kernel::Interrupts::restore(irq_state);
+}
+
 /**
  * @brief Read a character from the serial port
  * 
- * Waits for a character to be available in the receive FIFO.
+ * Waits until a character is available. While waiting, other ready tasks
+ * get the CPU and interrupts (timer tick, sleep wake-ups) are serviced.
  * 
  * @return Character read from serial port
  */
 char drivers::Serial::getchar() {
-    /* Wait until receive FIFO is not empty */
-    while (pl011_read(PL011_FR) & PL011_FR_RXFE) {
-        __asm__ volatile("nop");
+    char c;
+    
+    /* Before the scheduler runs (or from an interrupt) there is nothing to
+     * switch to: poll the FIFO. */
+    if (!kernel::Scheduler::get_current() || in_interrupt()) {
+        while (!rx_try_get(&c)) {
+            __asm__ volatile("nop");
+        }
+        return c;
     }
     
-    /* Read character from data register */
-    return (char)(pl011_read(PL011_DR) & 0xFF);
+    rx_irq_setup();
+    
+    /*
+     * System calls run with interrupts masked on arm64, and the caller stays
+     * runnable: the idle task cannot be relied on to wake a blocked reader,
+     * because a kernel context resumed by the context switch inherits the
+     * interrupt mask of whoever switched to it.
+     */
+    bool irq_state = kernel::Interrupts::disable();
+    while (!rx_try_get(&c)) {
+        /* Let any other ready task run first */
+        kernel::Scheduler::yield();
+        
+        /* Sleep until an interrupt is pending. WFI wakes up for a pending
+         * interrupt even while it is masked, so one that arrived after the
+         * check above is not slept through. */
+        __asm__ volatile("wfi");
+        
+        /* Open a window to take it (timer tick, UART RX, ...) */
+        kernel::Interrupts::enable();
+        __asm__ volatile("isb");
+        kernel::Interrupts::disable();
+    }
+    kernel::Interrupts::restore(irq_state);
+    return c;
 }
 
 /**
@@ -279,7 +392,8 @@ char drivers::Serial::getchar() {
  * @return true if a character is available, false otherwise
  */
 bool drivers::Serial::has_char() {
-    return !(pl011_read(PL011_FR) & PL011_FR_RXFE);
+    sync::SpinlockIrqGuard guard(rx_lock);
+    return rx_head != rx_tail || !(pl011_read(PL011_FR) & PL011_FR_RXFE);
 }
 
 /**
@@ -287,10 +401,19 @@ bool drivers::Serial::has_char() {
  * @return Character read, or -1 if no character available
  */
 int drivers::Serial::getchar_nonblock() {
-    if (pl011_read(PL011_FR) & PL011_FR_RXFE) {
+    char c;
+    if (!rx_try_get(&c)) {
         return -1;
     }
-    return (int)(pl011_read(PL011_DR) & 0xFF);
+    return (int)(uint8_t)c;
+}
+
+/**
+ * @brief Queue a character as if it had been received
+ */
+void drivers::Serial::rx_inject(char c) {
+    sync::SpinlockIrqGuard guard(rx_lock);
+    rx_push_locked(c);
 }
 
 /**
@@ -366,7 +489,7 @@ void drivers::Serial::put_dec(uint64_t value) {
 }
 
 /* ============================================================================
- * Interrupt Support (for future use)
+ * Interrupt Support
  * ========================================================================== */
 
 /**
@@ -408,9 +531,5 @@ uint32_t drivers::Serial::get_interrupt_status() {
  * @return true if a character was read, false if no character available
  */
 bool serial_try_getchar(char *c) {
-    if (pl011_read(PL011_FR) & PL011_FR_RXFE) {
-        return false;
-    }
-    *c = (char)(pl011_read(PL011_DR) & 0xFF);
-    return true;
+    return rx_try_get(c);
 }

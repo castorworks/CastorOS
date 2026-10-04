@@ -12,6 +12,7 @@
 #include <types.h>
 #include <drivers/usb/usb.h>
 #include <fs/blockdev.h>
+#include <kernel/sync/mutex.h>
 
 /* ============================================================================
  * USB Mass Storage 常量
@@ -130,6 +131,9 @@ typedef struct usb_msc_device {
     
     /* CBW 标签 */
     uint32_t tag;                   // 命令标签计数
+    
+    /* 串行化一次完整的 CBW - 数据 - CSW 事务（两个任务的阶段不能交错） */
+    sync::Mutex lock;
     
     /* 块设备 */
     fs::Blockdev blockdev;            // 块设备接口
