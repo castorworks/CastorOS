@@ -29,7 +29,7 @@
 #include <drivers/usb/uhci.h>
 #include <drivers/usb/usb_mass_storage.h>
 #include <kernel/multiboot.h>
-#include <net/netdev.h>
+#include <net/net.h>
 #include <kernel/deferred.h>
 #endif
 
@@ -359,6 +359,7 @@ void kernel_main(void *dtb_addr) {
 
 #else /* x86 architectures (i686, x86_64) */
 
+
 // ============================================================================
 // x86 Kernel Main Entry Point
 // ============================================================================
@@ -531,9 +532,13 @@ void kernel_main(multiboot_info_t* mbi) {
         LOG_WARN_MSG("        Power management may not work correctly\n");
     }
 
-    // 4.7 初始化网络设备子系统
-    net::Netdev::init();
-    LOG_INFO_MSG("  [4.7] Network device subsystem initialized\n");
+    // 4.7 初始化网络协议栈
+    //     net::Stack::init 内部先初始化网络设备层，再初始化各协议，
+    //     并注册 TCP 定时器（重传、超时中止、TIME_WAIT 回收都靠它）。
+    //     必须在定时器之后、网卡驱动之前。
+    net::Stack::init();
+    net::Dns::init();
+    LOG_INFO_MSG("  [4.7] Network stack initialized\n");
 
     // 4.8 初始化 E1000 网卡驱动
 #if defined(ARCH_X86_64)
