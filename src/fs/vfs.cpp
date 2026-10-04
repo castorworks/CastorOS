@@ -621,9 +621,9 @@ int fs::Vfs::truncate(fs_node_t *node, uint32_t new_size) {
         return node->ops->truncate(node, new_size);
     }
     
-    // 否则，只更新大小（对于简单的内存文件系统）
-    node->size = new_size;
-    return 0;
+    // 不支持截断的文件系统：只改 node->size 会让它和文件系统自己的大小不一致
+    // （之后的 O_APPEND、lseek(SEEK_END)、stat 都会用到错误的值），所以报告失败
+    return -1;
 }
 
 // 重命名文件或目录
