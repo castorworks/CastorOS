@@ -28,6 +28,12 @@
 /* IRQ 处理函数数组（仅用于硬件中断 0-15） */
 static isr_handler_t irq_handlers[16] = {0};
 
+/* Additional handlers for lines shared by several PCI devices. A level-triggered
+ * line stays asserted until every device on it has been serviced, so each
+ * interrupt calls all handlers registered for the line. */
+#define IRQ_SHARED_MAX 3
+static isr_handler_t irq_shared_handlers[16][IRQ_SHARED_MAX] = {{0}};
+
 /* 保护 irq_handlers 数组的自旋锁
  * 注意：irq_handler() 在中断上下文中执行，因此必须使用 spinlock + IRQ save
  * 但由于 irq_handler 本身就在中断禁用状态下运行，所以读取时不需要额外保护
@@ -121,6 +127,11 @@ void irq_handler(registers_t *regs) {
     if (irq < 16 && irq_handlers[irq] != 0) {
         isr_handler_t handler = irq_handlers[irq];
         handler(regs);
+        for (int i = 0; i < IRQ_SHARED_MAX; i++) {
+            if (irq_shared_handlers[irq][i] != 0) {
+                irq_shared_handlers[irq][i](regs);
+            }
+        }
     } else {
         /* 未处理的 IRQ */
         LOG_WARN_MSG("Unhandled IRQ %u (interrupt %u)\n", irq, regs->int_no);
@@ -152,6 +163,42 @@ void irq_register_handler(uint8_t irq, isr_handler_t handler) {
     /* 使用 IRQ save 版本，防止在注册过程中被中断打断 */
     sync::SpinlockIrqGuard guard(irq_registry_lock);
     irq_handlers[irq] = handler;
+}
+
+/**
+ * Add a handler to an IRQ line without displacing the ones already there.
+ * For PCI device drivers, whose lines may be shared.
+ */
+void irq_add_shared_handler(uint8_t irq, isr_handler_t handler) {
+    if (irq >= 16 || handler == 0) {
+        return;
+    }
+    
+    if (!irq_registry_lock_initialized) {
+        irq_registry_lock.init();
+        irq_registry_lock_initialized = true;
+    }
+    
+    sync::SpinlockIrqGuard guard(irq_registry_lock);
+    if (irq_handlers[irq] == 0) {
+        irq_handlers[irq] = handler;
+        return;
+    }
+    if (irq_handlers[irq] == handler) {
+        return;
+    }
+    for (int i = 0; i < IRQ_SHARED_MAX; i++) {
+        if (irq_shared_handlers[irq][i] == handler) {
+            return;
+        }
+    }
+    for (int i = 0; i < IRQ_SHARED_MAX; i++) {
+        if (irq_shared_handlers[irq][i] == 0) {
+            irq_shared_handlers[irq][i] = handler;
+            return;
+        }
+    }
+    LOG_ERROR_MSG("IRQ %u: too many shared handlers\n", irq);
 }
 
 static inline uint16_t irq_get_port(uint8_t irq) {

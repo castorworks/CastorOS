@@ -625,7 +625,7 @@ static int e1000_init_device(pci_device_t *pci_dev) {
     
     /* 注册中断处理程序 */
     if (dev->irq != 0 && dev->irq != 0xFF) {
-        irq_register_handler(dev->irq, e1000_irq_handler);
+        irq_add_shared_handler(dev->irq, e1000_irq_handler);
         irq_enable_line(dev->irq);
     }
     

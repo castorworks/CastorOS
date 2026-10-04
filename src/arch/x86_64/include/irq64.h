@@ -52,6 +52,7 @@ void irq64_init(void);
  * @param handler Handler function
  */
 void irq64_register_handler(uint8_t irq, isr_handler_t handler);
+void irq64_add_shared_handler(uint8_t irq, isr_handler_t handler);
 
 /**
  * @brief Disable (mask) an IRQ line
@@ -81,6 +82,7 @@ uint64_t irq64_get_timer_ticks(void);
 /* Compatibility wrappers */
 #define irq_init() irq64_init()
 #define irq_register_handler(irq, h) irq64_register_handler(irq, h)
+#define irq_add_shared_handler(irq, h) irq64_add_shared_handler(irq, h)
 #define irq_disable_line(irq) irq64_disable_line(irq)
 #define irq_enable_line(irq) irq64_enable_line(irq)
 #define irq_get_count(irq) irq64_get_count(irq)

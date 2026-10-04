@@ -45,6 +45,7 @@ void irq_init(void);
  * @param handler 处理函数
  */
 void irq_register_handler(uint8_t irq, isr_handler_t handler);
+void irq_add_shared_handler(uint8_t irq, isr_handler_t handler);
 
 /**
  * 禁用（屏蔽）指定 IRQ 线路

@@ -952,7 +952,7 @@ static int uhci_init_controller(pci_device_t *pci_dev) {
     
     /* 注册中断处理程序 */
     if (hc->irq != 0 && hc->irq != 0xFF) {
-        irq_register_handler(hc->irq, uhci_irq_handler);
+        irq_add_shared_handler(hc->irq, uhci_irq_handler);
         irq_enable_line(hc->irq);
     }
     
