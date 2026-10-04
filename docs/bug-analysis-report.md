@@ -7,13 +7,13 @@
 ## 0. 修复状态（2026-10-04 更新）
 
 本报告第 1、3 节描述的是审计时（`50dc9eb`）的状态。之后在分支 `fix/audit-critical` 上做了修复，
-下面是截至该分支提交 `480c8c1` 的情况。
+下面是截至目前的情况（前一轮修复已合并进 `main`）。
 
 | | 数量 |
 |---|---|
 | 已复核的问题 | 124 |
-| 已修复 | 115 |
-| 未修复 | 9 |
+| 已修复 | 120 |
+| 未修复 | 4 |
 | 未复核的 medium/low（见附录） | 446，其中 1 条已修复，其余未处理 |
 
 修复后的回归结果：内核测试 i686 669/669、x86_64 650/650，arm64 无失败；三个架构都能从用户 shell 运行程序；
@@ -22,12 +22,10 @@ x86_64 不再随 exec 泄漏内存；i686 和 x86_64 开机自动通过 DHCP 获
 第 5 节每个条目的标题里标了"已修复"或"未修复"。由后期批量修复处理的条目附有修复说明和验证方式；
 其余"已修复"条目是按第 4 节顺序在前七项里修掉的，说明见对应提交。
 
-未修复的 9 项归为四类：
+未修复的 4 项：
 
-1. **arm64 内核仍运行在低地址恒等映射里**（3 项：V009、V010、V124）。arm64 上 `mmap` 因此不可用。需要把内核重新链接到高半区。
-2. **socket 没有接入文件描述符表**（2 项：V092、V093）。`close(sockfd)` 走不到 socket。
-3. **内核抢占**（1 项：V052）。用户态死循环仍会冻结系统。
-4. 其余 3 项：没有权限模型（V054）；arm64 的 virtio-gpu 设备类型（V115）；`Scheduler::free` 中页目录释放顺序（V038）。
+1. **arm64 内核仍运行在低地址恒等映射里**（V009、V010、V124）。arm64 上 `mmap` 因此不可用。需要把内核重新链接到高半区。
+2. **没有权限模型**（V054）。任何进程都能重启系统、修改网络配置、kill 其他用户进程。这是设计上的取舍，需要先确定模型。
 
 ### 端到端验证
 
@@ -40,6 +38,9 @@ x86_64 不再随 exec 泄漏内存；i686 和 x86_64 开机自动通过 DHCP 获
 | x86_64 网卡 | 已启用，ping 网关 3/3 |
 | USB | i686、x86_64 开机时挂载的 USB 存储设备能枚举、读出容量并注册为块设备 |
 | `mmap`/`munmap`/`brk` | 用户态测试新增"映射互不重叠"和"fork 后写时复制"两项检查，i686、x86_64 通过 |
+| socket 作为进程 fd | socket 得到 fd 3；`close(fd)` 生效；进程不关 socket 直接退出时对端看到正常关闭。i686、x86_64 通过 |
+| 用户态抢占 | 后台跑死循环程序时 shell 仍响应、可被 kill。i686、x86_64、arm64 通过 |
+| arm64 图形控制台 | 带 virtio-gpu-device 启动，截屏确认控制台正常绘制 |
 
 这轮验证中发现并修复了三个不在已复核清单里的问题：共享中断线导致有网卡和 USB 控制器时启动挂死
 （附录中的 `x-concurrency-10`）；内核与用户库的 `ifreq` 硬件地址布局差 2 字节，`ifconfig` 显示错误的 MAC
@@ -473,9 +474,9 @@ x86_64 不再随 exec 泄漏内存；i686 和 x86_64 开机自动通过 DHCP 获
 - 复核意见：boot64.asm:162-179 只填一个 PD（512 个 2MB 页，即 1GiB）；src/mm/vmm.cpp:295-306 的 x86_64 分支明确不扩展映射；src/mm/pmm.cpp:265-268 的 x86_64 分支为空，不截断 max_addr；alloc_frame 在 pmm.cpp:698 无条件 `memset(PHYS_TO_VIRT(addr))`，acpi.cpp:337 用 PHYS_TO_VIRT(rsdt_phys) 且 kernel.cpp:524 无架构守卫地调用 Acpi::init。因此内存超过 1GiB 时访问未映射地址的缺陷真实存在；vmm.cpp:1326-1327 的 MMIO 窗口也确实是物理 1-3GiB 的直接映射地址。 更正：严重度下调为 medium：Makefile 的 QEMU_FLAGS 不带 -m，默认 128MB 不会触发，属于潜在的配置相关缺陷。MMIO 窗口重叠目前更是纯潜在问题：map_mmio 在内核中的唯一调用者是 e1000.cpp:579，而 x86_64 上 e1000 被跳过（kernel.cpp:538-541），所以“memset 写进设备内存”的分支当前不会发生，实际后果是未映射缺页停机。heap.cpp:54 对堆扩展已有 1GiB 的显式检查，堆本身不受影响。-m 2G 下 ACPI 表落在 1GiB 以上这一点依赖固件行为，未动态验证。
 - 被 2 个独立审计者重复报告（x-64bit-6, arch-x86_64-mm-4）
 
-#### V038 [medium·已确认·i686·未修复] i686：Scheduler::free 在清空 PCB 之前调用 free_page_directory，被 is_page_directory_in_use 保护拦截，地址空间泄漏
+#### V038 [medium·已确认·i686·已修复] i686：Scheduler::free 在清空 PCB 之前调用 free_page_directory，被 is_page_directory_in_use 保护拦截，地址空间泄漏
 
-- **未修复**：The fix belongs in kernel::Scheduler::free (src/kernel/task.cpp, outside my ownership): it must mark the PCB unused, or clear page_dir_phys, before calling free_page_directory. The is_page_directory_in_use guard in vmm.cpp is correct as protection, and loosening it would hide the ordering bug and risk freeing a directory another task still uses. The leak on kill-orphan and fork-failure paths on i686 remains.
+- **修复**：已在进程批次中修复：`Scheduler::free` 先把任务标记为 TERMINATED，再释放页目录，`is_page_directory_in_use` 不再把正在释放的任务算作使用者。此前因文件归属被内存批次误报为未修复。验证方式：启动回归。
 - 位置：`src/mm/vmm.cpp:1060`；相关：`src/kernel/task.cpp:215`、`src/kernel/syscalls/process.cpp:902`、`src/kernel/syscalls/process.cpp:218`、`src/kernel/task.cpp:1022`
 - 证据：free_page_directory(i686 分支)：`if (is_page_directory_in_use(dir_phys)) { LOG_ERROR_MSG("...BLOCKED!..."); return; }`，is_page_directory_in_use 把所有 state 不是 UNUSED/ZOMBIE/TERMINATED 且 page_dir_phys 相同的任务算作在用。而 Scheduler::free(task.cpp:214-222) 先调用 free_page_directory，最后才 `memset(task,0,...); task->state = TASK_UNUSED;`。因此只要被释放的任务状态是 READY/BLOCKED，释放就被拦截并静默返回。另外 schedule() 只在切换到用户进程时才 sync_current_dir，所以切到 idle/内核线程后 current_dir_phys 仍是已死进程的页目录，`dir_phys == current_dir_phys` 检查也会拦截延迟回收。
 - 触发场景：(1) syscall kill 杀死一个没有父进程的非当前进程（process.cpp:902，目标状态为 READY/BLOCKED）：Scheduler::free → free_page_directory 打印 BLOCKED 后返回，随后 PCB 被清零，页目录、全部页表和用户页（至少 1MB 栈）永久泄漏。(2) fork 的三条失败路径中 child 状态为 READY，两次 free_page_directory 都被拦截，克隆出的页目录泄漏，且父进程 COW 帧的引用计数永远多 1。反复执行即可耗尽物理内存。
@@ -606,9 +607,9 @@ x86_64 不再随 exec 泄漏内存；i686 和 x86_64 开机自动通过 DHCP 获
 - 复核意见：src/kernel/task.cpp:1305-1332 的 wakeup 确实 `(void)wait_object`，并在 1318 行按 task_pool 下标唤醒第一个 `TASK_BLOCKED && sleep_until_ms==0` 的任务后 break；Mutex::lock (mutex.cpp:73) 与 Semaphore::wait (semaphore.cpp:41) 只置 TASK_BLOCKED，不记录等待对象，task_t 中也没有 wait_object 字段。被错唤醒的任务在 while(1) 中重试失败后再次阻塞，而 signal/unlock 只调用一次 wakeup（semaphore.cpp:78、mutex.cpp:114），真正的等待者无人再唤醒。pipe.cpp:210/298 的读写阻塞、FAT32/ATA/VFS 的 Mutex 都依赖此路径，两个以上不同对象同时有等待者即可触发。 更正：丢失的唤醒不一定永久：之后任何一次无关的 signal/unlock 都可能碰巧唤醒真正的等待者，所以表现为挂起或严重延迟而非必然死锁；但在没有后续唤醒源时确实永久挂起。Scheduler::block (1280) 同样忽略 wait_object，需一并修改。
 - 被 3 个独立审计者重复报告（x-doc-drift-8, kernel-task-sync-1, x-concurrency-3）
 
-#### V052 [high·已确认·all·未修复] IRQ 返回路径上的 schedule_from_irq 是空函数：系统完全没有抢占，用户态死循环即可独占 CPU 挂死整机
+#### V052 [high·已确认·all·已修复] IRQ 返回路径上的 schedule_from_irq 是空函数：系统完全没有抢占，用户态死循环即可独占 CPU 挂死整机
 
-- **未修复**：Preemption is an unimplemented feature, not a local bug. A correct fix needs changes to the IRQ return stubs of all three architectures, per-task interrupt-depth accounting, the restore paths in the context-switch assembly and FPU state saving, all outside my ownership and too large for this batch. schedule_from_irq is still empty.
+- **修复**：时钟中断在时间片用完时置位，IRQ 分发在 EOI 之后的抢占点切换任务，只抢占用户态；抢占点同时投递待处理的 kill。验证方式：后台运行一个从不进内核的死循环程序，shell 仍能响应、其他程序能运行完、`kill` 能终止它；i686、x86_64、arm64 实测通过。
 - 位置：`src/kernel/task.cpp:1341`；相关：`src/arch/i686/interrupt/irq.cpp:131`、`src/kernel/task.cpp:1149`、`src/arch/i686/task/task_asm.asm:184`
 - 证据：irq_handler 在 EOI 之后调用 `schedule_from_irq(regs);`（src/arch/i686/interrupt/irq.cpp:131），但其实现只有 `(void)regs;` 和一段注释“当前暂时禁用从 IRQ 的调度”。Scheduler::timer_tick 里时间片到期分支也只是 `tick_count = 0;`（task.cpp:1149-1153），不设置任何 need_resched 标志；syscall_handler 返回用户态前也不检查重调度。任务切换只发生在任务主动调用 schedule()/yield()/sleep()/block() 时。
 - 触发场景：用户程序执行 `for(;;);`（或任何不做阻塞系统调用的长计算）：定时器中断照常进入 timer_tick，把到期的睡眠任务放回就绪队列，但中断返回后仍回到该进程；shell、idle、其它进程永远不再运行，键盘输入无人读取，也没有信号机制可以杀掉它，只能重启。DEFAULT_TIME_SLICE/priority 等字段形同虚设。
@@ -978,9 +979,9 @@ if (fat32_mark_entry_deleted(fs, lookup->cluster, lookup->offset) != 0) { kfree(
 - 复核意见：全仓库 grep 确认 net::Stack::init 只有 src/net/net.cpp:22 的定义，没有任何调用者；src/kernel/kernel.cpp:534 只调用 net::Netdev::init()。net::Tcp::timer() 的唯一调用点是 net.cpp:19 的回调，而该回调仅在 net.cpp:50（Stack::init 内）注册，因此 tcp.cpp:1316 的重传/超时处理永不运行。Arp::cache_cleanup(arp.cpp:365)、Ip::reass_timer(ip.cpp:233) 同样没有调用者。 更正：“tcp_isn 永远从 0 开始”不准确：tcp.cpp:45 的 tcp_gen_isn 每次都会加上 uptime_ms*250000，ISN 并非恒为 0，只是缺少 Tcp::init 中的初始种子（仍可预测）。实际影响限于 i686（x86_64 跳过 e1000，arm64 不编译网络栈）。
 - 被 2 个独立审计者重复报告（net-link-ip-5, x-doc-drift-6）
 
-#### V092 [high·已确认·i686,x86_64·未修复] socket 描述符使用独立的全局表，未接入每进程 fd 表：close() 关不掉 socket，进程退出不回收，进程间互相可见
+#### V092 [high·已确认·i686,x86_64·已修复] socket 描述符使用独立的全局表，未接入每进程 fd 表：close() 关不掉 socket，进程退出不回收，进程间互相可见
 
-- **未修复**：Sockets still live in a global socket_table indexed from 0, separate from the per-process FdTable. The correct fix makes a socket an fs_node with NodeOps registered through kernel::FdTable, and re-routes SYS_CLOSE/SYS_FCNTL/read/write/dup/fork/exit in src/kernel/syscall.cpp, src/kernel/syscalls/fs.cpp, fd_table.cpp, task.cpp and the user library. That is a cross-subsystem redesign in files owned by other batches; a partial fix inside src/net would leave the fd-number collision in place. Left untouched.
+- **修复**：每个 socket 现在是所属进程 fd 表里的一个 `FS_SOCKET` 节点：`socket()`/`accept()` 返回真正的进程 fd，所有 socket 系统调用把 fd 换回 socket，`select` 转换 fd 集合；最后一个 fd 关闭时 socket 才关闭（`5a00ceb`）。验证方式：用户态程序实测 socket 得到 fd 3、`close(fd)` 后再 send 返回 -1；i686、x86_64 通过。
 - 位置：`src/net/socket.cpp:50`；相关：`src/net/socket.cpp:133`、`src/net/socket.cpp:485`、`src/kernel/syscall.cpp:143`、`src/kernel/syscall.cpp:474`、`src/kernel/task.cpp:202`
 - 证据：`#define MAX_SOCKETS 64` / `static socket_t *socket_table[MAX_SOCKETS];`，socket()/accept() 返回的是这个全局数组的下标（从 0 开始），与 kernel::FdTable 完全无关。net::Socket::closesocket 没有任何系统调用入口（syscall.cpp 中未注册，用户库 close() 走 SYS_CLOSE -> syscall::Fs::close -> FdTable::free）。SYS_FCNTL 只映射到 net::Socket::fcntl，read/write/dup/fork 也完全不认识 socket。
 - 触发场景：(1) 进程第一次调用 socket() 得到 0（与 stdin 同号），随后 `close(sockfd)` 实际关闭的是该进程的 stdin(fd 0)，socket 与其 TCP/UDP PCB、绑定端口永不释放；64 个 socket（全系统合计）用完后所有进程的 socket() 永久失败，只能重启。(2) 进程退出或被 kill 时 Scheduler::free 只清理 FdTable，socket 泄漏、监听端口一直被占用。(3) 任何进程都可以对别的进程的 socket 号调用 recv/send/shutdown，读取或劫持其连接。(4) 对普通文件 fd 调 fcntl(F_GETFL/F_SETFL) 会操作到同号的 socket，对 socket 调 read()/write()/dup2() 则操作到同号文件。
@@ -988,9 +989,9 @@ if (fat32_mark_entry_deleted(fs, lookup->cluster, lookup->offset) != 0) { kfree(
 - 复核意见：src/net/socket.cpp:50 的 socket_table 是全局静态数组，socket_alloc_fd(socket.cpp:59-71) 返回从 0 开始的下标，socket_get(socket.cpp:90) 没有属主检查。全仓库 grep closesocket 只有定义(socket.cpp:485)和声明(socket.h:214)，没有任何调用者或系统调用入口；SYS_CLOSE 走 syscall::Fs::close -> FdTable::free(syscalls/fs.cpp:213-221)，进程清理(task.cpp:202-210, 952-959)只处理 fd_table。SYS_FCNTL 只路由到 net::Socket::fcntl(syscall.cpp:470-475)，因此泄漏、跨进程可见、编号冲突均成立。 更正：仅 i686/x86_64 编译（syscall.cpp:344 的 #if !defined(ARCH_ARM64)）。x86_64 上 e1000 被跳过，但 socket 层仍会初始化，socket() 仍可消耗表项。
 - 被 4 个独立审计者重复报告（kernel-fs-net-syscalls-5, x-doc-drift-7, x-user-boundary-6, gap6-abi-struct-parity-lp64-1）
 
-#### V093 [high·已确认·i686,x86_64·未修复] closesocket 没有任何系统调用入口，且 socket fd 与进程 VFS fd 是两个互不相干的全局/进程编号空间：socket 永不关闭，用户 close(sockfd) 关掉的是无关文件
+#### V093 [high·已确认·i686,x86_64·已修复] closesocket 没有任何系统调用入口，且 socket fd 与进程 VFS fd 是两个互不相干的全局/进程编号空间：socket 永不关闭，用户 close(sockfd) 关掉的是无关文件
 
-- **未修复**：Same root cause as kernel-fs-net-syscalls-5: closesocket has no syscall entry and close(sockfd) hits the VFS fd table. Needs the socket-as-fd integration (or a new syscall number plus user-library change), all outside this batch's ownership. Note closesocket still calls Tcp::close followed immediately by pcb_free, so once it is wired up it must wait for send_buf/FIN to drain.
+- **修复**：同 V092：`close(sockfd)` 现在关闭 socket，进程退出时未关闭的 socket 由内核关闭。关闭 TCP socket 不再立即释放 PCB，而是由 `Tcp::release` 发起正常关闭、由定时器在连接关闭后释放（`5a00ceb`）。验证方式：用户态程序不关 socket 直接退出，宿主机上的对端观察到连接被正常关闭；i686、x86_64 通过。
 - 位置：`src/net/socket.cpp:485`；相关：`src/net/socket.cpp:50`、`src/net/socket.cpp:59`、`src/kernel/syscall.cpp:579`、`user/lib/src/socket.cpp:220`
 - 证据：全仓库 grep `closesocket` 只有 socket.cpp 的定义和 socket.h 的声明，syscall.cpp 中没有包装器调用它。socket fd 来自全局 `socket_table[MAX_SOCKETS]`（下标从 0 开始，所有进程共享，无属主检查）；用户库 user/lib/src/socket.cpp 用 `close(sockfd)` 关闭，而 SYS_CLOSE 走 syscall::Fs::close -> 当前进程的 FdTable。进程退出时也没有任何代码释放其 socket。
 - 触发场景：进程 A 调 socket() 得到 0，使用后 close(0)：实际关闭的是自己的 stdin（fd 0），socket 0 和它的 PCB（约 16KB 缓冲、绑定的端口）永远泄漏，TCP 连接也不会发 FIN。全系统累计创建 64 个 socket 后 socket() 永久失败。同时任意进程都可以对别的进程的 socket 编号执行 recv/send/bind（无隔离）。
@@ -1188,9 +1189,9 @@ if (fat32_mark_entry_deleted(fs, lookup->cluster, lookup->offset) != 0) { kfree(
 - 修复方向：把所有内核 MMIO（GIC、PL011、virtio-mmio 等）通过 TTBR1 高地址区域统一映射（ioremap 风格），驱动使用该虚拟地址；临时方案是在 create_space() 中补上 0x0a000000 的 2MB 设备块映射。根本上应让内核运行在 TTBR1 而不是依赖 TTBR0 恒等映射。
 - 复核意见：src/drivers/arm/virtio_gpu.cpp:23/383 把 0x0a000000 起的物理地址直接当虚拟地址，virtio_write32（:98）经 TTBR0 恒等映射访问；src/arch/arm64/mm/mmu.cpp:1072-1076 的 create_space 只填了 new_l2[64] 和 new_l2[72]，L2[80]（0x0a000000）确实为空。devfs.cpp:214 与 kprintf.cpp:385-387 在 Framebuffer 初始化后都会走到 VirtioGpu::flush，所以进程页表下访问会 translation fault。但 Makefile:346/457 默认用 `-device virtio-gpu-pci`，MMIO 扫描找不到设备、fb_initialized 保持 false，默认配置下不可达，且未做动态验证，故只判 plausible。 更正：仅在手动使用 `-device virtio-gpu-device`（virtio-mmio 传输）启动时才会触发；仓库 Makefile 的 run 目标用的是 virtio-gpu-pci，该驱动根本探测不到，帧缓冲不会初始化。严重度因此降为 medium。另外 timer_tick 的 LOG_INFO_MSG 路径是经 klog -> vkprintf_vga -> kprintf.cpp:386 的 Framebuffer::flush 到达的。
 
-#### V115 [medium·已确认·arm64·未修复] virtio-gpu 驱动只扫描 virtio-mmio，而 Makefile 的 arm64 运行目标使用 -device virtio-gpu-pci，帧缓冲控制台永远无法初始化
+#### V115 [medium·已确认·arm64·已修复] virtio-gpu 驱动只扫描 virtio-mmio，而 Makefile 的 arm64 运行目标使用 -device virtio-gpu-pci，帧缓冲控制台永远无法初始化
 
-- **未修复**：The fix is a Makefile change (-device virtio-gpu-pci to virtio-gpu-device in the arm64 run and run-disk targets) plus making kernel.cpp report terminal_init failure; both are outside my ownership. I also could not validate it: switching the device makes the framebuffer console path live on arm64 for the first time, and I was not allowed to start QEMU with that device. The driver-side blockers for doing so (drivers-arm-platform-2 and -3) are fixed in this branch but not run against a real device.
+- **修复**：arm64 的运行目标改用 `-device virtio-gpu-device`（virtio-mmio 传输）；`kernel.cpp` 如实报告帧缓冲是否初始化成功（`7e93d26`）。验证方式：arm64 带该设备启动，virtio-gpu 初始化成功（1280×800），截屏确认图形控制台正常绘制，内核测试和 shell 正常。
 - 位置：`src/drivers/arm/virtio_gpu.cpp:383`；相关：`Makefile:346`、`Makefile:457`、`src/kernel/kernel.cpp:231`
 - 证据：find_virtio_gpu() 只遍历固定的 MMIO 槽位：`volatile uint8_t *base = (volatile uint8_t *)(VIRTIO_MMIO_BASE + i * VIRTIO_MMIO_SIZE);` 并要求 `device_id == VIRTIO_DEV_GPU`。但 Makefile:346 (`run`) 和 Makefile:457 (`run-disk`) 传给 QEMU 的是 `-device virtio-gpu-pci`，该设备挂在 PCIe ECAM 总线上，32 个 virtio-mmio 槽位的 DeviceID 全为 0。arm64 上没有任何 PCI/ECAM 代码。
 - 触发场景：执行 `make run ARCH=arm64`：kernel.cpp:231 调用 drivers::Framebuffer::terminal_init() -> VirtioGpu::init() -> find_virtio_gpu() 返回 NULL，打印 "virtio-gpu: Device not found"，fb_initialized 始终为 false。QEMU 图形窗口一直黑屏，所有输出只走串口；kernel.cpp 仍然打印 "[4.2] Framebuffer console initialized"（terminal_init 无返回值，失败被吞掉）。
