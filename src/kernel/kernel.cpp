@@ -29,7 +29,7 @@
 #include <drivers/usb/uhci.h>
 #include <drivers/usb/usb_mass_storage.h>
 #include <kernel/multiboot.h>
-#include <net/netdev.h>
+#include <net/net.h>
 #include <kernel/deferred.h>
 #endif
 
@@ -531,9 +531,10 @@ void kernel_main(multiboot_info_t* mbi) {
         LOG_WARN_MSG("        Power management may not work correctly\n");
     }
 
-    // 4.7 初始化网络设备子系统
-    net::Netdev::init();
-    LOG_INFO_MSG("  [4.7] Network device subsystem initialized\n");
+    // 4.7 初始化网络协议栈（设备层、各协议、Socket 以及 TCP/维护定时器）。
+    // 必须在网卡驱动注册设备之前：其中的 Netdev::init() 会清空设备表。
+    net::Stack::init();
+    LOG_INFO_MSG("  [4.7] Network stack initialized\n");
 
     // 4.8 初始化 E1000 网卡驱动
 #if defined(ARCH_X86_64)

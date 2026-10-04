@@ -28,6 +28,22 @@ static void net_tcp_timer_callback(void *data) {
     kernel::Deferred::raise(tcp_timer_work);
 }
 
+/* 每秒一次的维护工作：ARP 重试/过期、IP 重组超时、DHCP 超时与续约。
+ * 同样在 kworker 线程里运行（要发包、要拿 Mutex）。 */
+static uint32_t net_periodic_timer_id = 0;
+static int net_periodic_work_id = -1;
+
+static void net_periodic_work(void) {
+    net::Arp::cache_cleanup();
+    net::Ip::reass_timer();
+    net::Dhcp::timer();
+}
+
+static void net_periodic_callback(void *data) {
+    (void)data;
+    kernel::Deferred::raise(net_periodic_work_id);
+}
+
 void net::Stack::init() {
     LOG_INFO_MSG("net: Initializing network stack...\n");
     
@@ -62,6 +78,13 @@ void net::Stack::init() {
         LOG_WARN_MSG("net: Failed to register TCP timer\n");
     }
     
+    // 10. 注册每秒一次的维护定时器
+    net_periodic_work_id = kernel::Deferred::add(net_periodic_work, "net_periodic");
+    net_periodic_timer_id = drivers::Timer::register_callback(net_periodic_callback, NULL, 1000, true);
+    if (net_periodic_timer_id == 0) {
+        LOG_WARN_MSG("net: Failed to register maintenance timer\n");
+    }
+
     LOG_INFO_MSG("net: Network stack initialized\n");
 }
 
