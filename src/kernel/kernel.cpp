@@ -1,100 +1,76 @@
 // ============================================================================
-// kernel.c - 内核主函数
+// kernel.cpp - 内核主函数
 // ============================================================================
 //
-// This file implements the kernel main entry point. It uses the Hardware
-// Abstraction Layer (HAL) for architecture-specific initialization, allowing
-// the same kernel code to work across different architectures (i686, x86_64,
-// ARM64).
-//
-// **Feature: multi-arch-support**
-// **Feature: arm64-kernel-integration**
-// **Validates: Requirements 1.1, 10.1**
+// 内核只做四件事：CPU/中断、内存管理、任务调度、系统调用。
+// 初始化完成后加载内嵌的 init 程序，其余功能都在用户态。
+// 体系结构相关的部分通过 HAL 完成；x86 由 Multiboot 提供启动信息，
+// arm64 由 DTB 提供。
 // ============================================================================
 
 #include <drivers/serial.h>
-
-/* x86-specific drivers (not available on ARM64) */
-#if defined(ARCH_I686) || defined(ARCH_X86_64)
-#include <drivers/vga.h>
 #include <drivers/timer.h>
-#include <drivers/keyboard.h>
-#include <drivers/ata.h>
-#include <drivers/rtc.h>
-#include <drivers/pci.h>
-#include <drivers/e1000.h>
-#include <drivers/framebuffer.h>
-#include <drivers/acpi.h>
-#include <drivers/usb/usb.h>
-#include <drivers/usb/uhci.h>
-#include <drivers/usb/usb_mass_storage.h>
-#include <kernel/multiboot.h>
-#include <net/net.h>
-#include <net/dhcp.h>
-#include <kernel/deferred.h>
-#endif
 
 #include <kernel/version.h>
+#include <kernel/task.h>
+#include <kernel/syscall.h>
+#include <kernel/loader.h>
 
 #include <lib/kprintf.h>
 #include <lib/klog.h>
+#include <lib/cxxrt.h>
 
-/* HAL interface for architecture-independent initialization */
 #include <hal/hal.h>
-
-/* Architecture-specific headers */
-#if defined(ARCH_I686) || defined(ARCH_X86_64)
-#include <kernel/gdt.h>
-#endif
-
-#include <kernel/task.h>
-#include <kernel/syscall.h>
-
-/* fs_bootstrap is x86-specific (has FAT32, partition, blockdev dependencies) */
-#if defined(ARCH_I686) || defined(ARCH_X86_64)
-#include <kernel/fs_bootstrap.h>
-#endif
-
-/* kernel_shell is x86-specific (has VGA, keyboard, USB dependencies) */
-#if defined(ARCH_I686) || defined(ARCH_X86_64)
-#include <kernel/kernel_shell.h>
-#endif
 
 #include <mm/pmm.h>
 #include <mm/vmm.h>
 #include <mm/heap.h>
 
-#include <kernel/loader.h>
-
-#include <lib/cxxrt.h>
-#include <tests/test_runner.h>
-
-/* Boot info for ARM64 */
 #if defined(ARCH_ARM64)
-#include <drivers/framebuffer.h>
 #include <boot/boot_info.h>
 #include <arch/arm64/arch_types.h>
-#include <fs/vfs.h>
-#include <fs/ramfs.h>
-#include <fs/devfs.h>
-#include <kernel/embedded_programs.h>
+#else
+#include <kernel/multiboot.h>
 #endif
 
-// 声明引导栈顶地址（定义在 boot.asm / boot64.asm / start.S）
-extern char stack_top[];
+#ifdef KTEST
+#include <tests/test_runner.h>
+#endif
 
-// ============================================================================
-// ARM64 Kernel Main Entry Point
-// ============================================================================
-// ARM64 uses DTB (Device Tree Blob) instead of Multiboot for boot information.
-// The initialization sequence is different from x86 due to:
-//   - DTB-based memory and device discovery
-//   - Different timer and interrupt controller (GIC)
-//   - No VGA, PCI, or x86-specific devices
-//
-// **Feature: arm64-kernel-integration**
-// **Validates: Requirements 10.1**
-// ============================================================================
+static void print_banner(void) {
+    kprintf("\n================================================================================\n");
+    kprintf("CastorOS v%s (%s)\n", KERNEL_VERSION, hal_arch_name());
+    kprintf("Compiled on: %s %s\n", __DATE__, __TIME__);
+    kprintf("================================================================================\n");
+}
+
+/**
+ * 内存管理就绪之后的公共启动流程：调度器、（可选的）内核测试、init
+ */
+static void kernel_start(void) __attribute__((noreturn));
+static void kernel_start(void) {
+    kernel::Scheduler::init();
+    LOG_INFO_MSG("Scheduler initialized\n");
+
+    hal::Interrupt::enable();
+
+#ifdef KTEST
+    LOG_INFO_MSG("Running test suite...\n");
+    run_all_tests();
+    kprintf("\n");
+#endif
+
+    if (!load_init()) {
+        LOG_WARN_MSG("No init process; kernel idles\n");
+    }
+
+    LOG_INFO_MSG("Kernel entering scheduler...\n");
+    kernel::Scheduler::schedule();
+
+    while (1) {
+        hal::Cpu::halt();
+    }
+}
 
 #if defined(ARCH_ARM64)
 
@@ -102,267 +78,45 @@ extern "C" void kernel_main(void *dtb_addr);
 void kernel_main(void *dtb_addr) {
     cxx_global_ctors_init();  // 运行 C++ 全局构造函数（必须最先执行）
 
-    // ========================================================================
-    // 阶段 0: 早期初始化 (ARM64)
-    // ========================================================================
-    drivers::Serial::init();  // Initialize PL011 UART
-    
-    // 日志配置
-    // klog_set_level(LOG_DEBUG);  // Uncomment for debug output
+    drivers::Serial::init();  // PL011
+    print_banner();
 
-    // ========================================================================
-    // 启动信息
-    // ========================================================================
-    kprintf("\n");
-    kprintf("================================================================================\n");
-    kprintf("Welcome to CastorOS!\n");
-    kprintf("Version v%s (ARM64)\n", KERNEL_VERSION);
-    kprintf("Compiled on: %s %s\n", __DATE__, __TIME__);
-    kprintf("================================================================================\n");
-    
-    kprintf("DTB address: 0x%llx\n", (unsigned long long)(uintptr_t)dtb_addr);
-    kprintf("Kernel virtual base: 0x%llx\n", (unsigned long long)KERNEL_VIRTUAL_BASE);
-    kprintf("\n");
-
-    // ========================================================================
-    // 阶段 1: Boot Info 初始化 (ARM64 特定)
-    // ========================================================================
-    // Parse DTB to extract memory information and device configuration
-    // **Feature: arm64-kernel-integration**
-    // **Validates: Requirements 1.1**
-    // ========================================================================
-    LOG_INFO_MSG("[Stage 1] Initializing boot info from DTB...\n");
-    
     boot_info_t *boot_info = boot_info_init_dtb(dtb_addr);
-    if (boot_info) {
-        LOG_INFO_MSG("  [1.1] Boot info initialized successfully\n");
-        boot_info_print();
-    } else {
-        LOG_WARN_MSG("  [1.1] WARNING: Failed to initialize boot info from DTB\n");
-        LOG_WARN_MSG("        Continuing with limited functionality...\n");
+    if (!boot_info) {
+        kprintf("PANIC: no usable boot info in DTB at 0x%llx\n",
+                (unsigned long long)(uintptr_t)dtb_addr);
+        while (1) {
+            hal::Cpu::halt();
+        }
     }
-    kprintf("\n");
 
-    // ========================================================================
-    // 阶段 2: CPU 和中断系统 (ARM64)
-    // ========================================================================
-    LOG_INFO_MSG("[Stage 2] Initializing CPU and interrupt system via HAL...\n");
-    
     hal::Cpu::init();
-    LOG_INFO_MSG("  [2.1] CPU initialized via HAL (%s)\n", hal_arch_name());
-    
-    hal::Interrupt::init();
-    LOG_INFO_MSG("  [2.2] Interrupt system initialized (GIC)\n");
-    
+    hal::Interrupt::init();   // 异常向量 + GIC
     syscall_init();
-    LOG_INFO_MSG("  [2.3] System calls initialized\n");
-    kprintf("\n");
 
-    // ========================================================================
-    // 阶段 3: 内存管理 (ARM64)
-    // ========================================================================
-    LOG_INFO_MSG("[Stage 3] Initializing memory management...\n");
-    
-    if (boot_info) {
-        // 3.1 Initialize PMM using boot_info from DTB
-        mm::Pmm::init_boot_info(boot_info);
-        LOG_INFO_MSG("  [3.1] PMM initialized\n");
-        
-        // 3.2 Initialize VMM
-        mm::Vmm::init();
-        LOG_INFO_MSG("  [3.2] VMM initialized\n");
-        
-        // 3.3 Initialize Heap
-        // ARM64 heap should be placed after PMM data structures, within physical memory
-        // Get the end of PMM data structures and place heap there
-        uintptr_t pmm_data_end = mm::Pmm::get_data_end_virt();
-        uintptr_t heap_start = PAGE_ALIGN_UP(pmm_data_end);
-        
-        // Calculate available memory for heap (leave some room for other allocations)
-        // Physical memory ends at max_phys, heap should not exceed that
-        mm::PmmInfo pmm_info_local = mm::Pmm::get_info();
-        uint64_t max_phys = (uint64_t)pmm_info_local.total_frames * PAGE_SIZE;
-        uintptr_t max_heap_virt = PHYS_TO_VIRT(max_phys);
-        
-        // Limit heap size to available space or 16MB, whichever is smaller
-        uint64_t available_space = max_heap_virt - heap_start;
-        uint32_t heap_size = (uint32_t)ARM64_HEAP_INIT_SIZE;  // 16MB initial
-        if (available_space < heap_size) {
-            heap_size = (uint32_t)(available_space / 2);  // Use half of available space
-        }
-        
-        LOG_INFO_MSG("  [3.3] Initializing heap at 0x%llx (size: %u MB)\n",
-                     (unsigned long long)heap_start, heap_size / (1024 * 1024));
-        LOG_INFO_MSG("        PMM data end: 0x%llx, max_heap_virt: 0x%llx\n",
-                     (unsigned long long)pmm_data_end, (unsigned long long)max_heap_virt);
-        
-        mm::Heap::init(heap_start, heap_size);
-        
-        // 【关键】通知 PMM 堆的虚拟地址范围，防止分配会与堆重叠的物理帧
-        // 这解决了堆扩展时覆盖已分配帧的恒等映射导致的页目录损坏问题
-        mm::Pmm::set_heap_reserved_range(heap_start, heap_start + heap_size);
-        
-        mm::Heap::print_info();
-        LOG_INFO_MSG("  [3.3] Heap initialized\n");
-        
-        // Test heap allocation
-        void *test_ptr = kmalloc(1024);
-        if (test_ptr) {
-            LOG_DEBUG_MSG("  Heap test: kmalloc(1024) = 0x%llx - OK\n",
-                         (unsigned long long)(uintptr_t)test_ptr);
-            kfree(test_ptr);
-        } else {
-            LOG_WARN_MSG("  Heap test: kmalloc(1024) FAILED\n");
-        }
-    } else {
-        LOG_WARN_MSG("  [3.x] Skipping PMM/VMM/Heap (no boot_info)\n");
-    }
-    kprintf("\n");
+    mm::Pmm::init_boot_info(boot_info);
+    mm::Vmm::init();
 
-    // ========================================================================
-    // 阶段 4: 设备驱动 (ARM64)
-    // ========================================================================
-    LOG_INFO_MSG("[Stage 4] Initializing device drivers...\n");
-    
-    // 4.1 Initialize timer with scheduler integration
-    // ARM64 uses ARM Generic Timer via HAL
-    hal::Timer::init(100, kernel::Scheduler::timer_tick);  // 100 Hz = 10ms tick
-    LOG_INFO_MSG("  [4.1] Timer initialized (100 Hz)\n");
-    
-    // 4.2 Initialize framebuffer console (virtio-gpu)
-    drivers::Framebuffer::terminal_init();
-    if (drivers::Framebuffer::is_initialized()) {
-        LOG_INFO_MSG("  [4.2] Framebuffer console initialized\n");
-    } else {
-        LOG_WARN_MSG("  [4.2] No framebuffer (virtio-gpu not found), console on serial only\n");
+    // 堆放在 PMM 数据结构之后，不超过物理内存末尾
+    uintptr_t heap_start = PAGE_ALIGN_UP(mm::Pmm::get_data_end_virt());
+    mm::PmmInfo pmm_info = mm::Pmm::get_info();
+    uintptr_t max_heap_virt = PHYS_TO_VIRT((uint64_t)pmm_info.total_frames * PAGE_SIZE);
+    uint64_t available_space = max_heap_virt - heap_start;
+    uint32_t heap_size = (uint32_t)ARM64_HEAP_INIT_SIZE;
+    if (available_space < heap_size) {
+        heap_size = (uint32_t)(available_space / 2);
     }
-    
-    // Note: ARM64 doesn't have VGA, keyboard, ATA, PCI, ACPI, E1000, USB
-    // These are x86-specific devices
-    LOG_INFO_MSG("  [4.x] ARM64: x86-specific drivers skipped\n");
-    kprintf("\n");
+    mm::Heap::init(heap_start, heap_size);
+    // 通知 PMM 堆的虚拟地址范围，防止分配会与堆重叠的物理帧
+    mm::Pmm::set_heap_reserved_range(heap_start, heap_start + heap_size);
+    LOG_INFO_MSG("Memory management initialized\n");
 
-    // ========================================================================
-    // 阶段 5: 高级子系统 (ARM64)
-    // ========================================================================
-    LOG_INFO_MSG("[Stage 5] Initializing advanced subsystems...\n");
-    
-    // 5.1 Initialize task management
-    kernel::Scheduler::init();
-    LOG_INFO_MSG("  [5.1] Task management initialized\n");
-    
-    // 5.2 Initialize file system (VFS + ramfs + devfs)
-    fs::Vfs::init();
-    LOG_INFO_MSG("  [5.2] VFS core initialized\n");
-    
-    fs_node_t *ramfs_root = fs::Ramfs::init();
-    if (ramfs_root) {
-        fs::Vfs::set_root(ramfs_root);
-        LOG_INFO_MSG("  [5.3] RAMFS initialized as root filesystem\n");
-        
-        // Initialize devfs
-        fs_node_t *devfs_root = fs::Devfs::init();
-        if (devfs_root) {
-            fs::Vfs::mkdir("/dev", FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC);
-            fs::Vfs::mount("/dev", devfs_root);
-            LOG_INFO_MSG("  [5.4] DevFS mounted at /dev\n");
-        }
-        
-        // Create standard directories
-        fs::Vfs::mkdir("/bin", FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC);
-        fs::Vfs::mkdir("/tmp", FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC);
-        LOG_INFO_MSG("  [5.5] Standard directories created\n");
-        
-        // Write embedded user programs to ramfs
-        if (embedded_shell_size > 0) {
-            if (fs::Vfs::create("/bin/shell.elf") == 0) {
-                fs_node_t *shell_node = fs::Vfs::path_to_node("/bin/shell.elf");
-                if (shell_node) {
-                    uint32_t written = fs::Vfs::write(shell_node, 0, embedded_shell_size, 
-                                                (uint8_t*)embedded_shell_elf);
-                    fs::Vfs::release_node(shell_node);
-                    if (written == embedded_shell_size) {
-                        LOG_INFO_MSG("  [5.6] Embedded shell.elf written (%u bytes)\n", 
-                                    embedded_shell_size);
-                    } else {
-                        LOG_WARN_MSG("  [5.6] Failed to write shell.elf (wrote %u/%u)\n",
-                                    written, embedded_shell_size);
-                    }
-                }
-            } else {
-                LOG_WARN_MSG("  [5.6] Failed to create /bin/shell.elf\n");
-            }
-        }
-        
-        if (embedded_hello_size > 0) {
-            if (fs::Vfs::create("/bin/hello.elf") == 0) {
-                fs_node_t *hello_node = fs::Vfs::path_to_node("/bin/hello.elf");
-                if (hello_node) {
-                    uint32_t written = fs::Vfs::write(hello_node, 0, embedded_hello_size,
-                                                (uint8_t*)embedded_hello_elf);
-                    fs::Vfs::release_node(hello_node);
-                    if (written == embedded_hello_size) {
-                        LOG_INFO_MSG("  [5.7] Embedded hello.elf written (%u bytes)\n",
-                                    embedded_hello_size);
-                    } else {
-                        LOG_WARN_MSG("  [5.7] Failed to write hello.elf (wrote %u/%u)\n",
-                                    written, embedded_hello_size);
-                    }
-                }
-            } else {
-                LOG_WARN_MSG("  [5.7] Failed to create /bin/hello.elf\n");
-            }
-        }
-    } else {
-        LOG_WARN_MSG("  [5.x] WARNING: Failed to initialize ramfs\n");
-    }
-    kprintf("\n");
+    hal::Timer::init(100, kernel::Scheduler::timer_tick);  // ARM Generic Timer, 100 Hz
 
-    // ========================================================================
-    // 启用中断
-    // ========================================================================
-    LOG_INFO_MSG("Enabling interrupts...\n");
-    hal::Interrupt::enable();
-    kprintf("\n");
-
-    // ========================================================================
-    // 单元测试
-    // ========================================================================
-    LOG_INFO_MSG("Running test suite...\n");
-    run_all_tests();
-    kprintf("\n");
-
-    // ========================================================================
-    // 阶段 6: 调度器启动 (ARM64)
-    // ========================================================================
-    LOG_INFO_MSG("[Stage 6] Starting scheduler...\n");
-    
-    // Try to load user shell from embedded programs
-    LOG_INFO_MSG("  [6.1] Loading user shell...\n");
-    bool shell_loaded = load_user_shell();
-    if (!shell_loaded) {
-        LOG_WARN_MSG("  [6.1] User shell not available, running idle loop\n");
-    }
-    
-    LOG_INFO_MSG("Kernel entering scheduler...\n");
-    kprintf("\n");
-    kprintf("ARM64 kernel initialization complete!\n");
-    if (shell_loaded) {
-        kprintf("User shell loaded and ready.\n");
-    } else {
-        kprintf("System is now running in idle loop.\n");
-    }
-    kprintf("\n");
-    
-    kernel::Scheduler::schedule();
-    
-    // Idle loop - should never reach here
-    while (1) {
-        hal::Cpu::halt();
-    }
+    kernel_start();
 }
 
-#else /* x86 architectures (i686, x86_64) */
+#else /* i686, x86_64 */
 
 /**
  * 把堆的起始地址移到所有已分配物理帧之后
@@ -382,350 +136,31 @@ static uintptr_t heap_start_after_used_frames(uintptr_t heap_start, uint32_t hea
     return start;
 }
 
-
-// ============================================================================
-// x86 Kernel Main Entry Point
-// ============================================================================
-// x86 uses Multiboot for boot information from GRUB.
-// ============================================================================
-
-extern "C" void kernel_main(multiboot_info_t* mbi);
-/* 在 kworker 线程里运行一次：为 eth0 启动 DHCP 客户端 */
-static void net_autoconfigure(void) {
-    net::Netdev *eth0 = net::Netdev::get_by_name("eth0");
-    if (eth0 && net::Dhcp::start(eth0) != 0) {
-        LOG_WARN_MSG("net: DHCP start failed on eth0\n");
-    }
-}
-
-void kernel_main(multiboot_info_t* mbi) {
+extern "C" void kernel_main(multiboot_info_t *mbi);
+void kernel_main(multiboot_info_t *mbi) {
     cxx_global_ctors_init();  // 运行 C++ 全局构造函数（必须最先执行）
 
-    // ========================================================================
-    // 阶段 0: 早期初始化
-    // ========================================================================    
-    drivers::Vga::init(); // 初始化 VGA
-    drivers::Serial::init(); // 初始化串口
-    
-    // 日志配置：
-    // - 默认级别为 INFO（过滤 DEBUG 信息）
-    // - 同时输出到 VGA 和串口
-    // 如需调试，可取消下行注释：
-    // klog_set_level(LOG_DEBUG);
+    drivers::Serial::init();  // COM1
+    print_banner();
 
-    // ========================================================================
-    // 启动信息
-    // ========================================================================
-    kprintf("================================================================================\n");
-    kprintf("Welcome to CastorOS!\n");
-    kprintf("Version v%s\n", KERNEL_VERSION);
-    kprintf("Compiled on: %s %s\n", __DATE__, __TIME__);
-    kprintf("================================================================================\n");
-
-    // ========================================================================
-    // 阶段 1: CPU 基础架构（CPU Architecture）
-    // ========================================================================
-    // Use HAL for architecture-independent CPU initialization
-    // This dispatches to the appropriate architecture-specific code:
-    //   - i686: GDT, TSS initialization
-    //   - x86_64: GDT64, TSS64 initialization
-    //   - ARM64: Exception Level configuration
-    // Requirements: 1.1 - HAL initialization dispatch
-    // ========================================================================
-    LOG_INFO_MSG("[Stage 1] Initializing CPU architecture via HAL...\n");
-    
-    hal::Cpu::init();
-    LOG_INFO_MSG("  [1.1] CPU initialized via HAL (%s)\n", hal_arch_name());
-    
-    // ========================================================================
-    // 阶段 2: 中断系统（Interrupt System）
-    // ========================================================================
-    // Use HAL for architecture-independent interrupt initialization
-    // This dispatches to the appropriate architecture-specific code:
-    //   - i686/x86_64: IDT, ISR, IRQ (PIC/APIC)
-    //   - ARM64: Exception vectors, GIC
-    // Requirements: 1.1 - HAL initialization dispatch
-    // ========================================================================
-    LOG_INFO_MSG("[Stage 2] Initializing interrupt system via HAL...\n");
-    
-    hal::Interrupt::init();
-    LOG_INFO_MSG("  [2.1] Interrupt system initialized via HAL\n");
-    
-    // 2.2 初始化系统调用（System Calls）
-    // syscall_init() internally uses HAL for architecture-specific setup
+    hal::Cpu::init();         // GDT + TSS
+    hal::Interrupt::init();   // IDT + PIC/APIC
     syscall_init();
-    LOG_INFO_MSG("  [2.2] System calls initialized\n");
 
-    // ========================================================================
-    // 阶段 3: 内存管理（Memory Management）
-    // ========================================================================   
-    LOG_INFO_MSG("[Stage 3] Initializing memory management...\n");
-    
-    // 3.0 显示 Multiboot 内存信息
-    if (mbi && (mbi->flags & 0x01)) {
-        kprintf("  Memory detected: %u KB (lower) + %u KB (upper) = %u MB\n",
-                mbi->mem_lower, mbi->mem_upper,
-                (mbi->mem_lower + mbi->mem_upper) / 1024);
-    } else {
-        LOG_WARN_MSG("  Warning: Memory info not available from bootloader\n");
-    }
-    
-    // 3.1 初始化 PMM（Physical Memory Manager - 物理内存管理）阶段1
-    //     解析内存映射，记录所有可用区域
     mm::Pmm::init(mbi);
-    LOG_INFO_MSG("  [3.1] PMM phase 1 initialized\n");
-    
-    // 3.2 初始化 VMM（Virtual Memory Manager - 虚拟内存管理）
     mm::Vmm::init();
-    LOG_INFO_MSG("  [3.2] VMM initialized\n");
-    
-    // 3.3 初始化 PAT（Page Attribute Table）
-    //     用于支持帧缓冲的 Write-Combining 模式，提升图形性能
-    mm::Vmm::init_pat();
-    LOG_INFO_MSG("  [3.3] PAT initialized\n");
-    
-    // 3.5 初始化 Heap（堆内存分配器）
-    // 堆起始地址：PMM 位图之后（避免与位图重叠）
-    uintptr_t heap_start = mm::Pmm::get_bitmap_end();
-    
-    // 确保堆不会覆盖 multiboot 模块
-    if (mbi->flags & MULTIBOOT_INFO_MODS && mbi->mods_count > 0) {
-        multiboot_module_t *modules = (multiboot_module_t *)PHYS_TO_VIRT(mbi->mods_addr);
-        
-        // 检查模块列表结束位置
-        uintptr_t mods_list_end = PHYS_TO_VIRT(mbi->mods_addr + sizeof(multiboot_module_t) * mbi->mods_count);
-        if (mods_list_end > heap_start) {
-            heap_start = mods_list_end;
-        }
-        
-        // 检查每个模块的结束位置
-        for (uint32_t i = 0; i < mbi->mods_count; i++) {
-            uintptr_t mod_end_virt = PHYS_TO_VIRT(modules[i].mod_end);
-            if (mod_end_virt > heap_start) {
-                heap_start = mod_end_virt;
-            }
-        }
-        
-        heap_start = PAGE_ALIGN_UP(heap_start);
-        LOG_INFO_MSG("  Heap start adjusted for multiboot modules: 0x%lx\n", (unsigned long)heap_start);
-    }
-    
-    uint32_t heap_size = 32 * 1024 * 1024;  // 32MB 堆
-    
-    // VMM 初始化已经分配了一些帧（页表），堆必须从它们之后开始
-    uintptr_t heap_start_free = heap_start_after_used_frames(heap_start, heap_size);
-    if (heap_start_free != heap_start) {
-        LOG_INFO_MSG("  Heap start moved past allocated frames: 0x%lx -> 0x%lx\n",
-                     (unsigned long)heap_start, (unsigned long)heap_start_free);
-        heap_start = heap_start_free;
-    }
-    
-    mm::Heap::init((uintptr_t)heap_start, heap_size);
-    
-    // 【关键】通知 PMM 堆的虚拟地址范围，防止分配会与堆重叠的物理帧
-    // 这解决了堆扩展时覆盖已分配帧的恒等映射导致的页目录损坏问题
-    // （此时区间内已经没有被占用的帧，见上面的 heap_start_after_used_frames）
+
+    // 堆起始地址：PMM 位图之后，并且在 VMM 初始化已分配的页表帧之后
+    uint32_t heap_size = 32 * 1024 * 1024;
+    uintptr_t heap_start = heap_start_after_used_frames(mm::Pmm::get_bitmap_end(), heap_size);
+    mm::Heap::init(heap_start, heap_size);
+    // 通知 PMM 堆的虚拟地址范围，防止分配会与堆重叠的物理帧
     mm::Pmm::set_heap_reserved_range(heap_start, heap_start + heap_size);
-    
-    mm::Heap::print_info();
-    LOG_INFO_MSG("  [3.3] Heap initialized\n");
-    
-    // DEBUG: 验证堆状态
-    {
-        heap_block_t *fb = (heap_block_t*)heap_start;
-        LOG_INFO_MSG("  DEBUG: first_block magic after mm::Heap::init = 0x%x\n", fb->magic);
-    }
+    LOG_INFO_MSG("Memory management initialized\n");
 
-    // ========================================================================
-    // 阶段 4: 设备驱动（Device Drivers）
-    // ========================================================================
-    
-    LOG_INFO_MSG("[Stage 4] Initializing device drivers...\n");
-    
-    // 4.1 初始化 PIT（Programmable Interval Timer - 可编程定时器）
-    drivers::Timer::init(100);  // 100 Hz
-    LOG_INFO_MSG("  [4.1] PIT initialized (100 Hz)\n");
-    
-    // 4.2 初始化键盘驱动
-    drivers::Keyboard::init();
-    LOG_INFO_MSG("  [4.2] Keyboard initialized\n");
+    drivers::Timer::init(100);  // PIT, 100 Hz
 
-    // 4.3 初始化 ATA 驱动
-    drivers::Ata::init();
-    LOG_INFO_MSG("  [4.3] ATA driver initialized\n");
-
-    // 4.4 初始化 RTC（实时时钟）
-    drivers::Rtc::init();
-    LOG_INFO_MSG("  [4.4] RTC initialized\n");
-
-    // 4.5 初始化 PCI 总线
-    drivers::Pci::init();
-    drivers::Pci::scan_devices();
-    LOG_INFO_MSG("  [4.5] PCI bus scanned\n");
-
-    // 4.6 初始化 ACPI 子系统
-    int acpi_result = drivers::Acpi::init();
-    if (acpi_result == 0) {
-        LOG_INFO_MSG("  [4.6] ACPI initialized\n");
-        drivers::Acpi::print_info();
-    } else {
-        LOG_WARN_MSG("  [4.6] ACPI initialization failed (code=%d)\n", acpi_result);
-        LOG_WARN_MSG("        Power management may not work correctly\n");
-    }
-
-    // 4.7 初始化网络协议栈
-    //     net::Stack::init 内部先初始化网络设备层，再初始化各协议，
-    //     并注册 TCP 定时器（重传、超时中止、TIME_WAIT 回收都靠它）。
-    //     必须在定时器之后、网卡驱动之前。
-    net::Stack::init();
-    net::Dns::init();
-    LOG_INFO_MSG("  [4.7] Network stack initialized\n");
-
-    // 4.8 初始化 E1000 网卡驱动
-    int e1000_count = drivers::E1000::init();
-    if (e1000_count > 0) {
-        LOG_INFO_MSG("  [4.8] E1000 driver initialized (%d device(s))\n", e1000_count);
-        
-        // 如果有网卡，启用第一个网卡
-        net::Netdev *eth0 = net::Netdev::get_by_name("eth0");
-        if (eth0) {
-            net::Netdev::up(eth0);
-            LOG_INFO_MSG("  Network: eth0 enabled\n");
-        }
-    } else {
-        LOG_DEBUG_MSG("  [4.8] No E1000 network card found\n");
-    }
-
-    // 4.9 初始化帧缓冲（图形模式）
-#if defined(ARCH_ARM64)
-    // ARM64: 暂时跳过帧缓冲，因为 VMM MMIO 映射尚未支持
-    LOG_WARN_MSG("  [4.9] Framebuffer skipped (ARM64 VMM MMIO not ready)\n");
-#else
-    int fb_result = drivers::Framebuffer::init(mbi);
-    if (fb_result == 0) {
-        framebuffer_info_t *fb = drivers::Framebuffer::get_info();
-        LOG_INFO_MSG("  [4.9] Framebuffer initialized: %ux%u @ %ubpp\n",
-                     fb->width, fb->height, fb->bpp);
-        
-        // 根据分辨率显示不同的信息
-        const char *resolution_name;
-        if (fb->width == 1400 && fb->height == 1050) {
-            resolution_name = "SXGA+ (1400x1050)";
-        } else if (fb->width == 1024 && fb->height == 768) {
-            resolution_name = "XGA (1024x768)";
-        } else if (fb->width == 800 && fb->height == 600) {
-            resolution_name = "SVGA (800x600)";
-        } else {
-            resolution_name = "Custom";
-        }
-        LOG_INFO_MSG("  Display mode: %s\n", resolution_name);
-        
-        // 初始化图形终端（用于后续输出）
-        drivers::Framebuffer::terminal_init();
-    } else {
-        LOG_DEBUG_MSG("  [4.9] Framebuffer not available (code=%d), using text mode\n", fb_result);
-    }
-#endif
-
-    // 4.10 初始化 USB 子系统
-    LOG_INFO_MSG("  [4.10] Initializing USB subsystem...\n");
-    
-    // 4.10.1 初始化 USB 核心层
-    drivers::Usb::init();
-    LOG_DEBUG_MSG("    [4.10.1] USB core initialized\n");
-    
-    // 4.10.2 初始化 UHCI 控制器
-    int uhci_count = drivers::Uhci::init();
-    if (uhci_count > 0) {
-        LOG_INFO_MSG("    [4.10.2] UHCI initialized (%d controller(s))\n", uhci_count);
-    } else {
-        LOG_DEBUG_MSG("    [4.10.2] No UHCI controller found\n");
-    }
-    
-    // 4.10.3 初始化 USB Mass Storage 驱动
-    drivers::UsbMsc::init();
-    LOG_DEBUG_MSG("    [4.10.3] USB Mass Storage driver initialized\n");
-    
-    // 4.10.4 扫描 USB 设备
-    drivers::Usb::scan_devices();
-    drivers::Uhci::sync_port_devices();  // 建立端口到设备的映射（热插拔支持）
-    LOG_INFO_MSG("    [4.10.4] USB device scan complete\n");
-    
-#if !defined(ARCH_X86_64)
-    // 4.10.5 启动 USB 热插拔监控
-    drivers::Uhci::start_hotplug_monitor();
-    LOG_DEBUG_MSG("    [4.10.5] USB hot-plug monitor started\n");
-#endif
-
-    // ========================================================================
-    // 阶段 5: 高级子系统（Advanced Subsystems）
-    // ========================================================================
-    LOG_INFO_MSG("[Stage 5] Initializing advanced subsystems...\n");
-    
-    // DEBUG: 验证堆状态
-    {
-        heap_block_t *fb = (heap_block_t*)heap_start;
-        LOG_INFO_MSG("  DEBUG: first_block magic before kernel::Scheduler::init = 0x%x\n", fb->magic);
-        LOG_INFO_MSG("  DEBUG: task_pool addr = 0x%llx, size = %llu\n", 
-                     (unsigned long long)(uintptr_t)task_pool, 
-                     (unsigned long long)sizeof(task_pool));
-    }
-
-    // 5.1 初始化进程管理
-    kernel::Scheduler::init();
-    LOG_INFO_MSG("  [5.1] Task management initialized\n");
-
-    // 网络接收线程：中断只把数据包入队，协议栈在这个线程里运行
-    net::Netdev::start_rx_thread();
-    // kworker：执行中断里登记的延迟工作（TCP 定时器、USB 热插拔等）
-    kernel::Deferred::start();
-
-    // 有网卡时开机自动通过 DHCP 获取地址。放到 kworker 里做：
-    // 发送要走驱动的 Mutex，且此时调度器还没开始运行。
-    if (net::Netdev::get_by_name("eth0")) {
-        int dhcp_work = kernel::Deferred::add(net_autoconfigure, "dhcp_autostart");
-        kernel::Deferred::raise(dhcp_work);
-    }
-
-    // 5.2 初始化文件系统
-    fs_init();
-    LOG_INFO_MSG("  [5.2] File system initialized\n");
-
-    // ========================================================================
-    // 单元测试
-    // ========================================================================
-    LOG_INFO_MSG("Running test suite...\n");
-    run_all_tests();
-    kprintf("\n");
-
-    // ========================================================================
-    // 阶段 6: Shell（Shell）
-    // ========================================================================
-    LOG_INFO_MSG("[Stage 6] Starting Shell...\n");
-
-    LOG_INFO_MSG("  [6.1] Loading user shell...\n");
-    bool ok = load_user_shell();
-    if (!ok) {
-        LOG_ERROR_MSG("Failed to load user shell, trying to initialize kernel shell...\n");
-
-        // 初始化 Shell
-        kernel::Shell::init();
-        LOG_INFO_MSG("  [6.2] Kernel shell initialized\n");
-        
-        // 将 Shell 作为内核线程运行，这样它会出现在进程列表中
-        kernel::Scheduler::create_kernel_thread(kernel::Shell::run, "kernel_shell");
-    }
-    
-    // 主线程进入空闲循环（让调度器接管）
-    LOG_INFO_MSG("Kernel entering scheduler...\n");
-    
-    // 触发首次调度，切换到用户进程
-    kernel::Scheduler::schedule();
-    
-    // Idle loop - use HAL for architecture-independent CPU halt
-    while (1) {
-        hal::Cpu::halt();
-    }
+    kernel_start();
 }
 
-#endif /* !ARCH_ARM64 */
+#endif

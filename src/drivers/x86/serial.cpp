@@ -53,3 +53,11 @@ void drivers::Serial::print(const char *msg) {
         serial_putchar_nolock(*msg++);
     }
 }
+
+int drivers::Serial::getchar_nonblock() {
+    sync::SpinlockIrqGuard guard(serial_lock);
+    if ((inb(COM1 + 5) & 0x01) == 0) {
+        return -1;
+    }
+    return inb(COM1);
+}

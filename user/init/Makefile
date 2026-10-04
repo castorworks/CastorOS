@@ -1,4 +1,4 @@
-# CastorOS Hello World Example - Makefile
+# CastorOS init Example - Makefile
 # 支持多架构编译: i686, x86_64, arm64
 
 # ============================================================================
@@ -53,11 +53,11 @@ LIB_DIR = ../lib
 LIBRARY = $(LIB_DIR)/build/$(ARCH)/libuser.a
 
 # 源文件
-SOURCES = hello.cpp
+SOURCES = init.cpp
 OBJECTS = $(patsubst %.cpp, $(BUILD_DIR)/%.o, $(SOURCES))
 
 # 目标文件
-TARGET = hello
+TARGET = init
 ELF = $(BUILD_DIR)/$(TARGET).elf
 BINARY = $(BUILD_DIR)/$(TARGET).bin
 
@@ -69,7 +69,7 @@ BINARY = $(BUILD_DIR)/$(TARGET).bin
 
 all: lib $(ELF)
 	@echo ""
-	@echo "[OK] Hello World compiled for $(ARCH): $(ELF)"
+	@echo "[OK] init compiled for $(ARCH): $(ELF)"
 	@echo ""
 
 # 构建库
@@ -100,16 +100,16 @@ $(BINARY): $(ELF)
 # 清理当前架构
 clean:
 	rm -rf $(BUILD_DIR)
-	@echo "[OK] Cleaned hello build files for $(ARCH)"
+	@echo "[OK] Cleaned init build files for $(ARCH)"
 
 # 清理所有架构
 clean-all:
 	rm -rf build
-	@echo "[OK] Cleaned all hello build files"
+	@echo "[OK] Cleaned all init build files"
 
 # 显示配置信息
 info:
-	@echo "=== Hello World Build Configuration ==="
+	@echo "=== init Build Configuration ==="
 	@echo "Architecture: $(ARCH)"
 	@echo "Compiler:     $(CXX)"
 	@echo "Linker:       $(LD)"

@@ -4,7 +4,6 @@
 
 #include <kernel/task.h>
 #include <kernel/interrupt.h>
-#include <kernel/fd_table.h>
 #include <kernel/sync/spinlock.h>
 #include <hal/hal.h>
 #include <mm/heap.h>
@@ -207,18 +206,6 @@ void kernel::Scheduler::free(task_t *task) {
     // 释放内核栈（在锁外执行）
     if (kernel_stack_base) {
         kfree((void*)kernel_stack_base);
-    }
-    
-    // 释放文件描述符表
-    if (task->fd_table) {
-        // 先关闭所有打开的文件描述符
-        for (int i = 0; i < MAX_FDS; i++) {
-            if (task->fd_table->entries[i].in_use) {
-                kernel::FdTable::free(task->fd_table, i);
-            }
-        }
-        // 再释放文件描述符表本身
-        kfree(task->fd_table);
     }
     
     // 释放页目录（在锁外执行，仅用户进程）
@@ -585,12 +572,6 @@ uint32_t kernel::Scheduler::create_kernel_thread(void (*entry)(void), const char
     task->context.esp = (uintptr_t)&stack_ptr[-1];  // ESP/RSP 指向入口函数
 #endif
     
-    // 文件描述符表（内核线程不需要）
-    task->fd_table = NULL;
-    
-    // 工作目录
-    strcpy(task->cwd, "/");
-    
     // 添加到就绪队列
     task->state = TASK_READY;
     kernel::Scheduler::ready_queue_add(task);
@@ -641,7 +622,7 @@ uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entr
     
     // 用户进程标志
     task->is_user_process = true;
-    task->privileged = true;         // 由内核直接创建的用户进程（init shell）
+    task->privileged = true;         // 由内核直接创建的用户进程（init）
     task->user_entry = entry_point;
     
     // 分配内核栈
@@ -732,32 +713,6 @@ uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entr
     task->context.cr3 = task->page_dir_phys;
 #endif
     
-    // 分配文件描述符表
-    task->fd_table = (kernel::FdTable*)kmalloc(sizeof(kernel::FdTable));
-    if (!task->fd_table) {
-        LOG_ERROR_MSG("kernel::Scheduler::create_user_process: Failed to allocate fd_table\n");
-        // 同上：地址空间（连同已映射的用户栈页）由调用者销毁
-        task->page_dir_phys = 0;
-        task->page_dir = NULL;
-        kernel::Scheduler::free(task);
-        return 0;
-    }
-    
-    kernel::FdTable::init(task->fd_table);
-    
-    // 打开标准输入/输出/错误（指向 /dev/console）
-    fs_node_t *console = fs::Vfs::path_to_node("/dev/console");
-    if (console) {
-        kernel::FdTable::alloc(task->fd_table, console, 0); // stdin (fd 0)
-        kernel::FdTable::alloc(task->fd_table, console, 0); // stdout (fd 1)
-        kernel::FdTable::alloc(task->fd_table, console, 0); // stderr (fd 2)
-        // 关键修复：释放初始引用（kernel::FdTable::alloc 已经增加了 3 次引用计数）
-        fs::Vfs::release_node(console);
-        LOG_DEBUG_MSG("  Opened stdin/stdout/stderr for process\n");
-    } else {
-        LOG_WARN_MSG("  Failed to open /dev/console for stdio\n");
-    }
-    
     // 设置堆管理
     // 堆从程序结束后的下一页开始
     task->heap_start = PAGE_ALIGN_UP(program_end);
@@ -769,9 +724,6 @@ uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entr
                  (unsigned long long)task->heap_start, 
                  (unsigned long long)task->heap_end, 
                  (unsigned long long)task->heap_max);
-    
-    // 工作目录
-    strcpy(task->cwd, "/");
     
     // 添加到就绪队列
     task->state = TASK_READY;
@@ -919,9 +871,6 @@ static bool task_create_idle(void) {
     idle_task->context.esp = (uintptr_t)&stack_ptr[-1];  // ESP/RSP 指向入口函数
 #endif
     
-    idle_task->fd_table = NULL;
-    strcpy(idle_task->cwd, "/");
-    
     active_task_count++;
     
     LOG_DEBUG_MSG("Idle task created (PID 0)\n");
@@ -944,8 +893,8 @@ void kernel::Scheduler::schedule() {
     
     // 【关键修复】先清理上一次延迟的 terminated 任务
     // 现在我们已经在新任务的栈上了，可以安全地释放旧任务的资源
-    // 调用者不是这些任务中的任何一个（它们退出后不会再运行），其 fd 已在
-    // 退出时关闭，这里只剩内核栈、地址空间和 PCB，释放过程不会睡眠
+    // 调用者不是这些任务中的任何一个（它们退出后不会再运行），
+    // 这里只剩内核栈、地址空间和 PCB，释放过程不会睡眠
     while (pending_cleanup_head) {
         task_t *task_to_cleanup = pending_cleanup_head;
         pending_cleanup_head = task_to_cleanup->next;
@@ -1036,34 +985,6 @@ void kernel::Scheduler::schedule() {
                         prev_task->pid, prev_task->name);
         }
         
-#if defined(ARCH_X86_64)
-        // Debug: Print context before switching to user process
-        if (next_task->is_user_process) {
-            LOG_INFO_MSG("Switching to user process %u (%s):\n", next_task->pid, next_task->name);
-            LOG_INFO_MSG("  RIP=0x%llx, RSP=0x%llx\n", 
-                         (unsigned long long)next_task->context.eip,
-                         (unsigned long long)next_task->context.esp);
-            LOG_INFO_MSG("  CS=0x%llx, SS=0x%llx, RFLAGS=0x%llx\n",
-                         (unsigned long long)next_task->context.cs,
-                         (unsigned long long)next_task->context.ss,
-                         (unsigned long long)next_task->context.eflags);
-            LOG_INFO_MSG("  CR3=0x%llx\n", (unsigned long long)next_task->context.cr3);
-        }
-#endif
-
-#if defined(ARCH_ARM64)
-        // Debug: Print context before switching to user process
-        if (next_task->is_user_process) {
-            LOG_INFO_MSG("ARM64: Switching to user process %u (%s):\n", next_task->pid, next_task->name);
-            LOG_INFO_MSG("  PC=0x%llx, SP=0x%llx\n", 
-                         (unsigned long long)next_task->context.pc,
-                         (unsigned long long)next_task->context.sp);
-            LOG_INFO_MSG("  PSTATE=0x%llx, TTBR0=0x%llx\n",
-                         (unsigned long long)next_task->context.pstate,
-                         (unsigned long long)next_task->context.ttbr0);
-        }
-#endif
-        
         task_switch_context(&old_ctx_ptr, &next_task->context);
         
         // 注意：永远不会执行到这里（task_switch_context 不会返回到这里）
@@ -1079,21 +1000,10 @@ static volatile bool need_resched = false;
 /**
  * @brief 定时器中断处理
  */
-static uint32_t timer_tick_count = 0;
-
 void kernel::Scheduler::timer_tick() {
     if (!scheduler_initialized || !current_task) {
         return;
     }
-    
-#if defined(ARCH_ARM64)
-    /* Debug: Print timer tick every 100 ticks (1 second at 100Hz) */
-    timer_tick_count++;
-    if (timer_tick_count % 100 == 0) {
-        LOG_INFO_MSG("Timer tick %u, current task: %s (PID %u)\n",
-                     timer_tick_count, current_task->name, current_task->pid);
-    }
-#endif
     
     // 更新当前任务的运行时间
     uint32_t tick_ms = 1000 / drivers::Timer::get_frequency();
@@ -1173,20 +1083,6 @@ void kernel::Scheduler::exit_current(uint32_t exit_code, bool signaled, uint32_t
     // Mutex::lock 都会被当成“在中断里睡眠”。
     while (in_interrupt()) {
         interrupt_exit();
-    }
-
-    // 先关闭全部文件描述符，再变成僵尸。管道的 EOF/broken pipe 取决于对端的
-    // 读写者计数，不能等到父进程 waitpid 回收时才关——父进程往往要先读到 EOF
-    // 才会去 waitpid。关闭可能睡眠（管道/文件系统的锁），所以放在关中断之前。
-    kernel::FdTable *fd_table = current_task->fd_table;
-    if (fd_table) {
-        current_task->fd_table = NULL;
-        for (int i = 0; i < MAX_FDS; i++) {
-            if (fd_table->entries[i].in_use) {
-                kernel::FdTable::free(fd_table, i);
-            }
-        }
-        kfree(fd_table);
     }
 
     kernel::Interrupts::disable();

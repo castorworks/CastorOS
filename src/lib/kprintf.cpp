@@ -4,13 +4,12 @@
 
 #include <lib/kprintf.h>
 #include <lib/string.h>
-#include <drivers/vga.h>
 #include <drivers/serial.h>
-#include <drivers/framebuffer.h>
 #include <kernel/interrupt.h>
 #include <stdarg.h>
 
-/* 输出目标标志 */
+/* 输出目标标志。内核控制台只有串口；OUTPUT_VGA 保留给 *_vga 接口，
+ * 这些接口在没有显示驱动的内核里不产生输出。 */
 typedef enum {
     OUTPUT_SERIAL = 0x01,
     OUTPUT_VGA   = 0x02,
@@ -20,42 +19,23 @@ typedef enum {
 
 /**
  * 内部字符输出函数（根据目标输出）
- * 在图形模式下自动使用帧缓冲终端
  */
 static void output_char(char c, output_target_t target) {
     if (target & OUTPUT_SERIAL) {
         drivers::Serial::putchar(c);
     }
-    if (target & OUTPUT_VGA) {
-        // 优先使用图形终端，回退到 VGA 文本模式
-        if (drivers::Framebuffer::is_initialized()) {
-            drivers::Framebuffer::terminal_putchar(c);
-        } else {
-            drivers::Vga::putchar(c);
-        }
-    }
 }
 
 /**
  * 内部字符串输出函数（根据目标输出）
- * 在图形模式下自动使用帧缓冲终端
  */
 static void output_string(const char *msg, output_target_t target) {
     if (target & OUTPUT_SERIAL) {
         drivers::Serial::print(msg);
     }
-    if (target & OUTPUT_VGA) {
-        // 优先使用图形终端，回退到 VGA 文本模式
-        if (drivers::Framebuffer::is_initialized()) {
-            drivers::Framebuffer::terminal_write(msg);
-        } else {
-            drivers::Vga::print(msg);
-        }
-    }
 }
 
-/* 控制台状态（帧缓冲终端的光标和 ANSI 解析器、VGA 光标）没有自己的锁，
- * 而中断处理函数也会打日志。下面每个公共输出入口都整体关中断，
+/* 中断处理函数也会打日志。下面每个公共输出入口都整体关中断，
  * 保证一次输出不会被另一次输出从中间插入。 */
 
 /* ============================================================================
@@ -391,11 +371,6 @@ static void vkprintf_internal(const char *fmt, va_list args, output_target_t tar
             output_char(*fmt++, target);
         }
     }
-    
-    // 如果输出到 VGA 且使用图形模式，确保刷新
-    if ((target & OUTPUT_VGA) && drivers::Framebuffer::is_initialized()) {
-        drivers::Framebuffer::flush();
-    }
 }
 
 /* ============================================================================
@@ -711,31 +686,12 @@ int ksnprintf(char *str, size_t size, const char *fmt, ...) {
 }
 
 /* ============================================================================
- * 控制台颜色和清屏（自动适配 VGA 文本模式和帧缓冲图形模式）
+ * 控制台颜色和清屏：串口控制台不支持，保留为空操作
  * ============================================================================ */
 
-/**
- * 设置控制台颜色
- * 自动适配 VGA 文本模式和帧缓冲图形模式
- */
 void kconsole_set_color(kcolor_t fg, kcolor_t bg) {
-    if (drivers::Framebuffer::is_initialized()) {
-        drivers::Framebuffer::terminal_set_vga_color((uint8_t)fg, (uint8_t)bg);
-    } else {
-        drivers::Vga::set_color((vga_color_t)fg, (vga_color_t)bg);
-    }
+    (void)fg; (void)bg;
 }
 
-/**
- * 清空控制台屏幕
- * 自动适配 VGA 文本模式和帧缓冲图形模式
- */
 void kconsole_clear(void) {
-    if (drivers::Framebuffer::is_initialized()) {
-        drivers::Framebuffer::terminal_clear();
-    } else {
-        drivers::Vga::clear();
-    }
 }
-
-

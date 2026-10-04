@@ -29,12 +29,13 @@ public:
     static uint32_t fork(uintptr_t *frame);
 
     /**
-     * syscall::Process::execve - 执行新程序（替换当前进程）
+     * syscall::Process::exec - 用内存中的 ELF 映像替换当前进程
      * @param frame 系统调用栈帧指针（架构相关大小）
-     * @param path  程序路径
+     * @param image ELF 映像（调用者地址空间内，入口已校验可读）
+     * @param size  映像大小
      * @return 成功则返回 0（通过修改 frame 返回到新程序），失败返回 -1
      */
-    static uint32_t execve(uintptr_t *frame, const char *path);
+    static uint32_t exec(uintptr_t *frame, const void *image, size_t size);
 
     /**
      * syscall::Process::getpid - 获取当前进程 PID

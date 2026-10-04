@@ -58,23 +58,6 @@ struct timespec {
 #define NULL nullptr
 #endif
 
-#define DT_UNKNOWN       0
-#define DT_FIFO          1
-#define DT_CHR           2
-#define DT_DIR           4
-#define DT_BLK           6
-#define DT_REG           8
-#define DT_LNK           10
-#define DT_SOCK          12
-
-struct dirent {
-    uint32_t d_ino;
-    uint32_t d_off;
-    uint16_t d_reclen;
-    uint8_t  d_type;
-    char     d_name[256];
-};
-
 #define WNOHANG    1
 #define WUNTRACED  2
 
@@ -83,50 +66,6 @@ struct dirent {
 #define WIFSIGNALED(status)  (((status) & 0xFF) != 0)
 #define WTERMSIG(status)     ((status) & 0x7F)
 #define WCOREDUMP(status)    (((status) & 0x80) != 0)
-
-#ifndef _STRUCT_STAT_DEFINED
-#define _STRUCT_STAT_DEFINED
-struct stat {
-    uint32_t st_dev;
-    uint32_t st_ino;
-    uint32_t st_mode;
-    uint32_t st_nlink;
-    uint32_t st_uid;
-    uint32_t st_gid;
-    uint32_t st_rdev;
-    uint32_t st_size;
-    uint32_t st_blksize;
-    uint32_t st_blocks;
-    uint32_t st_atime;
-    uint32_t st_mtime;
-    uint32_t st_ctime;
-};
-#endif
-
-#define S_IFMT   0170000
-#define S_IFREG  0100000
-#define S_IFDIR  0040000
-#define S_IFCHR  0020000
-#define S_IFBLK  0060000
-#define S_IFIFO  0010000
-#define S_IFLNK  0120000
-
-#define S_IRUSR  0400
-#define S_IWUSR  0200
-#define S_IXUSR  0100
-#define S_IRGRP  0040
-#define S_IWGRP  0020
-#define S_IXGRP  0010
-#define S_IROTH  0004
-#define S_IWOTH  0002
-#define S_IXOTH  0001
-
-#define S_ISREG(m)  (((m) & S_IFMT) == S_IFREG)
-#define S_ISDIR(m)  (((m) & S_IFMT) == S_IFDIR)
-#define S_ISCHR(m)  (((m) & S_IFMT) == S_IFCHR)
-#define S_ISBLK(m)  (((m) & S_IFMT) == S_IFBLK)
-#define S_ISFIFO(m) (((m) & S_IFMT) == S_IFIFO)
-#define S_ISLNK(m)  (((m) & S_IFMT) == S_IFLNK)
 
 #define PROT_NONE   0x0
 #define PROT_READ   0x1
@@ -140,16 +79,5 @@ struct stat {
 #define MAP_ANON        MAP_ANONYMOUS
 
 #define MAP_FAILED      ((void *)-1)
-
-#ifndef _STRUCT_UTSNAME_DEFINED
-#define _STRUCT_UTSNAME_DEFINED
-struct utsname {
-    char sysname[65];
-    char nodename[65];
-    char release[65];
-    char version[65];
-    char machine[65];
-};
-#endif
 
 #endif /* _USERLAND_LIB_TYPES_H_ */

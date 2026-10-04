@@ -6,7 +6,7 @@
  * 构造函数，再调用程序的 main()，最后用它的返回值调用 exit()。
  */
 
-#include <unistd.h>
+#include <syscall.h>
 
 typedef void (*ctor_func_t)(void);
 

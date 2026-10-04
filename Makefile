@@ -1,15 +1,11 @@
-# CastorOS Makefile - Multi-Architecture Support
+# CastorOS Makefile
 # ============================================================================
 # 快速参考:
-#   make                    # 构建 i686 内核
+#   make                    # 构建 i686 内核（内嵌 user/init）
 #   make ARCH=arm64         # 构建 ARM64 内核
-#   make test               # 构建并运行测试 (8秒超时)
-#   make test-all           # 测试所有架构
+#   make run                # 在 QEMU 中运行（串口控制台）
+#   make test               # 构建带内核测试的版本并运行
 #   make build-all          # 构建所有架构
-# ============================================================================
-
-# ============================================================================
-# 架构配置
 # ============================================================================
 
 ARCH ?= i686
@@ -19,22 +15,14 @@ ifeq ($(filter $(ARCH),$(VALID_ARCHS)),)
 $(error Invalid ARCH=$(ARCH). Valid options: $(VALID_ARCHS))
 endif
 
-# ============================================================================
-# 调试配置
-# ============================================================================
+# KTEST=1: 把 src/tests 编进内核，启动时运行（make test 会自动设置）
+KTEST ?= 0
 
-# 测试超时时间 (秒)
-TEST_TIMEOUT ?= 8
-# 输出行数限制
-OUTPUT_LINES ?= 200
+# 测试超时时间 (秒) 和输出行数限制
+TEST_TIMEOUT ?= 60
+OUTPUT_LINES ?= 400
 # timeout 命令 (macOS 需要安装 coreutils: brew install coreutils)
 TIMEOUT_CMD = timeout
-UNAME_S := $(shell uname -s)
-ifeq ($(UNAME_S),Darwin)
-    CREATE_SCRIPT = scripts/bootable-img-create-macos.sh
-else
-    CREATE_SCRIPT = scripts/bootable-img-create.sh
-endif
 
 # ============================================================================
 # 架构特定工具链配置
@@ -51,8 +39,7 @@ ifeq ($(ARCH),i686)
     ARCH_ASFLAGS = -f elf32 -g -F dwarf
     ARCH_DEFINE = -DARCH_I686
     QEMU = qemu-system-i386
-    QEMU_FLAGS = -kernel
-    QEMU_MACHINE =
+    DRIVER_DIR = x86
 else ifeq ($(ARCH),x86_64)
     CC = x86_64-elf-gcc
     CXX = x86_64-elf-g++
@@ -64,8 +51,7 @@ else ifeq ($(ARCH),x86_64)
     ARCH_ASFLAGS = -f elf64 -g -F dwarf
     ARCH_DEFINE = -DARCH_X86_64
     QEMU = qemu-system-x86_64
-    QEMU_FLAGS = -kernel
-    QEMU_MACHINE =
+    DRIVER_DIR = x86
 else ifeq ($(ARCH),arm64)
     CC = aarch64-elf-gcc
     CXX = aarch64-elf-g++
@@ -77,17 +63,20 @@ else ifeq ($(ARCH),arm64)
     ARCH_ASFLAGS =
     ARCH_DEFINE = -DARCH_ARM64
     QEMU = qemu-system-aarch64
-    QEMU_FLAGS = -M virt -cpu cortex-a72 -kernel
+    DRIVER_DIR = arm
     QEMU_MACHINE = -M virt -cpu cortex-a72
 endif
 
 # ============================================================================
-# 通用编译标志
+# 编译标志
 # ============================================================================
 
 COMMON_FLAGS = -ffreestanding -O0 -g -Wall -Wextra \
          -Isrc/include -Isrc/arch/$(ARCH)/include \
          $(ARCH_CFLAGS) $(ARCH_DEFINE)
+ifeq ($(KTEST),1)
+    COMMON_FLAGS += -DKTEST
+endif
 # CFLAGS 仅用于预处理/汇编 .S 文件
 CFLAGS = $(COMMON_FLAGS)
 CXXFLAGS = -std=gnu++20 $(COMMON_FLAGS) \
@@ -99,189 +88,83 @@ LDFLAGS = $(ARCH_LDFLAGS)
 ASFLAGS = $(ARCH_ASFLAGS)
 
 # ============================================================================
-# 目录配置
+# 目录与输出
 # ============================================================================
 
 SRC_DIR = src
-BUILD_DIR = build/$(ARCH)
 ARCH_DIR = $(SRC_DIR)/arch/$(ARCH)
-
-# ============================================================================
-# 输出文件
-# ============================================================================
+ifeq ($(KTEST),1)
+    BUILD_DIR = build/$(ARCH)-ktest
+else
+    BUILD_DIR = build/$(ARCH)
+endif
 
 KERNEL = $(BUILD_DIR)/castor.bin
-DISK_IMAGE = $(BUILD_DIR)/bootable.img
 
-# ============================================================================
-# 源文件收集
-# ============================================================================
-
-ifeq ($(ARCH),arm64)
-    # ARM64 Common Sources
-    # Library modules
-    COMMON_C_SOURCES = $(SRC_DIR)/lib/string.cpp \
-        $(SRC_DIR)/lib/libgcc_stub.cpp \
-        $(SRC_DIR)/lib/kprintf.cpp \
-        $(SRC_DIR)/lib/klog.cpp \
-        $(SRC_DIR)/lib/cxxrt.cpp \
-        $(wildcard $(SRC_DIR)/drivers/arm/*.cpp) \
-        $(wildcard $(SRC_DIR)/drivers/platform/*.cpp) \
-        $(wildcard $(SRC_DIR)/tests/framework/*.cpp) \
-        $(wildcard $(SRC_DIR)/tests/lib/*.cpp) \
-        $(wildcard $(SRC_DIR)/tests/mm/*.cpp) \
-        $(wildcard $(SRC_DIR)/tests/kernel/*.cpp) \
-        $(wildcard $(SRC_DIR)/tests/arch/*.cpp) \
-        $(wildcard $(SRC_DIR)/tests/pbt/*.cpp) \
-        $(SRC_DIR)/tests/fs/vfs_test.cpp \
-        $(SRC_DIR)/tests/fs/ramfs_test.cpp \
-        $(SRC_DIR)/tests/fs/devfs_test.cpp \
-        $(SRC_DIR)/tests/drivers/timer_test.cpp \
-        $(SRC_DIR)/tests/drivers/serial_test.cpp \
-        \
-        $(SRC_DIR)/mm/pmm.cpp \
-        $(SRC_DIR)/mm/vmm.cpp \
-        $(SRC_DIR)/mm/heap.cpp \
-        \
-        $(SRC_DIR)/kernel/kernel.cpp \
-        $(SRC_DIR)/kernel/task.cpp \
-        $(SRC_DIR)/kernel/syscall.cpp \
-        $(SRC_DIR)/kernel/uaccess.cpp \
-        $(SRC_DIR)/kernel/deferred.cpp \
-        $(SRC_DIR)/kernel/panic.cpp \
-        $(SRC_DIR)/kernel/fd_table.cpp \
-        $(SRC_DIR)/kernel/interrupt.cpp \
-        $(SRC_DIR)/kernel/elf.cpp \
-        $(SRC_DIR)/kernel/system.cpp \
-        $(SRC_DIR)/kernel/user.cpp \
-        $(SRC_DIR)/kernel/loader.cpp \
-        $(wildcard $(SRC_DIR)/kernel/sync/*.cpp) \
-        $(SRC_DIR)/kernel/syscalls/fs.cpp \
-        $(SRC_DIR)/kernel/syscalls/mm.cpp \
-        $(SRC_DIR)/kernel/syscalls/process.cpp \
-        $(SRC_DIR)/kernel/syscalls/system.cpp \
-        $(SRC_DIR)/kernel/syscalls/time.cpp \
-        \
-        $(SRC_DIR)/fs/vfs.cpp \
-        $(SRC_DIR)/fs/ramfs.cpp \
-        $(SRC_DIR)/fs/devfs.cpp \
-        $(SRC_DIR)/fs/pipe.cpp
-else
-    COMMON_C_SOURCES = $(wildcard $(SRC_DIR)/drivers/common/*.cpp) \
-        $(wildcard $(SRC_DIR)/drivers/platform/*.cpp) \
-        $(wildcard $(SRC_DIR)/drivers/x86/*.cpp) \
-        $(wildcard $(SRC_DIR)/drivers/x86/usb/*.cpp) \
-        $(wildcard $(SRC_DIR)/fs/*.cpp) \
-        $(wildcard $(SRC_DIR)/kernel/*.cpp) \
-        $(wildcard $(SRC_DIR)/kernel/sync/*.cpp) \
-        $(wildcard $(SRC_DIR)/kernel/syscalls/*.cpp) \
-        $(wildcard $(SRC_DIR)/lib/*.cpp) \
-        $(wildcard $(SRC_DIR)/mm/*.cpp) \
-        $(wildcard $(SRC_DIR)/net/*.cpp) \
-        $(wildcard $(SRC_DIR)/tests/framework/*.cpp) \
-        $(wildcard $(SRC_DIR)/tests/lib/*.cpp) \
-        $(wildcard $(SRC_DIR)/tests/mm/*.cpp) \
-        $(wildcard $(SRC_DIR)/tests/fs/*.cpp) \
-        $(wildcard $(SRC_DIR)/tests/net/*.cpp) \
-        $(wildcard $(SRC_DIR)/tests/kernel/*.cpp) \
-        $(wildcard $(SRC_DIR)/tests/drivers/*.cpp) \
-        $(wildcard $(SRC_DIR)/tests/arch/*.cpp) \
-        $(wildcard $(SRC_DIR)/tests/pbt/*.cpp) \
-        $(wildcard $(SRC_DIR)/tests/examples/*.cpp)
-endif
-
-# 架构特定测试源文件
+# QEMU 的 -kernel 只接受 32 位 multiboot ELF：x86_64 内核转一份 ELF32 外壳
 ifeq ($(ARCH),x86_64)
-    ARCH_TEST_SOURCES = $(wildcard $(SRC_DIR)/tests/arch/x86_64/*.cpp)
-else ifeq ($(ARCH),arm64)
-    ARCH_TEST_SOURCES = $(wildcard $(SRC_DIR)/tests/arch/arm64/*.cpp)
-else ifeq ($(ARCH),i686)
-    ARCH_TEST_SOURCES = $(wildcard $(SRC_DIR)/tests/arch/i686/*.cpp)
-endif
-
-ifeq ($(ARCH),arm64)
-    ARCH_C_SOURCES = $(ARCH_DIR)/hal.cpp \
-        $(ARCH_DIR)/hal_caps.cpp \
-        $(ARCH_DIR)/stubs.cpp \
-        $(ARCH_DIR)/boot/boot_info.cpp \
-        $(ARCH_DIR)/interrupt/exception.cpp \
-        $(ARCH_DIR)/interrupt/gic.cpp \
-        $(ARCH_DIR)/interrupt/hal_irq.cpp \
-        $(ARCH_DIR)/mm/mmu.cpp \
-        $(ARCH_DIR)/mm/fault.cpp \
-        $(ARCH_DIR)/mm/pgtable.cpp \
-        $(ARCH_DIR)/task/context.cpp \
-        $(ARCH_DIR)/syscall/syscall.cpp \
-        $(ARCH_DIR)/syscall/hal_syscall.cpp \
-        $(ARCH_DIR)/dtb/dtb.cpp
+    BOOT_IMAGE = $(BUILD_DIR)/castor32.elf
 else
-    ARCH_C_SOURCES = $(wildcard $(ARCH_DIR)/*.cpp) \
-        $(wildcard $(ARCH_DIR)/boot/*.cpp) \
-        $(wildcard $(ARCH_DIR)/cpu/*.cpp) \
-        $(wildcard $(ARCH_DIR)/interrupt/*.cpp) \
-        $(wildcard $(ARCH_DIR)/mm/*.cpp) \
-        $(wildcard $(ARCH_DIR)/task/*.cpp) \
-        $(wildcard $(ARCH_DIR)/syscall/*.cpp)
+    BOOT_IMAGE = $(KERNEL)
 endif
 
-ifeq ($(ARCH),i686)
-    COMMON_ASM_SOURCES = $(wildcard $(SRC_DIR)/kernel/*.asm)
-    ARCH_ASM_SOURCES = $(wildcard $(ARCH_DIR)/*.asm) \
-        $(wildcard $(ARCH_DIR)/boot/*.asm) \
-        $(wildcard $(ARCH_DIR)/cpu/*.asm) \
-        $(wildcard $(ARCH_DIR)/interrupt/*.asm) \
-        $(wildcard $(ARCH_DIR)/task/*.asm) \
-        $(wildcard $(ARCH_DIR)/syscall/*.asm)
-else ifeq ($(ARCH),x86_64)
-    COMMON_ASM_SOURCES =
-    ARCH_ASM_SOURCES = $(wildcard $(ARCH_DIR)/*.asm) \
-        $(wildcard $(ARCH_DIR)/boot/*.asm) \
-        $(wildcard $(ARCH_DIR)/cpu/*.asm) \
-        $(wildcard $(ARCH_DIR)/interrupt/*.asm) \
-        $(wildcard $(ARCH_DIR)/task/*.asm) \
-        $(wildcard $(ARCH_DIR)/syscall/*.asm)
-else ifeq ($(ARCH),arm64)
-    COMMON_ASM_SOURCES =
-    ARCH_ASM_SOURCES = $(wildcard $(ARCH_DIR)/*.S) \
-        $(wildcard $(ARCH_DIR)/boot/*.S) \
-        $(wildcard $(ARCH_DIR)/cpu/*.S) \
-        $(wildcard $(ARCH_DIR)/interrupt/*.S) \
-        $(wildcard $(ARCH_DIR)/task/*.S) \
-        $(wildcard $(ARCH_DIR)/syscall/*.S)
+# 第一个用户进程，以 .incbin 嵌入内核 (src/kernel/init_image.S)
+INIT_ELF = user/init/build/$(ARCH)/init.elf
+INIT_DEPS = $(wildcard user/init/*.cpp user/init/Makefile user/linker/*.ld \
+              user/lib/Makefile user/lib/src/*.cpp user/lib/src/arch/$(ARCH)/*.S \
+              user/lib/include/*.h)
+
+# ============================================================================
+# 源文件
+# ============================================================================
+
+C_SOURCES = $(wildcard $(SRC_DIR)/kernel/*.cpp) \
+    $(wildcard $(SRC_DIR)/kernel/sync/*.cpp) \
+    $(wildcard $(SRC_DIR)/kernel/syscalls/*.cpp) \
+    $(wildcard $(SRC_DIR)/mm/*.cpp) \
+    $(wildcard $(SRC_DIR)/lib/*.cpp) \
+    $(wildcard $(SRC_DIR)/drivers/$(DRIVER_DIR)/*.cpp) \
+    $(wildcard $(ARCH_DIR)/*.cpp) \
+    $(wildcard $(ARCH_DIR)/*/*.cpp)
+
+ifeq ($(KTEST),1)
+    C_SOURCES += $(wildcard $(SRC_DIR)/tests/framework/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/pbt/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/lib/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/mm/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/kernel/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/arch/*.cpp) \
+        $(wildcard $(SRC_DIR)/tests/arch/$(ARCH)/*.cpp)
 endif
-
-C_SOURCES = $(COMMON_C_SOURCES) $(ARCH_C_SOURCES) $(ARCH_TEST_SOURCES)
-ASM_SOURCES = $(COMMON_ASM_SOURCES) $(ARCH_ASM_SOURCES)
-
-# ============================================================================
-# 目标文件生成
-# ============================================================================
-
-C_OBJECTS = $(patsubst $(SRC_DIR)/%.cpp, $(BUILD_DIR)/%.o, $(C_SOURCES))
 
 ifeq ($(ARCH),arm64)
+    ASM_SOURCES = $(wildcard $(ARCH_DIR)/*/*.S)
     ASM_OBJECTS = $(patsubst $(SRC_DIR)/%.S, $(BUILD_DIR)/%.o, $(ASM_SOURCES))
 else
+    ASM_SOURCES = $(wildcard $(ARCH_DIR)/*/*.asm)
     ASM_OBJECTS = $(patsubst $(SRC_DIR)/%.asm, $(BUILD_DIR)/%.o, $(ASM_SOURCES))
 endif
 
-OBJECTS = $(ASM_OBJECTS) $(C_OBJECTS)
+C_OBJECTS = $(patsubst $(SRC_DIR)/%.cpp, $(BUILD_DIR)/%.o, $(C_SOURCES))
+INIT_OBJECT = $(BUILD_DIR)/kernel/init_image.o
+
+OBJECTS = $(ASM_OBJECTS) $(C_OBJECTS) $(INIT_OBJECT)
 
 # ============================================================================
-# 主要构建目标
+# 构建
 # ============================================================================
 
-.PHONY: all clean run debug info help
-.PHONY: test test-all build-all check
-.PHONY: shell hello tests disk
-.PHONY: debug-arm64 gdb-arm64
+.PHONY: all clean clean-all run debug test test-all build-all check init info sources compile-db help
 
-all: $(KERNEL)
+all: $(BOOT_IMAGE)
 
 $(KERNEL): $(OBJECTS)
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
 	@echo "✓ CastorOS kernel built: $(KERNEL)"
+
+$(BUILD_DIR)/castor32.elf: $(KERNEL)
+	$(OBJCOPY) -O elf32-i386 $< $@
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@mkdir -p $(dir $@)
@@ -295,201 +178,64 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.S
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
+$(INIT_ELF): $(INIT_DEPS)
+	@$(MAKE) -C user/init ARCH=$(ARCH)
+
+$(INIT_OBJECT): $(SRC_DIR)/kernel/init_image.S $(INIT_ELF)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -DINIT_IMAGE='"$(INIT_ELF)"' -c $< -o $@
+
+init: $(INIT_ELF)
+
 -include $(OBJECTS:.o=.d)
 
-# ============================================================================
-# 测试目标 (带超时)
-# ============================================================================
-
-# 快速测试: 构建并运行，自动超时
-test: $(KERNEL)
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "Testing $(ARCH) (timeout: $(TEST_TIMEOUT)s)"
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-ifeq ($(ARCH),arm64)
-	@$(TIMEOUT_CMD) $(TEST_TIMEOUT) $(QEMU) $(QEMU_FLAGS) $(KERNEL) -nographic 2>&1 | head -$(OUTPUT_LINES) || true
-else
-	@$(MAKE) test-disk ARCH=$(ARCH)
-endif
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-# 测试所有架构
-test-all:
-	@echo "╔══════════════════════════════════════╗"
-	@echo "║     Testing All Architectures        ║"
-	@echo "╚══════════════════════════════════════╝"
-	@for arch in $(VALID_ARCHS); do \
-		echo ""; \
-		$(MAKE) test ARCH=$$arch || true; \
-	done
-	@echo ""
-	@echo "✓ All architecture tests completed"
-
-# 构建所有架构
 build-all:
-	@echo "Building all architectures..."
 	@for arch in $(VALID_ARCHS); do \
 		echo "━━━ Building $$arch ━━━"; \
 		$(MAKE) ARCH=$$arch || exit 1; \
 	done
 	@echo "✓ All architectures built successfully"
 
-# 快速检查: 仅编译，不运行
-check: $(KERNEL)
-	@echo "✓ $(ARCH) build OK: $(KERNEL)"
+check: $(BOOT_IMAGE)
 	@ls -lh $(KERNEL)
 
 # ============================================================================
-# 运行目标
+# 运行 / 调试 / 测试（控制台是串口，接到终端）
 # ============================================================================
 
-run: $(KERNEL)
-ifeq ($(ARCH),arm64)
-	$(QEMU) $(QEMU_FLAGS) $(KERNEL) -device virtio-gpu-device -serial mon:stdio
-else ifeq ($(ARCH),x86_64)
-	@$(MAKE) run-disk ARCH=x86_64
-else
-	$(QEMU) $(QEMU_FLAGS) $(KERNEL) -serial stdio
-endif
+QEMU_RUN = $(QEMU) $(QEMU_MACHINE) -kernel $(BOOT_IMAGE) -serial stdio -display none
 
-run-silent: $(KERNEL)
-ifeq ($(ARCH),arm64)
-	$(QEMU) $(QEMU_FLAGS) $(KERNEL) -nographic -serial mon:stdio
-else ifeq ($(ARCH),x86_64)
-	@$(MAKE) run-disk ARCH=x86_64
-else
-	$(QEMU) $(QEMU_FLAGS) $(KERNEL) -serial stdio -display none
-endif
+run: $(BOOT_IMAGE)
+	$(QEMU_RUN)
 
-# ============================================================================
-# 调试目标
-# ============================================================================
+# 等待 GDB 连接 (target remote :1234)
+debug: $(BOOT_IMAGE)
+	$(QEMU_RUN) -s -S
 
-debug: $(KERNEL)
-ifeq ($(ARCH),arm64)
-	$(QEMU) $(QEMU_FLAGS) $(KERNEL) -nographic -serial mon:stdio -s -S
-else ifeq ($(ARCH),x86_64)
-	@$(MAKE) debug-disk ARCH=x86_64
-else
-	$(QEMU) $(QEMU_FLAGS) $(KERNEL) -serial stdio -s -S
-endif
+# 构建带内核测试的版本并运行，超时后结束
+test:
+	@$(MAKE) --no-print-directory run-timeout ARCH=$(ARCH) KTEST=1
 
-debug-silent: $(KERNEL)
-ifeq ($(ARCH),arm64)
-	$(QEMU) $(QEMU_FLAGS) $(KERNEL) -nographic -serial mon:stdio -s -S
-else ifeq ($(ARCH),x86_64)
-	@$(MAKE) debug-disk ARCH=x86_64
-else
-	$(QEMU) $(QEMU_FLAGS) $(KERNEL) -serial stdio -s -S -display none
-endif
+run-timeout: $(BOOT_IMAGE)
+	@echo "━━━ $(ARCH) (KTEST=$(KTEST), timeout: $(TEST_TIMEOUT)s) ━━━"
+	@$(TIMEOUT_CMD) $(TEST_TIMEOUT) $(QEMU_RUN) 2>&1 < /dev/null | head -$(OUTPUT_LINES) || true
 
-# 带超时的调试输出捕获
-debug-capture: $(KERNEL)
-	@echo "Capturing $(ARCH) output ($(TEST_TIMEOUT)s)..."
-ifeq ($(ARCH),arm64)
-	@$(TIMEOUT_CMD) $(TEST_TIMEOUT) $(QEMU) $(QEMU_FLAGS) $(KERNEL) -nographic 2>&1 | tee $(BUILD_DIR)/debug.log | head -$(OUTPUT_LINES)
-else
-	@$(TIMEOUT_CMD) $(TEST_TIMEOUT) $(QEMU) $(QEMU_FLAGS) $(KERNEL) -serial stdio -display none 2>&1 | tee $(BUILD_DIR)/debug.log | head -$(OUTPUT_LINES)
-endif
-	@echo "Output saved to $(BUILD_DIR)/debug.log"
-
-# ARM64 专用调试目标
-debug-arm64:
-	@$(MAKE) ARCH=arm64 $(BUILD_DIR)/castor.bin
-	@echo "╔══════════════════════════════════════════════════════════════╗"
-	@echo "║           ARM64 Debug Session                                ║"
-	@echo "╠══════════════════════════════════════════════════════════════╣"
-	@echo "║ QEMU is waiting for GDB connection on port 1234              ║"
-	@echo "║                                                              ║"
-	@echo "║ To connect, run in another terminal:                         ║"
-	@echo "║   aarch64-elf-gdb -x .gdbinit-arm64                          ║"
-	@echo "║ Or:                                                          ║"
-	@echo "║   gdb-multiarch -x .gdbinit-arm64                            ║"
-	@echo "╚══════════════════════════════════════════════════════════════╝"
-	$(QEMU) -M virt -cpu cortex-a72 -kernel build/arm64/castor.bin -nographic -serial mon:stdio -s -S
-
-# GDB 连接辅助目标 (在另一个终端运行)
-gdb-arm64:
-	@if command -v aarch64-elf-gdb >/dev/null 2>&1; then \
-		aarch64-elf-gdb -x .gdbinit-arm64; \
-	elif command -v gdb-multiarch >/dev/null 2>&1; then \
-		gdb-multiarch -x .gdbinit-arm64; \
-	else \
-		echo "Error: No ARM64 GDB found. Install aarch64-elf-gdb or gdb-multiarch"; \
-		exit 1; \
-	fi
-
-# ============================================================================
-# 用户空间构建
-# ============================================================================
-
-shell:
-	@$(MAKE) -C user/shell ARCH=$(ARCH)
-
-hello:
-	@$(MAKE) -C user/helloworld ARCH=$(ARCH)
-
-tests:
-	@$(MAKE) -C user/tests ARCH=$(ARCH)
-
-user-all: shell hello tests
-	@echo "✓ All user programs built for $(ARCH)"
-
-user-clean:
-	@$(MAKE) -C user/shell clean-all
-	@$(MAKE) -C user/helloworld clean-all
-	@$(MAKE) -C user/tests clean-all
-	@$(MAKE) -C user/lib clean-all
-	@echo "✓ User programs cleaned"
-
-# ============================================================================
-# 磁盘镜像
-# ============================================================================
-
-disk: $(KERNEL) shell hello tests
-	@ARCH=$(ARCH) bash $(CREATE_SCRIPT)
-
-run-disk: disk
-ifeq ($(ARCH),i686)
-	qemu-system-i386 -hda $(DISK_IMAGE) -serial stdio -netdev user,id=net0 -device e1000,netdev=net0
-else ifeq ($(ARCH),x86_64)
-	qemu-system-x86_64 -hda $(DISK_IMAGE) -serial stdio -netdev user,id=net0 -device e1000,netdev=net0
-else ifeq ($(ARCH),arm64)
-	@echo "ARM64 uses direct kernel boot with disk as secondary storage"
-	qemu-system-aarch64 $(QEMU_MACHINE) -kernel $(KERNEL) -drive file=$(DISK_IMAGE),format=raw,if=virtio -device virtio-gpu-device -serial mon:stdio
-endif
-
-debug-disk: disk
-ifeq ($(ARCH),i686)
-	qemu-system-i386 -hda $(DISK_IMAGE) -serial stdio -netdev user,id=net0 -device e1000,netdev=net0 -s -S
-else ifeq ($(ARCH),x86_64)
-	qemu-system-x86_64 -hda $(DISK_IMAGE) -serial stdio -netdev user,id=net0 -device e1000,netdev=net0 -s -S
-else ifeq ($(ARCH),arm64)
-	qemu-system-aarch64 $(QEMU_MACHINE) -kernel $(KERNEL) -drive file=$(DISK_IMAGE),format=raw,if=virtio -nographic -serial mon:stdio -s -S
-endif
-
-# 从磁盘镜像测试 (用于 i686/x86_64)
-test-disk: disk
-ifeq ($(ARCH),x86_64)
-	@$(TIMEOUT_CMD) $(TEST_TIMEOUT) qemu-system-x86_64 -hda $(DISK_IMAGE) -serial stdio -display none 2>&1 | head -$(OUTPUT_LINES) || true
-else
-	@$(TIMEOUT_CMD) $(TEST_TIMEOUT) qemu-system-i386 -hda $(DISK_IMAGE) -serial stdio -display none 2>&1 | head -$(OUTPUT_LINES) || true
-endif
+test-all:
+	@for arch in $(VALID_ARCHS); do \
+		$(MAKE) --no-print-directory test ARCH=$$arch || true; \
+	done
 
 # ============================================================================
 # 清理
 # ============================================================================
 
 clean:
-	rm -rf build/$(ARCH)
-	@echo "✓ Cleaned $(ARCH)"
+	rm -rf build/$(ARCH) build/$(ARCH)-ktest
+	@$(MAKE) --no-print-directory -C user/init clean ARCH=$(ARCH)
+	@$(MAKE) --no-print-directory -C user/lib clean ARCH=$(ARCH)
 
 clean-all:
-	rm -rf build
-	@echo "✓ Cleaned all architectures"
-
-distclean: clean-all user-clean
-	@echo "✓ Full clean completed"
+	rm -rf build user/init/build user/lib/build
 
 # ============================================================================
 # 工具
@@ -498,80 +244,27 @@ distclean: clean-all user-clean
 compile-db:
 	@ARCH=$(ARCH) bash scripts/merge-compile-commands.sh
 
-# 显示配置信息
 info:
-	@echo "╔══════════════════════════════════════╗"
-	@echo "║     CastorOS Build Configuration     ║"
-	@echo "╚══════════════════════════════════════╝"
 	@echo "Architecture:  $(ARCH)"
 	@echo "Compiler:      $(CXX)"
-	@echo "Linker:        $(LD)"
-	@echo "Assembler:     $(AS)"
 	@echo "QEMU:          $(QEMU)"
-	@echo "Build Dir:     $(BUILD_DIR)"
 	@echo "Kernel:        $(KERNEL)"
-	@echo "Timeout:       $(TEST_TIMEOUT)s"
+	@echo "Init:          $(INIT_ELF)"
+	@echo "KTEST:         $(KTEST)"
 	@echo "CXXFLAGS:      $(CXXFLAGS)"
-	@echo ""
 	@echo "Source files:  $(words $(C_SOURCES)) C++, $(words $(ASM_SOURCES)) ASM"
 
-# 列出源文件
 sources:
-	@echo "=== C++ Sources ($(words $(C_SOURCES))) ==="
-	@for f in $(C_SOURCES); do echo "  $$f"; done
-	@echo ""
-	@echo "=== ASM Sources ($(words $(ASM_SOURCES))) ==="
-	@for f in $(ASM_SOURCES); do echo "  $$f"; done
-
-# ============================================================================
-# 帮助
-# ============================================================================
+	@for f in $(C_SOURCES) $(ASM_SOURCES); do echo "$$f"; done
 
 help:
-	@echo "CastorOS Build System"
+	@echo "Usage: make [target] [ARCH=i686|x86_64|arm64]"
 	@echo ""
-	@echo "Usage: make [target] [ARCH=i686|x86_64|arm64] [TEST_TIMEOUT=8]"
-	@echo ""
-	@echo "Build:"
-	@echo "  all          Build kernel (default)"
-	@echo "  build-all    Build all architectures"
-	@echo "  check        Build and verify"
-	@echo "  disk         Create bootable disk image"
-	@echo ""
-	@echo "Test:"
-	@echo "  test         Build and run with timeout ($(TEST_TIMEOUT)s)"
-	@echo "  test-all     Test all architectures"
-	@echo ""
-	@echo "Run:"
-	@echo "  run          Run in QEMU"
-	@echo "  run-silent   Run without GUI"
-	@echo "  run-disk     Run from disk image"
-	@echo ""
-	@echo "Debug:"
-	@echo "  debug        Start QEMU with GDB server"
-	@echo "  debug-silent Debug without GUI"
-	@echo "  debug-capture Capture output to file"
-	@echo "  debug-arm64  Start ARM64 debug session (with instructions)"
-	@echo "  gdb-arm64    Connect GDB to ARM64 debug session"
-	@echo ""
-	@echo "User Space:"
-	@echo "  shell        Build shell"
-	@echo "  hello        Build hello world"
-	@echo "  tests        Build user tests"
-	@echo "  user-all     Build all user programs"
-	@echo ""
-	@echo "Clean:"
-	@echo "  clean        Clean current arch"
-	@echo "  clean-all    Clean all architectures"
-	@echo "  distclean    Clean everything"
-	@echo ""
-	@echo "Info:"
-	@echo "  info         Show build configuration"
-	@echo "  sources      List source files"
-	@echo "  compile-db   Generate compile_commands.json"
-	@echo ""
-	@echo "Examples:"
-	@echo "  make                          # Build i686"
-	@echo "  make ARCH=arm64 test          # Test ARM64"
-	@echo "  make test-all                 # Test all archs"
-	@echo "  make TEST_TIMEOUT=15 test     # Custom timeout"
+	@echo "  all (default)  Build the kernel with user/init embedded"
+	@echo "  build-all      Build all architectures"
+	@echo "  run            Run in QEMU (serial console on stdio)"
+	@echo "  debug          Run in QEMU waiting for GDB on :1234"
+	@echo "  test           Build with in-kernel tests (KTEST=1) and run with a timeout"
+	@echo "  test-all       test for every architecture"
+	@echo "  clean          Clean current arch;  clean-all: everything"
+	@echo "  info / sources / compile-db"

@@ -345,6 +345,26 @@ void printf(const char *format, ...) {
     print(buffer);
 }
 
+void print(const char *msg) {
+    if (!msg) return;
+    // 内核单次最多接受 4096 字节，分块写
+    size_t len = strlen(msg);
+    while (len > 0) {
+        size_t chunk = len > 4096 ? 4096 : len;
+        if (console_write(msg, chunk) <= 0) return;
+        msg += chunk;
+        len -= chunk;
+    }
+}
+
+int getchar(void) {
+    char c;
+    while (console_read(&c, 1) != 1) {
+        usleep(10000);
+    }
+    return (unsigned char)c;
+}
+
 // snprintf 实现
 // 支持格式符: %s, %d, %i, %u, %c, %x, %X, %o, %p, %ld, %lu, %lld, %llu, %%
 // 支持标志: -, 0 (左对齐, 零填充)

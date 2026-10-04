@@ -1,61 +1,79 @@
-/**
- * @file syscall.h
- * @brief 系统调用统一入口（推荐使用标准 POSIX 头文件）
- * 
- * 新代码应直接使用标准头文件：
- *   - <unistd.h>     - 进程、文件操作
- *   - <fcntl.h>      - 文件控制
- *   - <sys/socket.h> - Socket API
- *   - <netinet/in.h> - Internet 地址
- *   - <arpa/inet.h>  - 地址转换
- *   - <sys/select.h> - I/O 多路复用
- *   - <net/if.h>     - 网络接口
- */
+#ifndef _USERLAND_LIB_SYSCALL_H_
+#define _USERLAND_LIB_SYSCALL_H_
 
-#ifndef _SYSCALL_H_
-#define _SYSCALL_H_
-
-// 基础类型
 #include <types.h>
 
-// 系统调用接口
-#include <sys/syscall.h>
-
-// POSIX 标准头文件
-#include <unistd.h>
-#include <fcntl.h>
-
-// Socket 和网络
-#include <sys/socket.h>
-#include <sys/select.h>
-#include <sys/ioctl.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <net/if.h>
-
 // ============================================================================
-// 额外的函数声明
+// 系统调用号（与内核 src/include/kernel/syscall.h 保持一致）
 // ============================================================================
 
-// 等待子进程
+enum {
+    SYS_EXIT            = 0,
+    SYS_FORK            = 1,
+    SYS_EXEC            = 2,
+    SYS_WAITPID         = 3,
+    SYS_GETPID          = 4,
+    SYS_GETPPID         = 5,
+    SYS_SCHED_YIELD     = 6,
+    SYS_KILL            = 7,
+    SYS_NANOSLEEP       = 8,
+    SYS_BRK             = 9,
+    SYS_MMAP            = 10,
+    SYS_MUNMAP          = 11,
+    SYS_CONSOLE_WRITE   = 12,
+    SYS_CONSOLE_READ    = 13,
+};
+
+typedef uintptr_t syscall_arg_t;
+
+// 架构相关的陷入指令封装（src/arch/<arch>/syscall.S）
+extern "C" syscall_arg_t syscall0(syscall_arg_t num);
+extern "C" syscall_arg_t syscall1(syscall_arg_t num, syscall_arg_t arg0);
+extern "C" syscall_arg_t syscall2(syscall_arg_t num, syscall_arg_t arg0, syscall_arg_t arg1);
+extern "C" syscall_arg_t syscall3(syscall_arg_t num, syscall_arg_t arg0, syscall_arg_t arg1,
+                       syscall_arg_t arg2);
+extern "C" syscall_arg_t syscall4(syscall_arg_t num, syscall_arg_t arg0, syscall_arg_t arg1,
+                       syscall_arg_t arg2, syscall_arg_t arg3);
+extern "C" syscall_arg_t syscall5(syscall_arg_t num, syscall_arg_t arg0, syscall_arg_t arg1,
+                       syscall_arg_t arg2, syscall_arg_t arg3, syscall_arg_t arg4);
+extern "C" syscall_arg_t syscall6(syscall_arg_t num, syscall_arg_t arg0, syscall_arg_t arg1,
+                       syscall_arg_t arg2, syscall_arg_t arg3, syscall_arg_t arg4,
+                       syscall_arg_t arg5);
+
+// ============================================================================
+// 进程
+// ============================================================================
+
+void exit(int status) __attribute__((noreturn));
+int fork(void);
+/** 用内存中的 ELF 映像替换当前进程；成功不返回 */
+int exec(const void *image, size_t size);
 int waitpid(int pid, int *wstatus, int options);
 int wait(int *wstatus);
+int getpid(void);
+int getppid(void);
+void yield(void);
+int kill(int pid, int signal);
+int nanosleep(const struct timespec *req, struct timespec *rem);
+unsigned int sleep(unsigned int seconds);
+int usleep(unsigned int usec);
 
-// 目录操作
-int mkdir(const char *path, uint32_t mode);
-int getdents(int fd, uint32_t index, struct dirent *dirent);
-int stat(const char *path, struct stat *buf);
-int fstat(int fd, struct stat *buf);
-int rename(const char *oldpath, const char *newpath);
+// ============================================================================
+// 内存
+// ============================================================================
 
-// 内存映射
+void *brk(void *addr);
+void *sbrk(int increment);
+/** 只支持匿名映射：flags 必须包含 MAP_ANONYMOUS，fd 传 -1 */
 void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
 int munmap(void *addr, size_t length);
 
-// 系统信息
-int uname(struct utsname *buf);
+// ============================================================================
+// 调试控制台（串口）
+// ============================================================================
 
-// 调试
-void print(const char *msg);
+ssize_t console_write(const void *buf, size_t count);
+/** 非阻塞：返回读到的字节数，没有输入时返回 0 */
+ssize_t console_read(void *buf, size_t count);
 
-#endif // _SYSCALL_H_
+#endif // _USERLAND_LIB_SYSCALL_H_

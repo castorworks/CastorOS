@@ -4,8 +4,8 @@
 #include <types.h>
 
 /**
- * 从文件系统加载并启动用户态 shell
+ * 加载内嵌在内核映像里的 init 程序（user/init），创建第一个用户进程
  */
-bool load_user_shell(void);
+bool load_init(void);
 
 #endif /* KERNEL_LOADER_H */

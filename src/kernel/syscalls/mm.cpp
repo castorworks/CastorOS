@@ -3,15 +3,12 @@
  * 
  * 实现内存管理系统调用：
  * - brk(2)
- * - mmap(2) - 支持匿名映射和文件映射
+ * - mmap(2) - 只支持匿名映射
  * - munmap(2)
  */
 
 #include <kernel/syscalls/mm.h>
-#include <kernel/syscalls/fs.h>  // O_RDONLY, O_WRONLY, O_RDWR
 #include <kernel/task.h>
-#include <kernel/fd_table.h>
-#include <fs/vfs.h>
 #include <mm/vmm.h>
 #include <mm/pmm.h>
 #include <mm/mm_types.h>
@@ -264,86 +261,7 @@ static uintptr_t do_mmap_anonymous(task_t *current, uintptr_t vaddr, size_t leng
 }
 
 /**
- * 执行文件映射
- * @param current 当前进程
- * @param vaddr 映射的虚拟地址
- * @param length 映射长度（已页对齐）
- * @param page_flags 页面标志
- * @param node 文件节点
- * @param offset 文件偏移
- * @return 成功返回虚拟地址，失败返回 -1
- */
-static uintptr_t do_mmap_file(task_t *current, uintptr_t vaddr, size_t length,
-                              uint32_t page_flags, fs_node_t *node, uint32_t offset) {
-    uint32_t pages_allocated = 0;
-    uint32_t file_offset = offset;
-    uint32_t file_size = node->size;
-    
-    for (uintptr_t page = vaddr; page < vaddr + length; page += PAGE_SIZE) {
-        // 分配物理页
-        paddr_t phys = mm::Pmm::alloc_frame();
-        if (phys == PADDR_INVALID) {
-            LOG_ERROR_MSG("syscall::Mm::mmap: out of memory at page 0x%llx\n", (unsigned long long)page);
-            // 回滚
-            for (uintptr_t p = vaddr; p < page; p += PAGE_SIZE) {
-                uintptr_t pf = mm::Vmm::unmap_page_in_directory(current->page_dir_phys, p);
-                if (pf) {
-                    mm::Pmm::free_frame((paddr_t)pf);
-                }
-            }
-            return (uintptr_t)-1;
-        }
-        
-        // 获取内核地址以便操作物理页
-        uint8_t *kernel_ptr = (uint8_t *)PHYS_TO_VIRT((uintptr_t)phys);
-        
-        // 先清零页面（通过内核地址）
-        memset(kernel_ptr, 0, PAGE_SIZE);
-        
-        // 读取文件内容到页面（通过内核地址）
-        if (file_offset < file_size) {
-            uint32_t read_size = PAGE_SIZE;
-            if (file_offset + read_size > file_size) {
-                read_size = file_size - file_offset;
-            }
-            
-            // 使用 VFS 读取文件内容
-            uint32_t bytes_read = fs::Vfs::read(node, file_offset, read_size, kernel_ptr);
-            if (bytes_read == 0 && read_size > 0) {
-                LOG_WARN_MSG("syscall::Mm::mmap: failed to read file at offset 0x%x\n", file_offset);
-            }
-            
-            LOG_DEBUG_MSG("syscall::Mm::mmap: read %u bytes from file offset 0x%x to page 0x%llx\n",
-                          bytes_read, file_offset, (unsigned long long)page);
-        }
-        // 超出文件大小的部分保持为 0
-        
-        // 映射到用户空间（在填充数据之后）
-        if (!mm::Vmm::map_page_in_directory(current->page_dir_phys, page, (uintptr_t)phys, page_flags)) {
-            mm::Pmm::free_frame(phys);
-            LOG_ERROR_MSG("syscall::Mm::mmap: failed to map page 0x%llx\n", (unsigned long long)page);
-            // 回滚
-            for (uintptr_t p = vaddr; p < page; p += PAGE_SIZE) {
-                uintptr_t pf = mm::Vmm::unmap_page_in_directory(current->page_dir_phys, p);
-                if (pf) {
-                    mm::Pmm::free_frame((paddr_t)pf);
-                }
-            }
-            return (uintptr_t)-1;
-        }
-        
-        file_offset += PAGE_SIZE;
-        pages_allocated++;
-    }
-    
-    LOG_DEBUG_MSG("syscall::Mm::mmap: file mapped 0x%llx bytes at 0x%llx (%u pages)\n",
-                  (unsigned long long)length, (unsigned long long)vaddr, pages_allocated);
-    
-    return vaddr;
-}
-
-/**
- * syscall::Mm::mmap - 内存映射（支持匿名映射和文件映射）
+ * syscall::Mm::mmap - 内存映射（只支持匿名映射）
  * @param addr 建议的映射地址（0 表示由内核选择）
  * @param length 映射长度
  * @param prot 保护标志
@@ -380,67 +298,13 @@ uintptr_t syscall::Mm::mmap(uintptr_t addr, size_t length, uint32_t prot,
     // 对齐长度
     length = PAGE_ALIGN_UP(length);
     
-    // 检查 offset 是否页对齐
-    if (offset & (PAGE_SIZE - 1)) {
-        LOG_ERROR_MSG("syscall::Mm::mmap: offset 0x%x not page aligned\n", offset);
+    // 内核里没有文件的概念：只支持匿名映射
+    (void)fd; (void)offset;
+    if (!(flags & MAP_ANONYMOUS)) {
+        LOG_ERROR_MSG("syscall::Mm::mmap: only anonymous mappings are supported\n");
         return (uintptr_t)-1;
     }
-    
-    bool is_anonymous = (flags & MAP_ANONYMOUS) != 0;
-    bool is_private = (flags & MAP_PRIVATE) != 0;
-    
-    LOG_DEBUG_MSG("syscall::Mm::mmap: addr=0x%llx, length=0x%llx, prot=0x%x, flags=0x%x, fd=%d, offset=0x%x\n",
-                  (unsigned long long)addr, (unsigned long long)length, prot, flags, fd, offset);
-    
-    // 文件映射需要有效的 fd
-    fs_node_t *file_node = NULL;
-    if (!is_anonymous) {
-        // 文件映射总是把文件内容拷贝到进程私有的页里，写入既不会写回文件，
-        // 也不会被其他映射者看到。共享文件映射（包括 /shm）尚未实现，
-        // 明确失败，而不是悄悄退化成私有拷贝。
-        if (flags & MAP_SHARED) {
-            LOG_ERROR_MSG("syscall::Mm::mmap: MAP_SHARED file mappings are not supported\n");
-            return (uintptr_t)-1;
-        }
 
-        if (fd < 0) {
-            LOG_ERROR_MSG("syscall::Mm::mmap: file mapping requires valid fd (got %d)\n", fd);
-            return (uintptr_t)-1;
-        }
-        
-        // 获取文件节点
-        kernel::FdEntry *entry = kernel::FdTable::get(current->fd_table, fd);
-        if (!entry || !entry->node) {
-            LOG_ERROR_MSG("syscall::Mm::mmap: invalid fd %d\n", fd);
-            return (uintptr_t)-1;
-        }
-        
-        file_node = entry->node;
-        
-        // 检查文件类型（只能映射普通文件）
-        if (file_node->type != FS_FILE) {
-            LOG_ERROR_MSG("syscall::Mm::mmap: can only map regular files (type=%d)\n", file_node->type);
-            return (uintptr_t)-1;
-        }
-        
-        // 检查文件权限
-        // 注意：O_RDONLY = 0，所以需要用 (flags & 3) 来获取访问模式
-        uint32_t access_mode = entry->flags & 3;
-        bool can_read = (access_mode == O_RDONLY) || (access_mode == O_RDWR);
-        bool can_write = (access_mode == O_WRONLY) || (access_mode == O_RDWR);
-        
-        if ((prot & PROT_READ) && !can_read) {
-            LOG_ERROR_MSG("syscall::Mm::mmap: file not opened for reading\n");
-            return (uintptr_t)-1;
-        }
-        
-        if ((prot & PROT_WRITE) && !is_private && !can_write) {
-            // 共享可写映射需要文件以写模式打开
-            LOG_ERROR_MSG("syscall::Mm::mmap: shared writable mapping requires write access\n");
-            return (uintptr_t)-1;
-        }
-    }
-    
     // 查找空闲虚拟地址空间
     uintptr_t vaddr = find_free_vaddr(addr, length);
     if (vaddr == 0) {
@@ -455,12 +319,7 @@ uintptr_t syscall::Mm::mmap(uintptr_t addr, size_t length, uint32_t prot,
         page_flags |= PAGE_WRITE;
     }
     
-    // 执行映射
-    if (is_anonymous) {
-        return do_mmap_anonymous(current, vaddr, length, page_flags);
-    } else {
-        return do_mmap_file(current, vaddr, length, page_flags, file_node, offset);
-    }
+    return do_mmap_anonymous(current, vaddr, length, page_flags);
 }
 
 /**

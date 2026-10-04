@@ -31,14 +31,13 @@ public:
      * @param addr 建议的映射地址（0 表示由内核选择）
      * @param length 映射长度（字节，会被页对齐）
      * @param prot 保护标志（PROT_READ, PROT_WRITE, PROT_EXEC）
-     * @param flags 映射标志（MAP_ANONYMOUS，或 MAP_PRIVATE 的文件映射）
-     * @param fd 文件描述符（匿名映射时忽略，应传 -1）
-     * @param offset 文件偏移（必须页对齐；匿名映射时应传 0）
+     * @param flags 映射标志（必须包含 MAP_ANONYMOUS）
+     * @param fd 忽略，应传 -1
+     * @param offset 忽略，应传 0
      * @return 成功返回映射的虚拟地址，失败返回 (uintptr_t)-1 (MAP_FAILED)
      * 
      * 当前限制：
-     * - 文件映射在映射时把文件内容拷贝到进程私有的页，写入不会写回文件
-     * - 不支持共享文件映射：带 MAP_SHARED 的文件映射（包括 /shm）返回失败
+     * - 只支持匿名映射（内核里没有文件）
      * - 映射地址由内核在各架构的 mmap 区域内选择，addr 只是建议
      * 
      * 用法示例：

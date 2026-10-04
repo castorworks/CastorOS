@@ -10,7 +10,6 @@
 
 #include <types.h>
 #include <mm/vmm.h>
-#include <kernel/fd_table.h>
 
 /* ============================================================================
  * 常量定义
@@ -40,9 +39,6 @@
 
 /** @brief 默认优先级 */
 #define DEFAULT_PRIORITY 10
-
-/** @brief 工作目录路径最大长度 */
-#define MAX_CWD_LENGTH 256
 
 /* ============================================================================
  * 数据结构定义
@@ -226,10 +222,6 @@ typedef struct task {
     uintptr_t heap_end;              ///< 当前堆结束地址（当前 brk）
     uintptr_t heap_max;              ///< 堆最大地址（防止与栈冲突）
 
-    /* 文件系统 */
-    kernel::FdTable *fd_table;            ///< 文件描述符表
-    char cwd[MAX_CWD_LENGTH];        ///< 当前工作目录
-
     /* 进程关系 */
     struct task *parent;             ///< 父进程
 
@@ -254,9 +246,8 @@ typedef struct task {
     uint32_t kill_signal;            ///< kill_pending 为 true 时的信号号
 
     /**
-     * 特权进程：可以重启/关机、修改网络配置、kill 任意用户进程。
-     * 第一个用户进程（init shell）有特权，fork 继承，execve 之后失去：
-     * 从 shell 启动的外部程序因此是非特权的。
+     * 特权进程：可以 kill 任意用户进程。
+     * 第一个用户进程（init）有特权，fork 继承，exec 之后失去。
      */
     bool privileged;
 } task_t;
@@ -369,7 +360,7 @@ public:
     /**
      * @brief 结束当前任务（不返回）
      *
-     * 关闭全部文件描述符、处理子进程，然后变成僵尸（有父进程）或
+     * 处理子进程，然后变成僵尸（有父进程）或
      * 交给调度器延迟回收（无父进程）。只能在任务自己的上下文调用。
      *
      * @param exit_code 退出码

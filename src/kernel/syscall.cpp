@@ -12,22 +12,14 @@
 
 #include <kernel/syscall.h>
 #include <hal/hal_syscall.h>
-#include <kernel/syscalls/fs.h>
 #include <kernel/syscalls/process.h>
-#include <kernel/syscalls/time.h>
-#include <kernel/syscalls/system.h>
 #include <kernel/syscalls/mm.h>
-#if !defined(ARCH_ARM64)
-#include <kernel/syscalls/net.h>
-#include <net/socket.h>
-#endif
-#include <kernel/utsname.h>
 #include <kernel/uaccess.h>
 #include <kernel/task.h>
+#include <drivers/serial.h>
 #include <hal/hal.h>
 #include <lib/klog.h>
 #include <lib/kprintf.h>
-#include <lib/string.h>
 
 /* 系统调用处理函数表 - 使用 syscall_arg_t 支持 32/64 位架构 */
 typedef syscall_arg_t (*syscall_handler_t)(syscall_arg_t*, syscall_arg_t, syscall_arg_t, 
@@ -50,12 +42,6 @@ static syscall_handler_t syscall_table[SYS_MAX];
  *   frame[15] = user_rsp
  */
 
-/* 默认时间片（与 task.c 保持一致） */
-#define DEFAULT_TIME_SLICE 10
-
-/**
- * sys_exit_wrapper - 退出进程（系统调用包装器）
- */
 /**
  * @brief 取第 6 个系统调用参数
  *
@@ -82,11 +68,8 @@ static inline syscall_arg_t syscall_arg6(const syscall_arg_t *frame) {
  * ============================================================================ */
 
 #define SYSCALL_FAIL        ((syscall_arg_t)-1)
-#define USER_PATH_MAX       256     /* 含结尾 NUL */
-#define USER_SOCKADDR_MAX   128
-
-/* 单次 read/write 的长度上限：结果要能用有符号 32 位表示 */
-#define USER_RW_MAX         ((syscall_arg_t)0x7FFFFFFF)
+/* 单次控制台读写的长度上限 */
+#define CONSOLE_IO_MAX      ((syscall_arg_t)4096)
 
 /**
  * 实现函数用 32 位值表示结果，出错时是负数（如 (uint32_t)-1、(uint32_t)-12）。
@@ -95,10 +78,6 @@ static inline syscall_arg_t syscall_arg6(const syscall_arg_t *frame) {
  */
 static inline syscall_arg_t sys_ret32(uint32_t value) {
     return (syscall_arg_t)(intptr_t)(int32_t)value;
-}
-
-static inline bool user_str(syscall_arg_t p) {
-    return kernel::UAccess::strnlen((const char *)(uintptr_t)p, USER_PATH_MAX) >= 0;
 }
 
 static inline bool user_rd(syscall_arg_t p, size_t len) {
@@ -114,20 +93,6 @@ static inline bool user_wr_opt(syscall_arg_t p, size_t len) {
     return p == 0 || user_wr(p, len);
 }
 
-#if !defined(ARCH_ARM64)
-/* (addr, addrlen*) 形式的可选输出参数：两者都可为空，非空时按 *addrlen 校验 addr */
-static inline bool user_sockaddr_out(syscall_arg_t addr, syscall_arg_t addrlen_ptr) {
-    if (addrlen_ptr == 0) {
-        return addr == 0;
-    }
-    if (!user_wr(addrlen_ptr, sizeof(socklen_t))) {
-        return false;
-    }
-    socklen_t len = *(socklen_t *)(uintptr_t)addrlen_ptr;
-    return addr == 0 || (len <= USER_SOCKADDR_MAX && user_wr(addr, len));
-}
-#endif
-
 static syscall_arg_t sys_exit_wrapper(syscall_arg_t *frame, syscall_arg_t exit_code, 
                                       syscall_arg_t p2, syscall_arg_t p3, 
                                       syscall_arg_t p4, syscall_arg_t p5) {
@@ -137,9 +102,6 @@ static syscall_arg_t sys_exit_wrapper(syscall_arg_t *frame, syscall_arg_t exit_c
     return 0;  // 永远不会返回
 }
 
-/**
- * sys_fork_wrapper - 创建子进程（系统调用包装器）
- */
 static syscall_arg_t sys_fork_wrapper(syscall_arg_t *frame, syscall_arg_t p1, syscall_arg_t p2, 
                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
@@ -148,182 +110,20 @@ static syscall_arg_t sys_fork_wrapper(syscall_arg_t *frame, syscall_arg_t p1, sy
 }
 
 /**
- * sys_execve_wrapper - 执行新程序（系统调用包装器）
+ * exec(image, size)：ELF 映像由调用者放在自己的地址空间里，内核不认识文件
  */
-static syscall_arg_t sys_execve_wrapper(syscall_arg_t *frame, syscall_arg_t path_addr, 
-                                        syscall_arg_t argv, syscall_arg_t envp, 
-                                        syscall_arg_t p4, syscall_arg_t p5) {
-    (void)argv; (void)envp; (void)p4; (void)p5;
-    
-    const char *user_path = (const char *)(uintptr_t)path_addr;
-    if (!user_str(path_addr)) {
-        return SYSCALL_FAIL;
-    }
-    
-    // 将路径从用户空间复制到内核空间，同时解析成绝对路径
-    // （相对路径以当前进程的工作目录为基准）
-    char path[USER_PATH_MAX + MAX_CWD_LENGTH];
-    task_t *current = kernel::Scheduler::get_current();
-    if (path_resolve(current ? current->cwd : "/", user_path, path, sizeof(path)) != 0) {
-        return SYSCALL_FAIL;
-    }
-    
-    // 传递 frame 指针给 syscall::Process::execve
-    return sys_ret32(syscall::Process::execve(frame, path));
-}
-
-/**
- * 通用系统调用处理入口（从汇编调用）
- * @param syscall_num 系统调用号
- * @param p1-p5 系统调用参数
- * @param frame 栈帧指针，指向 syscall_handler 保存的寄存器
- */
-/* 系统调用包装器函数 - 使用 syscall_arg_t 支持 32/64 位 */
-
-static syscall_arg_t sys_open_wrapper(syscall_arg_t *frame, syscall_arg_t path, syscall_arg_t flags, 
-                                      syscall_arg_t mode, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p4; (void)p5;
-    if (!(user_str(path))) return SYSCALL_FAIL;
-    return sys_ret32(syscall::Fs::open((const char *)(uintptr_t)path, (int32_t)flags, (uint32_t)mode));
-}
-
-static syscall_arg_t sys_close_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t p2, 
-                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
-    return sys_ret32(syscall::Fs::close((int32_t)fd));
-}
-
-static syscall_arg_t sys_read_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t buffer, 
-                                      syscall_arg_t size, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p4; (void)p5;
-    if (size > USER_RW_MAX) size = USER_RW_MAX;
-    if (!(user_wr(buffer, (size_t)size))) return SYSCALL_FAIL;
-    return sys_ret32(syscall::Fs::read((int32_t)fd, (void *)(uintptr_t)buffer, (uint32_t)size));
-}
-
-static syscall_arg_t sys_write_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t buffer, 
-                                       syscall_arg_t size, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p4; (void)p5;
-    if (size > USER_RW_MAX) size = USER_RW_MAX;
-    if (!(user_rd(buffer, (size_t)size))) return SYSCALL_FAIL;
-    return sys_ret32(syscall::Fs::write((int32_t)fd, (const void *)(uintptr_t)buffer, (uint32_t)size));
-}
-
-static syscall_arg_t sys_lseek_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t offset, 
-                                       syscall_arg_t whence, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p4; (void)p5;
-    return sys_ret32(syscall::Fs::lseek((int32_t)fd, (int32_t)offset, (int32_t)whence));
-}
-
-static syscall_arg_t sys_mkdir_wrapper(syscall_arg_t *frame, syscall_arg_t path, syscall_arg_t mode, 
-                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p3; (void)p4; (void)p5;
-    if (!(user_str(path))) return SYSCALL_FAIL;
-    return sys_ret32(syscall::Fs::mkdir((const char *)(uintptr_t)path, (uint32_t)mode));
-}
-
-static syscall_arg_t sys_unlink_wrapper(syscall_arg_t *frame, syscall_arg_t path, syscall_arg_t p2, 
-                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
-    if (!(user_str(path))) return SYSCALL_FAIL;
-    return sys_ret32(syscall::Fs::unlink((const char *)(uintptr_t)path));
-}
-
-static syscall_arg_t sys_chdir_wrapper(syscall_arg_t *frame, syscall_arg_t path, syscall_arg_t p2, 
-                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
-    if (!(user_str(path))) return SYSCALL_FAIL;
-    return sys_ret32(syscall::Fs::chdir((const char *)(uintptr_t)path));
-}
-
-static syscall_arg_t sys_getcwd_wrapper(syscall_arg_t *frame, syscall_arg_t buffer, syscall_arg_t size, 
-                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p3; (void)p4; (void)p5;
-    if (!(user_wr(buffer, (size_t)size))) return SYSCALL_FAIL;
-    return syscall::Fs::getcwd((char *)(uintptr_t)buffer, (size_t)size);
-}
-
-static syscall_arg_t sys_getdents_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t index, 
-                                          syscall_arg_t dirent, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p4; (void)p5;
-    if (!(user_wr(dirent, sizeof(struct dirent)))) return SYSCALL_FAIL;
-    return sys_ret32(syscall::Fs::getdents((int32_t)fd, (uint32_t)index, (void *)(uintptr_t)dirent));
-}
-
-static syscall_arg_t sys_stat_wrapper(syscall_arg_t *frame, syscall_arg_t path, syscall_arg_t buf, 
+static syscall_arg_t sys_exec_wrapper(syscall_arg_t *frame, syscall_arg_t image, syscall_arg_t size,
                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p3; (void)p4; (void)p5;
-    if (!(user_str(path) && user_wr(buf, sizeof(struct stat)))) return SYSCALL_FAIL;
-    return sys_ret32(syscall::Fs::stat((const char *)(uintptr_t)path, (struct stat *)(uintptr_t)buf));
+    (void)p3; (void)p4; (void)p5;
+    if (!user_rd(image, (size_t)size)) return SYSCALL_FAIL;
+    return sys_ret32(syscall::Process::exec(frame, (const void *)(uintptr_t)image, (size_t)size));
 }
 
-static syscall_arg_t sys_fstat_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t buf, 
-                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p3; (void)p4; (void)p5;
-    if (!(user_wr(buf, sizeof(struct stat)))) return SYSCALL_FAIL;
-    return sys_ret32(syscall::Fs::fstat((int32_t)fd, (struct stat *)(uintptr_t)buf));
-}
-
-static syscall_arg_t sys_ftruncate_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t length, 
-                                           syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p3; (void)p4; (void)p5;
-    return sys_ret32(syscall::Fs::ftruncate((int32_t)fd, (uint32_t)length));
-}
-
-static syscall_arg_t sys_pipe_wrapper(syscall_arg_t *frame, syscall_arg_t fds, syscall_arg_t p2, 
-                                      syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
-    if (!(user_wr(fds, 2 * sizeof(int32_t)))) return SYSCALL_FAIL;
-    return sys_ret32(syscall::Fs::pipe((int32_t *)(uintptr_t)fds));
-}
-
-static syscall_arg_t sys_dup_wrapper(syscall_arg_t *frame, syscall_arg_t oldfd, syscall_arg_t p2, 
-                                     syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
-    return sys_ret32(syscall::Fs::dup((int32_t)oldfd));
-}
-
-static syscall_arg_t sys_dup2_wrapper(syscall_arg_t *frame, syscall_arg_t oldfd, syscall_arg_t newfd, 
-                                      syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p3; (void)p4; (void)p5;
-    return sys_ret32(syscall::Fs::dup2((int32_t)oldfd, (int32_t)newfd));
-}
-
-#if defined(ARCH_ARM64)
-/* ARM64: stub for syscall::Net::ioctl (network ioctl not supported yet) */
-static int32_t sys_ioctl_stub(int32_t fd, uint32_t request, void *argp) {
-    (void)fd; (void)request; (void)argp;
-    return -38;  /* -ENOSYS */
-}
-#endif
-
-static syscall_arg_t sys_ioctl_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t request, 
-                                       syscall_arg_t argp, syscall_arg_t p4, syscall_arg_t p5) {
+static syscall_arg_t sys_waitpid_wrapper(syscall_arg_t *frame, syscall_arg_t pid, syscall_arg_t wstatus_ptr,
+                                         syscall_arg_t options, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
-#if defined(ARCH_ARM64)
-    return sys_ioctl_stub((int32_t)fd, (uint32_t)request, (void *)(uintptr_t)argp);
-#else
-    size_t arg_size;
-    uint32_t req = (uint32_t)request;
-    if (req >= SIOCGIFADDR && req <= SIOCSIFGATEWAY) {
-        arg_size = sizeof(struct ifreq);
-    } else if (req >= SIOCSARP && req <= SIOCDARP) {
-        arg_size = sizeof(struct arpreq);
-    } else if (req == SIOCPING) {
-        arg_size = sizeof(struct ping_req);
-    } else if (req == SIOCGIFSTATS) {
-        arg_size = sizeof(struct ifstats);
-    } else {
-        return SYSCALL_FAIL;
-    }
-    if (!user_wr(argp, arg_size)) return SYSCALL_FAIL;
-    // 修改网络配置的请求需要特权；查询和 ping 不需要
-    bool modifies = (req == SIOCSIFADDR || req == SIOCSIFNETMASK || req == SIOCSIFFLAGS ||
-                     req == SIOCSIFMTU || req == SIOCSIFGATEWAY || req == SIOCSARP ||
-                     req == SIOCDARP);
-    if (modifies && !kernel::Scheduler::current_is_privileged()) return SYSCALL_FAIL;
-    return syscall::Net::ioctl((int32_t)fd, (uint32_t)request, (void *)(uintptr_t)argp);
-#endif
+    if (!(user_wr_opt(wstatus_ptr, sizeof(uint32_t)))) return SYSCALL_FAIL;
+    return sys_ret32(syscall::Process::waitpid((int32_t)pid, (uint32_t *)(uintptr_t)wstatus_ptr, (uint32_t)options));
 }
 
 static syscall_arg_t sys_getpid_wrapper(syscall_arg_t *frame, syscall_arg_t p1, syscall_arg_t p2, 
@@ -344,6 +144,12 @@ static syscall_arg_t sys_yield_wrapper(syscall_arg_t *frame, syscall_arg_t p1, s
     return sys_ret32(syscall::Process::yield());
 }
 
+static syscall_arg_t sys_kill_wrapper(syscall_arg_t *frame, syscall_arg_t pid, syscall_arg_t signal,
+                                      syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p3; (void)p4; (void)p5;
+    return sys_ret32(syscall::Process::kill((uint32_t)pid, (uint32_t)signal));
+}
+
 static syscall_arg_t sys_nanosleep_wrapper(syscall_arg_t *frame, syscall_arg_t req_ptr, 
                                            syscall_arg_t rem_ptr, syscall_arg_t p3,
                                            syscall_arg_t p4, syscall_arg_t p5) {
@@ -352,41 +158,6 @@ static syscall_arg_t sys_nanosleep_wrapper(syscall_arg_t *frame, syscall_arg_t r
     struct timespec *rem = (struct timespec *)(uintptr_t)rem_ptr;
     if (!(user_rd(req_ptr, sizeof(struct timespec)) && user_wr_opt(rem_ptr, sizeof(struct timespec)))) return SYSCALL_FAIL;
     return sys_ret32(syscall::Process::nanosleep(req, rem));
-}
-
-static syscall_arg_t sys_time_wrapper(syscall_arg_t *frame, syscall_arg_t p1, syscall_arg_t p2, 
-                                      syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
-    return syscall::Time::time();
-}
-
-static syscall_arg_t sys_reboot_wrapper(syscall_arg_t *frame, syscall_arg_t p1, syscall_arg_t p2, 
-                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
-    if (!kernel::Scheduler::current_is_privileged()) return SYSCALL_FAIL;
-    syscall::System::reboot();
-    return 0;
-}
-
-static syscall_arg_t sys_poweroff_wrapper(syscall_arg_t *frame, syscall_arg_t p1, syscall_arg_t p2, 
-                                          syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
-    if (!kernel::Scheduler::current_is_privileged()) return SYSCALL_FAIL;
-    syscall::System::poweroff();
-    return 0;
-}
-
-static syscall_arg_t sys_kill_wrapper(syscall_arg_t *frame, syscall_arg_t pid, syscall_arg_t signal,
-                                      syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p3; (void)p4; (void)p5;
-    return sys_ret32(syscall::Process::kill((uint32_t)pid, (uint32_t)signal));
-}
-
-static syscall_arg_t sys_waitpid_wrapper(syscall_arg_t *frame, syscall_arg_t pid, syscall_arg_t wstatus_ptr,
-                                         syscall_arg_t options, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p4; (void)p5;
-    if (!(user_wr_opt(wstatus_ptr, sizeof(uint32_t)))) return SYSCALL_FAIL;
-    return sys_ret32(syscall::Process::waitpid((int32_t)pid, (uint32_t *)(uintptr_t)wstatus_ptr, (uint32_t)options));
 }
 
 static syscall_arg_t sys_brk_wrapper(syscall_arg_t *frame, syscall_arg_t addr, syscall_arg_t p2,
@@ -409,191 +180,36 @@ static syscall_arg_t sys_munmap_wrapper(syscall_arg_t *frame, syscall_arg_t addr
     return syscall::Mm::munmap((uintptr_t)addr, (size_t)length);
 }
 
-static syscall_arg_t sys_uname_wrapper(syscall_arg_t *frame, syscall_arg_t buf, syscall_arg_t p2,
-                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
-    if (!(user_wr(buf, sizeof(struct utsname)))) return SYSCALL_FAIL;
-    return sys_ret32(syscall::System::uname((struct utsname *)(uintptr_t)buf));
-}
-
-static syscall_arg_t sys_rename_wrapper(syscall_arg_t *frame, syscall_arg_t oldpath, syscall_arg_t newpath,
-                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
+static syscall_arg_t sys_console_write_wrapper(syscall_arg_t *frame, syscall_arg_t buf, syscall_arg_t len,
+                                               syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    if (!(user_str(oldpath) && user_str(newpath))) return SYSCALL_FAIL;
-    return sys_ret32(syscall::Fs::rename((const char *)(uintptr_t)oldpath, (const char *)(uintptr_t)newpath));
+    if (len > CONSOLE_IO_MAX) len = CONSOLE_IO_MAX;
+    if (!user_rd(buf, (size_t)len)) return SYSCALL_FAIL;
+    const char *p = (const char *)(uintptr_t)buf;
+    for (size_t i = 0; i < (size_t)len; i++) {
+        kputchar(p[i]);
+    }
+    return len;
 }
 
-/* ============================================================================
- * BSD Socket API 系统调用包装器 - 使用 syscall_arg_t 支持 32/64 位
- * ARM64 暂不支持网络功能
- * ============================================================================ */
-
-#if !defined(ARCH_ARM64)
-static syscall_arg_t sys_socket_wrapper(syscall_arg_t *frame, syscall_arg_t domain, 
-                                        syscall_arg_t type, syscall_arg_t protocol, 
-                                        syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p4; (void)p5;
-    return (syscall_arg_t)syscall::Net::socket_fd_alloc(
-        net::Socket::socket((int)domain, (int)type, (int)protocol));
-}
-
-static syscall_arg_t sys_bind_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
-                                      syscall_arg_t addr, syscall_arg_t addrlen, 
-                                      syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p4; (void)p5;
-    if (!(addrlen <= USER_SOCKADDR_MAX && user_rd(addr, (size_t)addrlen))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::bind(syscall::Net::socket_sid((int)sockfd), (const struct sockaddr *)(uintptr_t)addr, 
-                                   (socklen_t)addrlen);
-}
-
-static syscall_arg_t sys_listen_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
-                                        syscall_arg_t backlog, syscall_arg_t p3, 
-                                        syscall_arg_t p4, syscall_arg_t p5) {
+static syscall_arg_t sys_console_read_wrapper(syscall_arg_t *frame, syscall_arg_t buf, syscall_arg_t len,
+                                              syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    return (syscall_arg_t)net::Socket::listen(syscall::Net::socket_sid((int)sockfd), (int)backlog);
+    if (len > CONSOLE_IO_MAX) len = CONSOLE_IO_MAX;
+    if (!user_wr(buf, (size_t)len)) return SYSCALL_FAIL;
+    char *p = (char *)(uintptr_t)buf;
+    size_t n = 0;
+    while (n < (size_t)len) {
+        int c = drivers::Serial::getchar_nonblock();
+        if (c < 0) break;
+        p[n++] = (char)c;
+    }
+    return (syscall_arg_t)n;
 }
-
-static syscall_arg_t sys_accept_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
-                                        syscall_arg_t addr, syscall_arg_t addrlen, 
-                                        syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p4; (void)p5;
-    if (!(user_sockaddr_out(addr, addrlen))) return SYSCALL_FAIL;
-    return (syscall_arg_t)syscall::Net::socket_fd_alloc(
-        net::Socket::accept(syscall::Net::socket_sid((int)sockfd), (struct sockaddr *)(uintptr_t)addr, 
-                                     (socklen_t *)(uintptr_t)addrlen));
-}
-
-static syscall_arg_t sys_connect_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
-                                         syscall_arg_t addr, syscall_arg_t addrlen, 
-                                         syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p4; (void)p5;
-    if (!(addrlen <= USER_SOCKADDR_MAX && user_rd(addr, (size_t)addrlen))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::connect(syscall::Net::socket_sid((int)sockfd), (const struct sockaddr *)(uintptr_t)addr, 
-                                      (socklen_t)addrlen);
-}
-
-static syscall_arg_t sys_send_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
-                                      syscall_arg_t buf, syscall_arg_t len, 
-                                      syscall_arg_t flags, syscall_arg_t p5) {
-    (void)frame; (void)p5;
-    if (!(user_rd(buf, (size_t)len))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::send(syscall::Net::socket_sid((int)sockfd), (const void *)(uintptr_t)buf, 
-                                   (size_t)len, (int)flags);
-}
-
-static syscall_arg_t sys_sendto_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
-                                        syscall_arg_t buf, syscall_arg_t len, 
-                                        syscall_arg_t flags, syscall_arg_t dest_addr) {
-    // 第 6 个参数 addrlen 从保存的寄存器帧中取
-    syscall_arg_t addrlen = syscall_arg6(frame);
-    if (!(user_rd(buf, (size_t)len) && (dest_addr == 0 || (addrlen <= USER_SOCKADDR_MAX && user_rd(dest_addr, (size_t)addrlen))))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::sendto(syscall::Net::socket_sid((int)sockfd), (const void *)(uintptr_t)buf, 
-                                     (size_t)len, (int)flags,
-                                     (const struct sockaddr *)(uintptr_t)dest_addr, 
-                                     (socklen_t)addrlen);
-}
-
-static syscall_arg_t sys_recv_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
-                                      syscall_arg_t buf, syscall_arg_t len, 
-                                      syscall_arg_t flags, syscall_arg_t p5) {
-    (void)frame; (void)p5;
-    if (!(user_wr(buf, (size_t)len))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::recv(syscall::Net::socket_sid((int)sockfd), (void *)(uintptr_t)buf, 
-                                   (size_t)len, (int)flags);
-}
-
-static syscall_arg_t sys_recvfrom_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
-                                          syscall_arg_t buf, syscall_arg_t len, 
-                                          syscall_arg_t flags, syscall_arg_t src_addr) {
-    // 第 6 个参数 addrlen 指针从保存的寄存器帧中取
-    syscall_arg_t addrlen_ptr = syscall_arg6(frame);
-    socklen_t *addrlen = (socklen_t *)(uintptr_t)addrlen_ptr;
-    if (!(user_wr(buf, (size_t)len) && user_sockaddr_out(src_addr, addrlen_ptr))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::recvfrom(syscall::Net::socket_sid((int)sockfd), (void *)(uintptr_t)buf, 
-                                       (size_t)len, (int)flags,
-                                       (struct sockaddr *)(uintptr_t)src_addr, addrlen);
-}
-
-static syscall_arg_t sys_shutdown_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
-                                          syscall_arg_t how, syscall_arg_t p3, 
-                                          syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p3; (void)p4; (void)p5;
-    return (syscall_arg_t)net::Socket::shutdown(syscall::Net::socket_sid((int)sockfd), (int)how);
-}
-
-static syscall_arg_t sys_setsockopt_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
-                                            syscall_arg_t level, syscall_arg_t optname, 
-                                            syscall_arg_t optval, syscall_arg_t optlen) {
-    (void)frame;
-    if (!(optlen <= USER_SOCKADDR_MAX && user_rd(optval, (size_t)optlen))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::setsockopt(syscall::Net::socket_sid((int)sockfd), (int)level, (int)optname,
-                                         (const void *)(uintptr_t)optval, (socklen_t)optlen);
-}
-
-static syscall_arg_t sys_getsockopt_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
-                                            syscall_arg_t level, syscall_arg_t optname, 
-                                            syscall_arg_t optval, syscall_arg_t optlen) {
-    (void)frame;
-    if (!(optlen != 0 && optval != 0 && user_sockaddr_out(optval, optlen))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::getsockopt(syscall::Net::socket_sid((int)sockfd), (int)level, (int)optname,
-                                         (void *)(uintptr_t)optval, 
-                                         (socklen_t *)(uintptr_t)optlen);
-}
-
-static syscall_arg_t sys_getsockname_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
-                                             syscall_arg_t addr, syscall_arg_t addrlen, 
-                                             syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p4; (void)p5;
-    if (!(addrlen != 0 && addr != 0 && user_sockaddr_out(addr, addrlen))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::getsockname(syscall::Net::socket_sid((int)sockfd), (struct sockaddr *)(uintptr_t)addr, 
-                                          (socklen_t *)(uintptr_t)addrlen);
-}
-
-static syscall_arg_t sys_getpeername_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
-                                             syscall_arg_t addr, syscall_arg_t addrlen, 
-                                             syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p4; (void)p5;
-    if (!(addrlen != 0 && addr != 0 && user_sockaddr_out(addr, addrlen))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::getpeername(syscall::Net::socket_sid((int)sockfd), (struct sockaddr *)(uintptr_t)addr, 
-                                          (socklen_t *)(uintptr_t)addrlen);
-}
-
-static syscall_arg_t sys_select_wrapper(syscall_arg_t *frame, syscall_arg_t nfds, 
-                                        syscall_arg_t readfds, syscall_arg_t writefds, 
-                                        syscall_arg_t exceptfds, syscall_arg_t timeout) {
-    (void)frame;
-    if (!(user_wr_opt(readfds, sizeof(fd_set)) && user_wr_opt(writefds, sizeof(fd_set)) && user_wr_opt(exceptfds, sizeof(fd_set)) && user_wr_opt(timeout, sizeof(struct timeval)))) return SYSCALL_FAIL;
-    return (syscall_arg_t)syscall::Net::select((int)nfds, (fd_set *)(uintptr_t)readfds, 
-                                     (fd_set *)(uintptr_t)writefds,
-                                     (fd_set *)(uintptr_t)exceptfds, 
-                                     (struct timeval *)(uintptr_t)timeout);
-}
-
-static syscall_arg_t sys_fcntl_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
-                                       syscall_arg_t cmd, syscall_arg_t arg, 
-                                       syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p4; (void)p5;
-    return (syscall_arg_t)net::Socket::fcntl(syscall::Net::socket_sid((int)sockfd), (int)cmd, (int)arg);
-}
-#endif /* !ARCH_ARM64 */
-
-/* Debug counter for syscalls */
-static uint32_t syscall_count = 0;
 
 syscall_arg_t syscall_dispatcher(syscall_arg_t syscall_num, syscall_arg_t p1, syscall_arg_t p2, 
                                  syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5, 
                                  syscall_arg_t *frame) {
-    
-#if defined(ARCH_ARM64)
-    /* Debug: Print first few syscalls */
-    if (syscall_count < 10) {
-        LOG_INFO_MSG("ARM64 syscall: num=%lu, p1=0x%llx, p2=0x%llx\n",
-                     (unsigned long)syscall_num,
-                     (unsigned long long)p1,
-                     (unsigned long long)p2);
-        syscall_count++;
-    }
-#endif
     
     /* 检查系统调用号是否在有效范围内 */
     if (syscall_num >= SYS_MAX) {
@@ -616,98 +232,28 @@ syscall_arg_t syscall_dispatcher(syscall_arg_t syscall_num, syscall_arg_t p1, sy
     return ret;
 }
 
-/**
- * syscall_init - Initialize system call subsystem
- *
- * This function initializes the system call table and sets up the
- * architecture-specific system call entry mechanism through the HAL.
- *
- * Requirements: 8.1 - System call entry mechanism
- */
 void syscall_init(void) {
-    LOG_INFO_MSG("Initializing system calls...\n");
-    
-    /* Clear system call table */
     for (uint32_t i = 0; i < SYS_MAX; i++) {
         syscall_table[i] = NULL;
     }
-    
-    /* ========================================================================
-     * Register system call wrapper functions
-     * ======================================================================== */
-    
-    /* Process lifecycle */
-    syscall_table[SYS_EXIT]        = sys_exit_wrapper;   
-    syscall_table[SYS_FORK]        = sys_fork_wrapper;   
-    syscall_table[SYS_EXECVE]      = sys_execve_wrapper;
-    syscall_table[SYS_WAITPID]     = sys_waitpid_wrapper;
-    syscall_table[SYS_GETPID]      = sys_getpid_wrapper;
-    syscall_table[SYS_GETPPID]     = sys_getppid_wrapper;
-    syscall_table[SYS_SCHED_YIELD] = sys_yield_wrapper;
-    
-    /* Signal and process control */
-    syscall_table[SYS_KILL]        = sys_kill_wrapper;
-    
-    /* File system operations */
-    syscall_table[SYS_OPEN]        = sys_open_wrapper;   
-    syscall_table[SYS_CLOSE]       = sys_close_wrapper;  
-    syscall_table[SYS_READ]        = sys_read_wrapper;   
-    syscall_table[SYS_WRITE]       = sys_write_wrapper;  
-    syscall_table[SYS_LSEEK]       = sys_lseek_wrapper;
-    syscall_table[SYS_STAT]        = sys_stat_wrapper;
-    syscall_table[SYS_FSTAT]       = sys_fstat_wrapper;
-    syscall_table[SYS_MKDIR]       = sys_mkdir_wrapper;  
-    syscall_table[SYS_UNLINK]      = sys_unlink_wrapper;
-    syscall_table[SYS_RENAME]      = sys_rename_wrapper; 
-    syscall_table[SYS_GETCWD]      = sys_getcwd_wrapper;
-    syscall_table[SYS_CHDIR]       = sys_chdir_wrapper;
-    syscall_table[SYS_GETDENTS]    = sys_getdents_wrapper;
-    syscall_table[SYS_FTRUNCATE]   = sys_ftruncate_wrapper;
-    syscall_table[SYS_PIPE]        = sys_pipe_wrapper;
-    syscall_table[SYS_DUP]         = sys_dup_wrapper;
-    syscall_table[SYS_DUP2]        = sys_dup2_wrapper;
-    syscall_table[SYS_IOCTL]       = sys_ioctl_wrapper;
-    
-    /* Time related */
-    syscall_table[SYS_TIME]        = sys_time_wrapper;
-    syscall_table[SYS_NANOSLEEP]   = sys_nanosleep_wrapper;
-    
-    /* Memory management */
-    syscall_table[SYS_BRK]         = sys_brk_wrapper;
-    syscall_table[SYS_MMAP]        = sys_mmap_wrapper;
-    syscall_table[SYS_MUNMAP]      = sys_munmap_wrapper;
-    
-    /* Miscellaneous / System control */
-    syscall_table[SYS_REBOOT]      = sys_reboot_wrapper;
-    syscall_table[SYS_POWEROFF]    = sys_poweroff_wrapper;
-    syscall_table[SYS_UNAME]       = sys_uname_wrapper;
-    
-    /* BSD Socket API (not available on ARM64 yet) */
-#if !defined(ARCH_ARM64)
-    syscall_table[SYS_SOCKET]      = sys_socket_wrapper;
-    syscall_table[SYS_BIND]        = sys_bind_wrapper;
-    syscall_table[SYS_LISTEN]      = sys_listen_wrapper;
-    syscall_table[SYS_ACCEPT]      = sys_accept_wrapper;
-    syscall_table[SYS_CONNECT]     = sys_connect_wrapper;
-    syscall_table[SYS_SEND]        = sys_send_wrapper;
-    syscall_table[SYS_SENDTO]      = sys_sendto_wrapper;
-    syscall_table[SYS_RECV]        = sys_recv_wrapper;
-    syscall_table[SYS_RECVFROM]    = sys_recvfrom_wrapper;
-    syscall_table[SYS_SHUTDOWN]    = sys_shutdown_wrapper;
-    syscall_table[SYS_SETSOCKOPT]  = sys_setsockopt_wrapper;
-    syscall_table[SYS_GETSOCKOPT]  = sys_getsockopt_wrapper;
-    syscall_table[SYS_GETSOCKNAME] = sys_getsockname_wrapper;
-    syscall_table[SYS_GETPEERNAME] = sys_getpeername_wrapper;
-    syscall_table[SYS_SELECT]      = sys_select_wrapper;
-    syscall_table[SYS_FCNTL]       = sys_fcntl_wrapper;
-#endif
-    
-    /* Initialize architecture-specific system call entry mechanism via HAL */
+
+    syscall_table[SYS_EXIT]          = sys_exit_wrapper;
+    syscall_table[SYS_FORK]          = sys_fork_wrapper;
+    syscall_table[SYS_EXEC]          = sys_exec_wrapper;
+    syscall_table[SYS_WAITPID]       = sys_waitpid_wrapper;
+    syscall_table[SYS_GETPID]        = sys_getpid_wrapper;
+    syscall_table[SYS_GETPPID]       = sys_getppid_wrapper;
+    syscall_table[SYS_SCHED_YIELD]   = sys_yield_wrapper;
+    syscall_table[SYS_KILL]          = sys_kill_wrapper;
+    syscall_table[SYS_NANOSLEEP]     = sys_nanosleep_wrapper;
+    syscall_table[SYS_BRK]           = sys_brk_wrapper;
+    syscall_table[SYS_MMAP]          = sys_mmap_wrapper;
+    syscall_table[SYS_MUNMAP]        = sys_munmap_wrapper;
+    syscall_table[SYS_CONSOLE_WRITE] = sys_console_write_wrapper;
+    syscall_table[SYS_CONSOLE_READ]  = sys_console_read_wrapper;
+
+    /* 架构相关的系统调用入口（INT 0x80 / SYSCALL / SVC） */
     hal::Syscall::init(NULL);
-    
-#if defined(ARCH_ARM64)
-    LOG_INFO_MSG("System calls initialized (network syscalls not available on ARM64)\n");
-#else
-    LOG_INFO_MSG("System calls initialized (POSIX-compliant BSD Socket API enabled)\n");
-#endif
+
+    LOG_INFO_MSG("System calls initialized (%d calls)\n", (int)SYS_MAX);
 }

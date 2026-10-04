@@ -1,23 +1,17 @@
 /**
  * 进程管理相关系统调用实现
  * 
- * 实现 POSIX 标准的进程管理系统调用：
- * - exit(2), fork(2), execve(2)
- * - getpid(2), yield(2), nanosleep(2)
+ * exit / fork / exec / waitpid / getpid / getppid / yield / nanosleep / kill
  */
 
 #include <kernel/syscalls/process.h>
-#include <kernel/syscalls/fs.h>
 #include <kernel/task.h>
 #include <kernel/elf.h>
-#include <kernel/fd_table.h>
 #if defined(ARCH_I686) || defined(ARCH_X86_64)
 #include <kernel/gdt.h>
 #endif
 #include <kernel/interrupt.h>
 #include <hal/hal.h>
-#include <kernel/user.h>
-#include <fs/vfs.h>
 #include <mm/vmm.h>
 #include <mm/pmm.h>
 #include <mm/heap.h>
@@ -32,8 +26,8 @@ static inline uint32_t get_frame(uint32_t pde) { return pde & 0xFFFFF000; }
 /* 默认时间片（与 task.c 保持一致） */
 #define DEFAULT_TIME_SLICE 10
 
-/* execve 接受的可执行文件大小上限（与 loader.cpp 对 shell 的限制一致） */
-#define EXEC_MAX_FILE_SIZE (16u * 1024 * 1024)
+/* exec 接受的 ELF 映像大小上限 */
+#define EXEC_MAX_IMAGE_SIZE (16u * 1024 * 1024)
 
 /**
  * syscall::Process::exit - 退出当前进程
@@ -53,7 +47,7 @@ void syscall::Process::exit(uint32_t code) {
     
     // 永远不会执行到这里
     while (1) {
-        asm volatile("hlt");
+        hal::Cpu::halt();
     }
 }
 
@@ -205,7 +199,7 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
     child->time_slice = DEFAULT_TIME_SLICE;
     
     // 以下错误路径的约定：一旦资源记录到子进程 PCB（page_dir_phys、
-    // kernel_stack_base、fd_table），就只由 kernel::Scheduler::free(child) 释放。
+    // kernel_stack_base），就只由 kernel::Scheduler::free(child) 释放。
     // 不要在调用它之前再手动释放一次——那会二次释放内核栈，并把与父进程
     // COW 共享的物理页的引用计数多减一次。
 
@@ -320,30 +314,6 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
 #endif
 #endif /* ARCH_ARM64 */
     
-    // 分配并复制文件描述符表
-    if (parent->fd_table) {
-        child->fd_table = (kernel::FdTable*)kmalloc(sizeof(kernel::FdTable));
-        if (!child->fd_table) {
-            LOG_ERROR_MSG("syscall::Process::fork: Failed to allocate fd_table\n");
-            kernel::Scheduler::free(child);
-            kernel::Interrupts::restore(prev_state);
-            return (uint32_t)-12;
-        }
-        
-        // 必须先初始化 fd_table（包括其中的锁），再复制内容
-        kernel::FdTable::init(child->fd_table);
-        
-        if (kernel::FdTable::copy(parent->fd_table, child->fd_table) != 0) {
-            LOG_ERROR_MSG("syscall::Process::fork: failed to copy fd_table\n");
-            kernel::Scheduler::free(child);
-            kernel::Interrupts::restore(prev_state);
-            return (uint32_t)-1;
-        }
-    }
-    
-    // 继承当前工作目录
-    strcpy(child->cwd, parent->cwd);
-    
     // 设置父子关系
     child->parent = parent;
     child->privileged = parent->privileged;  // fork 继承特权
@@ -362,84 +332,51 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
 }
 
 /**
- * syscall::Process::execve - 执行新程序（替换当前进程）
- * 
+ * syscall::Process::exec - 用一个 ELF 映像替换当前进程
+ *
+ * 内核不认识文件：映像由调用者提供（位于调用者的用户地址空间，
+ * 系统调用入口已校验可读）。
+ *
  * @param frame 系统调用栈帧指针（架构相关大小）
- * @param path  程序路径
- * @return 成功则不返回，失败返回 -1
+ * @param image ELF 映像
+ * @param size  映像大小
+ * @return 成功则不返回到原程序，失败返回 -1
  */
-uint32_t syscall::Process::execve(uintptr_t *frame, const char *path) {
-    if (!path) {
-        LOG_ERROR_MSG("syscall::Process::execve: path is NULL\n");
-        return (uint32_t)-1;
-    }
-    
+uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size) {
     task_t *current = kernel::Scheduler::get_current();
-    if (!current) {
-        LOG_ERROR_MSG("syscall::Process::execve: no current task\n");
-        return (uint32_t)-1;
-    }
-    
-    LOG_DEBUG_MSG("syscall::Process::execve: loading '%s' for PID %u\n", path, current->pid);
-    
-    // 打开 ELF 文件
-    fs_node_t *file = fs::Vfs::path_to_node(path);
-    if (!file) {
-        LOG_ERROR_MSG("syscall::Process::execve: file '%s' not found\n", path);
-        return (uint32_t)-1;
-    }
-    
-    // 只有普通文件可以执行；大小为 0 或大得离谱的文件直接拒绝，
-    // 不为它分配内核堆
-    uint32_t file_size = file->size;
-    if (file->type != FS_FILE || file_size == 0 || file_size > EXEC_MAX_FILE_SIZE) {
-        LOG_ERROR_MSG("syscall::Process::execve: '%s' is not a loadable file (type=%d, size=%u)\n",
-                      path, (int)file->type, file_size);
-        fs::Vfs::release_node(file);
+    if (!current || !frame || !image) {
         return (uint32_t)-1;
     }
 
-    // 读取整个 ELF 文件到内存
+    if (size == 0 || size > EXEC_MAX_IMAGE_SIZE) {
+        LOG_ERROR_MSG("syscall::Process::exec: bad image size %llu\n", (unsigned long long)size);
+        return (uint32_t)-1;
+    }
+    uint32_t file_size = (uint32_t)size;
+
+    // 复制到内核：加载时要切到新地址空间，旧地址空间里的映像就看不到了
     void *elf_data = kmalloc(file_size);
     if (!elf_data) {
-        LOG_ERROR_MSG("syscall::Process::execve: failed to allocate memory for ELF file\n");
-        fs::Vfs::release_node(file);  // 释放节点
+        LOG_ERROR_MSG("syscall::Process::exec: out of memory for ELF image\n");
         return (uint32_t)-1;
     }
-    
-    fs::Vfs::open(file, 0);
-    uint32_t bytes_read = fs::Vfs::read(file, 0, file_size, (uint8_t *)elf_data);
-    fs::Vfs::close(file);
-    
-    if (bytes_read != file_size) {
-        LOG_ERROR_MSG("syscall::Process::execve: failed to read ELF file (read %u, expected %u)\n", 
-                      bytes_read, file_size);
-        kfree(elf_data);
-        fs::Vfs::release_node(file);  // 释放节点
-        return (uint32_t)-1;
-    }
-    
+    memcpy(elf_data, image, file_size);
+
     // 完整校验 ELF 映像（文件头、程序头表、各段的文件范围和地址范围、入口点），
-    // 在创建新地址空间之前就拒绝不合法的文件
+    // 在创建新地址空间之前就拒绝不合法的映像
     if (!kernel::Elf::validate(elf_data, file_size)) {
-        LOG_ERROR_MSG("syscall::Process::execve: invalid ELF file '%s'\n", path);
+        LOG_ERROR_MSG("syscall::Process::exec: invalid ELF image\n");
         kfree(elf_data);
-        fs::Vfs::release_node(file);  // 释放节点
         return (uint32_t)-1;
     }
 
-    // 获取入口点
     uintptr_t entry_point = kernel::Elf::get_entry(elf_data, file_size);
     if (entry_point == 0) {
-        LOG_ERROR_MSG("syscall::Process::execve: failed to get entry point from '%s'\n", path);
+        LOG_ERROR_MSG("syscall::Process::exec: no entry point\n");
         kfree(elf_data);
-        fs::Vfs::release_node(file);  // 释放节点
         return (uint32_t)-1;
     }
-    
-    // 文件已读取完毕，释放节点
-    fs::Vfs::release_node(file);
-    
+
     // ============================================================================
     // 创建新的地址空间
     // 必须使用新的页目录，否则直接在旧页目录上加载会导致：
@@ -449,7 +386,7 @@ uint32_t syscall::Process::execve(uintptr_t *frame, const char *path) {
     
     uintptr_t new_dir_phys = mm::Vmm::create_page_directory();
     if (!new_dir_phys) {
-        LOG_ERROR_MSG("syscall::Process::execve: failed to create new page directory\n");
+        LOG_ERROR_MSG("syscall::Process::exec: failed to create new page directory\n");
         kfree(elf_data);
         return (uint32_t)-1;
     }
@@ -468,7 +405,7 @@ uint32_t syscall::Process::execve(uintptr_t *frame, const char *path) {
     // 加载 ELF 到新页目录
     uintptr_t program_end;
     if (!kernel::Elf::load(elf_data, file_size, new_dir, &entry_point, &program_end)) {
-        LOG_ERROR_MSG("syscall::Process::execve: failed to load ELF '%s'\n", path);
+        LOG_ERROR_MSG("syscall::Process::exec: failed to load ELF\n");
         mm::Vmm::free_page_directory(new_dir_phys);
         kfree(elf_data);
         return (uint32_t)-1;
@@ -486,7 +423,7 @@ uint32_t syscall::Process::execve(uintptr_t *frame, const char *path) {
     uint32_t stack_pages_needed = (USER_STACK_SIZE / PAGE_SIZE) + 4;  // +4 用于页表
     mm::PmmInfo execve_mem_info = mm::Pmm::get_info();
     if (execve_mem_info.free_frames < stack_pages_needed) {
-        LOG_ERROR_MSG("syscall::Process::execve: Insufficient memory for user stack (free=%llu, required=%u)\n",
+        LOG_ERROR_MSG("syscall::Process::exec: Insufficient memory for user stack (free=%llu, required=%u)\n",
                      (unsigned long long)execve_mem_info.free_frames, stack_pages_needed);
         // 回滚
         current->page_dir = old_dir;
@@ -497,7 +434,7 @@ uint32_t syscall::Process::execve(uintptr_t *frame, const char *path) {
     
     // 在新页目录中设置用户栈
     if (!kernel::Scheduler::setup_user_stack(current)) {
-        LOG_ERROR_MSG("syscall::Process::execve: failed to setup user stack\n");
+        LOG_ERROR_MSG("syscall::Process::exec: failed to setup user stack\n");
         // 回滚
         current->page_dir = old_dir;
         current->page_dir_phys = old_dir_phys;
@@ -512,7 +449,7 @@ uint32_t syscall::Process::execve(uintptr_t *frame, const char *path) {
     // 堆最大值：留出 8MB 给栈
     current->heap_max = current->user_stack_base - (8 * 1024 * 1024);
     
-    LOG_DEBUG_MSG("syscall::Process::execve: heap: start=0x%llx, end=0x%llx, max=0x%llx\n", 
+    LOG_DEBUG_MSG("syscall::Process::exec: heap: start=0x%llx, end=0x%llx, max=0x%llx\n", 
                  (unsigned long long)current->heap_start, 
                  (unsigned long long)current->heap_end, 
                  (unsigned long long)current->heap_max);
@@ -527,68 +464,11 @@ uint32_t syscall::Process::execve(uintptr_t *frame, const char *path) {
     // 这解决了 exec 覆盖映射导致的内存泄露问题
     mm::Vmm::free_page_directory(old_dir_phys);
     
-    // 初始化标准文件描述符（如果还没有初始化）
-    // 这对于 fork + exec 模式很重要：
-    // - fork 出的子进程可能没有 stdio
-    // - exec 时需要为新程序初始化 stdin/stdout/stderr
-    if (current->fd_table) {
-        // 检查是否已经有 fd 0（stdin）
-        kernel::FdEntry *fd0 = kernel::FdTable::get(current->fd_table, 0);
-        if (!fd0 || !fd0->node) {
-            // 初始化标准文件描述符
-            fs_node_t *console = fs::Vfs::path_to_node("/dev/console");
-            if (console) {
-                // 注意：kernel::FdTable::alloc 会自动增加引用计数
-                // 所以我们可以安全地为多个 fd 使用同一个节点
-                
-                // 分配 fd 0 (stdin)
-                int32_t fd = kernel::FdTable::alloc(current->fd_table, console, O_RDONLY);
-                if (fd != 0) {
-                    LOG_WARN_MSG("syscall::Process::execve: failed to assign STDIN (fd=%d)\n", fd);
-                }
-                
-                // 分配 fd 1 (stdout) - kernel::FdTable::alloc 会增加引用计数
-                fd = kernel::FdTable::alloc(current->fd_table, console, O_WRONLY);
-                if (fd != 1) {
-                    LOG_WARN_MSG("syscall::Process::execve: failed to assign STDOUT (fd=%d)\n", fd);
-                }
-                
-                // 分配 fd 2 (stderr) - kernel::FdTable::alloc 会增加引用计数
-                fd = kernel::FdTable::alloc(current->fd_table, console, O_WRONLY);
-                if (fd != 2) {
-                    LOG_WARN_MSG("syscall::Process::execve: failed to assign STDERR (fd=%d)\n", fd);
-                }
-                
-                // 关键修复：释放 fs::Vfs::path_to_node 的初始引用
-                // 三个 kernel::FdTable::alloc 调用已经增加了引用计数（每个 fd 一次）
-                // 现在释放初始引用，console 的 ref_count = 3（每个 fd 一个）
-                fs::Vfs::release_node(console);
-                
-                // 当所有 fd 关闭时，引用计数会降到 0，节点才会被释放
-            } else {
-                LOG_WARN_MSG("syscall::Process::execve: /dev/console not available, stdio not initialized\n");
-            }
-        }
-    }
-    
     // 更新进程信息
     current->user_entry = entry_point;
     current->is_user_process = true;
     
-    // 更新进程名称（从路径中提取文件名）
-    const char *filename = strrchr(path, '/');
-    if (filename) {
-        filename++; // 跳过 '/'
-    } else {
-        filename = path;
-    }
-    strncpy(current->name, filename, sizeof(current->name) - 1);
-    current->name[sizeof(current->name) - 1] = '\0';
-    
-    LOG_DEBUG_MSG("syscall::Process::execve: loaded '%s' at entry 0x%llx for PID %u\n", 
-                  path, (unsigned long long)entry_point, current->pid);
-    
-    // 换成了另一个程序：不再继承 shell 的特权
+    // 换成了另一个程序：不再继承 init 的特权
     current->privileged = false;
 
     // 设置用户态上下文
@@ -647,7 +527,7 @@ uint32_t syscall::Process::execve(uintptr_t *frame, const char *path) {
     //
     // 我们需要修改这些值，让系统调用返回时跳转到新程序
     
-    if (frame) {
+    {
 #if defined(ARCH_ARM64)
         // ARM64: 修改 SVC 返回帧
         // 栈帧布局（vectors.S kernel_entry / svc.S）：
@@ -668,7 +548,7 @@ uint32_t syscall::Process::execve(uintptr_t *frame, const char *path) {
         frame[32] = entry_point;           // ELR_EL1 = 新程序入口点
         frame[33] = ARM64_PSTATE_EL0t;     // SPSR_EL1 = 用户模式，中断使能
         
-        LOG_DEBUG_MSG("syscall::Process::execve: modified ARM64 syscall frame:\n");
+        LOG_DEBUG_MSG("syscall::Process::exec: modified ARM64 syscall frame:\n");
         LOG_DEBUG_MSG("  ELR_EL1 (PC) = 0x%llx\n", (unsigned long long)entry_point);
         LOG_DEBUG_MSG("  SP_EL0 = 0x%llx\n", (unsigned long long)current->user_stack);
         LOG_DEBUG_MSG("  SPSR_EL1 = 0x%llx\n", (unsigned long long)ARM64_PSTATE_EL0t);
@@ -682,7 +562,7 @@ uint32_t syscall::Process::execve(uintptr_t *frame, const char *path) {
         frame[4]  = 0x202;                 // R11 = RFLAGS（中断使能）
         frame[15] = current->user_stack;   // user RSP = 用户栈顶
         
-        LOG_DEBUG_MSG("syscall::Process::execve: modified syscall frame to return to 0x%lx\n", (unsigned long)entry_point);
+        LOG_DEBUG_MSG("syscall::Process::exec: modified syscall frame to return to 0x%lx\n", (unsigned long)entry_point);
 #else
         // i686: 修改 IRET 栈帧
         // 修改用户段寄存器（syscall_handler 会在返回前恢复这些）
@@ -695,12 +575,8 @@ uint32_t syscall::Process::execve(uintptr_t *frame, const char *path) {
         frame[11] = current->user_stack;  // ESP = 用户栈顶
         frame[12] = 0x23;              // SS = 用户栈段 (Ring 3)
         
-        LOG_DEBUG_MSG("syscall::Process::execve: modified syscall frame to return to 0x%lx\n", (unsigned long)entry_point);
+        LOG_DEBUG_MSG("syscall::Process::exec: modified syscall frame to return to 0x%lx\n", (unsigned long)entry_point);
 #endif
-    } else {
-        // 如果没有 frame（不应该发生），使用原来的方法
-        LOG_WARN_MSG("syscall::Process::execve: no frame provided, using fallback method\n");
-        task_enter_usermode(entry_point, current->user_stack);
     }
     
     // 返回 0，让系统调用正常返回（通过 iret 到新程序）
@@ -804,7 +680,7 @@ uint32_t syscall::Process::nanosleep(const struct timespec *req, struct timespec
  * 某个 yield/block 点上，可能正持有互斥锁、正排在等待队列里；在这里改它的
  * 状态或释放它的内核栈都会破坏内核。所以只给目标记一个待处理的信号，
  * 由目标自己在系统调用返回用户态前退出（kernel::Scheduler::deliver_pending_kill）。
- * 阻塞在管道/锁上的目标要等到被正常唤醒后才会退出。
+ * 阻塞在锁上的目标要等到被正常唤醒后才会退出。
  */
 uint32_t syscall::Process::kill(uint32_t pid, uint32_t signal) {
     task_t *current = kernel::Scheduler::get_current();
@@ -834,7 +710,7 @@ uint32_t syscall::Process::kill(uint32_t pid, uint32_t signal) {
         return (uint32_t)-1;
     }
 
-    // 内核线程（网络接收线程、kworker 等）不是用户进程能终止的对象
+    // 内核线程不是用户进程能终止的对象
     if (!target->is_user_process) {
         LOG_WARN_MSG("syscall::Process::kill: PID %u is a kernel thread, refused\n", pid);
         return (uint32_t)-1;
