@@ -128,11 +128,6 @@ hal_error_t hal::Irq::register_logical(hal_irq_type_t type, uint32_t instance,
     /* 启用该中断 */
     gic_enable_irq((uint32_t)phys_irq);
     
-    serial_puts("HAL IRQ: Registered ");
-    serial_puts(irq_type_names[type]);
-    serial_puts(" handler on GIC IRQ ");
-    serial_put_hex64((uint64_t)phys_irq);
-    serial_puts("\n");
     
     return HAL_OK;
 }

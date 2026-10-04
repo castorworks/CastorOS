@@ -85,16 +85,6 @@
 .global hal_context_switch_asm
 .type hal_context_switch_asm, @function
 hal_context_switch_asm:
-    /* DEBUG: Print entry message */
-    stp     x0, x1, [sp, #-16]!
-    stp     x30, xzr, [sp, #-16]!
-    
-    adr     x0, .ctx_switch_entry_msg
-    bl      serial_puts
-    
-    ldp     x30, xzr, [sp], #16
-    ldp     x0, x1, [sp], #16
-    
     /* ========================================================================
      * Step 1: Save current task context
      * ======================================================================== */
@@ -149,24 +139,8 @@ hal_context_switch_asm:
      * Step 2: Load new task context
      * ======================================================================== */
     
-    /* DEBUG: Print load_new_context entry */
-    stp     x0, x1, [sp, #-16]!
-    stp     x30, xzr, [sp, #-16]!
-    adr     x0, .load_ctx_msg
-    bl      serial_puts
-    ldp     x30, xzr, [sp], #16
-    ldp     x0, x1, [sp], #16
-    
     /* x1 = new_ctx */
     cbz     x1, .done
-    
-    /* DEBUG: Print TTBR switch */
-    stp     x0, x1, [sp, #-16]!
-    stp     x30, xzr, [sp, #-16]!
-    adr     x0, .ttbr_switch_msg
-    bl      serial_puts
-    ldp     x30, xzr, [sp], #16
-    ldp     x0, x1, [sp], #16
     
     /* Switch TTBR0_EL1 (address space) if different */
     /* Property 10: Address Space Switch Correctness */
@@ -174,33 +148,6 @@ hal_context_switch_asm:
     mrs     x3, ttbr0_el1
     cmp     x2, x3
     b.eq    .skip_ttbr_switch
-    
-    /* DEBUG: Print old and new TTBR0 values */
-    stp     x0, x1, [sp, #-16]!
-    stp     x2, x3, [sp, #-16]!
-    stp     x30, xzr, [sp, #-16]!
-    
-    adr     x0, .ttbr_old_msg
-    bl      serial_puts
-    ldp     x2, x3, [sp, #16]           /* Get saved x3 (old TTBR0) */
-    mov     x0, x3
-    bl      serial_put_hex64
-    
-    adr     x0, .ttbr_new_msg
-    bl      serial_puts
-    ldp     x2, x3, [sp, #16]           /* Get saved x2 (new TTBR0) */
-    mov     x0, x2
-    bl      serial_put_hex64
-    
-    adr     x0, .newline
-    bl      serial_puts
-    
-    ldp     x30, xzr, [sp], #16
-    ldp     x2, x3, [sp], #16
-    ldp     x0, x1, [sp], #16
-    
-    /* Reload x2 with new TTBR0 value */
-    ldr     x2, [x1, #CTX_TTBR0]
     
     /* 
      * Switch address space with proper barrier sequence.
@@ -219,67 +166,14 @@ hal_context_switch_asm:
     tlbi    vmalle1is
     dsb     ish
     isb
-    
-    /* DEBUG: Print message after TTBR switch */
-    stp     x0, x1, [sp, #-16]!
-    stp     x30, xzr, [sp, #-16]!
-    adr     x0, .ttbr_done_msg
-    bl      serial_puts
-    ldp     x30, xzr, [sp], #16
-    ldp     x0, x1, [sp], #16
 
 .skip_ttbr_switch:
-    /* 
-     * Check if returning to user mode or kernel mode.
-     * Use callee-saved registers (x19-x28) to preserve values across function calls.
-     * x19 = new_ctx pointer (preserved)
-     * x20 = PSTATE value
-     * x21 = M field
-     */
-    
-    /* Save callee-saved registers we'll use */
-    stp     x19, x20, [sp, #-16]!
-    stp     x21, x30, [sp, #-16]!
-    
-    /* Save new_ctx in callee-saved register */
-    mov     x19, x1
-    
-    /* Load PSTATE and extract M field */
-    ldr     x20, [x19, #CTX_PSTATE]
-    and     x21, x20, #0x0F             /* Extract M[3:0] field */
-    
-    /* DEBUG: Print PSTATE */
-    adr     x0, .pstate_check_msg
-    bl      serial_puts
-    mov     x0, x20
-    bl      serial_put_hex64
-    adr     x0, .newline
-    bl      serial_puts
-    
-    /* DEBUG: Print M field */
-    adr     x0, .m_field_msg
-    bl      serial_puts
-    mov     x0, x21
-    bl      serial_put_hex64
-    adr     x0, .newline
-    bl      serial_puts
-    
-    /* 
-     * Compare M field and branch.
-     * x21 still contains the M field value (callee-saved).
-     * x19 still contains the context pointer (callee-saved).
-     */
-    cmp     x21, #PSTATE_EL0t
-    
-    /* Restore x1 from x19 before restoring callee-saved registers */
-    mov     x1, x19
-    
-    /* Restore callee-saved registers */
-    ldp     x21, x30, [sp], #16
-    ldp     x19, x20, [sp], #16
-    
+    /* Returning to user mode (EL0t) or kernel mode? Check PSTATE.M[3:0] */
+    ldr     x2, [x1, #CTX_PSTATE]
+    and     x2, x2, #0x0F
+    cmp     x2, #PSTATE_EL0t
     b.eq    .restore_user
-    
+
     /* ========================================================================
      * Kernel mode restore (using RET)
      * ======================================================================== */
@@ -318,14 +212,6 @@ hal_context_switch_asm:
      * User mode restore (using ERET)
      * ======================================================================== */
 .restore_user:
-    /* DEBUG: Print restore_user entry */
-    stp     x0, x1, [sp, #-16]!
-    stp     x30, xzr, [sp, #-16]!
-    adr     x0, .restore_user_msg
-    bl      serial_puts
-    ldp     x30, xzr, [sp], #16
-    ldp     x0, x1, [sp], #16
-    
     /* 
      * CRITICAL: Set SP_EL1 to the task's kernel stack before ERET.
      * When an exception occurs in user mode (EL0), the CPU will use SP_EL1
@@ -345,9 +231,6 @@ hal_context_switch_asm:
     add     x2, x2, :lo12:stack_top
     mov     sp, x2
 .do_eret_setup:
-    /* Debug: Save SP_EL1 value for later verification */
-    mov     x20, sp                      /* Save SP_EL1 in x20 (will be restored later) */
-
     /* Set up ELR_EL1 (return address) */
     ldr     x2, [x1, #CTX_PC]
     msr     elr_el1, x2
@@ -363,45 +246,6 @@ hal_context_switch_asm:
     /* Restore stack pointer for EL0 */
     ldr     x2, [x1, #CTX_SP]
     msr     sp_el0, x2
-    
-    /* DEBUG: Print state before ERET */
-    /* Save x0, x1 which we'll need */
-    stp     x0, x1, [sp, #-16]!
-    
-    /* Print "ERET:" */
-    adr     x0, .eret_msg
-    bl      serial_puts
-    
-    /* Print SP_EL1 */
-    adr     x0, .sp_el1_msg
-    bl      serial_puts
-    mov     x0, x20
-    bl      serial_put_hex64
-    
-    /* Print ELR_EL1 */
-    adr     x0, .elr_msg
-    bl      serial_puts
-    mrs     x0, elr_el1
-    bl      serial_put_hex64
-    
-    /* Print SPSR_EL1 */
-    adr     x0, .spsr_msg
-    bl      serial_puts
-    mrs     x0, spsr_el1
-    bl      serial_put_hex64
-    
-    /* Print SP_EL0 */
-    adr     x0, .sp_el0_msg
-    bl      serial_puts
-    mrs     x0, sp_el0
-    bl      serial_put_hex64
-    
-    /* Print newline */
-    adr     x0, .newline
-    bl      serial_puts
-    
-    /* Restore x0, x1 */
-    ldp     x0, x1, [sp], #16
     
     /* Restore general purpose registers X2-X30 */
     ldp     x2, x3, [x1, #CTX_X2]
@@ -483,39 +327,3 @@ task_switch_context:
 task_enter_kernel_thread:
     b       hal_context_enter_kernel_thread
 .size task_enter_kernel_thread, . - task_enter_kernel_thread
-
-/* ============================================================================
- * Debug string constants
- * ========================================================================== */
-
-.section .rodata
-.eret_msg:
-    .asciz "ERET: "
-.sp_el1_msg:
-    .asciz "SP_EL1="
-.elr_msg:
-    .asciz " ELR="
-.spsr_msg:
-    .asciz " SPSR="
-.sp_el0_msg:
-    .asciz " SP_EL0="
-.newline:
-    .asciz "\n"
-.pstate_check_msg:
-    .asciz "CTX_PSTATE="
-.ctx_switch_entry_msg:
-    .asciz "[CTX_SWITCH] Entry\n"
-.load_ctx_msg:
-    .asciz "[CTX_SWITCH] load_new_context\n"
-.ttbr_switch_msg:
-    .asciz "[CTX_SWITCH] TTBR switch\n"
-.restore_user_msg:
-    .asciz "[CTX_SWITCH] restore_user\n"
-.m_field_msg:
-    .asciz "M_FIELD="
-.ttbr_old_msg:
-    .asciz "TTBR0_old="
-.ttbr_new_msg:
-    .asciz " TTBR0_new="
-.ttbr_done_msg:
-    .asciz "[CTX_SWITCH] TTBR switch done\n"

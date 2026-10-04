@@ -104,14 +104,6 @@ static const char *fault_status_lookup(uint32_t x) {
     }
 }
 
-/* Exception type names */
-static const char *exception_type_names[] = {
-    [EXCEPTION_SYNC]    = "Synchronous",
-    [EXCEPTION_IRQ]     = "IRQ",
-    [EXCEPTION_FIQ]     = "FIQ",
-    [EXCEPTION_SERROR]  = "SError",
-};
-
 /* Exception source names */
 static const char *exception_source_names[] = {
     [EXCEPTION_FROM_EL1_SP0]    = "EL1 with SP0",
@@ -192,6 +184,24 @@ static void dump_registers(arm64_regs_t *regs) {
 extern "C" void arm64_syscall_handler(void *regs);
 
 /**
+ * @brief Print the header for a synchronous exception nobody handled
+ */
+static void print_sync_exception(arm64_regs_t *regs, uint32_t source, uint32_t ec,
+                                 uint64_t esr, uint64_t far) {
+    serial_puts("\n========== SYNCHRONOUS EXCEPTION ==========\n");
+    serial_puts("Exception class: ");
+    serial_puts(arm64_exception_class_name(ec));
+    serial_puts("\n");
+    serial_puts("Source: ");
+    serial_puts(exception_source_names[source]);
+    serial_puts("\n");
+
+    print_reg("ESR_EL1", esr);
+    print_reg("FAR_EL1", far);
+    print_reg("ELR_EL1", regs->elr);
+}
+
+/**
  * @brief Handle synchronous exception
  */
 static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
@@ -200,27 +210,8 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
     uint32_t ec = (esr >> ESR_EC_SHIFT) & 0x3F;
     uint32_t iss = esr & ESR_ISS_MASK;
     
-    /* Debug: Print first few sync exceptions from EL0 */
-    static int el0_sync_count = 0;
-    if (source == EXCEPTION_FROM_EL0_64 && el0_sync_count < 5) {
-        serial_puts("[SYNC] From EL0, EC=");
-        serial_put_hex64(ec);
-        serial_puts(", ELR=");
-        serial_put_hex64(regs->elr);
-        serial_puts("\n");
-        el0_sync_count++;
-    }
-    
     /* Handle SVC (system call) */
     if (ec == ESR_EC_SVC64) {
-        /* Debug: Print first few syscalls */
-        static int syscall_count = 0;
-        if (syscall_count < 10) {
-            serial_puts("[SVC] Syscall from EL0, X8=");
-            serial_put_hex64(regs->x[8]);
-            serial_puts("\n");
-            syscall_count++;
-        }
         /* Dispatch to syscall handler
          * The syscall handler will extract arguments from the saved frame
          * and call syscall_dispatcher
@@ -239,29 +230,9 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
          * This is different from some other exception types where ELR points
          * to the faulting instruction.
          */
-        
-        /* Debug: Print return info */
-        if (syscall_count <= 10) {
-            serial_puts("[SVC] Return: X0=");
-            serial_put_hex64(regs->x[0]);
-            serial_puts(" ELR=");
-            serial_put_hex64(regs->elr);
-            serial_puts("\n");
-        }
+
         return;
     }
-    
-    serial_puts("\n========== SYNCHRONOUS EXCEPTION ==========\n");
-    serial_puts("Exception class: ");
-    serial_puts(arm64_exception_class_name(ec));
-    serial_puts("\n");
-    serial_puts("Source: ");
-    serial_puts(exception_source_names[source]);
-    serial_puts("\n");
-    
-    print_reg("ESR_EL1", esr);
-    print_reg("FAR_EL1", far);
-    print_reg("ELR_EL1", regs->elr);
     
     /* Handle specific exception types */
     switch (ec) {
@@ -291,6 +262,7 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
                  * **Feature: arm64-kernel-integration**
                  * **Validates: Requirements 6.3**
                  */
+                print_sync_exception(regs, source, ec, esr, far);
                 serial_puts("Instruction abort\n");
                 serial_puts("Fault status: ");
                 serial_puts(arm64_fault_status_name(ifsc));
@@ -361,6 +333,7 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
                  * **Feature: arm64-kernel-integration**
                  * **Validates: Requirements 6.3**
                  */
+                print_sync_exception(regs, source, ec, esr, far);
                 serial_puts("Data abort\n");
                 serial_puts("Fault status: ");
                 serial_puts(arm64_fault_status_name(dfsc));
@@ -387,14 +360,17 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
             break;
             
         case ESR_EC_PC_ALIGN:
+            print_sync_exception(regs, source, ec, esr, far);
             serial_puts("PC alignment fault\n");
             break;
             
         case ESR_EC_SP_ALIGN:
+            print_sync_exception(regs, source, ec, esr, far);
             serial_puts("SP alignment fault\n");
             break;
             
         case ESR_EC_BRK64:
+            print_sync_exception(regs, source, ec, esr, far);
             serial_puts("Breakpoint (BRK instruction)\n");
             serial_puts("Comment: ");
             serial_put_hex64(iss & 0xFFFF);
@@ -402,6 +378,7 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
             break;
             
         default:
+            print_sync_exception(regs, source, ec, esr, far);
             serial_puts("Unhandled exception class\n");
             break;
     }
@@ -428,21 +405,6 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
  */
 static void handle_irq(arm64_regs_t *regs, uint32_t source) {
     (void)regs;
-    
-    /* Debug: Print source to see if we're getting EL0 IRQs */
-    static int irq_count = 0;
-    irq_count++;
-    
-    if (irq_count <= 5) {
-        serial_puts("[IRQ] source=");
-        serial_put_hex64(source);
-        if (source == EXCEPTION_FROM_EL0_64) {
-            serial_puts(" (EL0)");
-        } else if (source == EXCEPTION_FROM_EL1_SPX) {
-            serial_puts(" (EL1)");
-        }
-        serial_puts("\n");
-    }
     
     /* Acknowledge and handle IRQ via GIC */
     interrupt_enter();
@@ -501,22 +463,6 @@ static void handle_serror(arm64_regs_t *regs, uint32_t source) {
  * @param source Exception source (EXCEPTION_FROM_EL1_SPX, etc.)
  */
 void arm64_exception_handler(arm64_regs_t *regs, uint32_t type, uint32_t source) {
-    /* Debug: Track first few exceptions from each source */
-    static int el0_exception_count = 0;
-    static int el1_exception_count = 0;
-    
-    if (source == EXCEPTION_FROM_EL0_64 && el0_exception_count < 5) {
-        serial_puts("[EXC] From EL0: type=");
-        serial_put_hex64(type);
-        serial_puts(", ELR=");
-        serial_put_hex64(regs->elr);
-        serial_puts("\n");
-        el0_exception_count++;
-    } else if (source == EXCEPTION_FROM_EL1_SPX && el1_exception_count < 3) {
-        /* Only print first few EL1 exceptions to avoid spam */
-        el1_exception_count++;
-    }
-    
     switch (type) {
         case EXCEPTION_SYNC:
             handle_sync_exception(regs, source);

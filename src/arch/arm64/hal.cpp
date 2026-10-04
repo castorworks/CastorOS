@@ -126,17 +126,7 @@ void hal::Interrupt::unregister_handler(uint32_t irq) {
  * @brief Enable interrupts globally
  */
 void hal::Interrupt::enable() {
-    serial_puts("HAL: Enabling interrupts...\n");
-    
-    /* Debug: Print current SP before enabling interrupts */
-    uint64_t sp;
-    __asm__ volatile("mov %0, sp" : "=r"(sp));
-    serial_puts("  Current SP: ");
-    serial_put_hex64(sp);
-    serial_puts("\n");
-    
     __asm__ volatile("msr daifclr, #0xf" ::: "memory");
-    serial_puts("HAL: Interrupts enabled\n");
 }
 
 /**
@@ -201,57 +191,6 @@ static hal_timer_callback_t g_timer_callback = NULL;
 #define ARM_TIMER_IRQ   30
 
 /**
- * @brief Read ARM Generic Timer counter frequency
- * @return Counter frequency in Hz
- */
-static inline uint64_t read_cntfrq_el0(void) {
-    uint64_t val;
-    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(val));
-    return val;
-}
-
-/**
- * @brief Read ARM Generic Timer physical counter
- * @return Current counter value
- */
-static inline uint64_t read_cntpct_el0(void) {
-    uint64_t val;
-    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(val));
-    return val;
-}
-
-/**
- * @brief Write ARM Generic Timer physical timer value
- * @param val Timer value (countdown)
- */
-static inline void write_cntp_tval_el0(uint64_t val) {
-    __asm__ volatile("msr cntp_tval_el0, %0" : : "r"(val));
-}
-
-/**
- * @brief Read ARM Generic Timer physical timer control
- * @return Control register value
- */
-static inline uint64_t read_cntp_ctl_el0(void) {
-    uint64_t val;
-    __asm__ volatile("mrs %0, cntp_ctl_el0" : "=r"(val));
-    return val;
-}
-
-/**
- * @brief Write ARM Generic Timer physical timer control
- * @param val Control register value
- */
-static inline void write_cntp_ctl_el0(uint64_t val) {
-    __asm__ volatile("msr cntp_ctl_el0, %0" : : "r"(val));
-}
-
-/** CNTP_CTL_EL0 bits */
-#define CNTP_CTL_ENABLE     (1ULL << 0)  /**< Timer enable */
-#define CNTP_CTL_IMASK      (1ULL << 1)  /**< Interrupt mask */
-#define CNTP_CTL_ISTATUS    (1ULL << 2)  /**< Interrupt status */
-
-/**
  * @brief Internal timer IRQ handler
  * @param data User data (unused)
  */
@@ -263,20 +202,8 @@ static void hal_timer_irq_handler(void *data) {
     
     /* Let the timer driver handle the hardware FIRST: it reloads the timer for the
      * next tick (which clears the interrupt condition), advances its own tick
-     * counter and runs the callbacks registered through drivers::Timer. */
+     * counter. */
     drivers::Timer::irq_handler();
-    
-    /* Debug: Print tick count periodically */
-    if (g_timer_ticks <= 10 || (g_timer_ticks % 100) == 0) {
-        serial_puts("[TIMER] Tick ");
-        serial_put_hex64(g_timer_ticks);
-        
-        /* Check timer state after reload */
-        uint64_t ctl = read_cntp_ctl_el0();
-        serial_puts(" CTL=");
-        serial_put_hex64(ctl);
-        serial_puts("\n");
-    }
     
     /* Call user callback if registered */
     if (g_timer_callback) {
@@ -293,86 +220,13 @@ static void hal_timer_irq_handler(void *data) {
  * periodic interrupts at the specified frequency.
  */
 void hal::Timer::init(uint32_t freq_hz, hal_timer_callback_t callback) {
-    serial_puts("HAL: Initializing ARM64 timer...\n");
-    
     g_timer_frequency = freq_hz;
     g_timer_callback = callback;
-    
-    /* Get the counter frequency */
-    uint64_t cntfrq = read_cntfrq_el0();
-    serial_puts("  Counter frequency: ");
-    serial_put_hex64(cntfrq);
-    serial_puts(" Hz\n");
-    
-    if (cntfrq == 0) {
-        serial_puts("  WARNING: Counter frequency is 0, timer may not work\n");
-        return;
-    }
-    
-    /* Calculate timer value for desired frequency */
-    uint64_t tval = cntfrq / freq_hz;
-    serial_puts("  Timer value: ");
-    serial_put_hex64(tval);
-    serial_puts("\n");
-    
-    /* Register timer IRQ handler */
-    serial_puts("  Registering timer IRQ handler for IRQ ");
-    serial_put_hex64(ARM_TIMER_IRQ);
-    serial_puts("\n");
+
+    /* The HAL owns the IRQ registration and the scheduler callback;
+     * the driver programs and enables the timer itself. */
     hal::Interrupt::register_handler(ARM_TIMER_IRQ, hal_timer_irq_handler, NULL);
-    
-    /* Program and enable the timer through the driver, so that the driver-level
-     * API (uptime, frequency, callbacks) is initialised as well. The HAL only
-     * owns the IRQ registration and the scheduler callback. */
     drivers::Timer::init(freq_hz);
-    
-    /* Verify timer is enabled */
-    uint64_t ctl = read_cntp_ctl_el0();
-    serial_puts("  Timer control: ");
-    serial_put_hex64(ctl);
-    serial_puts(" (ENABLE=");
-    serial_puts((ctl & CNTP_CTL_ENABLE) ? "1" : "0");
-    serial_puts(", IMASK=");
-    serial_puts((ctl & CNTP_CTL_IMASK) ? "1" : "0");
-    serial_puts(", ISTATUS=");
-    serial_puts((ctl & CNTP_CTL_ISTATUS) ? "1" : "0");
-    serial_puts(")\n");
-    
-    /* Check current DAIF state */
-    uint64_t daif;
-    __asm__ volatile("mrs %0, daif" : "=r"(daif));
-    serial_puts("  Current DAIF: ");
-    serial_put_hex64(daif);
-    serial_puts(" (I=");
-    serial_puts((daif & (1 << 7)) ? "masked" : "enabled");
-    serial_puts(")\n");
-    
-    /* Read current counter value */
-    uint64_t cnt_before = read_cntpct_el0();
-    serial_puts("  Counter before delay: ");
-    serial_put_hex64(cnt_before);
-    serial_puts("\n");
-    
-    /* Wait a bit and check if timer interrupt is pending */
-    for (int i = 0; i < 10000000; i++) {
-        __asm__ volatile("nop");
-    }
-    
-    uint64_t cnt_after = read_cntpct_el0();
-    serial_puts("  Counter after delay: ");
-    serial_put_hex64(cnt_after);
-    serial_puts(" (diff=");
-    serial_put_hex64(cnt_after - cnt_before);
-    serial_puts(")\n");
-    
-    ctl = read_cntp_ctl_el0();
-    serial_puts("  After delay - Timer control: ");
-    serial_put_hex64(ctl);
-    serial_puts(" (ISTATUS=");
-    serial_puts((ctl & CNTP_CTL_ISTATUS) ? "1" : "0");
-    serial_puts(")\n");
-    
-    serial_puts("HAL: ARM64 timer initialization complete\n");
 }
 
 /**

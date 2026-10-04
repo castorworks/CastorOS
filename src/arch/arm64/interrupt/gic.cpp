@@ -31,7 +31,6 @@ static volatile uint32_t *gicc_base = (volatile uint32_t *)PHYS_TO_VIRT(GICC_BAS
 static uint32_t gic_num_interrupts = 0;
 
 /** GIC version */
-static uint32_t gic_version = 2;
 
 /** Interrupt handler table */
 typedef struct {
