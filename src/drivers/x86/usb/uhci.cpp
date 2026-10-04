@@ -8,6 +8,7 @@
 #include <kernel/deferred.h>
 #include <drivers/usb/uhci.h>
 #include <drivers/pci.h>
+#include <drivers/x86/dma.h>
 #include <drivers/timer.h>
 #include <kernel/io.h>
 #include <kernel/irq.h>
@@ -23,6 +24,12 @@
 /* 全局控制器数组 */
 static uhci_controller_t uhci_controllers[UHCI_MAX_CONTROLLERS];
 static int uhci_controller_count = 0;
+
+/* 热插拔延迟工作编号（kernel::Deferred），未启动监控时为 -1 */
+static int uhci_hotplug_work_id = -1;
+
+/* 一次传输的数据长度上限（远大于 TD 池能描述的长度，只用于防止长度计算回绕） */
+#define UHCI_MAX_TRANSFER_SIZE  (1024 * 1024)
 
 /* ============================================================================
  * 寄存器访问函数
@@ -60,15 +67,15 @@ static inline void uhci_write32(uhci_controller_t *hc, uint16_t reg, uint32_t va
  * @brief 初始化 TD 池
  */
 static int uhci_init_td_pool(uhci_controller_t *hc) {
+    /* 控制器按物理地址访问 TD，池跨多页，必须物理连续（见 drivers/x86/dma.h） */
     uint32_t size = sizeof(uhci_td_t) * UHCI_TD_POOL_SIZE;
-    hc->td_pool = (uhci_td_t *)kmalloc_aligned(size, 16);
+    paddr_t phys;
+    hc->td_pool = (uhci_td_t *)drivers::Dma::alloc(size, &phys);
     if (!hc->td_pool) {
         return -1;
     }
-    memset(hc->td_pool, 0, size);
-    
-    hc->td_pool_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)hc->td_pool);
-    
+    hc->td_pool_phys = (uint32_t)phys;
+
     hc->free_tds = NULL;
     for (int i = UHCI_TD_POOL_SIZE - 1; i >= 0; i--) {
         uhci_td_t *td = &hc->td_pool[i];
@@ -85,14 +92,13 @@ static int uhci_init_td_pool(uhci_controller_t *hc) {
  */
 static int uhci_init_qh_pool(uhci_controller_t *hc) {
     uint32_t size = sizeof(uhci_qh_t) * UHCI_QH_POOL_SIZE;
-    hc->qh_pool = (uhci_qh_t *)kmalloc_aligned(size, 16);
+    paddr_t phys;
+    hc->qh_pool = (uhci_qh_t *)drivers::Dma::alloc(size, &phys);
     if (!hc->qh_pool) {
         return -1;
     }
-    memset(hc->qh_pool, 0, size);
-    
-    hc->qh_pool_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)hc->qh_pool);
-    
+    hc->qh_pool_phys = (uint32_t)phys;
+
     hc->free_qhs = NULL;
     for (int i = UHCI_QH_POOL_SIZE - 1; i >= 0; i--) {
         uhci_qh_t *qh = &hc->qh_pool[i];
@@ -115,7 +121,7 @@ static uhci_td_t *uhci_alloc_td(uhci_controller_t *hc) {
     hc->free_tds = td->next;
     
     memset(td, 0, sizeof(uhci_td_t));
-    td->phys_addr = hc->td_pool_phys + ((uint32_t)(uintptr_t)td - (uint32_t)(uintptr_t)hc->td_pool);
+    td->phys_addr = hc->td_pool_phys + (uint32_t)((uintptr_t)td - (uintptr_t)hc->td_pool);
     td->link = UHCI_LP_TERM;
     
     return td;
@@ -141,7 +147,7 @@ static uhci_qh_t *uhci_alloc_qh(uhci_controller_t *hc) {
     hc->free_qhs = qh->next;
     
     memset(qh, 0, sizeof(uhci_qh_t));
-    qh->phys_addr = hc->qh_pool_phys + ((uint32_t)(uintptr_t)qh - (uint32_t)(uintptr_t)hc->qh_pool);
+    qh->phys_addr = hc->qh_pool_phys + (uint32_t)((uintptr_t)qh - (uintptr_t)hc->qh_pool);
     qh->head = UHCI_LP_TERM;
     qh->element = UHCI_LP_TERM;
     
@@ -165,21 +171,22 @@ static void uhci_free_qh(uhci_controller_t *hc, uhci_qh_t *qh) {
  * @brief 初始化帧列表和 QH 结构
  */
 static int uhci_init_frame_list(uhci_controller_t *hc) {
-    /* 分配帧列表（4KB 对齐） */
+    /* 分配帧列表（一个 4KB 页，页对齐） */
     uint32_t size = sizeof(uint32_t) * UHCI_FRAME_LIST_SIZE;
-    hc->frame_list = (uint32_t *)kmalloc_aligned(size, 4096);
+    paddr_t frame_list_phys;
+    hc->frame_list = (uint32_t *)drivers::Dma::alloc(size, &frame_list_phys);
     if (!hc->frame_list) {
         return -1;
     }
-    
-    hc->frame_list_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)hc->frame_list);
-    
+    hc->frame_list_phys = (uint32_t)frame_list_phys;
+
     /* 分配 QH 池 */
     if (uhci_init_qh_pool(hc) < 0) {
-        kfree_aligned(hc->frame_list);
+        drivers::Dma::free(hc->frame_list, size);
+        hc->frame_list = NULL;
         return -1;
     }
-    
+
     /* 创建 QH 链表结构:
      * Frame List -> QH_INT -> QH_CTRL -> QH_BULK -> Terminate
      */
@@ -483,196 +490,238 @@ static uint32_t uhci_td_get_actlen(uhci_td_t *td) {
 }
 
 /**
- * @brief 提交控制传输
+ * @brief 释放一条 TD 链
  */
-static int uhci_submit_control(uhci_controller_t *hc, usb_urb_t *urb) {
-    /* 分配 SETUP 包缓冲区 */
-    uint8_t *setup_buf = (uint8_t *)kmalloc_aligned(8, 16);
-    if (!setup_buf) {
-        return -1;
-    }
-    memcpy(setup_buf, &urb->setup, 8);
-    uint32_t setup_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)setup_buf);
-    
-    /* 数据缓冲区物理地址 */
-    uint32_t data_phys = 0;
-    if (urb->buffer && urb->buffer_length > 0) {
-        data_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)urb->buffer);
-    }
-    
-    /* 确定数据方向 */
-    bool is_in = (urb->setup.bmRequestType & USB_REQTYPE_DIR_MASK) == USB_REQTYPE_DEV_TO_HOST;
-    
-    /* 创建 SETUP TD */
-    uhci_td_t *setup_td = uhci_create_setup_td(hc, urb, setup_phys);
-    if (!setup_td) {
-        kfree_aligned(setup_buf);
-        return -1;
-    }
-    
-    uhci_td_t *first_td = setup_td;
-    uhci_td_t *last_td = setup_td;
-    
-    /* 创建 DATA TDs */
-    uint8_t toggle = 1;
-    uint32_t offset = 0;
-    uint16_t max_pkt = urb->endpoint->max_packet_size;
-    
-    while (offset < urb->buffer_length) {
-        uint16_t len = (urb->buffer_length - offset > max_pkt) ? max_pkt : (urb->buffer_length - offset);
-        
-        uhci_td_t *data_td = uhci_create_data_td(hc, urb,
-                                                  is_in ? UHCI_TD_PID_IN : UHCI_TD_PID_OUT,
-                                                  data_phys + offset, len, toggle);
-        if (!data_td) {
-            /* 清理 */
-            for (uhci_td_t *td = first_td; td; ) {
-                uhci_td_t *next = td->next;
-                uhci_free_td(hc, td);
-                td = next;
-            }
-            kfree_aligned(setup_buf);
-            return -1;
-        }
-        
-        last_td->link = data_td->phys_addr | UHCI_LP_DEPTH;
-        last_td->next = data_td;
-        last_td = data_td;
-        
-        toggle ^= 1;
-        offset += len;
-    }
-    
-    /* 创建 STATUS TD */
-    uhci_td_t *status_td = uhci_create_status_td(hc, urb, 
-                                                  is_in ? UHCI_TD_PID_OUT : UHCI_TD_PID_IN);
-    if (!status_td) {
-        for (uhci_td_t *td = first_td; td; ) {
-            uhci_td_t *next = td->next;
-            uhci_free_td(hc, td);
-            td = next;
-        }
-        kfree_aligned(setup_buf);
-        return -1;
-    }
-    
-    last_td->link = status_td->phys_addr | UHCI_LP_DEPTH;
-    last_td->next = status_td;
-    last_td = status_td;
-    
-    /* 分配 QH */
-    uhci_qh_t *qh = uhci_alloc_qh(hc);
-    if (!qh) {
-        for (uhci_td_t *td = first_td; td; ) {
-            uhci_td_t *next = td->next;
-            uhci_free_td(hc, td);
-            td = next;
-        }
-        kfree_aligned(setup_buf);
-        return -1;
-    }
-    
-    qh->first_td = first_td;
-    qh->last_td = last_td;
-    qh->element = first_td->phys_addr;
-    
-    /* 插入到控制 QH 链表 */
-    qh->head = hc->qh_ctrl->head;
-    hc->qh_ctrl->element = qh->phys_addr | UHCI_LP_QH;
-    hc->active_ctrl_qh = qh;
-    
-    /* 等待完成（轮询） */
-    int timeout = 5000;  // 5 秒超时
-    while (timeout > 0) {
-        /* 检查所有 TD */
-        bool all_done = true;
-        int status = URB_STATUS_COMPLETE;
-        uint32_t total_len = 0;
-        
-        for (uhci_td_t *td = first_td; td; td = td->next) {
-            if (!uhci_td_is_complete(td)) {
-                all_done = false;
-                break;
-            }
-            
-            int td_status = uhci_td_get_status(td);
-            if (td_status != URB_STATUS_COMPLETE) {
-                status = td_status;
-                all_done = true;
-                break;
-            }
-            
-            /* 累加数据传输长度（跳过 SETUP 和 STATUS） */
-            if (td != first_td && td != last_td) {
-                total_len += uhci_td_get_actlen(td);
-            }
-        }
-        
-        if (all_done) {
-            urb->actual_length = total_len;
-            urb->status = status;
-            break;
-        }
-        
-        drivers::Timer::wait(1);
-        timeout--;
-    }
-    
-    if (timeout == 0) {
-        urb->status = URB_STATUS_TIMEOUT;
-        LOG_WARN_MSG("uhci: Control transfer timeout\n");
-    }
-    
-    /* 从 QH 链表移除 */
-    hc->qh_ctrl->element = UHCI_LP_TERM;
-    hc->active_ctrl_qh = NULL;
-    
-    /* 释放资源 */
+static void uhci_free_td_chain(uhci_controller_t *hc, uhci_td_t *first_td) {
     for (uhci_td_t *td = first_td; td; ) {
         uhci_td_t *next = td->next;
         uhci_free_td(hc, td);
         td = next;
     }
+}
+
+/**
+ * @brief 等待一条 TD 链完成（轮询）
+ *
+ * @param skip_ends 统计长度时跳过首尾 TD（控制传输的 SETUP 和 STATUS）
+ * @return true 已完成（成功或出错，结果写入 urb），false 超时
+ */
+static bool uhci_wait_td_chain(usb_urb_t *urb, uhci_td_t *first_td, uhci_td_t *last_td,
+                               bool skip_ends, int timeout_ms) {
+    while (timeout_ms > 0) {
+        bool all_done = true;
+        int status = URB_STATUS_COMPLETE;
+        uint32_t total_len = 0;
+
+        for (uhci_td_t *td = first_td; td; td = td->next) {
+            if (!uhci_td_is_complete(td)) {
+                all_done = false;
+                break;
+            }
+
+            int td_status = uhci_td_get_status(td);
+            if (td_status != URB_STATUS_COMPLETE) {
+                status = td_status;
+                break;
+            }
+
+            if (!skip_ends || (td != first_td && td != last_td)) {
+                total_len += uhci_td_get_actlen(td);
+            }
+        }
+
+        if (all_done) {
+            urb->actual_length = total_len;
+            urb->status = status;
+            return true;
+        }
+
+        drivers::Timer::wait(1);
+        timeout_ms--;
+    }
+
+    urb->status = URB_STATUS_TIMEOUT;
+    return false;
+}
+
+/**
+ * @brief 提交控制传输
+ *
+ * 控制器按物理地址读写数据，而调用者的缓冲区在内核堆或内核栈上，跨页时
+ * 物理上不一定连续。所以 SETUP 包和数据阶段都走一块物理连续的 DMA 中转
+ * 缓冲区：OUT 方向提交前拷入，IN 方向完成后拷回。
+ */
+static int uhci_submit_control(uhci_controller_t *hc, usb_urb_t *urb) {
+    /* SETUP 包放在中转缓冲区开头，数据从 UHCI_CTRL_DATA_OFFSET 开始 */
+    const uint32_t UHCI_CTRL_DATA_OFFSET = 16;
+
+    uint16_t max_pkt = urb->endpoint->max_packet_size;
+    if (max_pkt == 0 || urb->buffer_length > UHCI_MAX_TRANSFER_SIZE ||
+        (urb->buffer_length > 0 && !urb->buffer)) {
+        return -1;
+    }
+
+    size_t dma_size = UHCI_CTRL_DATA_OFFSET + urb->buffer_length;
+    paddr_t dma_phys;
+    uint8_t *dma = (uint8_t *)drivers::Dma::alloc(dma_size, &dma_phys);
+    if (!dma) {
+        return -1;
+    }
+    uint32_t setup_phys = (uint32_t)dma_phys;
+    uint32_t data_phys = setup_phys + UHCI_CTRL_DATA_OFFSET;
+    uint8_t *data = dma + UHCI_CTRL_DATA_OFFSET;
+
+    memcpy(dma, &urb->setup, 8);
+
+    /* 确定数据方向 */
+    bool is_in = (urb->setup.bmRequestType & USB_REQTYPE_DIR_MASK) == USB_REQTYPE_DEV_TO_HOST;
+    if (!is_in && urb->buffer_length > 0) {
+        memcpy(data, urb->buffer, urb->buffer_length);
+    }
+
+    /* 创建 SETUP TD */
+    uhci_td_t *setup_td = uhci_create_setup_td(hc, urb, setup_phys);
+    if (!setup_td) {
+        drivers::Dma::free(dma, dma_size);
+        return -1;
+    }
+
+    uhci_td_t *first_td = setup_td;
+    uhci_td_t *last_td = setup_td;
+
+    /* 创建 DATA TDs */
+    uint8_t toggle = 1;
+    uint32_t offset = 0;
+
+    while (offset < urb->buffer_length) {
+        uint16_t len = (urb->buffer_length - offset > max_pkt) ? max_pkt : (urb->buffer_length - offset);
+
+        uhci_td_t *data_td = uhci_create_data_td(hc, urb,
+                                                  is_in ? UHCI_TD_PID_IN : UHCI_TD_PID_OUT,
+                                                  data_phys + offset, len, toggle);
+        if (!data_td) {
+            uhci_free_td_chain(hc, first_td);
+            drivers::Dma::free(dma, dma_size);
+            return -1;
+        }
+
+        last_td->link = data_td->phys_addr | UHCI_LP_DEPTH;
+        last_td->next = data_td;
+        last_td = data_td;
+
+        toggle ^= 1;
+        offset += len;
+    }
+
+    /* 创建 STATUS TD */
+    uhci_td_t *status_td = uhci_create_status_td(hc, urb,
+                                                  is_in ? UHCI_TD_PID_OUT : UHCI_TD_PID_IN);
+    if (!status_td) {
+        uhci_free_td_chain(hc, first_td);
+        drivers::Dma::free(dma, dma_size);
+        return -1;
+    }
+
+    last_td->link = status_td->phys_addr | UHCI_LP_DEPTH;
+    last_td->next = status_td;
+    last_td = status_td;
+
+    /* 分配 QH */
+    uhci_qh_t *qh = uhci_alloc_qh(hc);
+    if (!qh) {
+        uhci_free_td_chain(hc, first_td);
+        drivers::Dma::free(dma, dma_size);
+        return -1;
+    }
+
+    qh->first_td = first_td;
+    qh->last_td = last_td;
+    qh->element = first_td->phys_addr;
+
+    /* 插入到控制 QH 链表 */
+    qh->head = hc->qh_ctrl->head;
+    hc->qh_ctrl->element = qh->phys_addr | UHCI_LP_QH;
+    hc->active_ctrl_qh = qh;
+
+    /* 等待完成（轮询，5 秒超时） */
+    bool finished = uhci_wait_td_chain(urb, first_td, last_td, true, 5000);
+    if (!finished) {
+        LOG_WARN_MSG("uhci: Control transfer timeout\n");
+    }
+
+    /* 从 QH 链表移除 */
+    hc->qh_ctrl->element = UHCI_LP_TERM;
+    hc->active_ctrl_qh = NULL;
+
+    if (!finished) {
+        /* 控制器可能正在处理本帧里的 TD：等它走过这一帧，再回收 TD 和缓冲区 */
+        drivers::Timer::wait(2);
+    }
+
+    /* IN 方向：把收到的数据拷回调用者的缓冲区 */
+    if (is_in && urb->buffer_length > 0) {
+        uint32_t copy_len = urb->actual_length;
+        if (copy_len > urb->buffer_length) {
+            copy_len = urb->buffer_length;
+        }
+        memcpy(urb->buffer, data, copy_len);
+    }
+
+    /* 释放资源 */
+    uhci_free_td_chain(hc, first_td);
     uhci_free_qh(hc, qh);
-    kfree_aligned(setup_buf);
-    
+    drivers::Dma::free(dma, dma_size);
+
     return (urb->status == URB_STATUS_COMPLETE) ? 0 : urb->status;
 }
 
 /**
  * @brief 提交批量传输
+ *
+ * 数据同样经过物理连续的 DMA 中转缓冲区（原因见 uhci_submit_control）。
  */
 static int uhci_submit_bulk(uhci_controller_t *hc, usb_urb_t *urb) {
     if (!urb->endpoint || urb->endpoint->type != USB_TRANSFER_BULK) {
         return -1;
     }
-    
+
     bool is_in = (urb->endpoint->address & USB_DIR_MASK) == USB_DIR_IN;
     uint8_t pid = is_in ? UHCI_TD_PID_IN : UHCI_TD_PID_OUT;
     uint16_t max_pkt = urb->endpoint->max_packet_size;
-    
-    /* 数据缓冲区物理地址 */
-    uint32_t data_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)urb->buffer);
-    
+
+    if (max_pkt == 0 || !urb->buffer || urb->buffer_length == 0 ||
+        urb->buffer_length > UHCI_MAX_TRANSFER_SIZE) {
+        return -1;
+    }
+
+    size_t dma_size = urb->buffer_length;
+    paddr_t dma_phys;
+    uint8_t *dma = (uint8_t *)drivers::Dma::alloc(dma_size, &dma_phys);
+    if (!dma) {
+        return -1;
+    }
+    uint32_t data_phys = (uint32_t)dma_phys;
+
+    if (!is_in) {
+        memcpy(dma, urb->buffer, urb->buffer_length);
+    }
+
     /* 创建 TDs */
     uhci_td_t *first_td = NULL;
     uhci_td_t *last_td = NULL;
     uint8_t toggle = urb->endpoint->toggle;
     uint32_t offset = 0;
-    
+
     while (offset < urb->buffer_length) {
         uint16_t len = (urb->buffer_length - offset > max_pkt) ? max_pkt : (urb->buffer_length - offset);
-        
+
         uhci_td_t *td = uhci_create_data_td(hc, urb, pid, data_phys + offset, len, toggle);
         if (!td) {
-            for (uhci_td_t *t = first_td; t; ) {
-                uhci_td_t *next = t->next;
-                uhci_free_td(hc, t);
-                t = next;
-            }
+            uhci_free_td_chain(hc, first_td);
+            drivers::Dma::free(dma, dma_size);
             return -1;
         }
-        
+
         if (!first_td) {
             first_td = td;
         }
@@ -681,88 +730,62 @@ static int uhci_submit_bulk(uhci_controller_t *hc, usb_urb_t *urb) {
             last_td->next = td;
         }
         last_td = td;
-        
+
         toggle ^= 1;
         offset += len;
     }
-    
+
     /* 最后一个 TD 设置 IOC */
-    if (last_td) {
-        last_td->ctrl_status |= UHCI_TD_IOC;
-    }
-    
+    last_td->ctrl_status |= UHCI_TD_IOC;
+
     /* 分配 QH */
     uhci_qh_t *qh = uhci_alloc_qh(hc);
     if (!qh) {
-        for (uhci_td_t *td = first_td; td; ) {
-            uhci_td_t *next = td->next;
-            uhci_free_td(hc, td);
-            td = next;
-        }
+        uhci_free_td_chain(hc, first_td);
+        drivers::Dma::free(dma, dma_size);
         return -1;
     }
-    
+
     qh->first_td = first_td;
     qh->last_td = last_td;
     qh->element = first_td->phys_addr;
-    
+
     /* 插入到批量 QH 链表 */
     qh->head = hc->qh_bulk->head;
     hc->qh_bulk->element = qh->phys_addr | UHCI_LP_QH;
     hc->active_bulk_qh = qh;
-    
-    /* 等待完成 */
-    int timeout = 10000;  // 10 秒超时
-    while (timeout > 0) {
-        bool all_done = true;
-        int status = URB_STATUS_COMPLETE;
-        uint32_t total_len = 0;
-        
-        for (uhci_td_t *td = first_td; td; td = td->next) {
-            if (!uhci_td_is_complete(td)) {
-                all_done = false;
-                break;
-            }
-            
-            int td_status = uhci_td_get_status(td);
-            if (td_status != URB_STATUS_COMPLETE) {
-                status = td_status;
-                all_done = true;
-                break;
-            }
-            
-            total_len += uhci_td_get_actlen(td);
-        }
-        
-        if (all_done) {
-            urb->actual_length = total_len;
-            urb->status = status;
-            break;
-        }
-        
-        drivers::Timer::wait(1);
-        timeout--;
-    }
-    
-    if (timeout == 0) {
-        urb->status = URB_STATUS_TIMEOUT;
+
+    /* 等待完成（轮询，10 秒超时） */
+    bool finished = uhci_wait_td_chain(urb, first_td, last_td, false, 10000);
+    if (!finished) {
         LOG_WARN_MSG("uhci: Bulk transfer timeout\n");
     }
-    
+
     /* 更新端点 toggle */
     urb->endpoint->toggle = toggle;
-    
+
     /* 移除并释放 */
     hc->qh_bulk->element = UHCI_LP_TERM;
     hc->active_bulk_qh = NULL;
-    
-    for (uhci_td_t *td = first_td; td; ) {
-        uhci_td_t *next = td->next;
-        uhci_free_td(hc, td);
-        td = next;
+
+    if (!finished) {
+        /* 控制器可能正在处理本帧里的 TD：等它走过这一帧，再回收 TD 和缓冲区 */
+        drivers::Timer::wait(2);
     }
+
+    /* IN 方向：把收到的数据拷回调用者的缓冲区 */
+    if (is_in) {
+        uint32_t copy_len = urb->actual_length;
+        if (copy_len > urb->buffer_length) {
+            copy_len = urb->buffer_length;
+        }
+        memcpy(urb->buffer, dma, copy_len);
+    }
+
+    uhci_free_td_chain(hc, first_td);
     uhci_free_qh(hc, qh);
-    
+    drivers::Dma::free(dma, dma_size);
+
     return (urb->status == URB_STATUS_COMPLETE) ? 0 : urb->status;
 }
 
@@ -770,7 +793,12 @@ int drivers::Uhci::submit_urb(uhci_controller_t *hc, usb_urb_t *urb) {
     if (!hc || !urb || !urb->device || !urb->endpoint) {
         return -1;
     }
-    
+
+    /* 每类传输在调度表里只有一个 QH 槽位，TD/QH 空闲链表也没有别的保护：
+     * 一个控制器同一时刻只进行一次传输。传输靠等待时间流逝来轮询，
+     * 所以用可睡眠的 Mutex，只能在任务上下文提交。 */
+    sync::MutexGuard guard(hc->lock);
+
     switch (urb->endpoint->type) {
         case USB_TRANSFER_CONTROL:
             return uhci_submit_control(hc, urb);
@@ -820,8 +848,11 @@ static void uhci_irq_handler(registers_t *regs) {
             LOG_ERROR_MSG("uhci: Host controller process error!\n");
         }
         
-        /* 检查端口状态变化（热插拔） */
-        drivers::Uhci::check_port_changes(hc);
+        /* 端口状态变化（热插拔）：去抖和枚举要等待时间流逝并发起传输，
+         * 不能在中断里做，交给 kworker（监控未启动时 raise 是空操作） */
+        if (status & UHCI_STS_RD) {
+            kernel::Deferred::raise(uhci_hotplug_work_id);
+        }
     }
 }
 
@@ -884,7 +915,8 @@ static int uhci_init_controller(pci_device_t *pci_dev) {
     
     uhci_controller_t *hc = &uhci_controllers[uhci_controller_count];
     memset(hc, 0, sizeof(uhci_controller_t));
-    
+    hc->lock.init();
+
     /* 保存 PCI 信息 */
     hc->bus = pci_dev->bus;
     hc->slot = pci_dev->slot;
@@ -1114,16 +1146,14 @@ void drivers::Uhci::sync_port_devices() {
 /** 热插拔定时器 ID */
 static uint32_t uhci_hotplug_timer_id = 0;
 
-/**
- * @brief 热插拔轮询定时器回调
- */
-static int uhci_hotplug_work_id = -1;
-
 /* 在 kworker 线程里运行 */
 static void uhci_hotplug_work(void) {
     drivers::Uhci::poll_port_changes();
 }
 
+/**
+ * @brief 热插拔轮询定时器回调（中断上下文，只置位）
+ */
 static void uhci_hotplug_timer_callback(void *data) {
     (void)data;
     kernel::Deferred::raise(uhci_hotplug_work_id);

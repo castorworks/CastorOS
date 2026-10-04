@@ -15,6 +15,7 @@
 
 #include <drivers/e1000.h>
 #include <drivers/pci.h>
+#include <drivers/x86/dma.h>
 #include <kernel/io.h>
 #include <kernel/irq.h>
 #include <kernel/sync/mutex.h>
@@ -118,55 +119,69 @@ static void e1000_read_mac_address(e1000_device_t *dev) {
  * 描述符环初始化
  * ============================================================================ */
 
+/* 一页能放下的收发缓冲区个数（缓冲区不能跨页，见 e1000_alloc_buffers） */
+#define E1000_BUFFERS_PER_PAGE  (PAGE_SIZE / E1000_RX_BUFFER_SIZE)
+
+/**
+ * @brief 为描述符环分配数据缓冲区
+ *
+ * 网卡按物理地址线性读写整个缓冲区，所以每个缓冲区必须落在一个物理页内。
+ * 这里每次向 DMA 分配器要一页，切成 E1000_BUFFERS_PER_PAGE 个缓冲区，
+ * 不依赖内核堆的物理连续性。
+ *
+ * @param buffers    [out] 每个缓冲区的内核虚拟地址
+ * @param buffers_phys [out] 每个缓冲区的物理地址
+ * @param count      缓冲区个数
+ */
+static int e1000_alloc_buffers(uint8_t **buffers, paddr_t *buffers_phys, int count) {
+    for (int i = 0; i < count; i += E1000_BUFFERS_PER_PAGE) {
+        paddr_t page_phys;
+        uint8_t *page = (uint8_t *)drivers::Dma::alloc(PAGE_SIZE, &page_phys);
+        if (!page) {
+            return -1;
+        }
+        for (int j = 0; j < (int)E1000_BUFFERS_PER_PAGE && i + j < count; j++) {
+            buffers[i + j] = page + j * E1000_RX_BUFFER_SIZE;
+            buffers_phys[i + j] = page_phys + j * E1000_RX_BUFFER_SIZE;
+        }
+    }
+    return 0;
+}
+
 /**
  * @brief 初始化接收描述符环
  */
 static int e1000_init_rx_ring(e1000_device_t *dev) {
-    /* 分配描述符数组（16 字节对齐） */
+    /* 描述符数组：物理连续的 DMA 内存（页对齐，满足 16 字节对齐要求） */
     uint32_t desc_size = sizeof(e1000_rx_desc_t) * E1000_NUM_RX_DESC;
-    dev->rx_descs = (e1000_rx_desc_t *)kmalloc_aligned(desc_size, 16);
+    dev->rx_descs = (e1000_rx_desc_t *)drivers::Dma::alloc(desc_size, &dev->rx_descs_phys);
     if (!dev->rx_descs) {
         LOG_ERROR_MSG("e1000: Failed to allocate RX descriptors\n");
         return -1;
     }
-    memset(dev->rx_descs, 0, desc_size);
-    
-    /* 获取物理地址 - 必须通过页表查询，因为堆内存不是恒等映射 */
-    dev->rx_descs_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)dev->rx_descs);
-    if (!dev->rx_descs_phys) {
-        LOG_ERROR_MSG("e1000: Failed to get physical address for RX descriptors\n");
-        return -1;
-    }
     
     /* 为每个描述符分配接收缓冲区 */
+    paddr_t buf_phys[E1000_NUM_RX_DESC];
+    if (e1000_alloc_buffers(dev->rx_buffers, buf_phys, E1000_NUM_RX_DESC) < 0) {
+        LOG_ERROR_MSG("e1000: Failed to allocate RX buffers\n");
+        return -1;
+    }
     for (int i = 0; i < E1000_NUM_RX_DESC; i++) {
-        dev->rx_buffers[i] = (uint8_t *)kmalloc_aligned(E1000_RX_BUFFER_SIZE, 16);
-        if (!dev->rx_buffers[i]) {
-            LOG_ERROR_MSG("e1000: Failed to allocate RX buffer %d\n", i);
-            return -1;
-        }
-        
-        /* 设置描述符 - 必须通过页表查询获取真正的物理地址 */
-        uint32_t buf_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)dev->rx_buffers[i]);
-        if (!buf_phys) {
-            LOG_ERROR_MSG("e1000: Failed to get physical address for RX buffer %d\n", i);
-            return -1;
-        }
-        dev->rx_descs[i].buffer_addr = buf_phys;
+        dev->rx_descs[i].buffer_addr = buf_phys[i];
         dev->rx_descs[i].status = 0;
     }
     
     dev->rx_cur = 0;
     
     /* 配置接收描述符寄存器 */
-    e1000_write_reg(dev, E1000_REG_RDBAL, dev->rx_descs_phys);
-    e1000_write_reg(dev, E1000_REG_RDBAH, 0);  // 32 位系统
+    e1000_write_reg(dev, E1000_REG_RDBAL, (uint32_t)dev->rx_descs_phys);
+    e1000_write_reg(dev, E1000_REG_RDBAH, (uint32_t)(dev->rx_descs_phys >> 32));
     e1000_write_reg(dev, E1000_REG_RDLEN, desc_size);
     e1000_write_reg(dev, E1000_REG_RDH, 0);
     e1000_write_reg(dev, E1000_REG_RDT, E1000_NUM_RX_DESC - 1);
     
-    LOG_DEBUG_MSG("e1000: RX ring: descs_virt=0x%x descs_phys=0x%x\n", 
-                  (uint32_t)(uintptr_t)dev->rx_descs, dev->rx_descs_phys);
+    LOG_DEBUG_MSG("e1000: RX ring: descs_virt=0x%llx descs_phys=0x%llx\n", 
+                  (unsigned long long)(uintptr_t)dev->rx_descs, (unsigned long long)dev->rx_descs_phys);
     
     return 0;
 }
@@ -175,37 +190,22 @@ static int e1000_init_rx_ring(e1000_device_t *dev) {
  * @brief 初始化发送描述符环
  */
 static int e1000_init_tx_ring(e1000_device_t *dev) {
-    /* 分配描述符数组（16 字节对齐） */
+    /* 描述符数组：物理连续的 DMA 内存（页对齐，满足 16 字节对齐要求） */
     uint32_t desc_size = sizeof(e1000_tx_desc_t) * E1000_NUM_TX_DESC;
-    dev->tx_descs = (e1000_tx_desc_t *)kmalloc_aligned(desc_size, 16);
+    dev->tx_descs = (e1000_tx_desc_t *)drivers::Dma::alloc(desc_size, &dev->tx_descs_phys);
     if (!dev->tx_descs) {
         LOG_ERROR_MSG("e1000: Failed to allocate TX descriptors\n");
         return -1;
     }
-    memset(dev->tx_descs, 0, desc_size);
-    
-    /* 获取物理地址 - 必须通过页表查询，因为堆内存不是恒等映射 */
-    dev->tx_descs_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)dev->tx_descs);
-    if (!dev->tx_descs_phys) {
-        LOG_ERROR_MSG("e1000: Failed to get physical address for TX descriptors\n");
-        return -1;
-    }
     
     /* 为每个描述符分配发送缓冲区 */
+    paddr_t buf_phys[E1000_NUM_TX_DESC];
+    if (e1000_alloc_buffers(dev->tx_buffers, buf_phys, E1000_NUM_TX_DESC) < 0) {
+        LOG_ERROR_MSG("e1000: Failed to allocate TX buffers\n");
+        return -1;
+    }
     for (int i = 0; i < E1000_NUM_TX_DESC; i++) {
-        dev->tx_buffers[i] = (uint8_t *)kmalloc_aligned(E1000_RX_BUFFER_SIZE, 16);
-        if (!dev->tx_buffers[i]) {
-            LOG_ERROR_MSG("e1000: Failed to allocate TX buffer %d\n", i);
-            return -1;
-        }
-        
-        /* 设置描述符 - 必须通过页表查询获取真正的物理地址 */
-        uint32_t buf_phys = mm::Vmm::virt_to_phys((uint32_t)(uintptr_t)dev->tx_buffers[i]);
-        if (!buf_phys) {
-            LOG_ERROR_MSG("e1000: Failed to get physical address for TX buffer %d\n", i);
-            return -1;
-        }
-        dev->tx_descs[i].buffer_addr = buf_phys;
+        dev->tx_descs[i].buffer_addr = buf_phys[i];
         dev->tx_descs[i].status = E1000_TXD_STAT_DD;  // 标记为完成（可用）
         dev->tx_descs[i].cmd = 0;
     }
@@ -213,14 +213,14 @@ static int e1000_init_tx_ring(e1000_device_t *dev) {
     dev->tx_cur = 0;
     
     /* 配置发送描述符寄存器 */
-    e1000_write_reg(dev, E1000_REG_TDBAL, dev->tx_descs_phys);
-    e1000_write_reg(dev, E1000_REG_TDBAH, 0);  // 32 位系统
+    e1000_write_reg(dev, E1000_REG_TDBAL, (uint32_t)dev->tx_descs_phys);
+    e1000_write_reg(dev, E1000_REG_TDBAH, (uint32_t)(dev->tx_descs_phys >> 32));
     e1000_write_reg(dev, E1000_REG_TDLEN, desc_size);
     e1000_write_reg(dev, E1000_REG_TDH, 0);
     e1000_write_reg(dev, E1000_REG_TDT, 0);
     
-    LOG_DEBUG_MSG("e1000: TX ring: descs_virt=0x%x descs_phys=0x%x\n", 
-                  (uint32_t)(uintptr_t)dev->tx_descs, dev->tx_descs_phys);
+    LOG_DEBUG_MSG("e1000: TX ring: descs_virt=0x%llx descs_phys=0x%llx\n", 
+                  (unsigned long long)(uintptr_t)dev->tx_descs, (unsigned long long)dev->tx_descs_phys);
     
     return 0;
 }
@@ -567,16 +567,23 @@ static int e1000_init_device(pci_device_t *pci_dev) {
     drivers::Pci::enable_bus_master(pci_dev);
     drivers::Pci::enable_memory_space(pci_dev);
     
-    /* 获取 MMIO 基地址 */
-    uint32_t bar0 = drivers::Pci::get_bar_address(pci_dev, 0);
-    if (bar0 == 0) {
+    /* 获取 MMIO 基地址（64 位内存 BAR 的高 32 位在下一个 BAR 里） */
+    uint64_t bar0 = drivers::Pci::get_bar_address(pci_dev, 0);
+    if (!drivers::Pci::bar_is_io(pci_dev, 0) && (pci_dev->bar[0] & 0x6) == 0x4) {
+        bar0 |= (uint64_t)pci_dev->bar[1] << 32;
+    }
+    if (bar0 == 0 || drivers::Pci::bar_is_io(pci_dev, 0)) {
         LOG_ERROR_MSG("e1000: Invalid BAR0 address\n");
         return -1;
     }
+    if (bar0 != (uint64_t)(uintptr_t)bar0) {
+        LOG_ERROR_MSG("e1000: BAR0 0x%llx is not addressable\n", (unsigned long long)bar0);
+        return -1;
+    }
     
-    /* 映射 MMIO 空间 */
+    /* 映射 MMIO 空间（返回的是内核虚拟地址，64 位内核上超过 4GB，不能截断） */
     dev->mmio_size = 0x20000;  // 128KB
-    uint32_t mmio_virt = mm::Vmm::map_mmio(bar0, dev->mmio_size);
+    uintptr_t mmio_virt = mm::Vmm::map_mmio((uintptr_t)bar0, dev->mmio_size);
     if (!mmio_virt) {
         LOG_ERROR_MSG("e1000: Failed to map MMIO\n");
         return -1;
