@@ -390,6 +390,20 @@ static fs_node_t *shmfs_finddir(fs_node_t *node, const char *name) {
     return result;
 }
 
+/**
+ * 释放一个已从目录摘除的共享内存文件节点及其物理页
+ */
+static void shmfs_destroy_node(fs_node_t *target) {
+    if (target->type == FS_FILE) {
+        shmfs_file_t *file = (shmfs_file_t *)target->impl;
+        if (file) {
+            shmfs_free_pages(file);
+            kfree(file);
+        }
+    }
+    kfree(target);
+}
+
 class ShmfsFileOps final : public fs::NodeOps {
 public:
     uint32_t supported() const override { return OP_READ | OP_WRITE | OP_OPEN | OP_CLOSE | OP_TRUNCATE; }
@@ -407,6 +421,9 @@ public:
     }
     int truncate(fs_node_t *node, uint32_t new_size) const override {
         return shmfs_truncate(node, new_size);
+    }
+    void destroy(fs_node_t *node) const override {
+        shmfs_destroy_node(node);
     }
 };
 static const ShmfsFileOps shmfs_file_ops{};
@@ -470,6 +487,7 @@ static int shmfs_create_file(fs_node_t *node, const char *name) {
     new_node->impl = file;
     new_node->impl_data = SHMFS_MAGIC;  // 用于标识 shmfs 节点
     new_node->ref_count = 0;
+    new_node->open_count = 0;
     new_node->flags = 0;
     
     // 设置操作函数
@@ -528,18 +546,19 @@ static int shmfs_unlink(fs_node_t *node, const char *name) {
                                      name, file->map_count);
                         return -1;
                     }
-                
-                    // 释放物理页
-                    if (file) {
-                        shmfs_free_pages(file);
-                        kfree(file);
-                    }
                 }
             
+                // 从目录中摘除：之后路径查找再也找不到它
                 *current = (*current)->next;
                 kfree(to_remove);
-                kfree(target);
                 dir->count--;
+            
+                if (fs::Vfs::is_pinned(target)) {
+                    // 仍有文件描述符指向它：只标记，最后一次关闭时由 destroy() 释放
+                    target->flags |= FS_NODE_FLAG_UNLINKED;
+                } else {
+                    shmfs_destroy_node(target);
+                }
             
                 LOG_DEBUG_MSG("shmfs: unlinked file '%s'\n", name);
             
@@ -691,6 +710,7 @@ fs_node_t *fs::Shmfs::create(const char *name) {
     root->impl = root_dir;
     root->impl_data = SHMFS_MAGIC;
     root->ref_count = 0;
+    root->open_count = 0;
     root->flags = 0;
     
     // 设置操作函数

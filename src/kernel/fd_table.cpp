@@ -46,6 +46,7 @@ int32_t kernel::FdTable::alloc(kernel::FdTable *table, fs_node_t *node, int32_t 
             
             // 增加节点引用计数
             fs::Vfs::ref_node(node);
+            fs::Vfs::pin(node);
             
             result = i;
             break;
@@ -101,8 +102,11 @@ int32_t kernel::FdTable::free(kernel::FdTable *table, int32_t fd) {
         if (fs::node_supports(node, fs::NodeOps::OP_CLOSE)) {
             fs::Vfs::close(node);
         }
-        // 释放动态分配的节点
-        fs::Vfs::release_node(node);
+        // unpin 返回 true 表示节点已随最后一次关闭被销毁，不能再碰；
+        // 否则释放动态分配的节点
+        if (!fs::Vfs::unpin(node)) {
+            fs::Vfs::release_node(node);
+        }
     }
     
     return 0;
@@ -140,6 +144,7 @@ int32_t kernel::FdTable::copy(kernel::FdTable *src, kernel::FdTable *dst) {
                 // 关键修复：增加引用计数，因为现在有两个fd指向同一个节点
                 if (dst->entries[i].node) {
                     fs::Vfs::ref_node(dst->entries[i].node);
+                    fs::Vfs::pin(dst->entries[i].node);
                 
                     // 如果是管道，还需要增加 readers/writers 计数
                     if (dst->entries[i].node->type == FS_PIPE) {

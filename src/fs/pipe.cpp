@@ -60,6 +60,9 @@ public:
     void close(fs_node_t *node) const override {
         pipe_close(node);
     }
+    /* pipe_t 由两端节点共享，生命周期由 readers/writers 计数决定（见 pipe_close），
+     * 不能在某一端节点释放时跟着释放 */
+    void release_impl(fs_node_t *) const override {}
 };
 static const PipeReadOps pipe_read_ops{};
 
@@ -72,6 +75,9 @@ public:
     void close(fs_node_t *node) const override {
         pipe_close(node);
     }
+    /* pipe_t 由两端节点共享，生命周期由 readers/writers 计数决定（见 pipe_close），
+     * 不能在某一端节点释放时跟着释放 */
+    void release_impl(fs_node_t *) const override {}
 };
 static const PipeWriteOps pipe_write_ops{};
 

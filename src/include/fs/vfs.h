@@ -26,6 +26,7 @@ typedef enum {
 
 // 文件节点标志（用于 flags 字段）
 #define FS_NODE_FLAG_ALLOCATED      0x80000000  // 节点是动态分配的，需要释放
+#define FS_NODE_FLAG_UNLINKED       0x40000000  // 已从目录摘除，最后一次关闭时销毁
 
 /* 前向声明 */
 struct fs_node;
@@ -50,6 +51,7 @@ typedef struct fs_node {
     void *impl;                  // 文件系统私有数据指针（如 fat32_file_t*），释放节点时会 kfree
     uint32_t impl_data;          // 文件系统私有整数值（如 procfs 的 PID），不会被 kfree
     uint32_t ref_count;          // 引用计数（用于资源管理）
+    uint32_t open_count;         // 指向本节点的打开文件描述符数（fs::Vfs::pin/unpin 维护）
 
     // 节点操作（虚函数接口，见下方 fs::NodeOps）；NULL 表示不支持任何操作
     const fs::NodeOps *ops;
@@ -97,6 +99,22 @@ public:
     virtual int unlink(fs_node_t *, const char *) const { return -1; }
     virtual int truncate(fs_node_t *, uint32_t) const { return -1; }
     virtual int rename(fs_node_t *, const char *, const char *) const { return -1; }
+
+    /**
+     * @brief 释放 node->impl（动态节点的引用计数归零时由 VFS 调用）
+     *
+     * 默认 kfree(impl)。impl 被多个节点共享的类型（管道两端）必须重写，
+     * 否则先归零的一端会把另一端还在用的数据释放掉。
+     */
+    virtual void release_impl(fs_node_t *node) const;
+
+    /**
+     * @brief 销毁一个已被 unlink 的节点及其数据
+     *
+     * 节点带 FS_NODE_FLAG_UNLINKED 且最后一个文件描述符关闭时由 VFS 调用。
+     * 支持“打开状态下删除”的文件系统在这里释放节点；调用后节点不再有效。
+     */
+    virtual void destroy(fs_node_t *) const {}
 
 protected:
     /* 实现对象都是静态存储期的单例，不会通过基类指针销毁 */
@@ -179,6 +197,23 @@ public:
      * @param node 文件节点
      */
     static void release_node(fs_node_t *node);
+
+    /**
+     * 记录一个文件描述符开始引用节点（所有节点类型都计数）
+     */
+    static void pin(fs_node_t *node);
+
+    /**
+     * 一个文件描述符不再引用节点
+     * @return true 表示节点已被销毁（之前被 unlink，且这是最后一个引用），
+     *         调用者不得再访问它
+     */
+    static bool unpin(fs_node_t *node);
+
+    /**
+     * 节点当前是否被文件描述符引用
+     */
+    static bool is_pinned(fs_node_t *node);
 
     /**
      * 读取目录项

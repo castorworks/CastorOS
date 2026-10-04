@@ -756,6 +756,9 @@ uint32_t syscall::Fs::pipe(int32_t *fds) {
     int32_t read_fd = kernel::FdTable::alloc(current->fd_table, read_node, O_RDONLY);
     if (read_fd < 0) {
         LOG_ERROR_MSG("syscall::Fs::pipe: failed to allocate read fd\n");
+        // 两端都没有描述符：先关闭两端（pipe_t 在两端都关闭时释放），再释放节点
+        fs::Vfs::close(read_node);
+        fs::Vfs::close(write_node);
         fs::Vfs::release_node(read_node);
         fs::Vfs::release_node(write_node);
         return (uint32_t)-1;
@@ -769,6 +772,8 @@ uint32_t syscall::Fs::pipe(int32_t *fds) {
     if (write_fd < 0) {
         LOG_ERROR_MSG("syscall::Fs::pipe: failed to allocate write fd\n");
         kernel::FdTable::free(current->fd_table, read_fd);
+        // 写端没有描述符：手动关闭，pipe_t 随之释放
+        fs::Vfs::close(write_node);
         fs::Vfs::release_node(write_node);
         return (uint32_t)-1;
     }
@@ -885,6 +890,7 @@ uint32_t syscall::Fs::dup2(int32_t oldfd, int32_t newfd) {
     
         // 增加引用计数
         fs::Vfs::ref_node(old_entry->node);
+        fs::Vfs::pin(old_entry->node);
     
         // 如果是管道，增加 readers/writers 计数
         if (old_entry->node->type == FS_PIPE) {

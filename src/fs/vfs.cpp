@@ -142,9 +142,13 @@ void fs::Vfs::release_node(fs_node_t *node) {
         vfs_refcount_mutex.unlock();
         
         // 释放实现相关的数据（如 fat32_file_t）
-        // 注意：impl 是指针，会被 kfree；impl_data 是整数值，不会被释放
+        // 注意：impl_data 是整数值，不会被释放
         if (node->impl) {
-            kfree(node->impl);
+            if (node->ops) {
+                node->ops->release_impl(node);
+            } else {
+                kfree(node->impl);
+            }
         }
         // 释放节点本身
         kfree(node);
@@ -152,6 +156,44 @@ void fs::Vfs::release_node(fs_node_t *node) {
     }
     
     vfs_refcount_mutex.unlock();
+}
+
+void fs::NodeOps::release_impl(fs_node_t *node) const {
+    kfree(node->impl);
+}
+
+void fs::Vfs::pin(fs_node_t *node) {
+    if (!node) {
+        return;
+    }
+    sync::MutexGuard guard(vfs_refcount_mutex);
+    node->open_count++;
+}
+
+bool fs::Vfs::unpin(fs_node_t *node) {
+    if (!node) {
+        return false;
+    }
+    {
+        sync::MutexGuard guard(vfs_refcount_mutex);
+        if (node->open_count > 0) {
+            node->open_count--;
+        }
+        if (node->open_count > 0 || !(node->flags & FS_NODE_FLAG_UNLINKED) || !node->ops) {
+            return false;
+        }
+    }
+    // 已被 unlink 且这是最后一个引用：现在才真正释放
+    node->ops->destroy(node);
+    return true;
+}
+
+bool fs::Vfs::is_pinned(fs_node_t *node) {
+    if (!node) {
+        return false;
+    }
+    sync::MutexGuard guard(vfs_refcount_mutex);
+    return node->open_count > 0;
 }
 
 struct dirent *fs::Vfs::readdir(fs_node_t *node, uint32_t index) {

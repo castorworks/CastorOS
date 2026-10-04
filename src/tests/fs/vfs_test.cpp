@@ -22,6 +22,9 @@
 #include <tests/fs/vfs_test.h>
 #include <tests/test_module.h>
 #include <fs/vfs.h>
+#include <fs/pipe.h>
+#include <kernel/fd_table.h>
+#include <mm/heap.h>
 #include <fs/ramfs.h>
 #include <lib/string.h>
 #include <types.h>
@@ -44,8 +47,50 @@ static bool vfs_test_setup(void) {
     return true;
 }
 
+/**
+ * @brief 测试管道一端关闭后另一端仍然可用
+ *
+ * 管道两端的节点共享同一个 pipe_t。读端的最后一个描述符关闭时
+ * 只能释放读端节点，不能把写端还在用的 pipe_t 一并释放。
+ */
+TEST_CASE(test_vfs_pipe_close_one_end) {
+    fs_node_t *rnode = NULL;
+    fs_node_t *wnode = NULL;
+    ASSERT_EQ(fs::Pipe::create(&rnode, &wnode), 0);
+    ASSERT_NOT_NULL(rnode);
+    ASSERT_NOT_NULL(wnode);
+    
+    kernel::FdTable *table = (kernel::FdTable *)kmalloc(sizeof(kernel::FdTable));
+    ASSERT_NOT_NULL(table);
+    kernel::FdTable::init(table);
+    
+    int32_t rfd = kernel::FdTable::alloc(table, rnode, 0);
+    int32_t wfd = kernel::FdTable::alloc(table, wnode, 1);
+    ASSERT_TRUE(rfd >= 0);
+    ASSERT_TRUE(wfd >= 0);
+    // 与 sys_pipe 一致：fd 持有引用后放掉创建时的初始引用
+    fs::Vfs::release_node(rnode);
+    fs::Vfs::release_node(wnode);
+    
+    // 先写入数据，再关闭读端
+    const char *text = "abc";
+    ASSERT_EQ_U(fs::Vfs::write(wnode, 0, 3, (uint8_t *)text), 3);
+    ASSERT_EQ(kernel::FdTable::free(table, rfd), 0);
+    
+    // 写端节点仍指向有效的管道，且能看到读端已关闭
+    pipe_t *pipe = (pipe_t *)wnode->impl;
+    ASSERT_NOT_NULL(pipe);
+    ASSERT_TRUE(pipe->read_closed);
+    ASSERT_EQ_U(pipe->writers, 1);
+    ASSERT_EQ_U(pipe->count, 3);
+    
+    // 关闭写端：两端都关闭后管道才被释放
+    ASSERT_EQ(kernel::FdTable::free(table, wfd), 0);
+    kfree(table);
+}
+
 // ============================================================================
-// 测试套件 1: vfs_basic_tests - 基本 VFS 操作测试
+// 测试套件定义
 // ============================================================================
 //
 // 测试 VFS 的基本功能
@@ -571,6 +616,7 @@ TEST_SUITE(vfs_edge_tests) {
     RUN_TEST(test_vfs_unlink_nonexistent);
     RUN_TEST(test_vfs_unlink_nonempty_dir);
     RUN_TEST(test_vfs_dot_entry);
+    RUN_TEST(test_vfs_pipe_close_one_end);
 }
 
 // ============================================================================

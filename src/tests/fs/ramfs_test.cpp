@@ -516,6 +516,66 @@ TEST_CASE(test_ramfs_finddir) {
     fs::Vfs::unlink("/RFIND.TMP");
 }
 
+/**
+ * @brief 测试删除仍被打开的文件
+ *
+ * unlink 之后目录里查不到该文件，但已打开的引用仍能读到原内容；
+ * 最后一个引用关闭时节点才被销毁。
+ */
+TEST_CASE(test_ramfs_unlink_while_open) {
+    // 用独立的 ramfs 实例，不依赖根文件系统的类型
+    fs_node_t *dir = fs::Ramfs::create("unlink_test");
+    ASSERT_NOT_NULL(dir);
+    ASSERT_EQ(dir->ops->create(dir, "OPEN.TMP"), 0);
+    
+    fs_node_t *file = fs::Vfs::finddir(dir, "OPEN.TMP");
+    ASSERT_NOT_NULL(file);
+    
+    const char *text = "still here";
+    uint32_t len = (uint32_t)strlen(text);
+    ASSERT_EQ_U(fs::Vfs::write(file, 0, len, (uint8_t *)text), len);
+    
+    // 模拟两个文件描述符指向它
+    fs::Vfs::pin(file);
+    fs::Vfs::pin(file);
+    
+    ASSERT_EQ(dir->ops->unlink(dir, "OPEN.TMP"), 0);
+    ASSERT_NULL(fs::Vfs::finddir(dir, "OPEN.TMP"));
+    ASSERT_TRUE((file->flags & FS_NODE_FLAG_UNLINKED) != 0);
+    
+    // 数据仍然可读
+    char buf[16];
+    memset(buf, 0, sizeof(buf));
+    ASSERT_EQ_U(fs::Vfs::read(file, 0, len, (uint8_t *)buf), len);
+    ASSERT_STR_EQ(buf, text);
+    
+    // 第一次关闭不销毁，最后一次关闭才销毁
+    ASSERT_FALSE(fs::Vfs::unpin(file));
+    ASSERT_TRUE(fs::Vfs::unpin(file));
+}
+
+/**
+ * @brief 测试未被打开的文件 unlink 后不残留打开计数状态
+ */
+TEST_CASE(test_ramfs_unpin_without_unlink) {
+    fs_node_t *dir = fs::Ramfs::create("pin_test");
+    ASSERT_NOT_NULL(dir);
+    ASSERT_EQ(dir->ops->create(dir, "KEEP.TMP"), 0);
+    
+    fs_node_t *file = fs::Vfs::finddir(dir, "KEEP.TMP");
+    ASSERT_NOT_NULL(file);
+    
+    // 没有 unlink 时，关闭最后一个引用不能销毁节点
+    fs::Vfs::pin(file);
+    ASSERT_TRUE(fs::Vfs::is_pinned(file));
+    ASSERT_FALSE(fs::Vfs::unpin(file));
+    ASSERT_FALSE(fs::Vfs::is_pinned(file));
+    ASSERT_EQ_PTR(fs::Vfs::finddir(dir, "KEEP.TMP"), file);
+    
+    ASSERT_EQ(dir->ops->unlink(dir, "KEEP.TMP"), 0);
+    ASSERT_NULL(fs::Vfs::finddir(dir, "KEEP.TMP"));
+}
+
 // ============================================================================
 // 测试套件定义
 // ============================================================================
@@ -557,6 +617,8 @@ TEST_SUITE(ramfs_edge_tests) {
     RUN_TEST(test_ramfs_read_empty);
     RUN_TEST(test_ramfs_read_past_eof);
     RUN_TEST(test_ramfs_finddir);
+    RUN_TEST(test_ramfs_unlink_while_open);
+    RUN_TEST(test_ramfs_unpin_without_unlink);
 }
 
 // ============================================================================

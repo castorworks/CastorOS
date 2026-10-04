@@ -319,6 +319,27 @@ static fs_node_t *ramfs_finddir(fs_node_t *node, const char *name) {
     return result;
 }
 
+/**
+ * 释放一个已从目录摘除的节点及其数据
+ */
+static void ramfs_destroy_node(fs_node_t *target) {
+    if (target->type == FS_DIRECTORY) {
+        ramfs_dir_t *target_dir = (ramfs_dir_t *)target->impl;
+        if (target_dir) {
+            kfree(target_dir);
+        }
+    } else if (target->type == FS_FILE) {
+        ramfs_file_t *file = (ramfs_file_t *)target->impl;
+        if (file) {
+            if (file->data) {
+                kfree(file->data);
+            }
+            kfree(file);
+        }
+    }
+    kfree(target);
+}
+
 class RamfsFileOps final : public fs::NodeOps {
 public:
     uint32_t supported() const override { return OP_READ | OP_WRITE | OP_OPEN | OP_CLOSE; }
@@ -333,6 +354,9 @@ public:
     }
     void close(fs_node_t *node) const override {
         ramfs_close(node);
+    }
+    void destroy(fs_node_t *node) const override {
+        ramfs_destroy_node(node);
     }
 };
 static const RamfsFileOps ramfs_file_ops{};
@@ -393,6 +417,7 @@ static int ramfs_create_file(fs_node_t *node, const char *name) {
     new_node->permissions = FS_PERM_READ | FS_PERM_WRITE;
     new_node->impl = file;
     new_node->ref_count = 0;  // 初始化引用计数
+    new_node->open_count = 0;
     new_node->flags = 0;  // RAMFS 节点不应该被自动释放
     
     // 设置操作函数
@@ -424,6 +449,9 @@ public:
     }
     int mkdir(fs_node_t *node, const char *name, uint32_t permissions) const override {
         return ramfs_mkdir(node, name, permissions);
+    }
+    void destroy(fs_node_t *node) const override {
+        ramfs_destroy_node(node);
     }
     int unlink(fs_node_t *node, const char *name) const override {
         return ramfs_unlink(node, name);
@@ -489,6 +517,7 @@ static int ramfs_mkdir(fs_node_t *node, const char *name, uint32_t permissions) 
     new_node->permissions = permissions;
     new_node->impl = new_dir;
     new_node->ref_count = 0;  // 初始化引用计数
+    new_node->open_count = 0;
     new_node->flags = 0;  // RAMFS 节点不应该被自动释放
     
     // 设置操作函数
@@ -591,29 +620,17 @@ static int ramfs_unlink(fs_node_t *node, const char *name) {
             dir->lock.unlock();
             return -1;  // 目录不为空
         }
-        
-        // 释放目录数据
-        if (target_dir) {
-            kfree(target_dir);
-        }
     }
     
-    // 如果是文件，释放文件数据
-    if (target->type == FS_FILE) {
-        ramfs_file_t *file = (ramfs_file_t *)target->impl;
-        if (file) {
-            if (file->data) {
-                kfree(file->data);
-            }
-            kfree(file);
-        }
-    }
-    
-    // 从目录中移除
+    // 从目录中移除：之后路径查找再也找不到它
     ramfs_remove_entry(dir, name);
     
-    // 释放节点
-    kfree(target);
+    if (fs::Vfs::is_pinned(target)) {
+        // 仍有文件描述符指向它：只标记，最后一次关闭时由 destroy() 释放
+        target->flags |= FS_NODE_FLAG_UNLINKED;
+    } else {
+        ramfs_destroy_node(target);
+    }
     
     dir->lock.unlock();
     return 0;
@@ -663,6 +680,7 @@ fs_node_t *fs::Ramfs::create(const char *name) {
     root->permissions = FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC;
     root->impl = root_dir;
     root->ref_count = 0;  // 初始化引用计数
+    root->open_count = 0;
     root->flags = 0;  // RAMFS 节点不应该被自动释放
     
     // 设置操作函数
