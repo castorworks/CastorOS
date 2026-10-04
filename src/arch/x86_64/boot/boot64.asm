@@ -21,7 +21,12 @@ PAGE_SIZE_2MB           equ (1 << 7)
 
 CR0_PG                  equ (1 << 31)
 CR0_WP                  equ (1 << 16)
+CR0_NE                  equ (1 << 5)    ; x87 错误走 #MF 而不是 IRQ13
+CR0_EM                  equ (1 << 2)    ; 置位时所有 x87/SSE 指令 #UD/#NM
+CR0_MP                  equ (1 << 1)
 CR4_PAE                 equ (1 << 5)
+CR4_OSFXSR              equ (1 << 9)    ; 允许 SSE 指令和 FXSAVE/FXRSTOR
+CR4_OSXMMEXCPT          equ (1 << 10)   ; SIMD 浮点异常走 #XM
 
 MSR_EFER                equ 0xC0000080
 EFER_LME                equ (1 << 8)
@@ -89,8 +94,11 @@ _start:
 
     call setup_page_tables
 
+    ; PAE 是长模式的前提。同时打开 SSE：x86_64 用户程序按 SysV ABI 编译，
+    ; 变参函数序言、浮点运算都会用 xmm 寄存器，OSFXSR=0 时这些指令是 #UD。
+    ; （内核自身用 -mno-sse 编译，不使用这些寄存器。）
     mov eax, cr4
-    or eax, CR4_PAE
+    or eax, CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT
     mov cr4, eax
 
     mov eax, BOOT_PML4_PHYS
@@ -102,7 +110,8 @@ _start:
     wrmsr
 
     mov eax, cr0
-    or eax, CR0_PG | CR0_WP
+    and eax, ~CR0_EM
+    or eax, CR0_PG | CR0_WP | CR0_MP | CR0_NE
     mov cr0, eax
 
     ; 使用绝对地址加载 GDT
@@ -255,6 +264,9 @@ long_mode_entry_high:
     ; 刷新 TLB
     mov rax, cr3
     mov cr3, rax
+
+    ; x87 进入已知的初始状态（控制字 0x37F）
+    fninit
 
     ; 设置栈
     mov rax, stack_top
