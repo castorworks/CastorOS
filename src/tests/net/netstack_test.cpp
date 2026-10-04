@@ -513,6 +513,50 @@ TEST_CASE(test_udp_recv_queue_bounded) {
     test_net_teardown();
 }
 
+/**
+ * socket 层按完整长度拒绝装不进一个帧的 UDP 数据报（不会截断后再 memcpy）。
+ */
+TEST_CASE(test_socket_udp_send_rejects_oversize) {
+    test_net_setup();
+    net::Arp::cache_update(T_PEER, T_PEER_MAC);
+
+    int fd = net::Socket::socket(AF_INET, SOCK_DGRAM, 0);
+    ASSERT_TRUE(fd >= 0);
+    if (fd < 0) { test_net_teardown(); return; }
+
+    struct sockaddr_in dst;
+    memset(&dst, 0, sizeof(dst));
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons(5000);
+    dst.sin_addr = T_PEER;
+
+    static uint8_t big[2000];
+
+    // 正好一个 MTU：发出去
+    ASSERT_EQ(1472, net::Socket::sendto(fd, big, 1472, 0,
+                                        (struct sockaddr *)&dst, sizeof(dst)));
+    ASSERT_EQ(1, cap_count);
+    if (cap_valid(0)) {
+        ASSERT_EQ_U(ETH_HEADER_LEN + 1500, cap[0].len);
+    }
+
+    // 再多一个字节：拒绝，什么也不发
+    cap_reset();
+    ASSERT_EQ(-EMSGSIZE, net::Socket::sendto(fd, big, 1473, 0,
+                                             (struct sockaddr *)&dst, sizeof(dst)));
+    ASSERT_EQ(-EMSGSIZE, net::Socket::sendto(fd, big, sizeof(big), 0,
+                                             (struct sockaddr *)&dst, sizeof(dst)));
+#if defined(ARCH_X86_64)
+    // 低 32 位很小、高位非零的长度：不能被截断成“合法”的小长度
+    ASSERT_EQ(-EMSGSIZE, net::Socket::sendto(fd, big, (size_t)0x100000010ULL, 0,
+                                             (struct sockaddr *)&dst, sizeof(dst)));
+#endif
+    ASSERT_EQ(0, cap_count);
+
+    net::Socket::closesocket(fd);
+    test_net_teardown();
+}
+
 // ============================================================================
 // DHCP
 // ============================================================================
@@ -992,6 +1036,7 @@ TEST_SUITE(netstack_ip_tests) {
 
 TEST_SUITE(netstack_udp_tests) {
     RUN_TEST(test_udp_recv_queue_bounded);
+    RUN_TEST(test_socket_udp_send_rejects_oversize);
 }
 
 TEST_SUITE(netstack_dhcp_tests) {

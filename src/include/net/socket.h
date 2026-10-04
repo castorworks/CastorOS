@@ -62,6 +62,7 @@
 
 // 错误码
 #define EAGAIN          11      ///< 资源暂时不可用
+#define EMSGSIZE        90      ///< 消息过长
 #define EWOULDBLOCK     EAGAIN  ///< 操作会阻塞
 
 // select() 相关定义

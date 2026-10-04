@@ -45,6 +45,9 @@ typedef struct socket {
     int error;
 } socket_t;
 
+// 单个 UDP 数据报的最大负载：协议栈不做发送分片，数据报必须装进一个以太网帧
+#define SOCKET_UDP_MAX_PAYLOAD  (1500 - IP_HEADER_MIN_LEN - UDP_HEADER_LEN)
+
 // Socket 表
 #define MAX_SOCKETS     64
 static socket_t *socket_table[MAX_SOCKETS];
@@ -334,8 +337,16 @@ ssize_t net::Socket::send(int sockfd, const void *buf, size_t len, int flags) {
     }
     
     if (sock->type == SOCK_STREAM) {
-        return net::Tcp::write(sock->pcb.tcp, buf, len);
+        // Tcp::write 的长度是 32 位的，返回值是 int：一次最多接受这么多
+        uint32_t n = (len > 0x7FFFFFFF) ? 0x7FFFFFFF : (uint32_t)len;
+        return net::Tcp::write(sock->pcb.tcp, buf, n);
     } else {
+        // 先按完整的 size_t 检查长度：下面的 alloc/put 只接受 32 位长度，
+        // 被截断后的小长度会通过它们的检查，而 memcpy 用的是完整长度
+        if (len > SOCKET_UDP_MAX_PAYLOAD) {
+            return -EMSGSIZE;
+        }
+
         // UDP: 使用已连接的地址
         net::Netbuf *nbuf = net::Netbuf::alloc(len);
         if (!nbuf) {
@@ -385,7 +396,12 @@ ssize_t net::Socket::sendto(int sockfd, const void *buf, size_t len, int flags,
     if (sin->sin_family != AF_INET) {
         return -1;
     }
-    
+
+    // 按完整的 size_t 检查长度（原因同 send()）
+    if (len > SOCKET_UDP_MAX_PAYLOAD) {
+        return -EMSGSIZE;
+    }
+
     net::Netbuf *nbuf = net::Netbuf::alloc(len);
     if (!nbuf) {
         return -1;
@@ -430,7 +446,8 @@ ssize_t net::Socket::recv(int sockfd, void *buf, size_t len, int flags) {
             return -1;  // 暂无数据
         }
         
-        return net::Tcp::read(pcb, buf, len);
+        uint32_t n = (len > 0x7FFFFFFF) ? 0x7FFFFFFF : (uint32_t)len;
+        return net::Tcp::read(pcb, buf, n);
     } else {
         // UDP: 从接收队列获取
         udp_pcb_t *pcb = sock->pcb.udp;
