@@ -103,6 +103,22 @@ public:
     static int get_info(HeapInfo *info);
 
     /**
+     * @brief 检查堆块链表是否完整
+     * @return 链表从堆起始到堆末尾首尾相接、前后指针一致时返回 true
+     *
+     * 每个块的数据区结束处必须正好是下一个块的块头，最后一个块必须结束在
+     * 堆的当前末尾。用于测试和调试。
+     */
+    static bool verify();
+
+    /**
+     * @brief 获取堆占用的虚拟地址范围
+     * @param start 输出：第一个块的地址
+     * @param max 输出：堆可增长到的最大地址
+     */
+    static void get_range(uintptr_t *start, uintptr_t *max);
+
+    /**
      * @brief 打印堆使用信息
      */
     static void print_info();

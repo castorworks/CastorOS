@@ -203,6 +203,11 @@ static void split(heap_block_t *b, size_t size) {
         if (b->next) b->next->prev = new_block;
         b->next = new_block;
         b->size = size;
+        // 分裂的是尾块时，余下的空闲块才是新的尾块；否则下次扩展堆时
+        // kmalloc 会把扩展块直接接在 b 后面，余块及其后的块就从链表里丢失
+        if (b == last_block) {
+            last_block = new_block;
+        }
     }
 }
 
@@ -214,6 +219,26 @@ static void split(heap_block_t *b, size_t size) {
 void mm::Heap::init(uintptr_t start, uint32_t size) {
     heap_start = heap_end = PAGE_ALIGN_UP(start);
     heap_max = heap_start + size;
+
+#if defined(ARCH_I686)
+    // i686 的堆把直接映射区的虚拟页改映射到新分配的帧上，于是物理帧
+    // VIRT_TO_PHYS(堆页) 就失去了 PHYS_TO_VIRT 别名。堆初始化之前分配出去的帧
+    // （mm::Vmm::init 为扩展直接映射分配的内核页表）正好落在这个范围的开头，
+    // 而内核始终通过 PHYS_TO_VIRT 访问页表，所以堆必须从这些帧之后开始。
+    // 之后的分配由 mm::Pmm::set_heap_reserved_range 挡在范围之外。
+    uintptr_t first_usable = heap_start;
+    for (uintptr_t v = heap_start; v < heap_max; v += PAGE_SIZE) {
+        if (mm::Pmm::frame_get_refcount((paddr_t)VIRT_TO_PHYS(v)) != 0) {
+            first_usable = v + PAGE_SIZE;
+        }
+    }
+    if (first_usable != heap_start) {
+        LOG_INFO_MSG("mm::Heap::init: skipping %u pages whose frames are already in use\n",
+                     (unsigned int)((first_usable - heap_start) / PAGE_SIZE));
+        if (first_usable >= heap_max) PANIC("Heap init failed: no usable range");
+        heap_start = heap_end = first_usable;
+    }
+#endif
     
     LOG_INFO_MSG("mm::Heap::init: start=0x%llx, max=0x%llx, size=%u\n", (unsigned long long)heap_start, (unsigned long long)heap_max, size);
     
@@ -420,6 +445,10 @@ void* kmalloc_aligned(size_t size, size_t alignment) {
     
     // 分配额外空间：alignment - 1 用于对齐，sizeof(void*) 用于存储原始指针
     size_t extra = alignment - 1 + sizeof(void*);
+    // size + extra 回绕后 kmalloc 会成功返回一块远小于请求的内存
+    if (extra < alignment || size > (size_t)-1 - extra) {
+        return NULL;
+    }
     void* raw = kmalloc(size + extra);
     if (!raw) {
         return NULL;
@@ -498,6 +527,36 @@ int mm::Heap::get_info(mm::HeapInfo *info) {
     info->free_block_count = free_block_count;
     
     return 0;
+}
+
+bool mm::Heap::verify() {
+    sync::SpinlockIrqGuard guard(heap_lock);
+
+    if (!first_block || (uintptr_t)first_block != heap_start) {
+        return false;
+    }
+
+    heap_block_t *prev = NULL;
+    for (heap_block_t *b = first_block; b; b = b->next) {
+        if (b->magic != HEAP_MAGIC || b->prev != prev) {
+            return false;
+        }
+        uintptr_t end = (uintptr_t)b + sizeof(heap_block_t) + b->size;
+        if (b->next) {
+            if (end != (uintptr_t)b->next) {
+                return false;
+            }
+        } else if (b != last_block || end != heap_end) {
+            return false;
+        }
+        prev = b;
+    }
+    return true;
+}
+
+void mm::Heap::get_range(uintptr_t *start, uintptr_t *max) {
+    if (start) *start = heap_start;
+    if (max) *max = heap_max;
 }
 
 /**
