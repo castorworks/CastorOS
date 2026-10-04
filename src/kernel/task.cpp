@@ -1072,6 +1072,9 @@ void kernel::Scheduler::schedule() {
     kernel::Interrupts::restore(prev_state);
 }
 
+/* 当前任务的时间片已用完，等待在返回用户态的抢占点切换 */
+static volatile bool need_resched = false;
+
 /**
  * @brief 定时器中断处理
  */
@@ -1129,8 +1132,9 @@ void kernel::Scheduler::timer_tick() {
     
     if (tick_count >= current_task->time_slice) {
         tick_count = 0;
-        // 在 IRQ 上下文中不调用 kernel::Scheduler::schedule()
-        // 调度会在 IRQ handler 返回时自动处理
+        // 这里还在中断处理函数里，不能切换任务：只记下“时间片用完”，
+        // 由 schedule_from_irq 在中断即将返回用户态时处理
+        need_resched = true;
     }
 }
 
@@ -1403,23 +1407,35 @@ void kernel::Scheduler::deliver_pending_kill() {
 }
 
 /**
- * @brief 从中断上下文调度
+ * @brief 中断返回前的抢占点
  *
- * 这个函数由 IRQ 处理程序调用，用于在中断返回时可能触发调度
- * 
- * @param regs 中断寄存器状态（未使用）
+ * 由各架构的 IRQ 分发函数在应答中断（EOI）并离开中断上下文之后调用。
+ *
+ * 只抢占用户态：被打断的是用户态代码时，当前任务的内核栈上只有这一个中断帧，
+ * 在这里切走、以后再切回来继续返回用户态是安全的。被打断的是内核态代码时
+ * 不切换（内核不可抢占，见并发规则 R1），等它自己让出或返回用户态。
+ *
+ * @param from_user 被打断的上下文是否为用户态
  */
-void schedule_from_irq(void *regs) {
-    (void)regs;
-    
-    // 注意：不能在 IRQ 上下文中直接调用 kernel::Scheduler::schedule()！
-    // 因为我们还在 IRQ 处理程序的栈帧中，切换任务会导致栈混乱
-    // 
-    // 正确的做法是：
-    // 1. 在 IRQ 返回到用户态之前进行调度（需要修改 IRQ 汇编代码）
-    // 2. 或者使用软中断/延迟调度机制
-    //
-    // 当前暂时禁用从 IRQ 的调度
+void schedule_from_irq(bool from_user) {
+    if (!from_user) {
+        return;
+    }
+
+    // 即将返回用户态：有待处理的 kill 就在这里退出。只在系统调用返回时投递的话，
+    // 从不进内核的进程（用户态死循环）永远杀不掉。exit 路径会清掉中断计数。
+    kernel::Scheduler::deliver_pending_kill();
+
+    if (!need_resched) {
+        return;
+    }
+    need_resched = false;
+
+    // 打断的是用户态，所以这是最外层的中断帧：此刻的嵌套计数全部属于它。
+    // 切换期间让出计数，换回来之后恢复，再由中断存根配对地减掉。
+    uint32_t depth = interrupt_depth_suspend();
+    kernel::Scheduler::schedule();
+    interrupt_depth_resume(depth);
 }
 
 /* ============================================================================

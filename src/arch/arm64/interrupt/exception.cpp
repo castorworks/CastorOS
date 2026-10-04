@@ -448,6 +448,9 @@ static void handle_irq(arm64_regs_t *regs, uint32_t source) {
     interrupt_enter();
     gic_handle_irq();
     interrupt_exit();
+
+    /* 抢占点：只在中断打断的是 EL0 时切换任务 */
+    schedule_from_irq(source == EXCEPTION_FROM_EL0_64);
 }
 
 /**

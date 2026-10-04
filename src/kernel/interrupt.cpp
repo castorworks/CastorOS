@@ -19,6 +19,16 @@ bool in_interrupt(void) {
     return interrupt_depth != 0;
 }
 
+uint32_t interrupt_depth_suspend(void) {
+    uint32_t depth = interrupt_depth;
+    interrupt_depth = 0;
+    return depth;
+}
+
+void interrupt_depth_resume(uint32_t depth) {
+    interrupt_depth = depth;
+}
+
 /* 违规时直接 panic：网络接收、TCP 定时器、USB 热插拔都已移到任务上下文，
  * 中断里不应再出现任何可睡眠操作。置为 false 可退回到只告警一次。 */
 static const bool MAY_SLEEP_VIOLATION_PANICS = true;

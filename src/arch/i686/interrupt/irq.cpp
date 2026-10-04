@@ -123,7 +123,6 @@ void irq_handler(registers_t *regs) {
     }
 
     /* 如果注册了处理函数，调用它 */
-    interrupt_enter();
     if (irq < 16 && irq_handlers[irq] != 0) {
         isr_handler_t handler = irq_handlers[irq];
         handler(regs);
@@ -136,13 +135,11 @@ void irq_handler(registers_t *regs) {
         /* 未处理的 IRQ */
         LOG_WARN_MSG("Unhandled IRQ %u (interrupt %u)\n", irq, regs->int_no);
     }
-    interrupt_exit();
-
     /* 发送 EOI 信号 */
     pic_send_eoi(irq);
 
     /* EOI 之后再尝试触发调度，避免阻塞 PIC */
-    schedule_from_irq(regs);
+    schedule_from_irq((regs->cs & 0x3) == 3);
 }
 
 /**

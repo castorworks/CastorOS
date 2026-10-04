@@ -124,7 +124,7 @@ static void timer_handler(registers_t *regs) {
 }
 
 /* Forward declaration for scheduler */
-extern void schedule_from_irq(void *regs);
+extern void schedule_from_irq(bool from_user);
 
 /* ============================================================================
  * IRQ Handler
@@ -144,7 +144,6 @@ void irq64_handler(registers_t *regs) {
     }
 
     /* Call registered handler if present */
-    interrupt_enter();
     if (irq < 16 && irq_handlers[irq] != 0) {
         isr_handler_t handler = irq_handlers[irq];
         handler(regs);
@@ -156,13 +155,11 @@ void irq64_handler(registers_t *regs) {
     } else {
         LOG_WARN_MSG("Unhandled IRQ %u (interrupt %llu)\n", irq, regs->int_no);
     }
-    interrupt_exit();
-
     /* Send EOI signal */
     pic_send_eoi(irq);
 
     /* Try to trigger scheduler after EOI */
-    schedule_from_irq(regs);
+    schedule_from_irq((regs->cs & 0x3) == 3);
 }
 
 /* ============================================================================

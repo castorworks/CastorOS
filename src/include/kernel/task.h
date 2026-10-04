@@ -274,7 +274,7 @@ extern "C" void task_exit(uint32_t exit_code) __attribute__((noreturn));
  * 
  * @param regs 中断寄存器状态
  */
-void schedule_from_irq(void *regs);
+void schedule_from_irq(bool from_user);
 
 /**
  * @brief 执行上下文切换

@@ -21,6 +21,17 @@ extern "C" void interrupt_exit(void);
 bool in_interrupt(void);
 
 /**
+ * 抢占点专用：把当前的中断嵌套计数取走并清零 / 之后放回。
+ *
+ * 计数是全局的，而它描述的是“当前这条执行流在某个中断帧里”。在中断返回
+ * 用户态的抢占点切换任务时，这一层计数属于被换下的任务的中断帧，不能带给
+ * 换上来的任务（否则它的 Mutex::lock 会被当成在中断里睡眠）；该任务被换回来、
+ * 继续走完中断返回路径之前再放回去。
+ */
+uint32_t interrupt_depth_suspend(void);
+void interrupt_depth_resume(uint32_t depth);
+
+/**
  * 在可能睡眠的操作入口调用（Mutex::lock、Semaphore::wait、Scheduler::block/sleep）。
  * 中断上下文里不允许睡眠：被打断的任务还没有保存成可恢复的状态，
  * 而且按任务身份判定持有者的锁会把中断误认成被打断的任务。
