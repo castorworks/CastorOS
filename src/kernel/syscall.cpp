@@ -22,6 +22,7 @@
 #include <net/socket.h>
 #endif
 #include <kernel/utsname.h>
+#include <kernel/uaccess.h>
 #include <kernel/task.h>
 #include <hal/hal.h>
 #include <lib/klog.h>
@@ -74,6 +75,47 @@ static inline syscall_arg_t syscall_arg6(const syscall_arg_t *frame) {
 #endif
 }
 
+/* ============================================================================
+ * 用户指针校验辅助
+ * 包装器拿到的地址/长度全部来自用户态，传给实现函数之前先在这里校验，
+ * 不合法一律返回 -1。
+ * ============================================================================ */
+
+#define SYSCALL_FAIL        ((syscall_arg_t)-1)
+#define USER_PATH_MAX       256     /* 含结尾 NUL */
+#define USER_SOCKADDR_MAX   128
+
+static inline bool user_str(syscall_arg_t p) {
+    return kernel::UAccess::strnlen((const char *)(uintptr_t)p, USER_PATH_MAX) >= 0;
+}
+
+static inline bool user_rd(syscall_arg_t p, size_t len) {
+    return kernel::UAccess::can_read((const void *)(uintptr_t)p, len);
+}
+
+static inline bool user_wr(syscall_arg_t p, size_t len) {
+    return kernel::UAccess::can_write((void *)(uintptr_t)p, len);
+}
+
+/* 可为空的输出指针 */
+static inline bool user_wr_opt(syscall_arg_t p, size_t len) {
+    return p == 0 || user_wr(p, len);
+}
+
+#if !defined(ARCH_ARM64)
+/* (addr, addrlen*) 形式的可选输出参数：两者都可为空，非空时按 *addrlen 校验 addr */
+static inline bool user_sockaddr_out(syscall_arg_t addr, syscall_arg_t addrlen_ptr) {
+    if (addrlen_ptr == 0) {
+        return addr == 0;
+    }
+    if (!user_wr(addrlen_ptr, sizeof(socklen_t))) {
+        return false;
+    }
+    socklen_t len = *(socklen_t *)(uintptr_t)addrlen_ptr;
+    return addr == 0 || (len <= USER_SOCKADDR_MAX && user_wr(addr, len));
+}
+#endif
+
 static syscall_arg_t sys_exit_wrapper(syscall_arg_t *frame, syscall_arg_t exit_code, 
                                       syscall_arg_t p2, syscall_arg_t p3, 
                                       syscall_arg_t p4, syscall_arg_t p5) {
@@ -102,8 +144,8 @@ static syscall_arg_t sys_execve_wrapper(syscall_arg_t *frame, syscall_arg_t path
     (void)argv; (void)envp; (void)p4; (void)p5;
     
     const char *user_path = (const char *)(uintptr_t)path_addr;
-    if (!user_path) {
-        return (syscall_arg_t)-1;
+    if (!user_str(path_addr)) {
+        return SYSCALL_FAIL;
     }
     
     // 将路径从用户空间复制到内核空间
@@ -133,6 +175,7 @@ static syscall_arg_t sys_execve_wrapper(syscall_arg_t *frame, syscall_arg_t path
 static syscall_arg_t sys_open_wrapper(syscall_arg_t *frame, syscall_arg_t path, syscall_arg_t flags, 
                                       syscall_arg_t mode, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
+    if (!(user_str(path))) return SYSCALL_FAIL;
     return syscall::Fs::open((const char *)(uintptr_t)path, (int32_t)flags, (uint32_t)mode);
 }
 
@@ -146,12 +189,14 @@ static syscall_arg_t sys_close_wrapper(syscall_arg_t *frame, syscall_arg_t fd, s
 static syscall_arg_t sys_read_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t buffer, 
                                       syscall_arg_t size, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
+    if (!(user_wr(buffer, (size_t)size))) return SYSCALL_FAIL;
     return syscall::Fs::read((int32_t)fd, (void *)(uintptr_t)buffer, (size_t)size);
 }
 
 static syscall_arg_t sys_write_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t buffer, 
                                        syscall_arg_t size, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
+    if (!(user_rd(buffer, (size_t)size))) return SYSCALL_FAIL;
     return syscall::Fs::write((int32_t)fd, (const void *)(uintptr_t)buffer, (size_t)size);
 }
 
@@ -164,42 +209,49 @@ static syscall_arg_t sys_lseek_wrapper(syscall_arg_t *frame, syscall_arg_t fd, s
 static syscall_arg_t sys_mkdir_wrapper(syscall_arg_t *frame, syscall_arg_t path, syscall_arg_t mode, 
                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
+    if (!(user_str(path))) return SYSCALL_FAIL;
     return syscall::Fs::mkdir((const char *)(uintptr_t)path, (uint32_t)mode);
 }
 
 static syscall_arg_t sys_unlink_wrapper(syscall_arg_t *frame, syscall_arg_t path, syscall_arg_t p2, 
                                         syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
+    if (!(user_str(path))) return SYSCALL_FAIL;
     return syscall::Fs::unlink((const char *)(uintptr_t)path);
 }
 
 static syscall_arg_t sys_chdir_wrapper(syscall_arg_t *frame, syscall_arg_t path, syscall_arg_t p2, 
                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
+    if (!(user_str(path))) return SYSCALL_FAIL;
     return syscall::Fs::chdir((const char *)(uintptr_t)path);
 }
 
 static syscall_arg_t sys_getcwd_wrapper(syscall_arg_t *frame, syscall_arg_t buffer, syscall_arg_t size, 
                                         syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
+    if (!(user_wr(buffer, (size_t)size))) return SYSCALL_FAIL;
     return syscall::Fs::getcwd((char *)(uintptr_t)buffer, (size_t)size);
 }
 
 static syscall_arg_t sys_getdents_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t index, 
                                           syscall_arg_t dirent, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
+    if (!(user_wr(dirent, sizeof(struct dirent)))) return SYSCALL_FAIL;
     return syscall::Fs::getdents((int32_t)fd, (uint32_t)index, (void *)(uintptr_t)dirent);
 }
 
 static syscall_arg_t sys_stat_wrapper(syscall_arg_t *frame, syscall_arg_t path, syscall_arg_t buf, 
                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
+    if (!(user_str(path) && user_wr(buf, sizeof(struct stat)))) return SYSCALL_FAIL;
     return syscall::Fs::stat((const char *)(uintptr_t)path, (struct stat *)(uintptr_t)buf);
 }
 
 static syscall_arg_t sys_fstat_wrapper(syscall_arg_t *frame, syscall_arg_t fd, syscall_arg_t buf, 
                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
+    if (!(user_wr(buf, sizeof(struct stat)))) return SYSCALL_FAIL;
     return syscall::Fs::fstat((int32_t)fd, (struct stat *)(uintptr_t)buf);
 }
 
@@ -212,6 +264,7 @@ static syscall_arg_t sys_ftruncate_wrapper(syscall_arg_t *frame, syscall_arg_t f
 static syscall_arg_t sys_pipe_wrapper(syscall_arg_t *frame, syscall_arg_t fds, syscall_arg_t p2, 
                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
+    if (!(user_wr(fds, 2 * sizeof(int32_t)))) return SYSCALL_FAIL;
     return syscall::Fs::pipe((int32_t *)(uintptr_t)fds);
 }
 
@@ -241,6 +294,20 @@ static syscall_arg_t sys_ioctl_wrapper(syscall_arg_t *frame, syscall_arg_t fd, s
 #if defined(ARCH_ARM64)
     return sys_ioctl_stub((int32_t)fd, (uint32_t)request, (void *)(uintptr_t)argp);
 #else
+    size_t arg_size;
+    uint32_t req = (uint32_t)request;
+    if (req >= SIOCGIFADDR && req <= SIOCSIFGATEWAY) {
+        arg_size = sizeof(struct ifreq);
+    } else if (req >= SIOCSARP && req <= SIOCDARP) {
+        arg_size = sizeof(struct arpreq);
+    } else if (req == SIOCPING) {
+        arg_size = sizeof(struct ping_req);
+    } else if (req == SIOCGIFSTATS) {
+        arg_size = sizeof(struct ifstats);
+    } else {
+        return SYSCALL_FAIL;
+    }
+    if (!user_wr(argp, arg_size)) return SYSCALL_FAIL;
     return syscall::Net::ioctl((int32_t)fd, (uint32_t)request, (void *)(uintptr_t)argp);
 #endif
 }
@@ -269,6 +336,7 @@ static syscall_arg_t sys_nanosleep_wrapper(syscall_arg_t *frame, syscall_arg_t r
     (void)frame; (void)p3; (void)p4; (void)p5;
     const struct timespec *req = (const struct timespec *)(uintptr_t)req_ptr;
     struct timespec *rem = (struct timespec *)(uintptr_t)rem_ptr;
+    if (!(user_rd(req_ptr, sizeof(struct timespec)) && user_wr_opt(rem_ptr, sizeof(struct timespec)))) return SYSCALL_FAIL;
     return syscall::Process::nanosleep(req, rem);
 }
 
@@ -301,6 +369,7 @@ static syscall_arg_t sys_kill_wrapper(syscall_arg_t *frame, syscall_arg_t pid, s
 static syscall_arg_t sys_waitpid_wrapper(syscall_arg_t *frame, syscall_arg_t pid, syscall_arg_t wstatus_ptr,
                                          syscall_arg_t options, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
+    if (!(user_wr_opt(wstatus_ptr, sizeof(uint32_t)))) return SYSCALL_FAIL;
     return syscall::Process::waitpid((int32_t)pid, (uint32_t *)(uintptr_t)wstatus_ptr, (uint32_t)options);
 }
 
@@ -327,12 +396,14 @@ static syscall_arg_t sys_munmap_wrapper(syscall_arg_t *frame, syscall_arg_t addr
 static syscall_arg_t sys_uname_wrapper(syscall_arg_t *frame, syscall_arg_t buf, syscall_arg_t p2,
                                        syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
+    if (!(user_wr(buf, sizeof(struct utsname)))) return SYSCALL_FAIL;
     return syscall::System::uname((struct utsname *)(uintptr_t)buf);
 }
 
 static syscall_arg_t sys_rename_wrapper(syscall_arg_t *frame, syscall_arg_t oldpath, syscall_arg_t newpath,
                                         syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
+    if (!(user_str(oldpath) && user_str(newpath))) return SYSCALL_FAIL;
     return syscall::Fs::rename((const char *)(uintptr_t)oldpath, (const char *)(uintptr_t)newpath);
 }
 
@@ -353,6 +424,7 @@ static syscall_arg_t sys_bind_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd
                                       syscall_arg_t addr, syscall_arg_t addrlen, 
                                       syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
+    if (!(addrlen <= USER_SOCKADDR_MAX && user_rd(addr, (size_t)addrlen))) return SYSCALL_FAIL;
     return (syscall_arg_t)net::Socket::bind((int)sockfd, (const struct sockaddr *)(uintptr_t)addr, 
                                    (socklen_t)addrlen);
 }
@@ -368,6 +440,7 @@ static syscall_arg_t sys_accept_wrapper(syscall_arg_t *frame, syscall_arg_t sock
                                         syscall_arg_t addr, syscall_arg_t addrlen, 
                                         syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
+    if (!(user_sockaddr_out(addr, addrlen))) return SYSCALL_FAIL;
     return (syscall_arg_t)net::Socket::accept((int)sockfd, (struct sockaddr *)(uintptr_t)addr, 
                                      (socklen_t *)(uintptr_t)addrlen);
 }
@@ -376,6 +449,7 @@ static syscall_arg_t sys_connect_wrapper(syscall_arg_t *frame, syscall_arg_t soc
                                          syscall_arg_t addr, syscall_arg_t addrlen, 
                                          syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
+    if (!(addrlen <= USER_SOCKADDR_MAX && user_rd(addr, (size_t)addrlen))) return SYSCALL_FAIL;
     return (syscall_arg_t)net::Socket::connect((int)sockfd, (const struct sockaddr *)(uintptr_t)addr, 
                                       (socklen_t)addrlen);
 }
@@ -384,6 +458,7 @@ static syscall_arg_t sys_send_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd
                                       syscall_arg_t buf, syscall_arg_t len, 
                                       syscall_arg_t flags, syscall_arg_t p5) {
     (void)frame; (void)p5;
+    if (!(user_rd(buf, (size_t)len))) return SYSCALL_FAIL;
     return (syscall_arg_t)net::Socket::send((int)sockfd, (const void *)(uintptr_t)buf, 
                                    (size_t)len, (int)flags);
 }
@@ -393,6 +468,7 @@ static syscall_arg_t sys_sendto_wrapper(syscall_arg_t *frame, syscall_arg_t sock
                                         syscall_arg_t flags, syscall_arg_t dest_addr) {
     // 第 6 个参数 addrlen 从保存的寄存器帧中取
     syscall_arg_t addrlen = syscall_arg6(frame);
+    if (!(user_rd(buf, (size_t)len) && (dest_addr == 0 || (addrlen <= USER_SOCKADDR_MAX && user_rd(dest_addr, (size_t)addrlen))))) return SYSCALL_FAIL;
     return (syscall_arg_t)net::Socket::sendto((int)sockfd, (const void *)(uintptr_t)buf, 
                                      (size_t)len, (int)flags,
                                      (const struct sockaddr *)(uintptr_t)dest_addr, 
@@ -403,6 +479,7 @@ static syscall_arg_t sys_recv_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd
                                       syscall_arg_t buf, syscall_arg_t len, 
                                       syscall_arg_t flags, syscall_arg_t p5) {
     (void)frame; (void)p5;
+    if (!(user_wr(buf, (size_t)len))) return SYSCALL_FAIL;
     return (syscall_arg_t)net::Socket::recv((int)sockfd, (void *)(uintptr_t)buf, 
                                    (size_t)len, (int)flags);
 }
@@ -411,7 +488,9 @@ static syscall_arg_t sys_recvfrom_wrapper(syscall_arg_t *frame, syscall_arg_t so
                                           syscall_arg_t buf, syscall_arg_t len, 
                                           syscall_arg_t flags, syscall_arg_t src_addr) {
     // 第 6 个参数 addrlen 指针从保存的寄存器帧中取
-    socklen_t *addrlen = (socklen_t *)(uintptr_t)syscall_arg6(frame);
+    syscall_arg_t addrlen_ptr = syscall_arg6(frame);
+    socklen_t *addrlen = (socklen_t *)(uintptr_t)addrlen_ptr;
+    if (!(user_wr(buf, (size_t)len) && user_sockaddr_out(src_addr, addrlen_ptr))) return SYSCALL_FAIL;
     return (syscall_arg_t)net::Socket::recvfrom((int)sockfd, (void *)(uintptr_t)buf, 
                                        (size_t)len, (int)flags,
                                        (struct sockaddr *)(uintptr_t)src_addr, addrlen);
@@ -428,6 +507,7 @@ static syscall_arg_t sys_setsockopt_wrapper(syscall_arg_t *frame, syscall_arg_t 
                                             syscall_arg_t level, syscall_arg_t optname, 
                                             syscall_arg_t optval, syscall_arg_t optlen) {
     (void)frame;
+    if (!(optlen <= USER_SOCKADDR_MAX && user_rd(optval, (size_t)optlen))) return SYSCALL_FAIL;
     return (syscall_arg_t)net::Socket::setsockopt((int)sockfd, (int)level, (int)optname,
                                          (const void *)(uintptr_t)optval, (socklen_t)optlen);
 }
@@ -436,6 +516,7 @@ static syscall_arg_t sys_getsockopt_wrapper(syscall_arg_t *frame, syscall_arg_t 
                                             syscall_arg_t level, syscall_arg_t optname, 
                                             syscall_arg_t optval, syscall_arg_t optlen) {
     (void)frame;
+    if (!(optlen != 0 && optval != 0 && user_sockaddr_out(optval, optlen))) return SYSCALL_FAIL;
     return (syscall_arg_t)net::Socket::getsockopt((int)sockfd, (int)level, (int)optname,
                                          (void *)(uintptr_t)optval, 
                                          (socklen_t *)(uintptr_t)optlen);
@@ -445,6 +526,7 @@ static syscall_arg_t sys_getsockname_wrapper(syscall_arg_t *frame, syscall_arg_t
                                              syscall_arg_t addr, syscall_arg_t addrlen, 
                                              syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
+    if (!(addrlen != 0 && addr != 0 && user_sockaddr_out(addr, addrlen))) return SYSCALL_FAIL;
     return (syscall_arg_t)net::Socket::getsockname((int)sockfd, (struct sockaddr *)(uintptr_t)addr, 
                                           (socklen_t *)(uintptr_t)addrlen);
 }
@@ -453,6 +535,7 @@ static syscall_arg_t sys_getpeername_wrapper(syscall_arg_t *frame, syscall_arg_t
                                              syscall_arg_t addr, syscall_arg_t addrlen, 
                                              syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
+    if (!(addrlen != 0 && addr != 0 && user_sockaddr_out(addr, addrlen))) return SYSCALL_FAIL;
     return (syscall_arg_t)net::Socket::getpeername((int)sockfd, (struct sockaddr *)(uintptr_t)addr, 
                                           (socklen_t *)(uintptr_t)addrlen);
 }
@@ -461,6 +544,7 @@ static syscall_arg_t sys_select_wrapper(syscall_arg_t *frame, syscall_arg_t nfds
                                         syscall_arg_t readfds, syscall_arg_t writefds, 
                                         syscall_arg_t exceptfds, syscall_arg_t timeout) {
     (void)frame;
+    if (!(user_wr_opt(readfds, sizeof(fd_set)) && user_wr_opt(writefds, sizeof(fd_set)) && user_wr_opt(exceptfds, sizeof(fd_set)) && user_wr_opt(timeout, sizeof(struct timeval)))) return SYSCALL_FAIL;
     return (syscall_arg_t)net::Socket::select((int)nfds, (fd_set *)(uintptr_t)readfds, 
                                      (fd_set *)(uintptr_t)writefds,
                                      (fd_set *)(uintptr_t)exceptfds, 
