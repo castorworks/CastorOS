@@ -187,6 +187,32 @@ public:
      * @return 0 成功，-1 失败
      */
     static int32_t ioctl(int32_t fd, uint32_t request, void *argp);
+
+    /* ------------------------------------------------------------------------
+     * socket 与进程文件描述符表的衔接
+     *
+     * net::Socket 用自己的全局编号（下面称 sid）管理 socket。用户态看到的
+     * 是进程 fd：每个 socket 对应一个 FS_SOCKET 类型的 VFS 节点，登记在进程的
+     * fd 表里。这样 close()、dup、fork 和进程退出都按普通 fd 处理，最后一个
+     * fd 关闭时 socket 才真正关闭；别的进程拿不到这个 fd，也就碰不到这个 socket。
+     * ---------------------------------------------------------------------- */
+
+    /**
+     * @brief 给一个刚创建的 socket 分配进程 fd
+     * @param sid net::Socket 返回的 socket 编号（所有权随之转移）
+     * @return 进程 fd；失败返回 -1，此时 sid 已被关闭
+     */
+    static int32_t socket_fd_alloc(int sid);
+
+    /**
+     * @brief 把进程 fd 换成 socket 编号
+     * @return socket 编号；fd 无效或不是 socket 时返回 -1
+     */
+    static int socket_sid(int32_t fd);
+
+    /** @brief select：fd 集合里的进程 fd 换成 socket 编号后转给 net::Socket::select */
+    static int select(int nfds, fd_set *readfds, fd_set *writefds,
+                      fd_set *exceptfds, struct timeval *timeout);
 };
 
 } // namespace syscall

@@ -1452,6 +1452,37 @@ int net::Tcp::close(tcp_pcb_t *pcb) {
     return 0;
 }
 
+/* orphaned 的 PCB 等待正常关闭完成的最长时间 */
+#define TCP_ORPHAN_TIMEOUT_MS 75000
+
+void net::Tcp::release(tcp_pcb_t *pcb) {
+    if (!pcb) {
+        return;
+    }
+
+    // 不会再有人接收回调
+    pcb->accept_callback = NULL;
+    pcb->recv_callback = NULL;
+    pcb->sent_callback = NULL;
+    pcb->error_callback = NULL;
+
+    // 监听 PCB 没有连接可言，直接释放（pcb_free 会清理它的半连接和待 accept 队列）
+    if (pcb->state == TCP_LISTEN) {
+        net::Tcp::pcb_free(pcb);
+        return;
+    }
+
+    net::Tcp::close(pcb);   // 已经在关闭过程中时返回 -1，无妨
+    if (pcb->state == TCP_CLOSED) {
+        net::Tcp::pcb_free(pcb);
+        return;
+    }
+
+    // 数据和 FIN 还没发完/确认完：交给定时器，等连接关闭后释放
+    pcb->orphan_deadline = (uint32_t)drivers::Timer::get_uptime_ms() + TCP_ORPHAN_TIMEOUT_MS;
+    pcb->orphaned = true;
+}
+
 void net::Tcp::abort(tcp_pcb_t *pcb) {
     if (!pcb) {
         return;
@@ -1647,6 +1678,12 @@ void net::Tcp::timer() {
             if (pcb->unacked) {
                 tcp_free_unacked(pcb);
             }
+            // 没有 socket 引用的已关闭 PCB 在这里释放
+            if (pcb->orphaned) {
+                tcp_lock.unlock_irqrestore(irq_state);
+                net::Tcp::pcb_free(pcb);
+                tcp_lock.lock_irqsave(irq_state);
+            }
             pcb = next;
             continue;
         }
@@ -1724,6 +1761,16 @@ void net::Tcp::timer() {
                           pcb->local_port);
             pcb->state = TCP_CLOSED;
             pcb->timer_time_wait = 0;
+        }
+
+        // 没有 socket 引用的 PCB 迟迟关不掉（对端不响应）：到期复位并释放。
+        // 正常关闭完成的在下一次进入循环时由上面的 CLOSED 分支释放。
+        if (pcb->orphaned && pcb->state != TCP_CLOSED &&
+            (int32_t)(now - pcb->orphan_deadline) >= 0) {
+            tcp_lock.unlock_irqrestore(irq_state);
+            net::Tcp::abort(pcb);
+            net::Tcp::pcb_free(pcb);
+            tcp_lock.lock_irqsave(irq_state);
         }
 
         pcb = next;

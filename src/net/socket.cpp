@@ -516,8 +516,9 @@ int net::Socket::closesocket(int sockfd) {
     
     // 关闭协议控制块
     if (sock->type == SOCK_STREAM && sock->pcb.tcp) {
-        net::Tcp::close(sock->pcb.tcp);
-        net::Tcp::pcb_free(sock->pcb.tcp);
+        // 不能立刻 pcb_free：发送缓冲区里的数据和 FIN 还要发出去
+        net::Tcp::release(sock->pcb.tcp);
+        sock->pcb.tcp = NULL;
     } else if (sock->type == SOCK_DGRAM && sock->pcb.udp) {
         net::Udp::pcb_free(sock->pcb.udp);
     }

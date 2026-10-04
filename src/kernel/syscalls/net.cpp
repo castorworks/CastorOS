@@ -8,6 +8,12 @@
 
 #include <kernel/syscalls/net.h>
 #include <net/net.h>
+#include <net/socket.h>
+#include <kernel/task.h>
+#include <kernel/fd_table.h>
+#include <kernel/syscalls/fs.h>
+#include <fs/vfs.h>
+#include <mm/heap.h>
 #include <net/netdev.h>
 #include <net/ip.h>
 #include <net/arp.h>
@@ -459,4 +465,137 @@ int32_t netif_arp_delete(const char *ip_str) {
     }
     
     return net::Arp::cache_delete(ip);
+}
+
+/* ============================================================================
+ * socket 与进程文件描述符表的衔接
+ * ============================================================================ */
+
+/** socket 节点：impl_data 保存 net::Socket 的 socket 编号 */
+class SocketNodeOps final : public fs::NodeOps {
+public:
+    uint32_t supported() const override { return OP_READ | OP_WRITE; }
+
+    uint32_t read(fs_node_t *node, uint32_t, uint32_t size, uint8_t *buffer) const override {
+        ssize_t n = net::Socket::recv((int)node->impl_data, buffer, size, 0);
+        return n > 0 ? (uint32_t)n : 0;
+    }
+
+    uint32_t write(fs_node_t *node, uint32_t, uint32_t size, uint8_t *buffer) const override {
+        ssize_t n = net::Socket::send((int)node->impl_data, buffer, size, 0);
+        return n > 0 ? (uint32_t)n : 0;
+    }
+
+    /* 节点的最后一个引用（最后一个 fd）消失时关闭 socket。
+     * impl 只是让 VFS 调到这里的非空标记，不是要 kfree 的内存。 */
+    void release_impl(fs_node_t *node) const override {
+        net::Socket::closesocket((int)node->impl_data);
+    }
+};
+static const SocketNodeOps socket_node_ops{};
+
+int32_t syscall::Net::socket_fd_alloc(int sid) {
+    if (sid < 0) {
+        return -1;
+    }
+
+    task_t *current = kernel::Scheduler::get_current();
+    fs_node_t *node = NULL;
+    if (current && current->fd_table) {
+        node = (fs_node_t *)kmalloc(sizeof(fs_node_t));
+    }
+    if (!node) {
+        net::Socket::closesocket(sid);
+        return -1;
+    }
+
+    memset(node, 0, sizeof(fs_node_t));
+    strcpy(node->name, "socket");
+    node->type = FS_SOCKET;
+    node->flags = FS_NODE_FLAG_ALLOCATED;
+    node->ref_count = 1;
+    node->impl = node;
+    node->impl_data = (uint32_t)sid;
+    node->ops = &socket_node_ops;
+
+    int32_t fd = kernel::FdTable::alloc(current->fd_table, node, O_RDWR);
+    // fd 表拿到了自己的引用；放掉创建时的那一个。
+    // 分配失败时这次释放使引用归零，release_impl 会关闭 socket。
+    fs::Vfs::release_node(node);
+    return fd;
+}
+
+int syscall::Net::socket_sid(int32_t fd) {
+    task_t *current = kernel::Scheduler::get_current();
+    if (!current || !current->fd_table) {
+        return -1;
+    }
+    kernel::FdEntry *entry = kernel::FdTable::get(current->fd_table, fd);
+    if (!entry || !entry->node || entry->node->type != FS_SOCKET) {
+        return -1;
+    }
+    return (int)entry->node->impl_data;
+}
+
+int syscall::Net::select(int nfds, fd_set *readfds, fd_set *writefds,
+                         fd_set *exceptfds, struct timeval *timeout) {
+    if (nfds < 0) {
+        return -1;
+    }
+    if (nfds > FD_SETSIZE) {
+        nfds = FD_SETSIZE;
+    }
+
+    fd_set *user_sets[3] = { readfds, writefds, exceptfds };
+    fd_set sid_sets[3];
+    int fd_of_sid[FD_SETSIZE];
+    for (int i = 0; i < FD_SETSIZE; i++) {
+        fd_of_sid[i] = -1;
+    }
+
+    // 进程 fd -> socket 编号
+    int max_sid = -1;
+    for (int s = 0; s < 3; s++) {
+        FD_ZERO(&sid_sets[s]);
+        if (!user_sets[s]) {
+            continue;
+        }
+        for (int fd = 0; fd < nfds; fd++) {
+            if (!FD_ISSET(fd, user_sets[s])) {
+                continue;
+            }
+            int sid = syscall::Net::socket_sid(fd);
+            if (sid < 0 || sid >= FD_SETSIZE) {
+                return -1;  // 集合里有不是 socket 的 fd
+            }
+            FD_SET(sid, &sid_sets[s]);
+            fd_of_sid[sid] = fd;
+            if (sid > max_sid) {
+                max_sid = sid;
+            }
+        }
+    }
+
+    int ready = net::Socket::select(max_sid + 1,
+                                    readfds ? &sid_sets[0] : NULL,
+                                    writefds ? &sid_sets[1] : NULL,
+                                    exceptfds ? &sid_sets[2] : NULL,
+                                    timeout);
+    if (ready < 0) {
+        return ready;
+    }
+
+    // socket 编号 -> 进程 fd
+    for (int s = 0; s < 3; s++) {
+        if (!user_sets[s]) {
+            continue;
+        }
+        FD_ZERO(user_sets[s]);
+        for (int sid = 0; sid <= max_sid; sid++) {
+            if (FD_ISSET(sid, &sid_sets[s]) && fd_of_sid[sid] >= 0) {
+                FD_SET(fd_of_sid[sid], user_sets[s]);
+            }
+        }
+    }
+    return ready;
 }

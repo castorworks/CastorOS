@@ -190,6 +190,8 @@ typedef struct tcp_pcb {
     uint32_t send_buf_size;     ///< 发送缓冲区大小
     uint32_t send_len;          ///< 待发送数据长度（尚未装入段发出的数据）
     bool fin_pending;           ///< 已请求关闭：发送缓冲区排空后发送 FIN
+    bool orphaned;              ///< 已没有 socket 引用：连接走完关闭流程后由定时器释放
+    uint32_t orphan_deadline;   ///< orphaned 的 PCB 最迟在这个时刻（毫秒）被强制释放
 
     uint8_t *recv_buf;          ///< 接收缓冲区
     uint32_t recv_buf_size;     ///< 接收缓冲区大小
@@ -309,6 +311,15 @@ public:
      * @return 0 成功，-1 失败
      */
     static int close(tcp_pcb_t *pcb);
+
+    /**
+     * @brief socket 不再使用这个 PCB
+     *
+     * 发起正常关闭（发送缓冲区里的数据和 FIN 仍会发出），PCB 在连接到达
+     * CLOSED 之后由 TCP 定时器释放；对端一直不响应时到期强制释放。
+     * 调用后调用者不得再访问 pcb。
+     */
+    static void release(tcp_pcb_t *pcb);
 
     /**
      * @brief 中止连接（发送 RST）

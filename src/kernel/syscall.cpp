@@ -426,7 +426,8 @@ static syscall_arg_t sys_socket_wrapper(syscall_arg_t *frame, syscall_arg_t doma
                                         syscall_arg_t type, syscall_arg_t protocol, 
                                         syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
-    return (syscall_arg_t)net::Socket::socket((int)domain, (int)type, (int)protocol);
+    return (syscall_arg_t)syscall::Net::socket_fd_alloc(
+        net::Socket::socket((int)domain, (int)type, (int)protocol));
 }
 
 static syscall_arg_t sys_bind_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
@@ -434,7 +435,7 @@ static syscall_arg_t sys_bind_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd
                                       syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
     if (!(addrlen <= USER_SOCKADDR_MAX && user_rd(addr, (size_t)addrlen))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::bind((int)sockfd, (const struct sockaddr *)(uintptr_t)addr, 
+    return (syscall_arg_t)net::Socket::bind(syscall::Net::socket_sid((int)sockfd), (const struct sockaddr *)(uintptr_t)addr, 
                                    (socklen_t)addrlen);
 }
 
@@ -442,7 +443,7 @@ static syscall_arg_t sys_listen_wrapper(syscall_arg_t *frame, syscall_arg_t sock
                                         syscall_arg_t backlog, syscall_arg_t p3, 
                                         syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    return (syscall_arg_t)net::Socket::listen((int)sockfd, (int)backlog);
+    return (syscall_arg_t)net::Socket::listen(syscall::Net::socket_sid((int)sockfd), (int)backlog);
 }
 
 static syscall_arg_t sys_accept_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
@@ -450,8 +451,9 @@ static syscall_arg_t sys_accept_wrapper(syscall_arg_t *frame, syscall_arg_t sock
                                         syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
     if (!(user_sockaddr_out(addr, addrlen))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::accept((int)sockfd, (struct sockaddr *)(uintptr_t)addr, 
-                                     (socklen_t *)(uintptr_t)addrlen);
+    return (syscall_arg_t)syscall::Net::socket_fd_alloc(
+        net::Socket::accept(syscall::Net::socket_sid((int)sockfd), (struct sockaddr *)(uintptr_t)addr, 
+                                     (socklen_t *)(uintptr_t)addrlen));
 }
 
 static syscall_arg_t sys_connect_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
@@ -459,7 +461,7 @@ static syscall_arg_t sys_connect_wrapper(syscall_arg_t *frame, syscall_arg_t soc
                                          syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
     if (!(addrlen <= USER_SOCKADDR_MAX && user_rd(addr, (size_t)addrlen))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::connect((int)sockfd, (const struct sockaddr *)(uintptr_t)addr, 
+    return (syscall_arg_t)net::Socket::connect(syscall::Net::socket_sid((int)sockfd), (const struct sockaddr *)(uintptr_t)addr, 
                                       (socklen_t)addrlen);
 }
 
@@ -468,7 +470,7 @@ static syscall_arg_t sys_send_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd
                                       syscall_arg_t flags, syscall_arg_t p5) {
     (void)frame; (void)p5;
     if (!(user_rd(buf, (size_t)len))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::send((int)sockfd, (const void *)(uintptr_t)buf, 
+    return (syscall_arg_t)net::Socket::send(syscall::Net::socket_sid((int)sockfd), (const void *)(uintptr_t)buf, 
                                    (size_t)len, (int)flags);
 }
 
@@ -478,7 +480,7 @@ static syscall_arg_t sys_sendto_wrapper(syscall_arg_t *frame, syscall_arg_t sock
     // 第 6 个参数 addrlen 从保存的寄存器帧中取
     syscall_arg_t addrlen = syscall_arg6(frame);
     if (!(user_rd(buf, (size_t)len) && (dest_addr == 0 || (addrlen <= USER_SOCKADDR_MAX && user_rd(dest_addr, (size_t)addrlen))))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::sendto((int)sockfd, (const void *)(uintptr_t)buf, 
+    return (syscall_arg_t)net::Socket::sendto(syscall::Net::socket_sid((int)sockfd), (const void *)(uintptr_t)buf, 
                                      (size_t)len, (int)flags,
                                      (const struct sockaddr *)(uintptr_t)dest_addr, 
                                      (socklen_t)addrlen);
@@ -489,7 +491,7 @@ static syscall_arg_t sys_recv_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd
                                       syscall_arg_t flags, syscall_arg_t p5) {
     (void)frame; (void)p5;
     if (!(user_wr(buf, (size_t)len))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::recv((int)sockfd, (void *)(uintptr_t)buf, 
+    return (syscall_arg_t)net::Socket::recv(syscall::Net::socket_sid((int)sockfd), (void *)(uintptr_t)buf, 
                                    (size_t)len, (int)flags);
 }
 
@@ -500,7 +502,7 @@ static syscall_arg_t sys_recvfrom_wrapper(syscall_arg_t *frame, syscall_arg_t so
     syscall_arg_t addrlen_ptr = syscall_arg6(frame);
     socklen_t *addrlen = (socklen_t *)(uintptr_t)addrlen_ptr;
     if (!(user_wr(buf, (size_t)len) && user_sockaddr_out(src_addr, addrlen_ptr))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::recvfrom((int)sockfd, (void *)(uintptr_t)buf, 
+    return (syscall_arg_t)net::Socket::recvfrom(syscall::Net::socket_sid((int)sockfd), (void *)(uintptr_t)buf, 
                                        (size_t)len, (int)flags,
                                        (struct sockaddr *)(uintptr_t)src_addr, addrlen);
 }
@@ -509,7 +511,7 @@ static syscall_arg_t sys_shutdown_wrapper(syscall_arg_t *frame, syscall_arg_t so
                                           syscall_arg_t how, syscall_arg_t p3, 
                                           syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    return (syscall_arg_t)net::Socket::shutdown((int)sockfd, (int)how);
+    return (syscall_arg_t)net::Socket::shutdown(syscall::Net::socket_sid((int)sockfd), (int)how);
 }
 
 static syscall_arg_t sys_setsockopt_wrapper(syscall_arg_t *frame, syscall_arg_t sockfd, 
@@ -517,7 +519,7 @@ static syscall_arg_t sys_setsockopt_wrapper(syscall_arg_t *frame, syscall_arg_t 
                                             syscall_arg_t optval, syscall_arg_t optlen) {
     (void)frame;
     if (!(optlen <= USER_SOCKADDR_MAX && user_rd(optval, (size_t)optlen))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::setsockopt((int)sockfd, (int)level, (int)optname,
+    return (syscall_arg_t)net::Socket::setsockopt(syscall::Net::socket_sid((int)sockfd), (int)level, (int)optname,
                                          (const void *)(uintptr_t)optval, (socklen_t)optlen);
 }
 
@@ -526,7 +528,7 @@ static syscall_arg_t sys_getsockopt_wrapper(syscall_arg_t *frame, syscall_arg_t 
                                             syscall_arg_t optval, syscall_arg_t optlen) {
     (void)frame;
     if (!(optlen != 0 && optval != 0 && user_sockaddr_out(optval, optlen))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::getsockopt((int)sockfd, (int)level, (int)optname,
+    return (syscall_arg_t)net::Socket::getsockopt(syscall::Net::socket_sid((int)sockfd), (int)level, (int)optname,
                                          (void *)(uintptr_t)optval, 
                                          (socklen_t *)(uintptr_t)optlen);
 }
@@ -536,7 +538,7 @@ static syscall_arg_t sys_getsockname_wrapper(syscall_arg_t *frame, syscall_arg_t
                                              syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
     if (!(addrlen != 0 && addr != 0 && user_sockaddr_out(addr, addrlen))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::getsockname((int)sockfd, (struct sockaddr *)(uintptr_t)addr, 
+    return (syscall_arg_t)net::Socket::getsockname(syscall::Net::socket_sid((int)sockfd), (struct sockaddr *)(uintptr_t)addr, 
                                           (socklen_t *)(uintptr_t)addrlen);
 }
 
@@ -545,7 +547,7 @@ static syscall_arg_t sys_getpeername_wrapper(syscall_arg_t *frame, syscall_arg_t
                                              syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
     if (!(addrlen != 0 && addr != 0 && user_sockaddr_out(addr, addrlen))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::getpeername((int)sockfd, (struct sockaddr *)(uintptr_t)addr, 
+    return (syscall_arg_t)net::Socket::getpeername(syscall::Net::socket_sid((int)sockfd), (struct sockaddr *)(uintptr_t)addr, 
                                           (socklen_t *)(uintptr_t)addrlen);
 }
 
@@ -554,7 +556,7 @@ static syscall_arg_t sys_select_wrapper(syscall_arg_t *frame, syscall_arg_t nfds
                                         syscall_arg_t exceptfds, syscall_arg_t timeout) {
     (void)frame;
     if (!(user_wr_opt(readfds, sizeof(fd_set)) && user_wr_opt(writefds, sizeof(fd_set)) && user_wr_opt(exceptfds, sizeof(fd_set)) && user_wr_opt(timeout, sizeof(struct timeval)))) return SYSCALL_FAIL;
-    return (syscall_arg_t)net::Socket::select((int)nfds, (fd_set *)(uintptr_t)readfds, 
+    return (syscall_arg_t)syscall::Net::select((int)nfds, (fd_set *)(uintptr_t)readfds, 
                                      (fd_set *)(uintptr_t)writefds,
                                      (fd_set *)(uintptr_t)exceptfds, 
                                      (struct timeval *)(uintptr_t)timeout);
@@ -564,7 +566,7 @@ static syscall_arg_t sys_fcntl_wrapper(syscall_arg_t *frame, syscall_arg_t sockf
                                        syscall_arg_t cmd, syscall_arg_t arg, 
                                        syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
-    return (syscall_arg_t)net::Socket::fcntl((int)sockfd, (int)cmd, (int)arg);
+    return (syscall_arg_t)net::Socket::fcntl(syscall::Net::socket_sid((int)sockfd), (int)cmd, (int)arg);
 }
 #endif /* !ARCH_ARM64 */
 

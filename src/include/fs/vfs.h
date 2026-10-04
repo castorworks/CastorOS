@@ -17,6 +17,7 @@ typedef enum {
     FS_BLOCKDEVICE,
     FS_PIPE,
     FS_SYMLINK,
+    FS_SOCKET,
 } fs_node_type_t;
 
 // 文件权限（内核使用）
