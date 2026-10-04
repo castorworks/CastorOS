@@ -42,6 +42,7 @@
 #define ARP_CACHE_TIMEOUT       300000  ///< 缓存超时时间（5分钟，毫秒）
 #define ARP_RETRY_INTERVAL      1000    ///< ARP 重试间隔（毫秒）
 #define ARP_MAX_RETRIES         3       ///< 最大重试次数
+#define ARP_PENDING_MAX         4       ///< 每个待解析条目最多排队的数据包数
 
 /**
  * @brief ARP 报文头部
@@ -76,7 +77,10 @@ typedef struct arp_entry {
     uint32_t    timestamp;      ///< 上次更新时间
     arp_state_t state;          ///< 条目状态
     uint8_t     retries;        ///< 重试次数
-    net::Netbuf    *pending_queue; ///< 等待发送的数据包队列
+    uint32_t    last_request;   ///< 上次发送 ARP 请求的时间（PENDING 状态）
+    net::Netdev *dev;           ///< 发起解析的设备（重发请求、发送排队数据包时使用）
+    uint8_t     pending_count;  ///< 等待队列中的数据包数
+    net::Netbuf    *pending_queue; ///< 等待发送的数据包队列（条目自己持有的副本）
 } arp_entry_t;
 
 namespace net {

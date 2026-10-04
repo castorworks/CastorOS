@@ -676,6 +676,9 @@ TEST_SUITE(tcp_checksum_tests) {
 // 运行所有测试
 // ============================================================================
 
+// 协议栈行为测试（netstack_test.cpp）：用假网卡驱动 ARP/IP/UDP/DHCP/TCP 的收发路径
+void run_netstack_tests(void);
+
 void run_tcp_tests(void) {
     // 初始化测试框架
     unittest_init();
@@ -688,7 +691,9 @@ void run_tcp_tests(void) {
     RUN_SUITE(tcp_window_tests);
     RUN_SUITE(tcp_urgent_tests);
     RUN_SUITE(tcp_checksum_tests);
-    
+
+    run_netstack_tests();
+
     // 打印测试摘要
     unittest_print_summary();
 }

@@ -188,7 +188,8 @@ typedef struct tcp_pcb {
     // 缓冲区
     uint8_t *send_buf;          ///< 发送缓冲区
     uint32_t send_buf_size;     ///< 发送缓冲区大小
-    uint32_t send_len;          ///< 待发送数据长度
+    uint32_t send_len;          ///< 待发送数据长度（尚未装入段发出的数据）
+    bool fin_pending;           ///< 已请求关闭：发送缓冲区排空后发送 FIN
 
     uint8_t *recv_buf;          ///< 接收缓冲区
     uint32_t recv_buf_size;     ///< 接收缓冲区大小
@@ -199,7 +200,8 @@ typedef struct tcp_pcb {
     struct tcp_pcb *accept_queue;   ///< 等待 accept 的连接队列
     struct tcp_pcb *pending_queue;  ///< 正在握手的连接队列
     int backlog;                    ///< 最大等待连接数
-    int pending_count;              ///< 当前等待连接数
+    int pending_count;              ///< 正在握手的连接数
+    int accept_count;               ///< 已完成握手、等待 accept 的连接数
     struct tcp_pcb *listen_pcb;     ///< 对应的监听 PCB
 
     // 回调函数

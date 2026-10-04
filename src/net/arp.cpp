@@ -63,25 +63,21 @@ static arp_entry_t *arp_cache_find(uint32_t ip) {
 }
 
 /**
- * @brief 发送等待队列中的数据包
+ * @brief 发送一条已从条目上摘下的等待队列，并释放其中的数据包
+ *
+ * 调用时不能持有 arp_cache_lock：发送会走到驱动（Mutex）。
  */
-static void arp_send_pending(arp_entry_t *entry, net::Netdev *dev) {
-    net::Netbuf *buf = entry->pending_queue;
-    while (buf) {
-        net::Netbuf *next = buf->next;
-        buf->next = NULL;
-        
-        // 发送数据包（通过以太网层）
-        // 注意：net::Ethernet::output 成功后，buf 由网卡驱动负责释放
-        // 如果失败，需要我们释放
-        int ret = net::Ethernet::output(dev, buf, entry->mac_addr, ETH_TYPE_IP);
-        if (ret < 0) {
-            net::Netbuf::free(buf);
+static void arp_send_queue(net::Netbuf *queue, net::Netdev *dev, const uint8_t *mac) {
+    while (queue) {
+        net::Netbuf *next = queue->next;
+        queue->next = NULL;
+        if (dev) {
+            net::Ethernet::output(dev, queue, mac, ETH_TYPE_IP);
         }
-        
-        buf = next;
+        // 队列里的是 queue_packet() 克隆的副本，发送只是借用，这里负责释放
+        net::Netbuf::free(queue);
+        queue = next;
     }
-    entry->pending_queue = NULL;
 }
 
 /**
@@ -95,6 +91,29 @@ static void arp_free_pending(arp_entry_t *entry) {
         buf = next;
     }
     entry->pending_queue = NULL;
+    entry->pending_count = 0;
+}
+
+/**
+ * @brief PENDING 条目到了重试时间时的处理（调用者持有 arp_cache_lock）
+ * @return true 需要重发 ARP 请求（由调用者在解锁后发送）；
+ *         false 不需要（还没到时间，或重试次数用尽、条目已释放）
+ */
+static bool arp_pending_retry_locked(arp_entry_t *entry, uint32_t now, bool *gave_up) {
+    *gave_up = false;
+    if (now - entry->last_request < ARP_RETRY_INTERVAL) {
+        return false;
+    }
+    if (entry->retries >= ARP_MAX_RETRIES) {
+        // 对端一直不应答：丢弃排队的数据包并释放条目，下次发送重新开始解析
+        arp_free_pending(entry);
+        entry->state = ARP_STATE_FREE;
+        *gave_up = true;
+        return false;
+    }
+    entry->retries++;
+    entry->last_request = now;
+    return true;
 }
 
 void net::Arp::init() {
@@ -172,41 +191,47 @@ int net::Arp::resolve(net::Netdev *dev, uint32_t ip, uint8_t *mac) {
         return -2;
     }
     
+    uint32_t now = (uint32_t)drivers::Timer::get_uptime_ms();
+    
     {
         sync::SpinlockIrqGuard guard(arp_cache_lock);
         // 查找缓存
         arp_entry_t *entry = arp_cache_find(ip);
     
-        if (entry) {
-            if (entry->state == ARP_STATE_RESOLVED) {
-                // 已解析，复制 MAC 地址
-                memcpy(mac, entry->mac_addr, 6);
-                entry->timestamp = (uint32_t)drivers::Timer::get_uptime_ms();
-                return 0;
-            } else if (entry->state == ARP_STATE_PENDING) {
-                // 正在解析中
-                return -1;
-            }
+        if (entry && entry->state == ARP_STATE_RESOLVED) {
+            // 已解析，复制 MAC 地址
+            memcpy(mac, entry->mac_addr, 6);
+            entry->timestamp = now;
+            return 0;
         }
-    
-        // 创建新的待解析条目
-        entry = arp_cache_find_free();
-        if (entry) {
-            // 释放旧条目的等待队列
-            if (entry->pending_queue) {
-                arp_free_pending(entry);
+        
+        if (entry && entry->state == ARP_STATE_PENDING) {
+            // 正在解析中：到了重试间隔就重发请求，重试用尽则放弃
+            bool gave_up;
+            if (!arp_pending_retry_locked(entry, now, &gave_up)) {
+                return gave_up ? -2 : -1;
             }
+            entry->dev = dev;
+        } else {
+            // 创建新的待解析条目
+            entry = arp_cache_find_free();
+            if (!entry) {
+                return -2;
+            }
+            // 释放被替换条目的等待队列
+            arp_free_pending(entry);
         
             entry->ip_addr = ip;
             entry->state = ARP_STATE_PENDING;
-            entry->timestamp = (uint32_t)drivers::Timer::get_uptime_ms();
+            entry->timestamp = now;
+            entry->last_request = now;
             entry->retries = 0;
-            entry->pending_queue = NULL;
+            entry->dev = dev;
             memset(entry->mac_addr, 0, 6);
         }
     }
     
-    // 发送 ARP 请求
+    // 发送 ARP 请求（锁外：发送会走到驱动）
     net::Arp::request(dev, ip);
     
     return -1;  // 正在解析
@@ -241,9 +266,7 @@ int net::Arp::request(net::Netdev *dev, uint32_t target_ip) {
     
     // 发送 ARP 请求（广播）
     int ret = net::Ethernet::output(dev, buf, ETH_BROADCAST_ADDR, ETH_TYPE_ARP);
-    if (ret < 0) {
-        net::Netbuf::free(buf);
-    }
+    net::Netbuf::free(buf);  // 发送只是借用 buf
     
     return ret;
 }
@@ -277,9 +300,7 @@ int net::Arp::reply(net::Netdev *dev, uint32_t target_ip, const uint8_t *target_
     
     // 发送 ARP 应答（单播）
     int ret = net::Ethernet::output(dev, buf, target_mac, ETH_TYPE_ARP);
-    if (ret < 0) {
-        net::Netbuf::free(buf);
-    }
+    net::Netbuf::free(buf);  // 发送只是借用 buf
     
     return ret;
 }
@@ -289,34 +310,50 @@ void net::Arp::cache_update(uint32_t ip, const uint8_t *mac) {
         return;
     }
     
-    sync::SpinlockIrqGuard guard(arp_cache_lock);
+    net::Netbuf *queue = NULL;
+    net::Netdev *dev = NULL;
     
-    // 查找现有条目
-    arp_entry_t *entry = arp_cache_find(ip);
-    
-    if (!entry) {
-        // 创建新条目
-        entry = arp_cache_find_free();
+    {
+        sync::SpinlockIrqGuard guard(arp_cache_lock);
+        
+        // 查找现有条目
+        arp_entry_t *entry = arp_cache_find(ip);
+        
         if (!entry) {
-            return;
+            // 创建新条目
+            entry = arp_cache_find_free();
+            if (!entry) {
+                return;
+            }
+            // 被替换的条目可能还挂着等待队列
+            arp_free_pending(entry);
+            entry->ip_addr = ip;
+            entry->dev = NULL;
         }
-        entry->ip_addr = ip;
+        
+        // 摘下等待发送的数据包，解锁后再发送
+        if (entry->state == ARP_STATE_PENDING) {
+            queue = entry->pending_queue;
+            dev = entry->dev;
+        } else if (entry->pending_queue) {
+            arp_free_pending(entry);
+        }
         entry->pending_queue = NULL;
+        entry->pending_count = 0;
+        
+        // 更新条目
+        memcpy(entry->mac_addr, mac, 6);
+        entry->state = ARP_STATE_RESOLVED;
+        entry->timestamp = (uint32_t)drivers::Timer::get_uptime_ms();
+        entry->retries = 0;
     }
     
-    // 如果有等待发送的数据包，发送它们
-    bool had_pending = (entry->state == ARP_STATE_PENDING && entry->pending_queue);
-    net::Netdev *dev = net::Netdev::get_default();
-    
-    // 更新条目
-    memcpy(entry->mac_addr, mac, 6);
-    entry->state = ARP_STATE_RESOLVED;
-    entry->timestamp = (uint32_t)drivers::Timer::get_uptime_ms();
-    entry->retries = 0;
-    
-    // 发送等待的数据包
-    if (had_pending && dev) {
-        arp_send_pending(entry, dev);
+    // 发送等待的数据包（不持有自旋锁）
+    if (queue) {
+        if (!dev) {
+            dev = net::Netdev::get_default();
+        }
+        arp_send_queue(queue, dev, mac);
     }
 }
 
@@ -365,21 +402,34 @@ int net::Arp::cache_delete(uint32_t ip) {
 void net::Arp::cache_cleanup() {
     uint32_t now = (uint32_t)drivers::Timer::get_uptime_ms();
     
-    sync::SpinlockIrqGuard guard(arp_cache_lock);
+    // 需要重发请求的条目先记下来，解锁后再发送
+    struct { net::Netdev *dev; uint32_t ip; } retry[ARP_CACHE_SIZE];
+    int retry_count = 0;
     
-    for (int i = 0; i < ARP_CACHE_SIZE; i++) {
-        if (arp_cache[i].state == ARP_STATE_RESOLVED) {
-            if (now - arp_cache[i].timestamp > ARP_CACHE_TIMEOUT) {
-                // 条目过期
-                arp_cache[i].state = ARP_STATE_FREE;
-            }
-        } else if (arp_cache[i].state == ARP_STATE_PENDING) {
-            if (arp_cache[i].retries >= ARP_MAX_RETRIES) {
-                // 重试次数过多，释放
-                arp_free_pending(&arp_cache[i]);
-                arp_cache[i].state = ARP_STATE_FREE;
+    {
+        sync::SpinlockIrqGuard guard(arp_cache_lock);
+        
+        for (int i = 0; i < ARP_CACHE_SIZE; i++) {
+            arp_entry_t *entry = &arp_cache[i];
+            if (entry->state == ARP_STATE_RESOLVED) {
+                if (now - entry->timestamp > ARP_CACHE_TIMEOUT) {
+                    // 条目过期
+                    arp_free_pending(entry);
+                    entry->state = ARP_STATE_FREE;
+                }
+            } else if (entry->state == ARP_STATE_PENDING) {
+                bool gave_up;
+                if (arp_pending_retry_locked(entry, now, &gave_up) && entry->dev) {
+                    retry[retry_count].dev = entry->dev;
+                    retry[retry_count].ip = entry->ip_addr;
+                    retry_count++;
+                }
             }
         }
+    }
+    
+    for (int i = 0; i < retry_count; i++) {
+        net::Arp::request(retry[i].dev, retry[i].ip);
     }
 }
 
@@ -465,25 +515,46 @@ int net::Arp::queue_packet(uint32_t ip, net::Netbuf *buf) {
         return -1;
     }
     
-    sync::SpinlockIrqGuard guard(arp_cache_lock);
-    
-    arp_entry_t *entry = arp_cache_find(ip);
-    
-    if (entry && entry->state == ARP_STATE_PENDING) {
-        // 添加到等待队列尾部
-        buf->next = NULL;
-        if (!entry->pending_queue) {
-            entry->pending_queue = buf;
-        } else {
-            net::Netbuf *tail = entry->pending_queue;
-            while (tail->next) {
-                tail = tail->next;
-            }
-            tail->next = buf;
-        }
-        return 0;
+    // 队列持有自己的副本：调用者发送后照常释放 buf，
+    // 不会和 ARP 解析完成后的发送/释放打架。
+    net::Netbuf *copy = net::Netbuf::clone(buf);
+    if (!copy) {
+        return -1;
     }
     
-    return -1;
+    net::Netbuf *dropped = NULL;
+    {
+        sync::SpinlockIrqGuard guard(arp_cache_lock);
+        
+        arp_entry_t *entry = arp_cache_find(ip);
+        
+        if (!entry || entry->state != ARP_STATE_PENDING) {
+            dropped = copy;
+            copy = NULL;
+        } else {
+            // 队列有上限：满了就丢弃最旧的数据包
+            if (entry->pending_count >= ARP_PENDING_MAX && entry->pending_queue) {
+                dropped = entry->pending_queue;
+                entry->pending_queue = dropped->next;
+                dropped->next = NULL;
+                entry->pending_count--;
+            }
+            
+            // 添加到等待队列尾部
+            copy->next = NULL;
+            if (!entry->pending_queue) {
+                entry->pending_queue = copy;
+            } else {
+                net::Netbuf *tail = entry->pending_queue;
+                while (tail->next) {
+                    tail = tail->next;
+                }
+                tail->next = copy;
+            }
+            entry->pending_count++;
+        }
+    }
+    
+    net::Netbuf::free(dropped);
+    return copy ? 0 : -1;
 }
-

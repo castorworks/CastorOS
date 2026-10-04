@@ -168,8 +168,8 @@ int net::Icmp::send_echo_request(uint32_t dst_ip, uint16_t id, uint16_t seq,
     
     // 发送
     int ret = net::Ip::output(NULL, buf, dst_ip, IP_PROTO_ICMP);
+    net::Netbuf::free(buf);  // 发送只是借用 buf
     if (ret < 0) {
-        net::Netbuf::free(buf);
         last_ping.waiting = false;
     }
     
@@ -208,9 +208,7 @@ int net::Icmp::send_echo_reply(uint32_t dst_ip, uint16_t id, uint16_t seq,
     
     // 发送
     int ret = net::Ip::output(NULL, buf, dst_ip, IP_PROTO_ICMP);
-    if (ret < 0) {
-        net::Netbuf::free(buf);
-    }
+    net::Netbuf::free(buf);  // 发送只是借用 buf
     
     return ret;
 }
@@ -251,9 +249,7 @@ int net::Icmp::send_dest_unreachable(uint32_t dst_ip, uint8_t code,
     
     // 发送
     int ret = net::Ip::output(NULL, buf, dst_ip, IP_PROTO_ICMP);
-    if (ret < 0) {
-        net::Netbuf::free(buf);
-    }
+    net::Netbuf::free(buf);  // 发送只是借用 buf
     
     return ret;
 }

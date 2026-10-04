@@ -297,6 +297,16 @@ void net::Netdev::receive(net::Netdev *dev, net::Netbuf *buf) {
     }
     
     // 中断上下文：入队，由接收线程处理
+    if (net::Netdev::loopback(dev, buf) < 0) {
+        dev->rx_dropped++;
+    }
+}
+
+int net::Netdev::loopback(net::Netdev *dev, net::Netbuf *buf) {
+    if (!dev || !buf) {
+        return -1;
+    }
+    
     buf->dev = dev;
     buf->next = NULL;
     bool dropped = false;
@@ -315,11 +325,11 @@ void net::Netdev::receive(net::Netdev *dev, net::Netbuf *buf) {
         }
     }
     if (dropped) {
-        dev->rx_dropped++;
         net::Netbuf::free(buf);
-        return;
+        return -1;
     }
     kernel::Scheduler::wakeup(&rx_queue_head);
+    return 0;
 }
 
 void net::Netdev::poll() {

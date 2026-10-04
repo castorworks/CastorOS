@@ -227,7 +227,15 @@ static net::Netbuf *ip_reassemble(net::Netdev *dev, net::Netbuf *buf, ip_header_
     uint8_t *data = (uint8_t *)ip + hdr_len;
     uint16_t data_len = ntohs(ip->total_length) - hdr_len;
     
-    if (ip_reass_add_fragment(r, offset, data, data_len, more_frags) < 0) {
+    // ip 指向 buf 内部，释放 buf 之前先取出还要用的字段
+    uint8_t protocol = ip->protocol;
+    
+    // 重组结果要放进一个 Netbuf：放不下的报文不可能重组成功，
+    // 直接丢弃整个条目，不让它的分片一直占着堆
+    bool too_big = (uint32_t)offset + data_len > NETBUF_MAX_SIZE - NETBUF_HEADROOM;
+    
+    if (too_big || ip_reass_add_fragment(r, offset, data, data_len, more_frags) < 0) {
+        ip_reass_free(r);
         net::Netbuf::free(buf);
         return NULL;
     }
@@ -235,7 +243,7 @@ static net::Netbuf *ip_reassemble(net::Netdev *dev, net::Netbuf *buf, ip_header_
     net::Netbuf::free(buf);
     
     // 尝试重组
-    return ip_reass_complete(r, dev, ip->protocol);
+    return ip_reass_complete(r, dev, protocol);
 }
 
 /**
@@ -435,6 +443,53 @@ int net::Ip::route_dump(char *buf, size_t size) {
     return len;
 }
 
+// ============================================================================
+// 地址分类与环回
+// ============================================================================
+
+/** 127.0.0.0/8（地址为网络字节序，第一个字节在最低位） */
+static bool ip_is_loopback(uint32_t ip) {
+    return (ip & 0xFF) == 127;
+}
+
+/** 224.0.0.0/4 */
+static bool ip_is_multicast(uint32_t ip) {
+    return (ip & 0xF0) == 0xE0;
+}
+
+/** 设备所在子网的定向广播地址 */
+static bool ip_is_directed_broadcast(net::Netdev *dev, uint32_t ip) {
+    if (dev->ip_addr == 0 || dev->netmask == 0 || dev->netmask == 0xFFFFFFFF) {
+        return false;
+    }
+    return net::Ip::same_subnet(dev->ip_addr, ip, dev->netmask) &&
+           (ip & ~dev->netmask) == ~dev->netmask;
+}
+
+/**
+ * @brief 把一个已填好 IP 头部的数据包送回本机
+ *
+ * buf 仍归调用者；这里复制一份、加上以太网头部后放入接收队列，
+ * 由接收线程处理，不在发送路径里重入协议栈。
+ */
+static int ip_loopback(net::Netdev *dev, net::Netbuf *buf) {
+    net::Netbuf *copy = net::Netbuf::clone(buf);
+    if (!copy) {
+        return -1;
+    }
+    
+    eth_header_t *eth = (eth_header_t *)net::Netbuf::push(copy, ETH_HEADER_LEN);
+    if (!eth) {
+        net::Netbuf::free(copy);
+        return -1;
+    }
+    mac_addr_copy(eth->dst, dev->mac);
+    mac_addr_copy(eth->src, dev->mac);
+    eth->type = htons(ETH_TYPE_IP);
+    
+    return net::Netdev::loopback(dev, copy);
+}
+
 void net::Ip::input(net::Netdev *dev, net::Netbuf *buf) {
     if (!dev || !buf) {
         return;
@@ -480,10 +535,18 @@ void net::Ip::input(net::Netdev *dev, net::Netbuf *buf) {
         return;
     }
     
+    // 以太网会把短帧填充到最小帧长：把缓冲区截到 IP 总长度，
+    // 上层协议按 buf->len 计算校验和与数据长度时才不会把填充算进去
+    net::Netbuf::trim(buf, total_len);
+    
     // 检查目的 IP 地址
-    // 接受：本机 IP、广播地址、多播地址
+    // 接受：本机 IP、环回地址、广播地址
     uint32_t dst = ip->dst_addr;
+    // 环回地址只接受本机自己放进接收队列的帧（见 ip_loopback），不接受线上来的
+    bool from_self = buf->mac_header &&
+                     mac_addr_cmp(((eth_header_t *)buf->mac_header)->src, dev->mac) == 0;
     bool is_for_us = (dst == dev->ip_addr) ||
+                     (ip_is_loopback(dst) && from_self) ||
                      (dst == 0xFFFFFFFF) ||  // 全网广播
                      ((dst & ~dev->netmask) == ~dev->netmask);  // 定向广播
     
@@ -554,8 +617,11 @@ int net::Ip::output(net::Netdev *dev, net::Netbuf *buf, uint32_t dst_ip, uint8_t
         next_hop = net::Ip::get_next_hop(dev, dst_ip);
     }
     
-    // 检查设备是否有 IP 地址
-    if (dev->ip_addr == 0) {
+    bool limited_broadcast = (dst_ip == 0xFFFFFFFF);
+    
+    // 检查设备是否有 IP 地址。
+    // 例外：受限广播允许以 0.0.0.0 为源地址发送（DHCP 获取地址之前）
+    if (dev->ip_addr == 0 && !limited_broadcast) {
         LOG_ERROR_MSG("ip: Device %s has no IP address\n", dev->name);
         return -1;
     }
@@ -586,17 +652,38 @@ int net::Ip::output(net::Netdev *dev, net::Netbuf *buf, uint32_t dst_ip, uint8_t
     // 计算校验和
     ip->checksum = net::Ip::checksum(ip, IP_HEADER_MIN_LEN);
     
-    // 解析下一跳的 MAC 地址
+    // 发给本机：不经过网卡，复制一份放入接收队列
+    if ((dev->ip_addr != 0 && dst_ip == dev->ip_addr) || ip_is_loopback(dst_ip)) {
+        return ip_loopback(dev, buf);
+    }
+    
+    // 广播和多播地址不做 ARP 解析，直接映射到链路层地址
     uint8_t dst_mac[6];
+    if (limited_broadcast || ip_is_directed_broadcast(dev, dst_ip)) {
+        return net::Ethernet::output(dev, buf, ETH_BROADCAST_ADDR, ETH_TYPE_IP);
+    }
+    if (ip_is_multicast(dst_ip)) {
+        // 224.0.0.0/4 -> 01:00:5e + 组地址的低 23 位
+        const uint8_t *b = (const uint8_t *)&dst_ip;
+        dst_mac[0] = 0x01;
+        dst_mac[1] = 0x00;
+        dst_mac[2] = 0x5e;
+        dst_mac[3] = b[1] & 0x7F;
+        dst_mac[4] = b[2];
+        dst_mac[5] = b[3];
+        return net::Ethernet::output(dev, buf, dst_mac, ETH_TYPE_IP);
+    }
+    
+    // 解析下一跳的 MAC 地址
     int ret = net::Arp::resolve(dev, next_hop, dst_mac);
     
     if (ret == 0) {
         // ARP 解析成功，发送
         return net::Ethernet::output(dev, buf, dst_mac, ETH_TYPE_IP);
     } else if (ret == -1) {
-        // 正在 ARP 解析中，将数据包加入等待队列
+        // 正在 ARP 解析中，把数据包的副本加入等待队列（buf 仍归调用者）
         if (net::Arp::queue_packet(next_hop, buf) == 0) {
-            return 0;  // 返回成功，数据包会在 ARP 解析完成后发送
+            return 0;  // 返回成功，副本会在 ARP 解析完成后发送
         } else {
             // 队列失败，可能 ARP 已经解析完成（竞态条件），重试一次
             ret = net::Arp::cache_lookup(next_hop, dst_mac);
@@ -605,7 +692,7 @@ int net::Ip::output(net::Netdev *dev, net::Netbuf *buf, uint32_t dst_ip, uint8_t
                 return net::Ethernet::output(dev, buf, dst_mac, ETH_TYPE_IP);
             }
             LOG_WARN_MSG("ip: Failed to queue packet for ARP resolution\n");
-            return -1;  // 调用者需要释放 buf
+            return -1;
         }
     } else {
         // ARP 解析失败

@@ -45,6 +45,9 @@ typedef struct udp_pseudo_header {
 /**
  * @brief UDP 控制块（PCB）- 表示一个 UDP 端点
  */
+/// 每个 PCB 的接收队列最多保存的数据报数，超过后丢弃新到的数据报
+#define UDP_RECV_QUEUE_MAX  64
+
 typedef struct udp_pcb {
     uint32_t local_ip;          ///< 本地 IP（0 表示任意）
     uint16_t local_port;        ///< 本地端口
@@ -53,6 +56,7 @@ typedef struct udp_pcb {
 
     // 接收缓冲区
     net::Netbuf *recv_queue;       ///< 接收队列
+    net::Netbuf *recv_queue_tail;  ///< 接收队列尾（入队 O(1)）
     uint32_t recv_queue_len;    ///< 队列中的数据包数
 
     // 回调函数
@@ -146,9 +150,11 @@ public:
      * @param buf 数据缓冲区
      * @param dst_ip 目的 IP（网络字节序）
      * @param dst_port 目的端口（主机字节序）
-     * @return 0 成功，-1 失败
+     * @param dev 发送设备；NULL 表示使用默认设备
+     * @return 0 成功，-1 失败（两种情况下 buf 都仍归调用者，由调用者释放）
      */
-    static int sendto(udp_pcb_t *pcb, net::Netbuf *buf, uint32_t dst_ip, uint16_t dst_port);
+    static int sendto(udp_pcb_t *pcb, net::Netbuf *buf, uint32_t dst_ip, uint16_t dst_port,
+                      net::Netdev *dev = NULL);
 
     /**
      * @brief 设置接收回调函数

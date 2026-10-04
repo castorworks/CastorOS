@@ -79,6 +79,14 @@ uint8_t *net::Netbuf::put(net::Netbuf *buf, uint32_t len) {
     return old_tail;
 }
 
+void net::Netbuf::trim(net::Netbuf *buf, uint32_t len) {
+    if (!buf || len >= buf->len) {
+        return;
+    }
+    buf->len = len;
+    buf->tail = buf->data + len;
+}
+
 net::Netbuf *net::Netbuf::clone(net::Netbuf *buf) {
     if (!buf) {
         return NULL;

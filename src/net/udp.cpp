@@ -109,6 +109,9 @@ void net::Udp::input(net::Netdev *dev, net::Netbuf *buf, uint32_t src_ip, uint32
         return;
     }
     
+    // 数据报长度以 UDP 头部为准，丢掉其后的多余字节
+    net::Netbuf::trim(buf, udp_len);
+    
     // 验证校验和（如果非零）
     if (udp->checksum != 0) {
         uint16_t orig_checksum = udp->checksum;
@@ -144,19 +147,23 @@ void net::Udp::input(net::Netdev *dev, net::Netbuf *buf, uint32_t src_ip, uint32
             return;  // 回调函数负责释放 buf
         }
         
-        // 如果没有回调，加入接收队列
+        // 如果没有回调，加入接收队列。队列有上限：应用不读（或读得慢）时
+        // 丢弃新到的数据报，而不是让队列无限占用内核堆
+        if (pcb->recv_queue_len >= UDP_RECV_QUEUE_MAX) {
+            udp_lock.unlock_irqrestore(irq_state);
+            net::Netbuf::free(buf);
+            return;
+        }
+
         buf->next = NULL;
         if (!pcb->recv_queue) {
             pcb->recv_queue = buf;
         } else {
-            net::Netbuf *tail = pcb->recv_queue;
-            while (tail->next) {
-                tail = tail->next;
-            }
-            tail->next = buf;
+            pcb->recv_queue_tail->next = buf;
         }
+        pcb->recv_queue_tail = buf;
         pcb->recv_queue_len++;
-        
+
         udp_lock.unlock_irqrestore(irq_state);
         return;
     }
@@ -210,9 +217,7 @@ int net::Udp::output(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
     
     // 发送
     int ret = net::Ip::output(dev, buf, dst_ip, IP_PROTO_UDP);
-    if (ret < 0) {
-        net::Netbuf::free(buf);
-    }
+    net::Netbuf::free(buf);  // 发送只是借用 buf
     
     return ret;
 }
@@ -328,12 +333,15 @@ int net::Udp::send(udp_pcb_t *pcb, net::Netbuf *buf) {
     return net::Udp::sendto(pcb, buf, pcb->remote_ip, pcb->remote_port);
 }
 
-int net::Udp::sendto(udp_pcb_t *pcb, net::Netbuf *buf, uint32_t dst_ip, uint16_t dst_port) {
+int net::Udp::sendto(udp_pcb_t *pcb, net::Netbuf *buf, uint32_t dst_ip, uint16_t dst_port,
+                     net::Netdev *dev) {
     if (!pcb || !buf) {
         return -1;
     }
-    
-    net::Netdev *dev = net::Netdev::get_default();
+
+    if (!dev) {
+        dev = net::Netdev::get_default();
+    }
     if (!dev) {
         return -1;
     }
@@ -387,6 +395,9 @@ net::Netbuf *net::Udp::recv_poll(udp_pcb_t *pcb) {
     if (pcb->recv_queue) {
         buf = pcb->recv_queue;
         pcb->recv_queue = buf->next;
+        if (!pcb->recv_queue) {
+            pcb->recv_queue_tail = NULL;
+        }
         pcb->recv_queue_len--;
         buf->next = NULL;  // 断开链表
     }
