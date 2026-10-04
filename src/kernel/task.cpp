@@ -546,7 +546,8 @@ uint32_t kernel::Scheduler::create_kernel_thread(void (*entry)(void), const char
     // schedule() 是关着中断切过来的：直接跳到入口函数的话线程会一直在屏蔽
     // 中断的状态下运行，入口函数返回时还会跳回自己的开头（LR == 入口）。
     // 蹦床负责打开中断，并在入口函数返回后调用 task_exit。
-    task->context.pc = (uintptr_t)entry;
+    task->context.pc = (uintptr_t)task_enter_kernel_thread;
+    task->context.x[19] = (uintptr_t)entry;
 
     // 设置 PSTATE (EL1h, 中断使能)
     task->context.pstate = ARM64_PSTATE_EL1h;
@@ -886,7 +887,10 @@ static bool task_create_idle(void) {
 #if defined(ARCH_ARM64)
     // ARM64: 设置内核模式上下文
     idle_task->context.sp = idle_task->kernel_stack;
-    idle_task->context.pc = (uintptr_t)idle_task_loop;
+    // 经蹦床进入（见 create_kernel_thread）：idle 必须开着中断执行 wfi，
+    // 否则所有任务都阻塞时定时器中断得不到处理，睡眠的任务永远不会被唤醒
+    idle_task->context.pc = (uintptr_t)task_enter_kernel_thread;
+    idle_task->context.x[19] = (uintptr_t)idle_task_loop;
     idle_task->context.pstate = ARM64_PSTATE_EL1h;
     idle_task->context.ttbr0 = idle_task->page_dir_phys;
 #else
