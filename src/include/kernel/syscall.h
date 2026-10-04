@@ -9,7 +9,7 @@ typedef uintptr_t syscall_arg_t;
 // ============================================================================
 // 系统调用号（与 user/lib/include/syscall.h 保持一致）
 //
-// 内核只提供进程、内存和调试控制台三类调用；文件系统、网络、设备驱动
+// 内核只提供进程、内存、调试控制台和进程间通信；文件系统、网络、设备驱动
 // 不在内核里。
 // ============================================================================
 
@@ -33,6 +33,11 @@ enum {
     // 调试控制台（串口）
     SYS_CONSOLE_WRITE   = 12,  // console_write(buf, len)
     SYS_CONSOLE_READ    = 13,  // console_read(buf, len)：非阻塞，返回读到的字节数
+
+    // 进程间通信（同步、定长消息，见 kernel/ipc.h）
+    SYS_IPC_SEND        = 14,  // ipc_send(dest, msg)
+    SYS_IPC_RECV        = 15,  // ipc_recv(from, msg)：from 为 IPC_ANY 或指定 PID
+    SYS_IPC_CALL        = 16,  // ipc_call(dest, msg)：发送后等待 dest 的应答
 
     SYS_MAX
 };

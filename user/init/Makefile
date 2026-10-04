@@ -21,14 +21,14 @@ else ifeq ($(ARCH),x86_64)
     CXX = x86_64-elf-g++
     LD = x86_64-elf-ld
     OBJCOPY = x86_64-elf-objcopy
-    ARCH_CFLAGS = -m64 -DARCH_X86_64 -mcmodel=large -mno-red-zone
+    ARCH_CFLAGS = -m64 -DARCH_X86_64 -mcmodel=large -mno-red-zone -mno-mmx -mno-sse -mno-sse2
     LDSCRIPT = ../linker/user_x86_64.ld
 else ifeq ($(ARCH),arm64)
     CC = aarch64-elf-gcc
     CXX = aarch64-elf-g++
     LD = aarch64-elf-ld
     OBJCOPY = aarch64-elf-objcopy
-    ARCH_CFLAGS = -DARCH_ARM64
+    ARCH_CFLAGS = -DARCH_ARM64 -mgeneral-regs-only
     LDSCRIPT = ../linker/user_arm64.ld
 else
     $(error Unsupported architecture: $(ARCH). Use i686, x86_64, or arm64)

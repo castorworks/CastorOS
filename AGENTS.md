@@ -8,7 +8,7 @@ CastorOS is an educational microkernel for learning and experimentation.
 
 - Targets i686, x86_64 and ARM64; all three build, boot and pass the kernel tests in QEMU
 - The kernel contains only CPU/interrupt setup, memory management, scheduling, sync
-  primitives and a 14-call syscall interface (process, memory, debug console)
+  primitives and a 17-call syscall interface (process, memory, debug console, synchronous IPC)
 - File systems, networking, device drivers and shells are **not** in the kernel; they are
   meant to come back as user-space modules (see `docs/microkernel.md`). Do not add them
   to `src/`.
@@ -142,6 +142,8 @@ CastorOS/
 - Prefer RAII guards (`sync::SpinlockIrqGuard`, `sync::MutexGuard`) over manual lock/unlock pairs.
 - Still C-style free functions: syscall wrappers (`sys_*_wrapper`), `kprintf`/`klog`/string library,
   `kmalloc()`/`kfree()`, and all of user space (POSIX-style API).
+- User programs are built without FP/SIMD (`-mno-sse` / `-mgeneral-regs-only`): the kernel does not
+  save those registers across context switches.
 - Syscall numbers live in `src/include/kernel/syscall.h` and must match `user/lib/include/syscall.h`.
 - Inside a member function, call a same-named global function with `::name()` (unqualified names
   bind to the class member first).

@@ -118,3 +118,19 @@ ssize_t console_write(const void *buf, size_t count) {
 ssize_t console_read(void *buf, size_t count) {
     return (ssize_t)syscall2(SYS_CONSOLE_READ, PTR_TO_ARG(buf), (syscall_arg_t)count);
 }
+
+// ============================================================================
+// 进程间通信
+// ============================================================================
+
+int ipc_send(int dest, const struct ipc_msg *msg) {
+    return (int)syscall2(SYS_IPC_SEND, (syscall_arg_t)dest, PTR_TO_ARG(msg));
+}
+
+int ipc_recv(int from, struct ipc_msg *msg) {
+    return (int)syscall2(SYS_IPC_RECV, (syscall_arg_t)from, PTR_TO_ARG(msg));
+}
+
+int ipc_call(int dest, struct ipc_msg *msg) {
+    return (int)syscall2(SYS_IPC_CALL, (syscall_arg_t)dest, PTR_TO_ARG(msg));
+}

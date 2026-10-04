@@ -428,9 +428,11 @@ bool kernel::Scheduler::setup_user_stack(task_t *task) {
         }
     }
     
-    // 设置栈指针（栈顶，向下增长，减去 4 字节对齐）
+    // 设置栈指针。入口 _start 是按普通函数编译的，它假定自己是被 call 进来的：
+    // 栈顶留出一个返回地址的位置，函数体内的栈才是 16 字节对齐的
+    // （x86_64 上编译器会对栈上的对象使用 movaps，没对齐就是 #GP）
     task->user_stack_base = stack_bottom;
-    task->user_stack = stack_top - 4;
+    task->user_stack = stack_top - sizeof(uintptr_t);
     
     LOG_DEBUG_MSG("kernel::Scheduler::setup_user_stack: User stack set up at 0x%x-0x%x\n", 
                  stack_bottom, stack_top);
@@ -1059,6 +1061,9 @@ void kernel::Scheduler::exit_current(uint32_t exit_code, bool signaled, uint32_t
         interrupt_exit();
     }
 
+    // 等着和本任务通信的任务不会再等到结果
+    kernel::Ipc::on_exit(current_task);
+
     kernel::Interrupts::disable();
 
     // 设置退出信息
@@ -1245,11 +1250,14 @@ bool kernel::Scheduler::request_kill(task_t *target, uint32_t signal) {
             target->kill_signal = signal;
         }
 
-        // 正在 sleep 的任务提前唤醒，让它尽快走到系统调用出口。
+        // 正在 sleep 或等待 IPC 的任务提前唤醒，让它尽快走到系统调用出口
+        // （IPC 的等待循环看到 kill_pending 会放弃）。
         // 阻塞在 Mutex/Semaphore 上的任务不能唤醒：它们醒来后会重新检查条件
         // 并再次阻塞，要等到被正常唤醒后才会走到出口。
-        if (target->state == TASK_BLOCKED && target->sleep_until_ms > 0) {
+        if (target->state == TASK_BLOCKED &&
+            (target->sleep_until_ms > 0 || target->ipc_state != IPC_IDLE)) {
             target->sleep_until_ms = 0;
+            target->wait_object = NULL;
             target->state = TASK_READY;
             wake = true;
         }

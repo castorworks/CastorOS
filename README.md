@@ -2,7 +2,7 @@
 
 > CastorOS is an operating system designed for learning and fun.
 
-一个用于学习的微内核：内核只做 CPU/中断、内存管理、任务调度和系统调用，其余功能都放在用户态。
+一个用于学习的微内核：内核只做 CPU/中断、内存管理、任务调度、系统调用和进程间通信，其余功能都放在用户态。
 结构说明见 [docs/microkernel.md](./docs/microkernel.md)。
 
 ## 支持的架构
@@ -39,7 +39,7 @@ make clean-all
 make help
 ```
 
-内核启动后加载内嵌的 `user/init`：它演示 `mmap`、`fork`/`waitpid`，然后回显串口输入。
+内核启动后加载内嵌的 `user/init`：它演示 `mmap`、`fork`/`waitpid` 和 IPC（fork 出一个服务进程并向它发请求），然后回显串口输入。
 
 ## 目录
 
@@ -57,7 +57,7 @@ docs/          文档
 
 ## 文档
 
-+ [微内核结构](./docs/microkernel.md)：内核边界、启动流程、系统调用表、如何加模块
++ [微内核结构](./docs/microkernel.md)：内核边界、启动流程、系统调用表、IPC、如何加模块
 + [概念讲解](./docs/concepts/00-overview.md)
 + 开发过程记录（写于精简为微内核之前，其中提到的 GRUB 磁盘镜像、VGA、shell 等已不在代码里）：
   [环境](./docs/00-environment.md)、[引导](./docs/01-boot.md)、[基础设施](./docs/02-infrastructure.md)、

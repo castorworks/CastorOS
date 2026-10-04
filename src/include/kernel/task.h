@@ -10,6 +10,7 @@
 
 #include <types.h>
 #include <mm/vmm.h>
+#include <kernel/ipc.h>
 
 /* ============================================================================
  * 常量定义
@@ -245,6 +246,12 @@ typedef struct task {
     bool kill_pending;
     uint32_t kill_signal;            ///< kill_pending 为 true 时的信号号
 
+    /* 进程间通信（kernel/ipc.cpp）。阻塞在 IPC 上时 wait_object == &ipc_state */
+    ipc_state_t ipc_state;           ///< 是否正阻塞在 send/recv 上
+    uint32_t ipc_peer;               ///< SENDING: 目标 PID；RECEIVING: 期望的发送者或 IPC_ANY
+    int ipc_result;                  ///< 等待结束时对方（或退出路径）写入的结果
+    ipc_msg ipc_buf;                 ///< SENDING: 待取走的消息；RECEIVING: 投递进来的消息
+
     /**
      * 特权进程：可以 kill 任意用户进程。
      * 第一个用户进程（init）有特权，fork 继承，exec 之后失去。
@@ -373,7 +380,7 @@ public:
     /**
      * @brief 请求终止另一个任务
      *
-     * 只记录待处理的信号（并把正在 sleep 的目标提前唤醒），不触碰目标的
+     * 只记录待处理的信号（并把正在 sleep 或等待 IPC 的目标提前唤醒），不触碰目标的
      * 状态和资源：目标停在内核里的某个 yield/block 点，可能正持有互斥锁，
      * 必须由它自己在安全点（deliver_pending_kill）退出。
      *

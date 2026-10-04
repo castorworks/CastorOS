@@ -15,6 +15,7 @@
 #include <kernel/syscalls/process.h>
 #include <kernel/syscalls/mm.h>
 #include <kernel/uaccess.h>
+#include <kernel/ipc.h>
 #include <kernel/task.h>
 #include <drivers/serial.h>
 #include <hal/hal.h>
@@ -207,6 +208,27 @@ static syscall_arg_t sys_console_read_wrapper(syscall_arg_t *frame, syscall_arg_
     return (syscall_arg_t)n;
 }
 
+static syscall_arg_t sys_ipc_send_wrapper(syscall_arg_t *frame, syscall_arg_t dest, syscall_arg_t msg,
+                                          syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p3; (void)p4; (void)p5;
+    if (!user_rd(msg, sizeof(ipc_msg))) return SYSCALL_FAIL;
+    return sys_ret32((uint32_t)kernel::Ipc::send((uint32_t)dest, (const ipc_msg *)(uintptr_t)msg));
+}
+
+static syscall_arg_t sys_ipc_recv_wrapper(syscall_arg_t *frame, syscall_arg_t from, syscall_arg_t msg,
+                                          syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p3; (void)p4; (void)p5;
+    if (!user_wr(msg, sizeof(ipc_msg))) return SYSCALL_FAIL;
+    return sys_ret32((uint32_t)kernel::Ipc::recv((uint32_t)from, (ipc_msg *)(uintptr_t)msg));
+}
+
+static syscall_arg_t sys_ipc_call_wrapper(syscall_arg_t *frame, syscall_arg_t dest, syscall_arg_t msg,
+                                          syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p3; (void)p4; (void)p5;
+    if (!user_wr(msg, sizeof(ipc_msg))) return SYSCALL_FAIL;
+    return sys_ret32((uint32_t)kernel::Ipc::call((uint32_t)dest, (ipc_msg *)(uintptr_t)msg));
+}
+
 syscall_arg_t syscall_dispatcher(syscall_arg_t syscall_num, syscall_arg_t p1, syscall_arg_t p2, 
                                  syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5, 
                                  syscall_arg_t *frame) {
@@ -251,6 +273,9 @@ void syscall_init(void) {
     syscall_table[SYS_MUNMAP]        = sys_munmap_wrapper;
     syscall_table[SYS_CONSOLE_WRITE] = sys_console_write_wrapper;
     syscall_table[SYS_CONSOLE_READ]  = sys_console_read_wrapper;
+    syscall_table[SYS_IPC_SEND]      = sys_ipc_send_wrapper;
+    syscall_table[SYS_IPC_RECV]      = sys_ipc_recv_wrapper;
+    syscall_table[SYS_IPC_CALL]      = sys_ipc_call_wrapper;
 
     /* 架构相关的系统调用入口（INT 0x80 / SYSCALL / SVC） */
     hal::Syscall::init(NULL);
