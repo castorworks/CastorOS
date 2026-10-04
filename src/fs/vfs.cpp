@@ -111,6 +111,23 @@ void fs::Vfs::ref_node(fs_node_t *node) {
     node->ref_count++;
 }
 
+bool fs::Vfs::try_ref_node(fs_node_t *node) {
+    if (!node) {
+        return false;
+    }
+    if (!(node->flags & FS_NODE_FLAG_ALLOCATED)) {
+        return true;
+    }
+
+    sync::MutexGuard guard(vfs_refcount_mutex);
+    if (node->ref_count == 0) {
+        // release_node 已经把计数减到 0，节点马上会被释放
+        return false;
+    }
+    node->ref_count++;
+    return true;
+}
+
 void fs::Vfs::release_node(fs_node_t *node) {
     if (!node) {
         return;

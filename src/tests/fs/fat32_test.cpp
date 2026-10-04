@@ -11,6 +11,8 @@
 //   - 短文件名 (8.3 格式) 处理
 //   - 长文件名 (LFN) 处理
 //   - 文件名格式转换
+//   - 内存块设备上的真实卷：共享 in-core 节点、打开状态下删除、
+//     扩展失败回滚、截断
 //
 // **Feature: test-refactor**
 // **Validates: Requirements 4.3**
@@ -18,6 +20,10 @@
 
 #include <tests/ktest.h>
 #include <tests/test_module.h>
+#include <fs/fat32.h>
+#include <fs/vfs.h>
+#include <fs/blockdev.h>
+#include <mm/heap.h>
 #include <lib/string.h>
 #include <types.h>
 
@@ -687,6 +693,359 @@ TEST_CASE(test_fat32_attribute_combinations) {
 }
 
 // ============================================================================
+// 真实文件系统测试：在内存块设备上格式化一个很小的 FAT32 卷
+// ============================================================================
+//
+// 卷布局（512 字节扇区，每簇 1 扇区）：
+//   扇区 0..3   保留区（扇区 0 是 BPB）
+//   扇区 4..5   FAT #1（256 个表项）
+//   扇区 6..7   FAT #2
+//   扇区 8..71  数据区，64 个簇（簇 2..65），簇 2 是根目录
+// 所以空卷上有 63 个空闲簇。
+
+#define RD_SECTOR_SIZE      512u
+#define RD_RESERVED         4u
+#define RD_FAT_SECTORS      2u
+#define RD_CLUSTERS         64u
+#define RD_TOTAL_SECTORS    (RD_RESERVED + 2 * RD_FAT_SECTORS + RD_CLUSTERS)
+#define RD_FREE_WHEN_EMPTY  (RD_CLUSTERS - 1)
+
+typedef struct {
+    uint8_t *data;
+    uint32_t sectors;
+} fat32_ramdisk_t;
+
+class Fat32RamdiskOps final : public fs::BlockdevOps {
+public:
+    int read(void *dev, uint32_t sector, uint32_t count, uint8_t *buffer) const override {
+        fat32_ramdisk_t *disk = (fat32_ramdisk_t *)dev;
+        if (sector > disk->sectors || count > disk->sectors - sector) {
+            return -1;
+        }
+        memcpy(buffer, disk->data + sector * RD_SECTOR_SIZE, count * RD_SECTOR_SIZE);
+        return 0;
+    }
+    int write(void *dev, uint32_t sector, uint32_t count, const uint8_t *buffer) const override {
+        fat32_ramdisk_t *disk = (fat32_ramdisk_t *)dev;
+        if (sector > disk->sectors || count > disk->sectors - sector) {
+            return -1;
+        }
+        memcpy(disk->data + sector * RD_SECTOR_SIZE, buffer, count * RD_SECTOR_SIZE);
+        return 0;
+    }
+};
+static const Fat32RamdiskOps fat32_ramdisk_ops{};
+
+static fat32_ramdisk_t fat32_test_disk;
+static fs::Blockdev fat32_test_dev;
+
+static void rd_put16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
+static void rd_put32(uint8_t *p, uint32_t v) { rd_put16(p, (uint16_t)v); rd_put16(p + 2, (uint16_t)(v >> 16)); }
+static uint32_t rd_get32(const uint8_t *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+/** 分配内存盘并写入一个空的 FAT32 卷（不挂载） */
+static bool fat32_test_format(void) {
+    fat32_test_disk.sectors = RD_TOTAL_SECTORS;
+    fat32_test_disk.data = (uint8_t *)kmalloc(RD_TOTAL_SECTORS * RD_SECTOR_SIZE);
+    if (!fat32_test_disk.data) {
+        return false;
+    }
+    uint8_t *d = fat32_test_disk.data;
+    memset(d, 0, RD_TOTAL_SECTORS * RD_SECTOR_SIZE);
+
+    // BPB
+    d[0] = 0xEB; d[1] = 0x58; d[2] = 0x90;
+    memcpy(d + 3, "CASTORT ", 8);
+    rd_put16(d + 11, RD_SECTOR_SIZE);       // bytes_per_sector
+    d[13] = 1;                              // sectors_per_cluster
+    rd_put16(d + 14, RD_RESERVED);          // reserved_sectors
+    d[16] = 2;                              // fat_count
+    d[21] = 0xF8;                           // media_type
+    rd_put32(d + 32, RD_TOTAL_SECTORS);     // total_sectors_32
+    rd_put32(d + 36, RD_FAT_SECTORS);       // sectors_per_fat_32
+    rd_put32(d + 44, 2);                    // root_cluster
+    rd_put16(d + 48, 0);                    // fs_info_sector（无）
+    d[66] = 0x29;                           // boot_signature
+    memcpy(d + 71, "TESTVOL    ", 11);
+    memcpy(d + 82, "FAT32   ", 8);
+    d[510] = 0x55; d[511] = 0xAA;
+
+    // 两份 FAT：0、1 号保留，簇 2（根目录）为 EOC
+    for (uint32_t copy = 0; copy < 2; copy++) {
+        uint8_t *fat = d + (RD_RESERVED + copy * RD_FAT_SECTORS) * RD_SECTOR_SIZE;
+        rd_put32(fat + 0, 0x0FFFFFF8);
+        rd_put32(fat + 4, 0x0FFFFFFF);
+        rd_put32(fat + 8, 0x0FFFFFFF);
+    }
+
+    memset(&fat32_test_dev, 0, sizeof(fat32_test_dev));
+    strcpy(fat32_test_dev.name, "fat32test");
+    fat32_test_dev.private_data = &fat32_test_disk;
+    fat32_test_dev.block_size = RD_SECTOR_SIZE;
+    fat32_test_dev.total_sectors = RD_TOTAL_SECTORS;
+    fat32_test_dev.ops = &fat32_ramdisk_ops;
+    return true;
+}
+
+static void fat32_test_free_disk(void) {
+    if (fat32_test_disk.data) {
+        kfree(fat32_test_disk.data);
+        fat32_test_disk.data = NULL;
+    }
+}
+
+/** 格式化并挂载，返回根目录节点 */
+static fs_node_t *fat32_test_mount(void) {
+    if (!fat32_test_format()) {
+        return NULL;
+    }
+    fs_node_t *root = fs::Fat32::init(&fat32_test_dev);
+    if (!root) {
+        fat32_test_free_disk();
+    }
+    return root;
+}
+
+static void fat32_test_unmount(fs_node_t *root) {
+    if (root) {
+        fs::Fat32::deinit(root);
+    }
+    fat32_test_free_disk();
+}
+
+/** 直接从内存盘的 FAT #1 数空闲簇 */
+static uint32_t fat32_test_free_clusters(void) {
+    const uint8_t *fat = fat32_test_disk.data + RD_RESERVED * RD_SECTOR_SIZE;
+    uint32_t free_count = 0;
+    for (uint32_t c = 2; c < RD_CLUSTERS + 2; c++) {
+        if ((rd_get32(fat + c * 4) & 0x0FFFFFFF) == 0) {
+            free_count++;
+        }
+    }
+    return free_count;
+}
+
+/** 文件 [offset, offset+len) 是否全是字节 value */
+static bool fat32_test_content_is(fs_node_t *file, uint32_t offset, uint32_t len, uint8_t value) {
+    uint8_t *buf = (uint8_t *)kmalloc(len);
+    if (!buf) {
+        return false;
+    }
+    memset(buf, (uint8_t)~value, len);
+    bool ok = fs::Vfs::read(file, offset, len, buf) == len;
+    for (uint32_t i = 0; ok && i < len; i++) {
+        ok = (buf[i] == value);
+    }
+    kfree(buf);
+    return ok;
+}
+
+/** 向文件 offset 处写 len 个字节 value，返回写入的字节数 */
+static uint32_t fat32_test_fill(fs_node_t *file, uint32_t offset, uint32_t len, uint8_t value) {
+    uint8_t *buf = (uint8_t *)kmalloc(len);
+    if (!buf) {
+        return 0;
+    }
+    memset(buf, value, len);
+    uint32_t written = fs::Vfs::write(file, offset, len, buf);
+    kfree(buf);
+    return written;
+}
+
+/**
+ * @brief 多次查找同一文件得到同一个节点，写入不会互相覆盖目录项
+ */
+TEST_CASE(test_fat32_shared_incore_node) {
+    fs_node_t *root = fat32_test_mount();
+    ASSERT_NOT_NULL(root);
+    if (!root) return;
+    ASSERT_EQ_U(RD_FREE_WHEN_EMPTY, fat32_test_free_clusters());
+
+    ASSERT_EQ(0, root->ops->create(root, "a.txt"));
+    fs_node_t *a1 = fs::Vfs::finddir(root, "a.txt");
+    fs_node_t *a2 = fs::Vfs::finddir(root, "a.txt");
+    ASSERT_NOT_NULL(a1);
+    ASSERT_EQ_PTR(a1, a2);
+    if (!a1 || !a2) { fat32_test_unmount(root); return; }
+
+    // 通过第一个引用写入后，第二个引用立刻看到新的大小
+    ASSERT_EQ_U(100, fat32_test_fill(a1, 0, 100, 'A'));
+    ASSERT_EQ_U(100, a2->size);
+
+    // 通过第二个引用追加：必须接在同一条簇链上，而不是另起一条
+    ASSERT_EQ_U(50, fat32_test_fill(a2, 100, 50, 'B'));
+    ASSERT_EQ_U(RD_FREE_WHEN_EMPTY - 1, fat32_test_free_clusters());
+    ASSERT_TRUE(fat32_test_content_is(a1, 0, 100, 'A'));
+    ASSERT_TRUE(fat32_test_content_is(a1, 100, 50, 'B'));
+
+    fs::Vfs::release_node(a1);
+    fs::Vfs::release_node(a2);
+
+    // 全部释放后重新查找：目录项里是合并后的结果
+    fs_node_t *a3 = fs::Vfs::finddir(root, "a.txt");
+    ASSERT_NOT_NULL(a3);
+    if (a3) {
+        ASSERT_EQ_U(150, a3->size);
+        ASSERT_TRUE(fat32_test_content_is(a3, 0, 100, 'A'));
+        ASSERT_TRUE(fat32_test_content_is(a3, 100, 50, 'B'));
+        fs::Vfs::release_node(a3);
+    }
+
+    fat32_test_unmount(root);
+}
+
+/**
+ * @brief 删除仍被打开的文件：数据保留到最后一次关闭，且不会破坏复用其槽位的新文件
+ */
+TEST_CASE(test_fat32_unlink_while_open) {
+    fs_node_t *root = fat32_test_mount();
+    ASSERT_NOT_NULL(root);
+    if (!root) return;
+
+    ASSERT_EQ(0, root->ops->create(root, "a.txt"));
+    fs_node_t *a = fs::Vfs::finddir(root, "a.txt");
+    ASSERT_NOT_NULL(a);
+    if (!a) { fat32_test_unmount(root); return; }
+    ASSERT_EQ_U(600, fat32_test_fill(a, 0, 600, 'A'));     // 2 个簇
+    fs::Vfs::pin(a);                                       // 模拟一个文件描述符
+    ASSERT_EQ_U(RD_FREE_WHEN_EMPTY - 2, fat32_test_free_clusters());
+
+    ASSERT_EQ(0, root->ops->unlink(root, "a.txt"));
+    ASSERT_NULL(fs::Vfs::finddir(root, "a.txt"));
+    ASSERT_TRUE((a->flags & FS_NODE_FLAG_UNLINKED) != 0);
+    // 簇链还在
+    ASSERT_EQ_U(RD_FREE_WHEN_EMPTY - 2, fat32_test_free_clusters());
+
+    // 新文件复用刚才的目录项槽位
+    ASSERT_EQ(0, root->ops->create(root, "b.txt"));
+    fs_node_t *b = fs::Vfs::finddir(root, "b.txt");
+    ASSERT_NOT_NULL(b);
+    ASSERT_NE_PTR(a, b);
+    if (!b) { fat32_test_unmount(root); return; }
+    ASSERT_EQ_U(700, fat32_test_fill(b, 0, 700, 'B'));
+
+    // 继续写已删除的文件：不能碰到 b 的数据和目录项
+    ASSERT_EQ_U(600, fat32_test_fill(a, 0, 600, 'C'));
+    ASSERT_TRUE(fat32_test_content_is(a, 0, 600, 'C'));
+    ASSERT_TRUE(fat32_test_content_is(b, 0, 700, 'B'));
+    fs::Vfs::release_node(b);
+    b = fs::Vfs::finddir(root, "b.txt");
+    ASSERT_NOT_NULL(b);
+    if (b) {
+        ASSERT_EQ_U(700, b->size);
+        ASSERT_TRUE(fat32_test_content_is(b, 0, 700, 'B'));
+        fs::Vfs::release_node(b);
+    }
+
+    // 最后一次关闭：节点销毁，簇链回收
+    ASSERT_TRUE(fs::Vfs::unpin(a));
+    ASSERT_EQ_U(RD_FREE_WHEN_EMPTY - 2, fat32_test_free_clusters());   // 只剩 b 的 2 个簇
+
+    ASSERT_EQ(0, root->ops->unlink(root, "b.txt"));
+    ASSERT_EQ_U(RD_FREE_WHEN_EMPTY, fat32_test_free_clusters());
+
+    fat32_test_unmount(root);
+}
+
+/**
+ * @brief 扩展失败（卷放不下 / 空闲簇不够）时不留下已分配的簇
+ */
+TEST_CASE(test_fat32_extend_failure_rolls_back) {
+    fs_node_t *root = fat32_test_mount();
+    ASSERT_NOT_NULL(root);
+    if (!root) return;
+
+    ASSERT_EQ(0, root->ops->create(root, "big.bin"));
+    fs_node_t *big = fs::Vfs::finddir(root, "big.bin");
+    ASSERT_NOT_NULL(big);
+    if (!big) { fat32_test_unmount(root); return; }
+
+    // lseek 到接近 2GB 再写 1 字节：整个卷都放不下，不能占用任何簇
+    uint8_t byte = 'x';
+    ASSERT_EQ_U(0, fs::Vfs::write(big, 0x7FFFFFF0u, 1, &byte));
+    ASSERT_EQ_U(0, big->size);
+    ASSERT_EQ_U(RD_FREE_WHEN_EMPTY, fat32_test_free_clusters());
+
+    // 占掉 40 个簇，剩 23 个
+    ASSERT_EQ_U(40 * RD_SECTOR_SIZE, fat32_test_fill(big, 0, 40 * RD_SECTOR_SIZE, 'G'));
+    ASSERT_EQ_U(RD_FREE_WHEN_EMPTY - 40, fat32_test_free_clusters());
+
+    // 空文件需要 31 个簇但只有 23 个：失败后分配到一半的簇必须全部归还
+    ASSERT_EQ(0, root->ops->create(root, "c.bin"));
+    fs_node_t *c = fs::Vfs::finddir(root, "c.bin");
+    ASSERT_NOT_NULL(c);
+    if (c) {
+        ASSERT_EQ_U(0, fs::Vfs::write(c, 30 * RD_SECTOR_SIZE, 1, &byte));
+        ASSERT_EQ_U(0, c->size);
+        ASSERT_EQ_U(RD_FREE_WHEN_EMPTY - 40, fat32_test_free_clusters());
+        // 之后的小写入仍然成功
+        ASSERT_EQ_U(1, fs::Vfs::write(c, 0, 1, &byte));
+        ASSERT_EQ_U(RD_FREE_WHEN_EMPTY - 41, fat32_test_free_clusters());
+        fs::Vfs::release_node(c);
+    }
+
+    // 已有簇链的文件扩展失败：原链保持完整，链尾仍是 EOC
+    ASSERT_EQ_U(0, fs::Vfs::write(big, 62 * RD_SECTOR_SIZE, 1, &byte));
+    ASSERT_EQ_U(40 * RD_SECTOR_SIZE, big->size);
+    ASSERT_EQ_U(RD_FREE_WHEN_EMPTY - 41, fat32_test_free_clusters());
+    ASSERT_TRUE(fat32_test_content_is(big, 39 * RD_SECTOR_SIZE, RD_SECTOR_SIZE, 'G'));
+    ASSERT_EQ_U(1, fs::Vfs::write(big, 40 * RD_SECTOR_SIZE, 1, &byte));
+    ASSERT_EQ_U(RD_FREE_WHEN_EMPTY - 42, fat32_test_free_clusters());
+
+    fs::Vfs::release_node(big);
+    fat32_test_unmount(root);
+}
+
+/**
+ * @brief 截断：收缩释放尾部簇，截到 0 释放整条链，扩展部分读出 0
+ */
+TEST_CASE(test_fat32_truncate_real) {
+    fs_node_t *root = fat32_test_mount();
+    ASSERT_NOT_NULL(root);
+    if (!root) return;
+
+    ASSERT_EQ(0, root->ops->create(root, "t.bin"));
+    fs_node_t *t = fs::Vfs::finddir(root, "t.bin");
+    ASSERT_NOT_NULL(t);
+    if (!t) { fat32_test_unmount(root); return; }
+
+    ASSERT_EQ_U(3 * RD_SECTOR_SIZE, fat32_test_fill(t, 0, 3 * RD_SECTOR_SIZE, 'T'));
+    ASSERT_EQ_U(RD_FREE_WHEN_EMPTY - 3, fat32_test_free_clusters());
+
+    // 收缩到 700 字节：保留 2 个簇
+    ASSERT_EQ(0, fs::Vfs::truncate(t, 700));
+    ASSERT_EQ_U(700, t->size);
+    ASSERT_EQ_U(RD_FREE_WHEN_EMPTY - 2, fat32_test_free_clusters());
+    ASSERT_TRUE(fat32_test_content_is(t, 0, 700, 'T'));
+
+    // 扩展：新增部分是 0，不是截断前的旧数据
+    ASSERT_EQ(0, fs::Vfs::truncate(t, 1500));
+    ASSERT_EQ_U(RD_FREE_WHEN_EMPTY - 3, fat32_test_free_clusters());
+    ASSERT_TRUE(fat32_test_content_is(t, 0, 700, 'T'));
+    ASSERT_TRUE(fat32_test_content_is(t, 700, 800, 0));
+
+    // 截到 0：整条链释放，目录项同步
+    ASSERT_EQ(0, fs::Vfs::truncate(t, 0));
+    ASSERT_EQ_U(0, t->size);
+    ASSERT_EQ_U(RD_FREE_WHEN_EMPTY, fat32_test_free_clusters());
+    fs::Vfs::release_node(t);
+
+    t = fs::Vfs::finddir(root, "t.bin");
+    ASSERT_NOT_NULL(t);
+    if (t) {
+        ASSERT_EQ_U(0, t->size);
+        ASSERT_EQ_U(2, fat32_test_fill(t, 0, 2, 'n'));
+        ASSERT_EQ_U(2, t->size);
+        ASSERT_EQ_U(RD_FREE_WHEN_EMPTY - 1, fat32_test_free_clusters());
+        fs::Vfs::release_node(t);
+    }
+
+    fat32_test_unmount(root);
+}
+
+// ============================================================================
 // 测试套件定义
 // ============================================================================
 
@@ -748,6 +1107,16 @@ TEST_SUITE(fat32_edge_tests) {
     RUN_TEST(test_fat32_attribute_combinations);
 }
 
+/**
+ * @brief 在内存块设备上的真实读写测试套件
+ */
+TEST_SUITE(fat32_volume_tests) {
+    RUN_TEST(test_fat32_shared_incore_node);
+    RUN_TEST(test_fat32_unlink_while_open);
+    RUN_TEST(test_fat32_extend_failure_rolls_back);
+    RUN_TEST(test_fat32_truncate_real);
+}
+
 // ============================================================================
 // 模块运行函数
 // ============================================================================
@@ -787,6 +1156,9 @@ void run_fat32_tests(void) {
     // 套件 4: 边界条件测试
     // _Requirements: 4.3_
     RUN_SUITE(fat32_edge_tests);
+
+    // 套件 5: 内存块设备上的真实文件系统测试
+    RUN_SUITE(fat32_volume_tests);
 
     // 打印测试摘要
     unittest_print_summary();

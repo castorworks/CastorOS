@@ -74,10 +74,15 @@ typedef struct fat32_fs {
     uint32_t last_allocated_cluster;  // 上次分配的簇号（用于加速下次分配）
     uint32_t next_free_cluster;   // FSInfo 中的下一个空闲簇号
     uint32_t fsinfo_sector;       // FSInfo 扇区号
+    struct fat32_file *incore;    // 正在使用的文件/目录（in-core inode 表），受 fs_lock 保护
     sync::Mutex fs_lock;              // 文件系统级别锁，保护 FAT 表和簇分配
 } fat32_fs_t;
 
-// FAT32 文件节点私有数据
+// FAT32 文件节点私有数据（in-core inode）
+//
+// 同一个目录项在内存中只对应一个 fat32_file_t / fs_node_t：finddir 命中 fs->incore
+// 时返回同一个节点并增加引用，所以所有打开者看到同一份 start_cluster / size，
+// 不会各自用陈旧的拷贝覆盖目录项。
 typedef struct fat32_file {
     fat32_fs_t *fs;               // 文件系统
     uint32_t start_cluster;       // 起始簇号
@@ -86,6 +91,10 @@ typedef struct fat32_file {
     uint32_t dirent_cluster;      // 目录项所在簇
     uint32_t dirent_offset;       // 目录项偏移（字节）
     uint32_t parent_cluster;      // 父目录簇号
+    fs_node_t *node;              // 对应的 VFS 节点
+    struct fat32_file *next;      // fs->incore 链表
+    bool in_table;                // 是否还在 fs->incore 中
+    bool unlinked;                // 目录项已删除；簇链在最后一个引用释放时回收
     struct dirent readdir_cache;  // readdir 结果缓冲区（避免静态变量）
 } fat32_file_t;
 
@@ -135,6 +144,42 @@ static int fat32_dir_rename(fs_node_t *node, const char *old_name, const char *n
 // ============================================================================
 // 内部辅助函数
 // ============================================================================
+
+/**
+ * 在 in-core 表中查找目录项 (dirent_cluster, dirent_offset) 对应的文件
+ * 已 unlink 的文件不参与查找：它的目录项槽位可能已被新文件复用。
+ * 调用者必须持有 fs_lock。
+ */
+static fat32_file_t *fat32_incore_find(fat32_fs_t *fs, uint32_t dirent_cluster, uint32_t dirent_offset) {
+    for (fat32_file_t *f = fs->incore; f; f = f->next) {
+        if (!f->unlinked && f->dirent_cluster == dirent_cluster && f->dirent_offset == dirent_offset) {
+            return f;
+        }
+    }
+    return NULL;
+}
+
+/** 加入 in-core 表（调用者持有 fs_lock） */
+static void fat32_incore_add(fat32_fs_t *fs, fat32_file_t *file) {
+    file->next = fs->incore;
+    fs->incore = file;
+    file->in_table = true;
+}
+
+/** 从 in-core 表摘除（调用者持有 fs_lock；重复调用无害） */
+static void fat32_incore_remove(fat32_fs_t *fs, fat32_file_t *file) {
+    if (!file->in_table) {
+        return;
+    }
+    for (fat32_file_t **pp = &fs->incore; *pp; pp = &(*pp)->next) {
+        if (*pp == file) {
+            *pp = file->next;
+            break;
+        }
+    }
+    file->next = NULL;
+    file->in_table = false;
+}
 
 /**
  * 读取 FAT 表项
@@ -743,12 +788,15 @@ static int fat32_get_cluster_by_index(fat32_fs_t *fs, uint32_t start_cluster,
 
 /**
  * 确保文件具有足够的簇支持指定大小
+ *
+ * 失败时回滚：本次新分配的簇全部释放，原链尾恢复为 EOC，file->start_cluster
+ * 恢复原值，所以失败不会留下无人引用的簇。
  */
 static int fat32_ensure_file_size(fat32_file_t *file, uint32_t new_size) {
     fat32_fs_t *fs = file->fs;
     uint32_t cluster_size = fs->bytes_per_cluster;
     uint32_t required_clusters = (new_size == 0) ? 0 :
-        ((new_size + cluster_size - 1) / cluster_size);
+        ((new_size - 1) / cluster_size + 1);
 
     uint32_t current_clusters = 0;
     uint32_t last_cluster = 0;
@@ -758,6 +806,10 @@ static int fat32_ensure_file_size(fat32_file_t *file, uint32_t new_size) {
         while (true) {
             current_clusters++;
             last_cluster = cluster;
+            if (current_clusters > fs->total_clusters) {
+                LOG_ERROR_MSG("fat32: Cluster chain loop detected while extending file\n");
+                return -1;
+            }
             uint32_t next = fat32_read_fat_entry(fs, cluster);
             if (next == 0xFFFFFFFF) {
                 return -1;
@@ -765,41 +817,70 @@ static int fat32_ensure_file_size(fat32_file_t *file, uint32_t new_size) {
             if (next >= FAT32_CLUSTER_EOF_MIN) {
                 break;
             }
+            if (next < 2) {
+                // 链中出现空闲/保留值：文件系统已损坏，不在它后面继续接簇
+                return -1;
+            }
             cluster = next;
         }
     }
 
-    if (required_clusters == 0) {
+    if (current_clusters >= required_clusters) {
         return 0;
     }
 
-    uint32_t prev_cluster = (current_clusters > 0) ? last_cluster : 0;
+    // 整个卷都放不下：直接失败，不要先把所有空闲簇占满再回滚
+    if (required_clusters > fs->total_clusters) {
+        return -1;
+    }
 
+    uint32_t original_start = file->start_cluster;
+    uint32_t original_last = (current_clusters > 0) ? last_cluster : 0;
+    uint32_t first_new = 0;
+    uint32_t prev_cluster = original_last;
+    bool failed = false;
+
+    // fat32_allocate_cluster 已把新簇写成 EOC，所以链尾始终是合法的
     while (current_clusters < required_clusters) {
         uint32_t new_cluster = fat32_allocate_cluster(fs);
         if (new_cluster == 0) {
-            return -1;
+            failed = true;
+            break;
         }
 
         if (prev_cluster >= 2) {
             if (fat32_write_fat_entry(fs, prev_cluster, new_cluster) != 0) {
-                return -1;
+                fat32_free_cluster(fs, new_cluster);
+                failed = true;
+                break;
             }
         } else {
             file->start_cluster = new_cluster;
         }
 
+        if (first_new == 0) {
+            first_new = new_cluster;
+        }
         prev_cluster = new_cluster;
         current_clusters++;
     }
 
-    if (prev_cluster >= 2) {
-        if (fat32_write_fat_entry(fs, prev_cluster, FAT32_CLUSTER_EOF_MAX) != 0) {
-            return -1;
-        }
+    if (!failed) {
+        return 0;
     }
 
-    return 0;
+    // 回滚：先把原链尾恢复成 EOC，再释放新分配的部分
+    if (original_last >= 2) {
+        fat32_write_fat_entry(fs, original_last, FAT32_CLUSTER_EOF_MAX);
+    }
+    if (first_new >= 2) {
+        fat32_free_cluster_chain(fs, first_new);
+        if (fs->next_free_cluster > first_new) {
+            fs->next_free_cluster = first_new;
+        }
+    }
+    file->start_cluster = original_start;
+    return -1;
 }
 
 /**
@@ -860,6 +941,11 @@ static int fat32_update_dirent_metadata(fat32_file_t *file) {
         return -1;
     }
 
+    if (file->unlinked) {
+        // 目录项已删除，槽位可能已属于别的文件，不能再写
+        return 0;
+    }
+
     if (file->dirent_offset >= file->fs->bytes_per_cluster ||
         file->dirent_cluster < 2) {
         // 根目录或无效目录项
@@ -894,50 +980,47 @@ static int fat32_update_dirent_metadata(fat32_file_t *file) {
 }
 
 /**
- * 截断簇链到指定数量的簇
- * @param fs 文件系统
- * @param start_cluster 起始簇号
- * @param keep_clusters 保留的簇数量（0 表示释放所有簇）
+ * 截断簇链，只保留前 keep_clusters 个簇（keep_clusters >= 1）
+ *
+ * 先把最后一个保留的簇写成 EOC，再释放后面的簇：中途失败或掉电时
+ * 最坏只是丢簇，不会让保留部分链接到已释放的簇。
+ * @return 0 成功，-1 失败（链保持原样）
  */
-static void fat32_truncate_cluster_chain(fat32_fs_t *fs, uint32_t start_cluster, 
-                                          uint32_t keep_clusters) {
-    if (!fs || start_cluster < 2) {
-        return;
+static int fat32_truncate_cluster_chain(fat32_fs_t *fs, uint32_t start_cluster,
+                                        uint32_t keep_clusters) {
+    if (!fs || start_cluster < 2 || keep_clusters == 0) {
+        return -1;
     }
-    
-    uint32_t cluster = start_cluster;
-    uint32_t cluster_count = 0;
-    uint32_t last_kept_cluster = 0;
-    const uint32_t MAX_CHAIN_LENGTH = fs->total_clusters + 10;
-    
-    // 遍历簇链
-    while (cluster >= 2 && cluster < FAT32_CLUSTER_EOF_MIN && cluster_count < MAX_CHAIN_LENGTH) {
-        uint32_t next = fat32_read_fat_entry(fs, cluster);
+
+    // 走到最后一个要保留的簇
+    uint32_t last_kept = start_cluster;
+    for (uint32_t i = 1; i < keep_clusters; i++) {
+        uint32_t next = fat32_read_fat_entry(fs, last_kept);
         if (next == 0xFFFFFFFF) {
             LOG_ERROR_MSG("fat32: Error reading FAT entry during truncate\n");
-            break;
+            return -1;
         }
-        
-        cluster_count++;
-        
-        if (cluster_count <= keep_clusters) {
-            // 保留此簇
-            last_kept_cluster = cluster;
-        } else {
-            // 释放此簇
-            fat32_free_cluster(fs, cluster);
+        if (next < 2 || next >= FAT32_CLUSTER_EOF_MIN) {
+            // 链本来就不比要保留的长
+            return 0;
         }
-        
-        if (next >= FAT32_CLUSTER_EOF_MIN) {
-            break;
-        }
-        cluster = next;
+        last_kept = next;
     }
-    
-    // 如果保留了簇，将最后一个保留的簇标记为 EOF
-    if (keep_clusters > 0 && last_kept_cluster >= 2) {
-        fat32_write_fat_entry(fs, last_kept_cluster, FAT32_CLUSTER_EOF_MAX);
+
+    uint32_t tail = fat32_read_fat_entry(fs, last_kept);
+    if (tail == 0xFFFFFFFF) {
+        LOG_ERROR_MSG("fat32: Error reading FAT entry during truncate\n");
+        return -1;
     }
+    if (tail < 2 || tail >= FAT32_CLUSTER_EOF_MIN) {
+        return 0;
+    }
+
+    if (fat32_write_fat_entry(fs, last_kept, FAT32_CLUSTER_EOF_MAX) != 0) {
+        return -1;
+    }
+    fat32_free_cluster_chain(fs, tail);
+    return 0;
 }
 
 /**
@@ -950,68 +1033,86 @@ static int fat32_file_truncate(fs_node_t *node, uint32_t new_size) {
     if (!node || !node->impl) {
         return -1;
     }
-    
+
     fat32_file_t *file = (fat32_file_t *)node->impl;
     if (file->is_dir) {
         LOG_ERROR_MSG("fat32: Cannot truncate a directory\n");
         return -1;
     }
-    
+
     fat32_fs_t *fs = file->fs;
     if (!fs) {
         return -1;
     }
-    
+
     uint32_t old_size;
     {
         sync::LockGuard guard(fs->fs_lock);
         uint32_t cluster_size = fs->bytes_per_cluster;
+        uint32_t old_start = file->start_cluster;
         old_size = file->size;
-    
+
         if (new_size == old_size) {
             // 大小不变
             return 0;
         }
-    
+
         if (new_size > old_size) {
-            // 扩展文件
+            // 扩展文件（失败时 ensure_file_size 已回滚新分配的簇）
             if (fat32_ensure_file_size(file, new_size) != 0) {
                 return -1;
             }
-        
+
+            // 空文件刚得到首簇：立刻记入目录项，后面再失败也不会丢簇
+            if (file->start_cluster != old_start && fat32_update_dirent_metadata(file) != 0) {
+                fat32_free_cluster_chain(fs, file->start_cluster);
+                file->start_cluster = old_start;
+                return -1;
+            }
+            node->inode = file->start_cluster;
+
             // 将新扩展的区域填充为 0
             if (fat32_zero_range(file, old_size, new_size) != 0) {
                 return -1;
             }
+
+            file->size = new_size;
+            if (fat32_update_dirent_metadata(file) != 0) {
+                file->size = old_size;
+                return -1;
+            }
         } else {
-            // 收缩文件
+            // 收缩文件：先让目录项反映新状态，再释放簇。
+            // 这样任何一步失败，目录项都不会指向已释放的簇。
             if (new_size == 0) {
-                // 截断到 0：释放所有簇
-                if (file->start_cluster >= 2) {
-                    fat32_free_cluster_chain(fs, file->start_cluster);
-                    file->start_cluster = 0;
-                }
-            } else {
-                // 计算需要保留的簇数
-                uint32_t keep_clusters = (new_size + cluster_size - 1) / cluster_size;
-            
-                // 截断簇链
-                if (file->start_cluster >= 2) {
-                    fat32_truncate_cluster_chain(fs, file->start_cluster, keep_clusters);
+                file->start_cluster = 0;
+            }
+            file->size = new_size;
+            if (fat32_update_dirent_metadata(file) != 0) {
+                file->start_cluster = old_start;
+                file->size = old_size;
+                return -1;
+            }
+
+            if (old_start >= 2) {
+                if (new_size == 0) {
+                    fat32_free_cluster_chain(fs, old_start);
+                } else {
+                    uint32_t keep_clusters = (new_size - 1) / cluster_size + 1;
+                    if (fat32_truncate_cluster_chain(fs, old_start, keep_clusters) != 0) {
+                        // 文件大小已经改了；多出的簇仍挂在链上，删除或再次扩展时会被回收/复用
+                        LOG_WARN_MSG("fat32: Failed to release clusters beyond new size\n");
+                    }
                 }
             }
+            node->inode = file->start_cluster;
         }
-    
-        // 更新文件大小
-        file->size = new_size;
-        node->size = new_size;
-    
-        // 更新目录项
-        fat32_update_dirent_metadata(file);
+
+        node->size = file->size;
     }
-    
+
     LOG_DEBUG_MSG("fat32: Truncated file from %u to %u bytes\n", old_size, new_size);
-    
+
     return 0;
 }
 /**
@@ -1157,6 +1258,11 @@ static int fat32_dir_create_entry(fat32_file_t *dir, const char *name, bool is_d
         return -1;
     }
 
+    if (dir->unlinked) {
+        // 目录已被删除（只是还有人打开着）：不能再往里创建
+        return -1;
+    }
+
     fat32_fs_t *fs = dir->fs;
 
     fat32_dir_lookup_t *existing = fat32_find_file_in_dir(fs, dir->start_cluster, name);
@@ -1290,13 +1396,25 @@ static int fat32_dir_remove_entry(fs_node_t *node, const char *name) {
         }
     }
 
-    if (start_cluster >= 2) {
-        fat32_free_cluster_chain(fs, start_cluster);
-    }
+    // 这个文件是否正被使用（有节点引用或文件描述符）
+    fat32_file_t *in_use = fat32_incore_find(fs, lookup->cluster, lookup->offset);
 
+    // 先删除目录项并确认写成功，再处理簇链：中途失败最坏只是丢簇，
+    // 不会留下指向已释放簇的目录项
     if (fat32_mark_entry_deleted(fs, lookup->cluster, lookup->offset) != 0) {
         kfree(lookup);
         return -1;
+    }
+
+    if (in_use) {
+        // 仍在使用：簇链保留，最后一个引用释放时回收（fat32_release_file）。
+        // 此后它不再对应任何目录项，槽位和名字都可以被新文件复用。
+        in_use->unlinked = true;
+        if (in_use->node) {
+            in_use->node->flags |= FS_NODE_FLAG_UNLINKED;
+        }
+    } else if (start_cluster >= 2) {
+        fat32_free_cluster_chain(fs, start_cluster);
     }
 
     kfree(lookup);
@@ -1384,7 +1502,16 @@ static int fat32_dir_rename(fs_node_t *node, const char *old_name, const char *n
     
     // 写回目录项
     int ret = fat32_write_dir_entry(fs, lookup->cluster, lookup->offset, &lookup->entry);
-    
+
+    // 已在使用的节点同步新名字
+    if (ret == 0) {
+        fat32_file_t *in_use = fat32_incore_find(fs, lookup->cluster, lookup->offset);
+        if (in_use && in_use->node) {
+            strncpy(in_use->node->name, new_name, sizeof(in_use->node->name) - 1);
+            in_use->node->name[sizeof(in_use->node->name) - 1] = '\0';
+        }
+    }
+
     kfree(lookup);
     fs->fs_lock.unlock();
     
@@ -1410,10 +1537,15 @@ static uint32_t fat32_file_read(fs_node_t *node, uint32_t offset, uint32_t size,
         return 0;
     }
 
+    fat32_fs_t *fs = file->fs;
+
+    // 获取文件系统锁（start_cluster / size 与其他打开者共享，必须在锁内读取）
+    sync::MutexGuard guard(fs->fs_lock);
+
     if (file->start_cluster < 2 || file->size == 0) {
         return 0;
     }
-    
+
     // 检查边界
     if (offset >= file->size) {
         return 0;
@@ -1421,13 +1553,8 @@ static uint32_t fat32_file_read(fs_node_t *node, uint32_t offset, uint32_t size,
     if (size > file->size - offset) {
         size = file->size - offset;
     }
-    
-    fat32_fs_t *fs = file->fs;
-    
-    // 获取文件系统锁
-    sync::MutexGuard guard(fs->fs_lock);
-    
-    uint32_t bytes_read = 0;
+
+uint32_t bytes_read = 0;
     uint32_t current_cluster = file->start_cluster;
     uint32_t cluster_offset = offset % fs->bytes_per_cluster;
     uint32_t current_cluster_index = offset / fs->bytes_per_cluster;
@@ -1512,7 +1639,9 @@ static uint32_t fat32_file_write(fs_node_t *node, uint32_t offset, uint32_t size
     }
 
     uint32_t requested_end = (uint32_t)end_pos64;
+    uint32_t original_start = file->start_cluster;
 
+    // 扩展失败时 ensure_file_size 已经回滚了本次分配的簇
     if (requested_end > original_size) {
         if (fat32_ensure_file_size(file, requested_end) != 0) {
             return 0;
@@ -1521,6 +1650,17 @@ static uint32_t fat32_file_write(fs_node_t *node, uint32_t offset, uint32_t size
         if (fat32_ensure_file_size(file, requested_end) != 0) {
             return 0;
         }
+    }
+
+    // 空文件刚得到首簇：立刻记入目录项。否则后面任何一步失败，
+    // 新簇链只存在于内存里，关闭后就成了无人引用的丢失簇。
+    if (file->start_cluster != original_start) {
+        if (fat32_update_dirent_metadata(file) != 0) {
+            fat32_free_cluster_chain(fs, file->start_cluster);
+            file->start_cluster = original_start;
+            return 0;
+        }
+        node->inode = file->start_cluster;
     }
 
     if (file->start_cluster < 2 && requested_end > 0) {
@@ -1675,6 +1815,39 @@ static struct dirent *fat32_dir_readdir(fs_node_t *node, uint32_t index) {
 
 static fs_node_t *fat32_dir_finddir(fs_node_t *node, const char *name);
 
+/**
+ * 节点的最后一个引用被释放（VFS 在 kfree(node) 之前调用）
+ *
+ * 从 in-core 表摘除；如果文件在打开期间被 unlink，现在才回收它的簇链。
+ */
+static void fat32_release_file(fs_node_t *node) {
+    fat32_file_t *file = (fat32_file_t *)node->impl;
+    if (!file) {
+        return;
+    }
+
+    fat32_fs_t *fs = file->fs;
+    if (fs) {
+        sync::MutexGuard guard(fs->fs_lock);
+        fat32_incore_remove(fs, file);
+        if (file->unlinked && file->start_cluster >= 2) {
+            fat32_free_cluster_chain(fs, file->start_cluster);
+            file->start_cluster = 0;
+        }
+    }
+
+    node->impl = NULL;
+    kfree(file);
+}
+
+/**
+ * 已 unlink 的节点的最后一个文件描述符关闭：放掉该描述符持有的引用。
+ * 引用归零时由 fat32_release_file 回收簇链并释放节点。
+ */
+static void fat32_destroy_node(fs_node_t *node) {
+    fs::Vfs::release_node(node);
+}
+
 class Fat32DirOps final : public fs::NodeOps {
 public:
     uint32_t supported() const override { return OP_READDIR | OP_FINDDIR | OP_CREATE | OP_MKDIR | OP_UNLINK | OP_RENAME; }
@@ -1696,6 +1869,12 @@ public:
     int rename(fs_node_t *node, const char *old_name, const char *new_name) const override {
         return fat32_dir_rename(node, old_name, new_name);
     }
+    void release_impl(fs_node_t *node) const override {
+        fat32_release_file(node);
+    }
+    void destroy(fs_node_t *node) const override {
+        fat32_destroy_node(node);
+    }
 };
 static const Fat32DirOps fat32_dir_ops{};
 
@@ -1710,6 +1889,12 @@ public:
     }
     int truncate(fs_node_t *node, uint32_t new_size) const override {
         return fat32_file_truncate(node, new_size);
+    }
+    void release_impl(fs_node_t *node) const override {
+        fat32_release_file(node);
+    }
+    void destroy(fs_node_t *node) const override {
+        fat32_destroy_node(node);
     }
 };
 static const Fat32FileOps fat32_file_ops{};
@@ -1734,13 +1919,30 @@ static fs_node_t *fat32_dir_finddir(fs_node_t *node, const char *name) {
         return NULL;
     }
     
+    uint32_t cluster = ((uint32_t)lookup->entry.cluster_high << 16) | lookup->entry.cluster_low;
+    uint32_t size = lookup->entry.file_size;
+
+    // 已经有节点在用这个目录项：返回同一个节点，所有打开者共享一份状态
+    fat32_file_t *existing = fat32_incore_find(fs, lookup->cluster, lookup->offset);
+    if (existing) {
+        if (existing->node && fs::Vfs::try_ref_node(existing->node)) {
+            kfree(lookup);
+            return existing->node;
+        }
+        // 该节点的引用已归零、正等着拿 fs_lock 做释放：不能复活它。
+        // 把它摘掉，新节点接管它的最新状态。
+        fat32_incore_remove(fs, existing);
+        cluster = existing->start_cluster;
+        size = existing->size;
+    }
+
     // 创建文件节点
     fs_node_t *new_node = (fs_node_t *)kmalloc(sizeof(fs_node_t));
     if (!new_node) {
         kfree(lookup);
         return NULL;
     }
-    
+
     fat32_file_t *new_file = (fat32_file_t *)kmalloc(sizeof(fat32_file_t));
     if (!new_file) {
         kfree(new_node);
@@ -1753,14 +1955,18 @@ static fs_node_t *fat32_dir_finddir(fs_node_t *node, const char *name) {
     memset(new_file, 0, sizeof(fat32_file_t));
     strncpy(new_node->name, name, sizeof(new_node->name) - 1);
     
-    uint32_t cluster = ((uint32_t)lookup->entry.cluster_high << 16) | lookup->entry.cluster_low;
+    bool is_directory = (lookup->entry.attributes & FAT32_ATTR_DIRECTORY) != 0;
+    if (is_directory && cluster == 0) {
+        // ".." 指向根目录时目录项里的簇号按规范写 0
+        cluster = fs->root_cluster;
+    }
     new_node->inode = cluster;
-    new_node->size = lookup->entry.file_size;
-    new_node->permissions = FS_PERM_READ | FS_PERM_WRITE;
+    new_node->size = size;
+new_node->permissions = FS_PERM_READ | FS_PERM_WRITE;
     new_node->flags = FS_NODE_FLAG_ALLOCATED;  // 标记为动态分配的节点
     new_node->ref_count = 1;  // 返回时引用计数为 1，表示调用者拥有一个引用
     
-    if (lookup->entry.attributes & FAT32_ATTR_DIRECTORY) {
+    if (is_directory) {
         new_node->type = FS_DIRECTORY;
         new_node->ops = &fat32_dir_ops;
         new_node->permissions = FS_PERM_READ | FS_PERM_WRITE | FS_PERM_EXEC;
@@ -1773,12 +1979,14 @@ static fs_node_t *fat32_dir_finddir(fs_node_t *node, const char *name) {
     
     new_file->fs = fs;
     new_file->start_cluster = cluster;
-    new_file->size = lookup->entry.file_size;
+    new_file->size = size;
     new_file->dirent_cluster = lookup->cluster;
     new_file->dirent_offset = lookup->offset;
     new_file->parent_cluster = file->start_cluster;
+    new_file->node = new_node;
     new_node->impl = new_file;
-    
+    fat32_incore_add(fs, new_file);
+
     kfree(lookup);
     return new_node;
 }
@@ -1943,6 +2151,7 @@ fs_node_t *fs::Fat32::init(fs::Blockdev *dev) {
     root_file->dirent_cluster = 0;
     root_file->dirent_offset = 0;
     root_file->parent_cluster = 0;
+    root_file->node = root;
     root->impl = root_file;
     
     LOG_INFO_MSG("fat32: Root directory created\n");

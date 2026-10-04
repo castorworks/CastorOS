@@ -192,6 +192,13 @@ public:
     static void ref_node(fs_node_t *node);
 
     /**
+     * 为一个已缓存的节点再取一个引用（文件系统的 in-core 节点表使用）
+     * @return false 表示节点是动态分配的且引用计数已经归零（正在被释放），
+     *         调用者不能再使用它
+     */
+    static bool try_ref_node(fs_node_t *node);
+
+    /**
      * 减少文件节点引用计数并在计数为0时释放
      * 如果节点是动态分配的（flags & FS_NODE_FLAG_ALLOCATED）且引用计数为0，则释放它
      * @param node 文件节点
