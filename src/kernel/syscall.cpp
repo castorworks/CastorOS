@@ -589,7 +589,13 @@ syscall_arg_t syscall_dispatcher(syscall_arg_t syscall_num, syscall_arg_t p1, sy
         return (syscall_arg_t)-1;
     }
     
-    return handler(frame, p1, p2, p3, p4, p5);
+    syscall_arg_t ret = handler(frame, p1, p2, p3, p4, p5);
+
+    /* 返回用户态之前处理别的任务发来的 kill：此时本任务不持有任何内核锁，
+     * 可以安全地自行退出（有待处理的 kill 时不返回） */
+    kernel::Scheduler::deliver_pending_kill();
+
+    return ret;
 }
 
 /**

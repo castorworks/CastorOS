@@ -247,6 +247,11 @@ typedef struct task {
 
     /* 阻塞时等待的对象（Mutex/Semaphore 等的地址）；Scheduler::wakeup 按它匹配 */
     void *wait_object;
+
+    /* 待处理的终止请求（kill）。别的任务只置这个标志，由目标任务自己在
+     * 系统调用返回用户态前（不持有任何内核锁时）执行退出 */
+    bool kill_pending;
+    uint32_t kill_signal;            ///< kill_pending 为 true 时的信号号
 } task_t;
 
 /* ============================================================================
@@ -321,6 +326,9 @@ public:
      * @param page_dir 页目录
      * @param program_end 程序加载的最高地址（用于设置堆起始地址）
      * @return 成功返回 PID，失败返回 0
+     *
+     * 所有权：成功后 page_dir 归新进程所有，随进程回收一起释放；
+     * 失败（返回 0）时 page_dir 仍归调用者，由调用者销毁。
      */
     static uint32_t create_user_process(const char *name, uintptr_t entry_point,
                                        page_directory_t *page_dir, uintptr_t program_end);
@@ -352,8 +360,39 @@ public:
     static void wakeup(void *wait_object);
 
     /**
+     * @brief 结束当前任务（不返回）
+     *
+     * 关闭全部文件描述符、处理子进程，然后变成僵尸（有父进程）或
+     * 交给调度器延迟回收（无父进程）。只能在任务自己的上下文调用。
+     *
+     * @param exit_code 退出码
+     * @param signaled  是否因信号终止
+     * @param signal    信号号（signaled 为 true 时有效）
+     */
+    static void exit_current(uint32_t exit_code, bool signaled, uint32_t signal)
+        __attribute__((noreturn));
+
+    /**
+     * @brief 请求终止另一个任务
+     *
+     * 只记录待处理的信号（并把正在 sleep 的目标提前唤醒），不触碰目标的
+     * 状态和资源：目标停在内核里的某个 yield/block 点，可能正持有互斥锁，
+     * 必须由它自己在安全点（deliver_pending_kill）退出。
+     *
+     * @return 目标仍然存活并已记录请求返回 true
+     */
+    static bool request_kill(task_t *target, uint32_t signal);
+
+    /**
+     * @brief 若当前任务有待处理的 kill，就地退出（不返回）
+     *
+     * 在系统调用返回用户态之前调用；此时当前任务不持有任何内核锁。
+     */
+    static void deliver_pending_kill();
+
+    /**
      * @brief 获取当前正在运行的任务
-     * 
+     *
      * @return 当前任务指针，如果没有则返回 NULL
      */
     static task_t* get_current();

@@ -83,6 +83,42 @@ TEST_CASE(test_user_stack_full_allocation_and_release) {
     ASSERT_EQ_U(0, task.page_dir_phys);
 }
 
+/**
+ * create_user_process 失败时不能动调用者传入的地址空间：
+ * 调用者（loader、task_create_user_process_arm64）会自己销毁它，
+ * 这里再释放一次就是二次销毁。PCB 也必须交还。
+ */
+TEST_CASE(test_create_user_process_failure_keeps_address_space) {
+    uintptr_t dir = mm::Vmm::create_page_directory();
+    ASSERT_NE_U(0, dir);
+#if defined(ARCH_ARM64)
+    page_directory_t *page_dir = (page_directory_t *)dir;
+#else
+    page_directory_t *page_dir = (page_directory_t *)PHYS_TO_VIRT(dir);
+#endif
+    uint32_t count_before = kernel::Scheduler::get_count();
+
+    g_task_stack_fail_index = 2;
+    uint32_t pid = kernel::Scheduler::create_user_process(
+        "fail-test", KTEST_USER_CODE_VADDR, page_dir, KTEST_USER_CODE_VADDR + PAGE_SIZE);
+    g_task_stack_fail_index = UINT32_MAX;
+
+    ASSERT_EQ_U(0, pid);
+    ASSERT_EQ_U(count_before, kernel::Scheduler::get_count());
+
+    // 地址空间仍然有效：还能在里面建立并查询映射
+    paddr_t frame = mm::Pmm::alloc_frame();
+    ASSERT_NE_U(frame, PADDR_INVALID);
+    ASSERT_TRUE(mm::Vmm::map_page_in_directory(dir, KTEST_USER_CODE_VADDR, (uintptr_t)frame,
+                                               PAGE_PRESENT | PAGE_USER));
+    paddr_t queried = 0;
+    ASSERT_TRUE(hal::Mmu::query((hal_addr_space_t)dir, KTEST_USER_CODE_VADDR, &queried, NULL));
+    ASSERT_EQ_U(queried, frame);
+
+    // 由调用者销毁（连同上面映射的页）
+    mm::Vmm::free_page_directory(dir);
+}
+
 // ============================================================================
 // Property-Based Tests: Context Switch Register Preservation
 // **Feature: multi-arch-support, Property 9: Context Switch Register Preservation**
@@ -653,6 +689,7 @@ void run_task_tests(void) {
     unittest_begin_suite("Task Manager Tests");
     RUN_TEST(test_user_stack_cleanup_on_partial_failure);
     RUN_TEST(test_user_stack_full_allocation_and_release);
+    RUN_TEST(test_create_user_process_failure_keeps_address_space);
     unittest_end_suite();
     
     // Property-based tests

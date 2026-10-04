@@ -57,7 +57,7 @@ bool load_user_shell(void) {
     LOG_DEBUG_MSG("Shell: ELF data loaded at %p, size=%u\n", elf_data, shell_size);
     
     // 验证 ELF 头
-    if (!kernel::Elf::validate_header(elf_data)) {
+    if (!kernel::Elf::validate_header(elf_data, shell_size)) {
         LOG_ERROR_MSG("Invalid ELF file\n");
         kfree(elf_data);
         return false;
