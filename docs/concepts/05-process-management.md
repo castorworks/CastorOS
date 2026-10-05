@@ -38,46 +38,44 @@ typedef enum {
 
 ## 任务控制块 (PCB)
 
-```c
+```cpp
 typedef struct task {
     // 标识信息
-    uint32_t pid;              // 进程 ID
-    char name[32];             // 进程名
-    task_state_t state;        // 状态
-    
+    uint32_t pid;                // 进程 ID（init 固定是 1，PID 不复用）
+    char name[32];               // 进程名（取自 argv[0]）
+    task_state_t state;          // 状态
+
     // 调度信息
-    uint32_t priority;         // 优先级
-    uint32_t time_slice;       // 剩余时间片
-    uint64_t total_ticks;      // 总运行滴答数
-    
-    // 内存信息
-    uint32_t page_dir_phys;    // 页目录物理地址
-    page_directory_t *page_dir;// 页目录虚拟地址
-    uint32_t brk;              // 堆顶地址
-    
-    // 栈信息
-    uint32_t kernel_stack;     // 内核栈顶
-    uint32_t user_stack;       // 用户栈顶
-    
-    // 上下文信息
-    cpu_context_t context;     // 保存的 CPU 状态
-    
-    // 文件信息
-    fd_entry_t *fd_table;      // 文件描述符表
-    int fd_count;              // 打开文件数
-    
-    // 进程关系
-    struct task *parent;       // 父进程
-    struct task *children;     // 子进程链表
-    struct task *sibling;      // 兄弟进程
-    
-    // 退出信息
-    int exit_code;             // 退出码
-    
-    // 链表指针
-    struct task *next;         // 就绪队列链接
+    uint32_t priority;
+    uint32_t time_slice;
+    uint64_t sleep_until_ms;     // 睡眠截止时间
+    void *wait_object;           // 阻塞时等待的对象
+
+    // CPU 上下文和内核栈
+    cpu_context_t context;
+    uintptr_t kernel_stack;
+
+    // 地址空间
+    uintptr_t page_dir_phys;
+    uintptr_t heap_start, heap_end, heap_max;   // brk
+    uintptr_t user_stack;
+
+    // 进程关系和退出信息
+    struct task *parent;
+    uint32_t exit_code;
+    bool kill_pending;           // 有待处理的 kill
+
+    // 进程间通信
+    ipc_state_t ipc_state;       // 是否阻塞在 send/recv 上
+    uint32_t ipc_peer;
+    ipc_msg ipc_buf;             // 在途的消息
+    uint32_t irq_pending;        // 还没被 recv 取走的设备中断
+
+    bool privileged;             // 可以访问硬件
 } task_t;
 ```
+
+PCB 里没有文件描述符表和工作目录：内核不认识文件，这些概念属于用户态的文件服务。
 
 ## CPU 上下文
 
@@ -164,153 +162,121 @@ context_switch:
 
 ### fork()
 
-```c
-int sys_fork(void) {
-    task_t *parent = current_task;
-    
+```cpp
+uint32_t syscall::Process::fork(uintptr_t *frame) {
+    task_t *parent = Scheduler::get_current();
+
     // 1. 分配子进程 PCB
-    task_t *child = task_alloc();
-    if (!child) return -ENOMEM;
-    
-    // 2. 复制页目录 (COW)
-    child->page_dir_phys = vmm_clone_page_directory(parent->page_dir_phys);
-    child->page_dir = PHYS_TO_VIRT(child->page_dir_phys);
-    
+    task_t *child = Scheduler::alloc();
+
+    // 2. 克隆地址空间：普通页变成只读 + COW，共享页（设备内存、进程间共享内存）原样共享
+    child->page_dir_phys = mm::Vmm::clone_page_directory(parent->page_dir_phys);
+
     // 3. 分配内核栈
-    child->kernel_stack = (uint32_t)kmalloc(KERNEL_STACK_SIZE);
-    
-    // 4. 复制上下文
-    memcpy(&child->context, &parent->context, sizeof(cpu_context_t));
-    child->context.eax = 0;  // 子进程 fork() 返回 0
-    
-    // 5. 复制文件描述符表
-    child->fd_table = fd_table_clone(parent->fd_table);
-    
-    // 6. 设置进程关系
+    child->kernel_stack_base = (uintptr_t)kmalloc(KERNEL_STACK_SIZE);
+
+    // 4. 用系统调用入口保存的用户寄存器（frame）构造子进程的上下文
+    //    子进程从 fork() 返回处继续执行，返回值是 0
+    child->context.eax = 0;
+    child->context.eip = frame[8];
+    ...
+
+    // 5. 继承父子关系和特权
     child->parent = parent;
-    child->sibling = parent->children;
-    parent->children = child;
-    
-    // 7. 加入就绪队列
+    child->privileged = parent->privileged;
+
+    // 6. 加入就绪队列
     child->state = TASK_READY;
-    enqueue_ready(child);
-    
+    Scheduler::ready_queue_add(child);
+
     return child->pid;  // 父进程返回子进程 PID
 }
 ```
 
 ### exec()
 
-```c
-int sys_execve(const char *path, char *const argv[], char *const envp[]) {
-    task_t *task = current_task;
-    
-    // 1. 打开可执行文件
-    int fd = vfs_open(path, O_RDONLY);
-    if (fd < 0) return fd;
-    
-    // 2. 读取 ELF 头
-    elf_header_t header;
-    vfs_read(fd, &header, sizeof(header));
-    
-    // 3. 验证 ELF
-    if (!elf_validate(&header)) {
-        vfs_close(fd);
-        return -ENOEXEC;
-    }
-    
-    // 4. 清除旧地址空间
-    vmm_destroy_user_space(task->page_dir);
-    
-    // 5. 加载程序段
-    for (每个程序头) {
-        load_segment(fd, phdr, task->page_dir);
-    }
-    
-    // 6. 设置用户栈
-    uint32_t user_stack = setup_user_stack(argv, envp);
-    
-    // 7. 设置入口点
-    task->context.eip = header.e_entry;
-    task->context.esp = user_stack;
-    
-    vfs_close(fd);
+内核不认识路径。调用者自己把程序读进内存（比如通过文件服务），把 ELF 映像和参数交给内核：
+
+```cpp
+uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size,
+                                const char *args, size_t args_size) {
+    // 1. 把映像和参数块复制进内核：接下来要换地址空间，旧的就看不到了
+    void *elf_data = kmalloc(size);
+    memcpy(elf_data, image, size);
+
+    // 2. 校验 ELF，在新的地址空间里加载各个段、建立用户栈
+    //    （任何一步失败都还能回到原来的程序）
+    uintptr_t new_dir = mm::Vmm::create_page_directory();
+    kernel::Elf::load(elf_data, size, new_dir, &entry_point, &program_end);
+    Scheduler::setup_user_stack(current);
+
+    // 3. 切到新地址空间，释放旧的
+    mm::Vmm::switch_page_directory(new_dir);
+    mm::Vmm::free_page_directory(old_dir);
+
+    // 4. 把参数写进参数页（用户栈区域最顶上的一页，地址固定）
+    memcpy(((user_args_t *)USER_ARGS_ADDR)->data, kargs, args_size);
+
+    // 5. 改写系统调用的返回帧：这次系统调用“返回”到新程序的入口
+    frame[8] = entry_point;           // EIP
+    frame[11] = current->user_stack;  // ESP
     return 0;
 }
 ```
+
+新程序的启动代码（`user/lib/src/crt0.cpp`）从参数页取出参数，组装成 `argv` 再调用 `main`。
 
 ## 进程终止
 
 ### exit()
 
-```c
-void sys_exit(int status) {
-    task_t *task = current_task;
-    
-    // 1. 关闭所有文件
-    for (int i = 0; i < task->fd_count; i++) {
-        if (task->fd_table[i].valid) {
-            vfs_close(i);
-        }
+```cpp
+void Scheduler::exit_current(uint32_t exit_code, bool signaled, uint32_t signal) {
+    // 1. 等着和本任务通信的任务不会再等到结果；释放认领的中断线
+    Ipc::on_exit(current_task);
+    UserIrq::on_exit(current_task);
+
+    // 2. 子进程：已经是僵尸的直接回收，还在运行的变成孤儿
+    ...
+
+    // 3. 有父进程就变成僵尸等它来收，并唤醒可能正在 waitpid 的父进程
+    if (current_task->parent) {
+        current_task->state = TASK_ZOMBIE;
+        Scheduler::wakeup(current_task->parent);
+    } else {
+        current_task->state = TASK_TERMINATED;
     }
-    
-    // 2. 释放用户地址空间
-    vmm_destroy_user_space(task->page_dir);
-    
-    // 3. 设置退出状态
-    task->exit_code = status;
-    task->state = TASK_ZOMBIE;
-    
-    // 4. 重新设置子进程的父进程
-    task_t *child = task->children;
-    while (child) {
-        child->parent = init_task;  // 孤儿进程由 init 收养
-        child = child->sibling;
-    }
-    
-    // 5. 通知父进程
-    if (task->parent) {
-        wake_up(task->parent);
-    }
-    
-    // 6. 触发调度
-    schedule();
-    
-    // 不会到达这里
+
+    // 4. 切走，不再回来。地址空间和内核栈不能在自己的栈上释放，
+    //    由父进程的 waitpid 或下一次调度来回收
+    Scheduler::schedule();
 }
 ```
 
 ### wait()
 
-```c
-int sys_waitpid(int pid, int *status, int options) {
-    task_t *parent = current_task;
-    
-    while (1) {
-        // 查找匹配的子进程
-        task_t *child = find_child(parent, pid);
-        
-        if (child && child->state == TASK_ZOMBIE) {
-            // 获取退出状态
-            if (status) *status = child->exit_code;
-            
-            // 回收资源
-            int child_pid = child->pid;
-            task_free(child);
-            
+```cpp
+uint32_t syscall::Process::waitpid(int32_t pid, uint32_t *wstatus, uint32_t options) {
+    while (true) {
+        // 找一个已经退出（僵尸）的匹配子进程
+        task_t *child = find_zombie_child(current, pid);
+        if (child) {
+            *wstatus = encode_status(child);
+            Scheduler::free(child);         // 回收它的地址空间、内核栈和 PCB
             return child_pid;
         }
-        
-        if (options & WNOHANG) {
-            return 0;  // 非阻塞模式
-        }
-        
-        // 阻塞等待
-        parent->state = TASK_BLOCKED;
-        schedule();
+        if (no_matching_child)   return -1;
+        if (options & WNOHANG)   return 0;
+        if (current->kill_pending) return -1;
+
+        // 阻塞到有子进程退出：exit_current 会唤醒我们
+        Scheduler::block(current);
     }
 }
 ```
+
+等待必须是真正的阻塞。如果父进程在内核里轮询（让出 CPU 再停机等下一次中断），它停机的
+那段时间里别的任务都得不到运行，系统里每一次唤醒都可能被拖到下一个时钟滴答。
 
 ## 用户态切换
 
@@ -367,46 +333,37 @@ void context_switch(task_t *prev, task_t *next) {
 }
 ```
 
-## 信号处理
+## 终止别的进程：kill
 
-### 信号发送
+CastorOS 没有信号处理函数。`kill(pid, sig)` 只有两种用法：`sig == 0` 探测进程是否存在，
+其他值终止目标进程。
 
-```c
-int sys_kill(int pid, int sig) {
-    task_t *target = find_task_by_pid(pid);
-    if (!target) return -ESRCH;
-    
-    // 添加待处理信号
-    target->pending_signals |= (1 << sig);
-    
-    // 如果目标阻塞，唤醒它
-    if (target->state == TASK_BLOCKED) {
+终止不是由调用者就地完成的。目标进程一定停在内核里的某个点上，可能正持有锁、
+正排在某个等待队列里；直接改它的状态或释放它的资源会破坏内核。所以 `kill` 只给目标
+记一个待处理的标记，由目标自己在安全的地方退出：
+
+```cpp
+bool Scheduler::request_kill(task_t *target, uint32_t signal) {
+    target->kill_pending = true;
+    target->kill_signal = signal;
+
+    // 正在 sleep、等待 IPC 或等待子进程的任务提前唤醒，让它尽快走到系统调用出口
+    if (target->state == TASK_BLOCKED && (sleeping || waiting_for_ipc || waiting_for_child)) {
         target->state = TASK_READY;
-        enqueue_ready(target);
+        ready_queue_add(target);
     }
-    
-    return 0;
+    return true;
 }
-```
 
-### 信号处理（返回用户态前）
-
-```c
-void handle_pending_signals(task_t *task) {
-    while (task->pending_signals) {
-        int sig = find_first_signal(task->pending_signals);
-        task->pending_signals &= ~(1 << sig);
-        
-        if (task->signal_handlers[sig]) {
-            // 调用用户定义的处理程序
-            call_signal_handler(task, sig);
-        } else {
-            // 默认处理
-            default_signal_action(task, sig);
-        }
+// 系统调用返回用户态之前、以及时钟中断即将返回用户态时调用
+void Scheduler::deliver_pending_kill() {
+    if (current_task->kill_pending) {
+        exit_current(128 + signal, true, signal);
     }
 }
 ```
+
+非特权进程只能终止自己和自己的子孙。
 
 ## 最佳实践
 

@@ -2,14 +2,14 @@
 
 ## 概述
 
-CastorOS 使用 GRUB 作为引导加载器，遵循 Multiboot 规范。引导过程从 BIOS/UEFI 开始，经过 GRUB，最终将控制权交给内核。
+x86 上的 CastorOS 遵循 Multiboot 规范：任何支持 Multiboot 的引导加载器都可以加载它。开发时用的是 QEMU 自带的加载器（`qemu -kernel`），真机上可以用 GRUB。引导过程从固件开始，经过引导加载器，最终将控制权交给内核。
 
 ## 引导流程
 
 ```
-BIOS/UEFI
+固件 (BIOS/UEFI)
     ↓
-GRUB (Multiboot)
+引导加载器 (QEMU -kernel / GRUB，Multiboot)
     ↓
 boot.asm (_start)
     ↓
@@ -26,7 +26,7 @@ kernel_main()
 
 ### Multiboot Header
 
-内核必须在前 8KB 包含 Multiboot 头，告诉 GRUB 如何加载内核：
+内核必须在前 8KB 包含 Multiboot 头，告诉引导加载器如何加载内核：
 
 ```c
 // multiboot.asm
@@ -40,7 +40,7 @@ section .multiboot
     dd MULTIBOOT_CHECKSUM
 ```
 
-### GRUB 提供的信息
+### 引导加载器提供的信息
 
 - **魔数**: 0x2BADB002（放在 EAX）
 - **Multiboot 信息结构指针**（放在 EBX）
@@ -117,41 +117,38 @@ higher_half:
 
 ## kernel_main 初始化顺序
 
-```c
-void kernel_main(multiboot_info_t* mbi) {
-    // 阶段 1: 基础输出
-    vga_init();           // VGA 文本模式
-    serial_init();        // 串口（调试）
-    
-    // 阶段 2: 中断系统
-    gdt_init();           // 全局描述符表
-    idt_init();           // 中断描述符表
-    isr_init();           // 异常处理
-    irq_init();           // 硬件中断
-    syscall_init();       // 系统调用
-    
-    // 阶段 3: 内存管理
-    pmm_init(mbi);        // 物理内存管理
-    vmm_init();           // 虚拟内存管理
-    heap_init();          // 堆分配器
-    
-    // 阶段 4: 设备驱动
-    pit_init();           // 定时器
-    keyboard_init();      // 键盘
-    ata_init();           // 磁盘
-    rtc_init();           // 实时时钟
-    pci_init();           // PCI 总线
-    acpi_init();          // ACPI
-    
-    // 阶段 5: 高级子系统
-    task_init();          // 任务管理
-    vfs_init();           // 文件系统
-    
-    // 阶段 6: 启动用户空间
-    load_shell();         // 加载用户 shell
-    scheduler_start();    // 启动调度器
+```cpp
+void kernel_main(multiboot_info_t *mbi) {
+    cxx_global_ctors_init();      // C++ 全局构造函数
+
+    drivers::Serial::init();      // 串口：内核唯一的输出设备
+    print_banner();
+
+    hal::Cpu::init();             // GDT + TSS
+    hal::Interrupt::init();       // IDT、异常、PIC
+    syscall_init();               // 系统调用表和入口
+
+    mm::Pmm::init(mbi);           // 物理内存
+    mm::Vmm::init();              // 虚拟内存
+    mm::Heap::init(...);          // 内核堆
+
+    drivers::Timer::init(100);    // 时钟，100 Hz
+
+    kernel_start();
+}
+
+static void kernel_start(void) {
+    kernel::Scheduler::init();    // 任务管理
+    hal::Interrupt::enable();
+    // KTEST=1 时在这里运行内核测试
+    load_init();                  // 加载内嵌的 init，成为 PID 1
+    kernel::Scheduler::schedule();
 }
 ```
+
+内核初始化到此为止。驱动、文件系统、命令行都由 init 在用户态启动
+（见 [../microkernel.md](../microkernel.md)）。arm64 的流程相同，只是启动信息来自
+设备树（DTB）而不是 Multiboot。
 
 ## Multiboot 信息结构
 
@@ -188,7 +185,7 @@ typedef struct {
 
 ## 内存映射
 
-GRUB 提供详细的内存映射，指示哪些区域可用：
+引导加载器提供详细的内存映射，指示哪些区域可用：
 
 ```c
 typedef struct {

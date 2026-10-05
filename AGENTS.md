@@ -19,8 +19,9 @@ CastorOS is an educational microkernel for learning and experimentation.
 ### Documentation Language
 
 Project documentation is primarily in Chinese (简体中文). Code comments mix Chinese and English.
-`docs/microkernel.md` describes the current structure; the numbered chapters in `docs/` are a
-development log written before the microkernel cut and mention things that no longer exist.
+`docs/microkernel.md` describes the current structure and `docs/concepts/` explains the
+mechanisms behind it. `docs/history/` is a development log written before the microkernel
+cut; its code listings no longer match the tree.
 
 ## Technology Stack
 

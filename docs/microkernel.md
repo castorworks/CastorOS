@@ -36,7 +36,7 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 
 其余程序不嵌在 init 里，而是放在启动映像中，由命令行从文件服务里读出来运行：
 
-- `user/selftest`：用户态自检（程序参数、内存、进程、IPC、特权、共享内存、名字服务、文件服务），开机时由 `rc` 脚本运行一次。
+- `user/selftest`：用户态自检（程序参数、内存、进程、IPC 的各条阻塞和退出路径、特权、共享内存、名字服务、文件服务、块设备、磁盘文件系统），开机时由 `rc` 脚本运行一次，每项打印一行结果。`make test` 要求它全部通过。
 - `user/ls`、`user/cat`、`user/cp`、`user/rm`、`user/echo`：小工具。
 - `user/disk`：显示磁盘容量、直接读写扇区。
 - `user/hello`：最小的示例程序，打印自己的 PID 和参数。
@@ -62,7 +62,7 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 | 0 | `exit(code)` | |
 | 1 | `fork()` | 写时复制 |
 | 2 | `exec(image, size, args, args_size)` | 用调用者内存里的 ELF 映像替换当前进程，并把参数块交给新程序；内核不认识路径 |
-| 3 | `waitpid(pid, wstatus, options)` | 支持 `WNOHANG` |
+| 3 | `waitpid(pid, wstatus, options)` | 阻塞到子进程退出；支持 `WNOHANG` |
 | 4 / 5 | `getpid()` / `getppid()` | |
 | 6 | `yield()` | |
 | 7 | `kill(pid, signal)` | 没有信号处理函数：非 0 信号终止目标；非特权进程只能发给自己和子孙。信号 0 只探测进程是否存在，谁都可以用 |
@@ -164,7 +164,7 @@ for (;;) {
 
 队列和请求缓冲区来自 `dma_alloc`（设备只认物理地址）。驱动一次处理一个请求：提交给设备后用 `ipc_recv(IPC_FROM_KERNEL)` 只等中断，这期间其他客户的请求留在各自的 `call` 里排队。
 
-`make run` 给 QEMU 挂上 `disk.img`（第一次运行时创建，16MB，`make clean` 不删，三个架构共用）；`make test` 每次用一块新的临时磁盘。
+`make run` 给 QEMU 挂上 `disk.img`（第一次运行时创建，16MB，`make clean` 不删，三个架构共用）；`make test` 每次用一块新的 2MB 临时磁盘，小到自检可以把它写满来检查“磁盘满”的处理（大于 4MB 的磁盘上这一项会跳过）。
 
 当前的限制：只支持 legacy 接口（QEMU 的默认配置）；一次一个请求，没有并发；每个请求最多 8 个扇区。
 

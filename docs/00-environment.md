@@ -1,4 +1,4 @@
-# 阶段 0: 开发环境搭建
+# 开发环境搭建
 
 ## 基础环境
 
@@ -191,93 +191,25 @@ qemu-system-aarch64 --version
 ### 快速测试
 
 ```bash
-# 测试 i686 构建
-make ARCH=i686 clean all
-make ARCH=i686 run-silent
-
-# 测试 x86_64 构建
-make ARCH=x86_64 clean all
-
-# 测试 ARM64 构建
-make ARCH=arm64 clean all
+make build-all          # 构建三个架构
+make run                # 在 QEMU 里运行 i686，串口控制台接到当前终端
+make test-all           # 三个架构各跑一遍内核测试和用户态自检
 ```
 
-## 创建项目结构
+`make test` 需要 `timeout` 命令（macOS: `brew install coreutils`）。不需要安装 GRUB。
 
-### 1. 初始化 Git 仓库（如果还没有）
-
-```bash
-cd /root/CastorOS
-git init
-```
-
-### 2. 创建目录结构
-
-```bash
-# 在项目根目录执行
-mkdir -p src/{boot,kernel,drivers,mm,fs,lib,include}
-mkdir -p src/include/{drivers,kernel,mm,fs,lib}
-mkdir -p build
-mkdir -p scripts
-
-# 给这些目录都创建一个 .gitkeep
-touch src/boot/.gitkeep
-touch src/kernel/.gitkeep
-touch src/drivers/.gitkeep
-touch src/mm/.gitkeep
-touch src/fs/.gitkeep
-touch src/lib/.gitkeep
-touch src/include/drivers/.gitkeep
-touch src/include/kernel/.gitkeep
-touch src/include/mm/.gitkeep
-touch src/include/fs/.gitkeep
-touch src/include/lib/.gitkeep
-touch scripts/.gitkeep
-```
+## 目录结构
 
 **目录说明**:
-- `src/boot/`: 引导相关代码（汇编）
-- `src/kernel/`: 内核核心代码（GDT、IDT、中断处理等）
-- `src/drivers/`: 设备驱动（VGA、键盘、定时器等）
+- `src/arch/`: 架构相关代码（引导、GDT/IDT 或异常向量、中断、分页、上下文切换）
+- `src/kernel/`: 内核核心代码（任务调度、系统调用、IPC、ELF 加载等）
+- `src/drivers/`: 内核里仅有的两个驱动（调试输出用的串口、调度用的时钟）
 - `src/mm/`: 内存管理（物理内存、虚拟内存、堆）
-- `src/fs/`: 文件系统
-- `src/lib/`: 标准库函数实现
-- `src/include/`: 头文件（采用层级式结构，便于管理和维护）
-  - `src/include/drivers/`: 驱动程序头文件（如 vga.h, keyboard.h 等）
-  - `src/include/kernel/`: 内核核心头文件（如 gdt.h, idt.h 等）
-  - `src/include/mm/`: 内存管理头文件（如 pmm.h, vmm.h 等）
-  - `src/include/fs/`: 文件系统头文件（如 vfs.h, initrd.h 等）
-  - `src/include/lib/`: 库函数头文件（如 string.h, stdio.h 等）
+- `src/lib/`: 内核库函数实现
+- `src/include/`: 头文件（按子系统分层）
+- `user/`: 用户态的库、驱动、服务和程序
 - `build/`: 编译输出目录
-- `scripts/`: 工具脚本（环境安装、检查等）
-
-### 3. 创建 .gitignore
-
-```bash
-cat > .gitignore << 'EOF'
-# 构建输出
-build/
-*.bin
-*.iso
-*.o
-*.elf
-
-# 编辑器和 IDE
-.idea/
-*.swp
-*.swo
-*~
-compile_commands.json
-.clangd/
-
-# 调试文件
-*.log
-
-# OS 特定文件
-.DS_Store
-Thumbs.db
-EOF
-```
+- `scripts/`: 工具脚本（交叉编译器安装）
 
 ### 配置 VSCode
 
@@ -285,8 +217,8 @@ EOF
 # 安装 clangd（用于代码补全和分析）
 sudo apt install -y clangd
 
-# 安装 bear（用于生成 compile_commands.json）
-sudo apt install -y bear
+# 安装 compiledb（make compile-db 用它生成 compile_commands.json）
+pip3 install compiledb
 ```
 
 在 VSCode 中安装以下插件：

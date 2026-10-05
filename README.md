@@ -20,7 +20,7 @@
 
 ## 构建与运行
 
-参考 [docs/00-environment.md](./docs/00-environment.md) 安装交叉编译器和 QEMU（不需要 GRUB）。
+参考 [docs/00-environment.md](./docs/00-environment.md) 安装交叉编译器和 QEMU。
 
 ```bash
 make                    # 构建内核（默认 i686），自动构建并内嵌 user/init
@@ -87,13 +87,11 @@ docs/          文档
 ## 文档
 
 + [微内核结构](./docs/microkernel.md)：内核边界、启动流程、系统调用表、IPC、共享内存、名字服务、文件服务、块设备、启动映像、硬件访问、如何加模块
-+ [概念讲解](./docs/concepts/00-overview.md)
-+ 开发过程记录（写于精简为微内核之前，其中提到的 GRUB 磁盘镜像、VGA、shell 等已不在代码里）：
-  [环境](./docs/00-environment.md)、[引导](./docs/01-boot.md)、[基础设施](./docs/02-infrastructure.md)、
-  [内存管理](./docs/03-mm.md)、[任务管理](./docs/05-task.md)、[用户模式](./docs/09-usermode.md)、
-  [同步机制](./docs/10-sync.md)、[C++ 重构](./docs/19-cpp-migration.md)
++ [开发环境搭建](./docs/00-environment.md)
++ [概念讲解](./docs/concepts/00-overview.md)：引导、高半核、内存管理、中断、进程、同步、系统调用背后的原理
++ [历史开发记录](./docs/history/README.md)：早期单内核阶段的分步记录，代码已对不上，背景知识仍可参考
 
-文件系统、网络、USB、图形等子系统的实现保留在 git 历史里（`ef63e55` 及之前）。
+文件系统、网络、USB、图形等内核子系统的旧实现保留在 git 历史里（`ef63e55` 及之前）。
 
 ## Git 提交格式
 
