@@ -446,6 +446,19 @@ static void test_network(void) {
         return;
     }
 
+    // 地址由 DHCP 配置，最多等几秒（等不到时网络服务会退回固定地址）
+    for (int i = 0; i < 250 && info.ip == 0; i++) {
+        usleep(20000);
+        net_info(&info);
+    }
+    report("network address configured", info.ip != 0 && info.gateway != 0 && info.netmask != 0, "ok");
+    if (info.ip == 0) {
+        return;
+    }
+    char ip[16];
+    net_format_ip(info.ip, ip);
+    printf("selftest: address %s (%s)\n", ip, info.dhcp ? "dhcp" : "static");
+
     // ping 网关（要经过网卡和 ARP）和自己（协议栈内部回环）；不存在的地址要超时
     uint32_t rtt = 0;
     uint64_t start = uptime_ms();

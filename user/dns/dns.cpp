@@ -2,8 +2,8 @@
 //
 //   dns <name> [server]
 //
-// 默认的服务器 10.0.2.3 是 QEMU 用户网络自带的转发器，它把查询交给宿主机的解析器，
-// 所以能不能查到取决于宿主机能不能上网。
+// 默认用 DHCP 给的 DNS 服务器。在 QEMU 用户网络里那是 10.0.2.3，一个把查询交给宿主机
+// 解析器的转发器，所以能不能查到取决于宿主机能不能上网。
 
 #include <syscall.h>
 #include <stdio.h>
@@ -49,9 +49,18 @@ static size_t skip_name(const uint8_t *msg, size_t len, size_t pos) {
 }
 
 int main(int argc, char **argv) {
-    uint32_t server = NET_IP(10, 0, 2, 3);
+    struct net_info info;
+    if (net_info(&info) != 0 || info.ip == 0) {
+        printf("dns: no network\n");
+        return 1;
+    }
+    uint32_t server = info.dns;
     if (argc < 2 || (argc > 2 && net_parse_ip(argv[2], &server) != 0)) {
         printf("usage: dns <name> [server]\n");
+        return 1;
+    }
+    if (server == 0) {
+        printf("dns: no DNS server configured\n");
         return 1;
     }
     int sock = net_udp_open(0);

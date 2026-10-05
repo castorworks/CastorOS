@@ -70,6 +70,8 @@ int net_info(struct net_info *info) {
     info->ip = (uint32_t)m.data[2];
     info->netmask = (uint32_t)m.data[3];
     info->gateway = (uint32_t)m.data[4];
+    info->dns = (uint32_t)m.data[5];
+    info->dhcp = (m.data[1] >> 48) & 1;
     return 0;
 }
 

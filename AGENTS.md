@@ -83,7 +83,7 @@ so there is no disk image. init starts the modules and is the name server (`name
 `user/lib`). Resident modules are embedded into init the same way (`user/init/modules.S`):
 `user/uart` (privileged serial input driver), `user/blk` (privileged virtio-blk driver,
 protocol and client in `blk.h`), `user/net` (privileged virtio-net driver plus a small
-ARP/IPv4/ICMP/UDP stack, protocol and client in `net.h`), `user/ramfs` (in-memory file
+ARP/IPv4/ICMP/UDP stack with a DHCP client, protocol and client in `net.h`), `user/ramfs` (in-memory file
 service), `user/diskfs`
 (persistent file service on top of blk; files are addressed with a `disk:` prefix) and
 `user/sh` (command line). Both file services share the protocol in `fs.h` and the server

@@ -6,7 +6,7 @@
 // 网络服务：协议和客户端接口。
 //
 // 服务进程以 "net" 登记（user/net：virtio-net 驱动加一个很小的协议栈，
-// 支持 ARP、IPv4、ICMP 回显和 UDP）。IP 地址在这套接口里都是主机字节序的
+// 支持 ARP、IPv4、ICMP 回显、UDP，启动时用 DHCP 获取地址）。IP 地址在这套接口里都是主机字节序的
 // 32 位整数，a.b.c.d 写成 NET_IP(a, b, c, d)。UDP 的数据经共享缓冲区传递。
 
 #define NET_SERVICE_NAME    "net"
@@ -20,7 +20,8 @@
 
 // 请求的 label。应答的 data[0] 是结果（负数表示失败，按 int64_t 解释）
 enum {
-    NET_INFO      = 1,  // 应答 data[1]: MAC（低 6 字节）, data[2]: IP, data[3]: 掩码, data[4]: 网关
+    NET_INFO      = 1,  // 应答 data[1]: MAC（低 6 字节；第 48 位: 地址来自 DHCP）, data[2]: IP（0 = 还在配置）,
+                        //   data[3]: 掩码, data[4]: 网关, data[5]: DNS 服务器
     NET_PING      = 2,  // data[0]: 目标 IP, data[1]: 超时（毫秒）。阻塞到收到回显应答或超时；
                         //   应答 data[1]: 往返时间（毫秒）
     NET_UDP_OPEN  = 3,  // data[0]: 本地端口（0 = 由服务挑一个）。应答 data[0]: 套接字号, data[1]: 端口
@@ -32,9 +33,11 @@ enum {
 
 struct net_info {
     uint8_t mac[6];
-    uint32_t ip;
+    uint32_t ip;            // 0 表示地址还没配置好（DHCP 进行中）
     uint32_t netmask;
     uint32_t gateway;
+    uint32_t dns;
+    bool dhcp;              // 地址来自 DHCP（否则是退回的固定地址）
 };
 
 /** 本机的网络配置。@return 0 成功，-1 没有网络服务 */
