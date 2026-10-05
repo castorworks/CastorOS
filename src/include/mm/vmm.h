@@ -82,6 +82,14 @@ typedef enum vmm_error {
 #define PAGE_COW        0x200
 
 /**
+ * 共享映射（软件标志，x86 页表项的 Available 位 10）
+ *
+ * 设备内存和进程间共享内存用它标记。fork 时这样的页不做写时复制，
+ * 父子进程继续指向同一个物理帧并保持可写。
+ */
+#define PAGE_SHARED     0x400
+
+/**
  * @brief 用户地址范围的上界（不含）
  *
  * 带 PAGE_USER 的映射只允许建立在这个地址以下。

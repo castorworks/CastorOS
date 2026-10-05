@@ -1170,6 +1170,47 @@ uint32_t mm::Pmm::frame_ref_inc(paddr_t frame) {
     return new_count;
 }
 
+void mm::Pmm::frame_ref_share(paddr_t frame) {
+    if (PADDR_TO_PFN(frame) < total_frames) {
+        mm::Pmm::frame_ref_inc(frame);
+    }
+}
+
+/* 被钉住的设备帧（在物理内存范围之内的那些），避免同一帧被重复钉住 */
+#define PMM_MAX_PINNED_FRAMES 64
+static paddr_t pinned_frames[PMM_MAX_PINNED_FRAMES];
+static uint32_t pinned_frame_count = 0;
+
+bool mm::Pmm::pin_device_frame(paddr_t frame) {
+    if (frame == PADDR_INVALID || !IS_PADDR_ALIGNED(frame)) {
+        return false;
+    }
+
+    pfn_t idx = PADDR_TO_PFN(frame);
+    if (idx >= total_frames) {
+        return true;    // 不归 PMM 管：没有什么可回收的
+    }
+
+    sync::SpinlockIrqGuard guard(pmm_lock);
+
+    for (uint32_t i = 0; i < pinned_frame_count; i++) {
+        if (pinned_frames[i] == frame) {
+            return true;
+        }
+    }
+
+    // 空闲帧是可分配的普通内存，不能当设备内存交出去
+    if (!test_frame(idx) || pinned_frame_count >= PMM_MAX_PINNED_FRAMES) {
+        return false;
+    }
+
+    if (frame_refcount[idx] < 0xFFFF) {
+        frame_refcount[idx]++;      // 这一份引用永远不归还
+    }
+    pinned_frames[pinned_frame_count++] = frame;
+    return true;
+}
+
 /**
  * @brief 减少物理页帧的引用计数
  * @param frame 页帧的物理地址

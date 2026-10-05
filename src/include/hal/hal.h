@@ -50,6 +50,7 @@ typedef void (*hal_interrupt_handler_t)(void *data);
 #define HAL_PAGE_ACCESSED   (1 << 7)   /**< Page has been accessed */
 #define HAL_PAGE_WRITECOMB  (1 << 8)   /**< Write-combining memory type */
 #define HAL_PAGE_HUGE       (1 << 9)   /**< Huge page (2MB on x86_64, 2MB block on ARM64) */
+#define HAL_PAGE_SHARED     (1 << 10)  /**< Shared mapping: fork shares the frame instead of making it COW */
 
 /**
  * @brief Address space handle type

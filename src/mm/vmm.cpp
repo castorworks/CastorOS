@@ -573,6 +573,7 @@ static uint32_t vmm_flags_to_hal(uint32_t vmm_flags) {
     if (vmm_flags & PAGE_USER)          hal_flags |= HAL_PAGE_USER;
     if (vmm_flags & PAGE_CACHE_DISABLE) hal_flags |= HAL_PAGE_NOCACHE;
     if (vmm_flags & PAGE_COW)           hal_flags |= HAL_PAGE_COW;
+    if (vmm_flags & PAGE_SHARED)        hal_flags |= HAL_PAGE_SHARED;
     if (vmm_flags & PAGE_EXEC)          hal_flags |= HAL_PAGE_EXEC;
     
     return hal_flags;
@@ -849,8 +850,8 @@ uintptr_t mm::Vmm::clone_page_directory(uintptr_t src_dir_phys) {
                     paddr_t src_frame = get_frame(src_table->entries[j]);
                     uint32_t flags = src_table->entries[j] & 0xFFF;
                     
-                    // 如果页面可写，将其改为只读并标记为 COW
-                    if (flags & PAGE_WRITE) {
+                    // 如果页面可写，将其改为只读并标记为 COW（共享映射除外：保持原样）
+                    if ((flags & PAGE_WRITE) && !(flags & PAGE_SHARED)) {
                         flags &= ~PAGE_WRITE;  // 去掉写权限
                         flags |= PAGE_COW;     // 标记为 COW
                         src_table->entries[j] = (uint32_t)src_frame | flags;
@@ -869,7 +870,7 @@ uintptr_t mm::Vmm::clone_page_directory(uintptr_t src_dir_phys) {
                     new_table->entries[j] = (uint32_t)src_frame | flags;
                     
                     // 增加物理页的引用计数（父子进程共享物理页）
-                    mm::Pmm::frame_ref_inc(src_frame);
+                    mm::Pmm::frame_ref_share(src_frame);
                 } else {
                     // 空页表项
                     new_table->entries[j] = 0;
@@ -1042,7 +1043,10 @@ void mm::Vmm::free_page_directory(uintptr_t dir_phys) {
                     
                     // 基本安全检查
                     if (frame == 0 || frame >= 0x80000000) {
-                        LOG_WARN_MSG("vmm_free: PDE %u PTE %u invalid frame 0x%llx\n", i, j, (unsigned long long)frame);
+                        // 物理内存之上的设备内存（map_device）不归 PMM 管，没有什么可释放的
+                        if (!(table->entries[j] & PAGE_SHARED)) {
+                            LOG_WARN_MSG("vmm_free: PDE %u PTE %u invalid frame 0x%llx\n", i, j, (unsigned long long)frame);
+                        }
                         freed_pages++;
                         pages_in_table++;
                         continue;

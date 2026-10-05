@@ -165,6 +165,7 @@ static uint32_t hal_flags_to_i686(uint32_t hal_flags) {
     if (hal_flags & HAL_PAGE_USER)      i686_flags |= PAGE_USER;
     if (hal_flags & HAL_PAGE_NOCACHE)   i686_flags |= PAGE_CACHE_DISABLE;
     if (hal_flags & HAL_PAGE_COW)       i686_flags |= PAGE_COW;
+    if (hal_flags & HAL_PAGE_SHARED)    i686_flags |= PAGE_SHARED;
     /* HAL_PAGE_EXEC: i686 doesn't have NX bit in standard mode */
     /* HAL_PAGE_DIRTY/ACCESSED: set by hardware, not by software */
     
@@ -184,6 +185,7 @@ static uint32_t i686_flags_to_hal(uint32_t i686_flags) {
     if (i686_flags & PAGE_USER)          hal_flags |= HAL_PAGE_USER;
     if (i686_flags & PAGE_CACHE_DISABLE) hal_flags |= HAL_PAGE_NOCACHE;
     if (i686_flags & PAGE_COW)           hal_flags |= HAL_PAGE_COW;
+    if (i686_flags & PAGE_SHARED)        hal_flags |= HAL_PAGE_SHARED;
     if (i686_flags & 0x40)               hal_flags |= HAL_PAGE_DIRTY;    /* Bit 6 */
     if (i686_flags & 0x20)               hal_flags |= HAL_PAGE_ACCESSED; /* Bit 5 */
     

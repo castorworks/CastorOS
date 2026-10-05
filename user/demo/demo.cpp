@@ -101,12 +101,46 @@ static void demo_privilege(void) {
     int pid = fork();
     if (pid == 0) {
         uint32_t v;
-        exit(io_read(0x80, 1, &v) == -1 && irq_claim(5) == -1 && irq_claim(40) == -1 ? 0 : 1);
+        exit(io_read(0x80, 1, &v) == -1 && irq_claim(5) == -1 && irq_claim(40) == -1 &&
+             map_device(0xB8000, 4096) == MAP_FAILED ? 0 : 1);
     }
     int status = 0;
     waitpid(pid, &status, 0);
     printf("demo: hardware access without privilege: %s\n",
            WEXITSTATUS(status) == 0 ? "refused" : "FAILED");
+}
+
+static void demo_shared_memory(void) {
+    // 父进程把一页内存共享给子进程；地址通过 IPC 告诉它。
+    // 子进程经由共享映射写入，父进程能看到（fork 得到的那份只是写时复制的副本）
+    volatile uint32_t *page = (volatile uint32_t *)mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+                                                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    page[0] = 1;
+
+    int child = fork();
+    if (child == 0) {
+        struct ipc_msg m;
+        ipc_recv(getppid(), &m);
+        volatile uint32_t *shared = (volatile uint32_t *)(uintptr_t)m.data[0];
+        uint32_t seen = shared[0];
+        shared[0] = 2;
+        page[0] = 99;               // 这是子进程自己的副本，父进程看不到
+        m.data[0] = seen;
+        ipc_reply(m.sender, &m);
+        exit(0);
+    }
+
+    void *remote = mem_grant(child, (void *)page, 4096);
+    struct ipc_msg m = {};
+    m.data[0] = (uint64_t)(uintptr_t)remote;
+    int ok = remote != MAP_FAILED && ipc_call(child, &m) == 0 && m.data[0] == 1 && page[0] == 2;
+    waitpid(child, NULL, 0);
+
+    // 对方退出后这一页仍然属于自己
+    page[0] = 3;
+    ok = ok && page[0] == 3 && mem_grant(child, (void *)page, 4096) == MAP_FAILED;
+    munmap((void *)page, 4096);
+    printf("demo: shared memory: %s\n", ok ? "ok" : "FAILED");
 }
 
 static void demo_names(void) {
@@ -122,6 +156,7 @@ int main() {
     demo_memory_and_fork();
     demo_ipc();
     demo_privilege();
+    demo_shared_memory();
     demo_names();
 
     int uart = name_wait("uart");

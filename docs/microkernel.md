@@ -33,7 +33,7 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 
 ## 系统调用
 
-共 21 个，编号在 `src/include/kernel/syscall.h`，用户态包装在 `user/lib`。
+共 24 个，编号在 `src/include/kernel/syscall.h`，用户态包装在 `user/lib`。
 
 | 编号 | 调用 | 说明 |
 |------|------|------|
@@ -51,15 +51,19 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 | 13 | `ipc_send(dest, msg)` | 把消息发给 PID `dest`，阻塞到对方收下 |
 | 14 | `ipc_recv(from, msg)` | 接收消息；`from` 为 `IPC_ANY` 或指定 PID |
 | 15 | `ipc_call(dest, msg)` | 发送请求并等待 `dest` 的应答，应答写回 `msg` |
-| 16 / 17 | `io_read(addr, width, value*)` / `io_write(addr, width, value)` | 读写设备寄存器，仅特权进程 |
-| 18 / 19 | `irq_claim(irq)` / `irq_ack(irq)` | 认领设备中断 / 处理完毕后重新打开，仅特权进程 |
-| 20 | `drop_privilege()` | 放弃特权，不可恢复 |
+| 16 | `ipc_reply(dest, msg)` | 应答正在 `call` 自己的进程，从不阻塞 |
+| 17 | `mem_grant(pid, addr, len)` | 把自己的一段内存共享给 `pid`，返回它在对方地址空间里的地址 |
+| 18 / 19 | `io_read(port, width, value*)` / `io_write(port, width, value)` | x86 的 I/O 端口，仅特权进程 |
+| 20 | `map_device(phys, len)` | 把设备内存映射进自己的地址空间，仅特权进程 |
+| 21 / 22 | `irq_claim(irq)` / `irq_ack(irq)` | 认领设备中断 / 处理完毕后重新打开，仅特权进程 |
+| 23 | `drop_privilege()` | 放弃特权，不可恢复 |
 
 ## 进程间通信
 
 IPC 是模块之间、模块与客户进程之间唯一的通信方式（`src/kernel/ipc.cpp`）。
 
 - **同步会合，没有缓冲**：`send` 阻塞到对方 `recv`，`recv` 阻塞到有人 `send`。消息只存放在阻塞一方的 PCB 里，内核里没有消息队列。
+- **请求-应答**：`call` 发出请求后原子地转入“等这个服务的应答”；服务用 `reply` 应答，`reply` 只投递给正在等自己的进程，否则立刻返回 -1，从不阻塞。所以客户无法把服务卡住。
 - **定长消息**：`struct ipc_msg { sender; label; data[6]; }`，共 56 字节，布局在三个架构上相同。`sender` 由内核填写，无法伪造；`label` 和 `data` 的含义由通信双方约定。
 - **按 PID 寻址**：PID 不复用，向已退出的进程发送会失败。
 - **退出与 kill**：进程退出时，正在向它发送或只等它消息的进程带着 -1 返回；阻塞在 IPC 上的进程可以被 `kill`。
@@ -71,13 +75,23 @@ struct ipc_msg m;
 for (;;) {
     ipc_recv(IPC_ANY, &m);        // 等请求
     /* 按 m.label 处理，结果写回 m */
-    ipc_send(m.sender, &m);       // 应答
+    ipc_reply(m.sender, &m);      // 应答（不会阻塞）
 }
 ```
 
 客户进程用 `ipc_call(server_pid, &m)` 一次完成请求和应答。`user/init/init.cpp` 里有一个完整的例子。
 
-当前的限制：大块数据还不能传递（没有共享内存）；应答用的是普通 `send`，客户若不去 `recv`，服务会阻塞在应答上（init 的名字服务也是如此）。
+消息只有 48 字节的载荷，大块数据用共享内存传递（见下）。
+
+## 共享内存
+
+`mem_grant(pid, addr, len)` 把调用者自己的一段内存（页对齐、已映射、可写，例如 `mmap` 得到的）同时映射进进程 `pid`，返回这段内存在对方地址空间里的地址；调用者再通过 IPC 把这个地址告诉对方。之后两个进程读写的是同一批物理页。
+
+- 只能共享自己的内存，所以不需要额外的权限检查；对方是被动接受的一方。
+- 共享页带有“共享”标记：之后任何一方 `fork`，子进程也继续共享这些页，而不是得到写时复制的副本。
+- 任何一方 `munmap` 或退出只是撤掉自己的映射，物理页在最后一个映射消失时才释放。
+
+当前的限制：不能撤回已经给出去的共享；映射在对方地址空间里的位置由内核决定；单次最多 16MB。
 
 ## 名字服务
 
@@ -93,19 +107,20 @@ for (;;) {
 
 ## 特权与硬件访问
 
-用户态驱动需要碰硬件，内核为此提供三样东西，都只对带 `privileged` 标志的进程开放：
+用户态驱动需要碰硬件，内核为此提供下面几样东西，都只对带 `privileged` 标志的进程开放：
 
 - **特权的来源**：内核直接创建的 init 有特权，`fork` 和 `exec` 都保留；进程调用 `drop_privilege()` 之后永久失去。init 启动驱动时保留特权，启动其他模块时先让子进程放弃。
-- **设备寄存器**：`io_read` / `io_write`，宽度 1/2/4 字节。x86 上 `addr` 是 I/O 端口号；arm64 上是寄存器的物理地址（限 QEMU virt 的设备区，1GB 以下），由内核代为访问。
+- **I/O 端口**（仅 x86）：`io_read` / `io_write`，宽度 1/2/4 字节。
+- **设备内存**：`map_device(phys, len)` 把设备的寄存器或显存映射进调用者的地址空间（不缓存）。只接受设备地址区：arm64 上是 QEMU virt 的 1GB 以下，x86 上是 640K–1M 的传统空洞和物理内存之上的地址；普通内存一律拒绝。映射同样带“共享”标记，`fork` 后父子都能访问设备。
 - **设备中断**：`irq_claim(irq)` 认领一条内核自己没在用的中断线（x86 是 PIC 的 IRQ 号，arm64 是 GIC 的 SPI 中断号）。中断到来时内核屏蔽这条线，并向属主投递一条 `sender == IPC_KERNEL`、`label == IPC_LABEL_IRQ`、`data[0] == irq` 的消息；属主没在 `recv` 时记为待处理，下一次 `recv(IPC_ANY)` 先收到它。驱动处理完设备后调用 `irq_ack(irq)` 重新打开中断线。进程退出时它认领的中断线被屏蔽并释放。
 
-实现在 `src/kernel/user_irq.cpp` 和 `src/kernel/syscall.cpp`。
+实现在 `src/kernel/user_irq.cpp`、`src/kernel/syscall.cpp` 和 `src/kernel/syscalls/mm.cpp`。
 
-当前的限制：设备寄存器每次访问都是一次系统调用，还不能把设备内存映射进用户地址空间（帧缓冲、网卡这类设备需要）；特权是全有或全无的，没有按设备授权。
+当前的限制：特权是全有或全无的，没有按设备授权；x86 的端口访问每次都是一次系统调用。
 
 ## 第一个用户态驱动：uart
 
-`user/uart` 是串口输入驱动（x86 的 16550 / arm64 的 PL011）。内核只用串口做输出，接收方向完全在驱动里：
+`user/uart` 是串口输入驱动：x86 的 16550 通过 I/O 端口访问，arm64 的 PL011 用 `map_device` 把寄存器映射进来直接读写。内核只用串口做输出，接收方向完全在驱动里：
 
 1. 启动时 `irq_claim` 串口中断，打开设备的接收中断。
 2. 主循环 `ipc_recv(IPC_ANY)`：收到内核的中断消息就把硬件 FIFO 读进自己的缓冲区并 `irq_ack`；收到 `UART_READ` 请求就记下读者。

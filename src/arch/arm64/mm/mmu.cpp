@@ -66,6 +66,7 @@
 #define DESC_UXN                (1ULL << 54)    /**< User Execute Never */
 #define DESC_DIRTY              (1ULL << 55)    /**< Dirty (software) */
 #define DESC_COW                (1ULL << 56)    /**< COW flag (software) */
+#define DESC_SHARED             (1ULL << 57)    /**< Shared mapping: not made COW on fork (software) */
 
 /** 物理地址掩码 (bits 47:12 for 4KB pages) */
 #define DESC_ADDR_MASK          0x0000FFFFFFFFF000ULL
@@ -511,6 +512,9 @@ static uint64_t hal_flags_to_arm64(uint32_t hal_flags) {
     if (hal_flags & HAL_PAGE_COW) {
         arm64_flags |= DESC_COW;
     }
+    if (hal_flags & HAL_PAGE_SHARED) {
+        arm64_flags |= DESC_SHARED;
+    }
     
     /* Non-global for user pages */
     if (hal_flags & HAL_PAGE_USER) {
@@ -539,6 +543,9 @@ static uint64_t desc_apply_flag_delta(uint64_t desc, uint32_t set_flags, uint32_
 
     if (set_flags & HAL_PAGE_COW)     desc |= DESC_COW;
     if (clear_flags & HAL_PAGE_COW)   desc &= ~DESC_COW;
+
+    if (set_flags & HAL_PAGE_SHARED)   desc |= DESC_SHARED;
+    if (clear_flags & HAL_PAGE_SHARED) desc &= ~DESC_SHARED;
 
     if (set_flags & HAL_PAGE_DIRTY)   desc |= DESC_DIRTY;
     if (clear_flags & HAL_PAGE_DIRTY) desc &= ~DESC_DIRTY;
@@ -584,6 +591,9 @@ static uint32_t arm64_flags_to_hal(uint64_t arm64_flags) {
     /* COW flag */
     if (arm64_flags & DESC_COW) {
         hal_flags |= HAL_PAGE_COW;
+    }
+    if (arm64_flags & DESC_SHARED) {
+        hal_flags |= HAL_PAGE_SHARED;
     }
     
     /* Dirty flag (software) */
@@ -1166,8 +1176,9 @@ static bool clone_page_table_recursive(paddr_t src_table_phys, int level,
         if (level == 1) {
             /* Level 3 (L3): entries point to physical pages */
             /* Apply COW semantics: mark writable pages as read-only + COW */
+            /* Shared mappings stay as they are: both sides keep the same frame. */
             uint64_t ap = flags & DESC_AP_MASK;
-            if (ap == DESC_AP_RW_ALL || ap == DESC_AP_RW_EL1) {
+            if ((ap == DESC_AP_RW_ALL || ap == DESC_AP_RW_EL1) && !(flags & DESC_SHARED)) {
                 /* Change to read-only */
                 flags &= ~DESC_AP_MASK;
                 flags |= (ap == DESC_AP_RW_ALL) ? DESC_AP_RO_ALL : DESC_AP_RO_EL1;
@@ -1178,7 +1189,7 @@ static bool clone_page_table_recursive(paddr_t src_table_phys, int level,
             }
             
             /* Increment reference count for shared physical page */
-            mm::Pmm::frame_ref_inc(frame);
+            mm::Pmm::frame_ref_share(frame);
             
             /* Copy entry to destination */
             dst_table[i] = frame | flags;

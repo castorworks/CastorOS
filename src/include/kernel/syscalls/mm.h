@@ -58,6 +58,21 @@ public:
      * - 会释放指定范围内的所有物理页
      */
     static uintptr_t munmap(uintptr_t addr, size_t length);
+
+    /**
+     * 把设备内存 [phys, phys+length) 映射进当前进程（调用者已确认是特权进程）
+     * @param phys 设备内存的物理地址，必须页对齐，且整个区间不属于普通内存
+     * @return 映射的虚拟地址，失败返回 (uintptr_t)-1
+     */
+    static uintptr_t map_device(uint64_t phys, size_t length);
+
+    /**
+     * 把当前进程的 [addr, addr+length) 共享给进程 pid：同一批物理页同时映射在
+     * 两个进程里，地址由内核在对方的 mmap 区域里选择
+     * @param addr 必须页对齐，区间内的页必须已映射且可写
+     * @return 这段内存在对方地址空间里的虚拟地址，失败返回 (uintptr_t)-1
+     */
+    static uintptr_t grant(uint32_t pid, uintptr_t addr, size_t length);
 };
 
 } // namespace syscall

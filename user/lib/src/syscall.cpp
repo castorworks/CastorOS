@@ -107,6 +107,11 @@ int munmap(void *addr, size_t length) {
     return (int)syscall2(SYS_MUNMAP, PTR_TO_ARG(addr), (syscall_arg_t)length);
 }
 
+void *mem_grant(int pid, void *addr, size_t length) {
+    return (void *)(uintptr_t)syscall3(SYS_MEM_GRANT, (syscall_arg_t)pid, PTR_TO_ARG(addr),
+                                       (syscall_arg_t)length);
+}
+
 // ============================================================================
 // 调试输出
 // ============================================================================
@@ -139,12 +144,16 @@ int ipc_reply(int dest, const struct ipc_msg *msg) {
 // 硬件访问
 // ============================================================================
 
-int io_read(uintptr_t addr, int width, uint32_t *value) {
-    return (int)syscall3(SYS_IO_READ, (syscall_arg_t)addr, (syscall_arg_t)width, PTR_TO_ARG(value));
+int io_read(uintptr_t port, int width, uint32_t *value) {
+    return (int)syscall3(SYS_IO_READ, (syscall_arg_t)port, (syscall_arg_t)width, PTR_TO_ARG(value));
 }
 
-int io_write(uintptr_t addr, int width, uint32_t value) {
-    return (int)syscall3(SYS_IO_WRITE, (syscall_arg_t)addr, (syscall_arg_t)width, (syscall_arg_t)value);
+int io_write(uintptr_t port, int width, uint32_t value) {
+    return (int)syscall3(SYS_IO_WRITE, (syscall_arg_t)port, (syscall_arg_t)width, (syscall_arg_t)value);
+}
+
+void *map_device(uintptr_t phys, size_t length) {
+    return (void *)(uintptr_t)syscall2(SYS_MAP_DEVICE, (syscall_arg_t)phys, (syscall_arg_t)length);
 }
 
 int irq_claim(int irq) {

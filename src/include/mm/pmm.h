@@ -186,6 +186,25 @@ public:
     static uint32_t frame_ref_inc(paddr_t frame);
 
     /**
+     * @brief 又多了一个映射指向 frame：是 PMM 管理的帧就增加引用计数
+     *
+     * 与 frame_ref_inc 的区别：frame 可以是物理内存范围之外的设备内存，
+     * 那样的帧不计数（也永远不会被释放），这里直接忽略。
+     */
+    static void frame_ref_share(paddr_t frame);
+
+    /**
+     * @brief 把设备内存帧钉住，使它可以像普通帧一样被映射/取消映射而不会被回收
+     *
+     * 调用者负责确认 frame 位于设备地址区。物理内存范围之外的帧不归 PMM 管，
+     * 直接接受；范围之内的必须是启动时就被保留的帧，这里给它加一份永不归还的
+     * 引用，之后各个映射的引用计数增减都不会把它释放。
+     *
+     * @return 可以映射返回 true；frame 是空闲的可分配内存返回 false
+     */
+    static bool pin_device_frame(paddr_t frame);
+
+    /**
      * @brief 减少物理页帧的引用计数
      * @param frame 页帧的物理地址
      * @return 新的引用计数值

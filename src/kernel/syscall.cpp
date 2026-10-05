@@ -225,54 +225,54 @@ static syscall_arg_t sys_ipc_call_wrapper(syscall_arg_t *frame, syscall_arg_t de
  * 硬件访问：只对特权进程开放
  * ============================================================================ */
 
-#if defined(ARCH_ARM64)
-/* QEMU virt：RAM 从 1GB 开始，之下全是设备；内核的直接映射覆盖这一段 */
-#define DEVICE_MMIO_END     0x40000000ULL
-#endif
-
-/** addr/width 是否是一次合法的设备寄存器访问 */
-static bool io_access_ok(syscall_arg_t addr, syscall_arg_t width) {
+/** port/width 是否是一次合法的端口访问（只有 x86 有 I/O 端口；设备内存用 map_device） */
+static bool io_access_ok(syscall_arg_t port, syscall_arg_t width) {
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
     if (!kernel::Scheduler::current_is_privileged()) return false;
     if (width != 1 && width != 2 && width != 4) return false;
-#if defined(ARCH_ARM64)
-    return (addr & (width - 1)) == 0 && addr < DEVICE_MMIO_END && addr + width <= DEVICE_MMIO_END;
+    return port <= 0xFFFF && port + width <= 0x10000;
 #else
-    return addr <= 0xFFFF && addr + width <= 0x10000;
+    (void)port; (void)width;
+    return false;
 #endif
 }
 
-static syscall_arg_t sys_io_read_wrapper(syscall_arg_t *frame, syscall_arg_t addr, syscall_arg_t width,
+static syscall_arg_t sys_io_read_wrapper(syscall_arg_t *frame, syscall_arg_t port, syscall_arg_t width,
                                          syscall_arg_t value_ptr, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
-    if (!io_access_ok(addr, width) || !user_wr(value_ptr, sizeof(uint32_t))) return SYSCALL_FAIL;
-    uint32_t value;
-#if defined(ARCH_ARM64)
-    volatile void *reg = (volatile void *)PHYS_TO_VIRT((uintptr_t)addr);
-    value = width == 1 ? hal::Mmio::read8(reg) : width == 2 ? hal::Mmio::read16(reg) : hal::Mmio::read32(reg);
-#else
-    uint16_t port = (uint16_t)addr;
-    value = width == 1 ? hal::Port::read8(port) : width == 2 ? hal::Port::read16(port) : hal::Port::read32(port);
+    if (!io_access_ok(port, width) || !user_wr(value_ptr, sizeof(uint32_t))) return SYSCALL_FAIL;
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
+    uint16_t p = (uint16_t)port;
+    *(uint32_t *)(uintptr_t)value_ptr =
+        width == 1 ? hal::Port::read8(p) : width == 2 ? hal::Port::read16(p) : hal::Port::read32(p);
 #endif
-    *(uint32_t *)(uintptr_t)value_ptr = value;
     return 0;
 }
 
-static syscall_arg_t sys_io_write_wrapper(syscall_arg_t *frame, syscall_arg_t addr, syscall_arg_t width,
+static syscall_arg_t sys_io_write_wrapper(syscall_arg_t *frame, syscall_arg_t port, syscall_arg_t width,
                                           syscall_arg_t value, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)p4; (void)p5;
-    if (!io_access_ok(addr, width)) return SYSCALL_FAIL;
-#if defined(ARCH_ARM64)
-    volatile void *reg = (volatile void *)PHYS_TO_VIRT((uintptr_t)addr);
-    if (width == 1) hal::Mmio::write8(reg, (uint8_t)value);
-    else if (width == 2) hal::Mmio::write16(reg, (uint16_t)value);
-    else hal::Mmio::write32(reg, (uint32_t)value);
-#else
-    uint16_t port = (uint16_t)addr;
-    if (width == 1) hal::Port::write8(port, (uint8_t)value);
-    else if (width == 2) hal::Port::write16(port, (uint16_t)value);
-    else hal::Port::write32(port, (uint32_t)value);
+    (void)frame; (void)value; (void)p4; (void)p5;
+    if (!io_access_ok(port, width)) return SYSCALL_FAIL;
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
+    uint16_t p = (uint16_t)port;
+    if (width == 1) hal::Port::write8(p, (uint8_t)value);
+    else if (width == 2) hal::Port::write16(p, (uint16_t)value);
+    else hal::Port::write32(p, (uint32_t)value);
 #endif
     return 0;
+}
+
+static syscall_arg_t sys_map_device_wrapper(syscall_arg_t *frame, syscall_arg_t phys, syscall_arg_t length,
+                                            syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p3; (void)p4; (void)p5;
+    if (!kernel::Scheduler::current_is_privileged()) return SYSCALL_FAIL;
+    return syscall::Mm::map_device((uint64_t)phys, (size_t)length);
+}
+
+static syscall_arg_t sys_mem_grant_wrapper(syscall_arg_t *frame, syscall_arg_t pid, syscall_arg_t addr,
+                                           syscall_arg_t length, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p4; (void)p5;
+    return syscall::Mm::grant((uint32_t)pid, (uintptr_t)addr, (size_t)length);
 }
 
 static syscall_arg_t sys_irq_claim_wrapper(syscall_arg_t *frame, syscall_arg_t irq, syscall_arg_t p2,
@@ -347,6 +347,8 @@ void syscall_init(void) {
     syscall_table[SYS_IPC_REPLY]     = sys_ipc_reply_wrapper;
     syscall_table[SYS_IO_READ]       = sys_io_read_wrapper;
     syscall_table[SYS_IO_WRITE]      = sys_io_write_wrapper;
+    syscall_table[SYS_MAP_DEVICE]    = sys_map_device_wrapper;
+    syscall_table[SYS_MEM_GRANT]     = sys_mem_grant_wrapper;
     syscall_table[SYS_IRQ_CLAIM]     = sys_irq_claim_wrapper;
     syscall_table[SYS_IRQ_ACK]       = sys_irq_ack_wrapper;
     syscall_table[SYS_DROP_PRIVILEGE] = sys_drop_privilege_wrapper;

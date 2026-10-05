@@ -58,6 +58,7 @@ typedef uint64_t pte64_t;
 #define PTE64_HUGE          (1ULL << 7)   /**< 大页 (2MB/1GB) */
 #define PTE64_GLOBAL        (1ULL << 8)   /**< 全局页 */
 #define PTE64_COW           (1ULL << 9)   /**< COW 标志 (Available bit) */
+#define PTE64_SHARED        (1ULL << 10)  /**< 共享映射：fork 时不做 COW (Available bit) */
 #define PTE64_NX            (1ULL << 63)  /**< 不可执行 */
 
 /** 物理地址掩码 (bits 12-51 for 4KB pages) */
@@ -375,6 +376,7 @@ static uint64_t hal_flags_to_x64(uint32_t hal_flags) {
     if (hal_flags & HAL_PAGE_USER)      x64_flags |= PTE64_USER;
     if (hal_flags & HAL_PAGE_NOCACHE)   x64_flags |= PTE64_CACHE_DISABLE;
     if (hal_flags & HAL_PAGE_COW)       x64_flags |= PTE64_COW;
+    if (hal_flags & HAL_PAGE_SHARED)    x64_flags |= PTE64_SHARED;
     if (!(hal_flags & HAL_PAGE_EXEC))   x64_flags |= PTE64_NX;  /* NX = not executable */
     /* HAL_PAGE_DIRTY/ACCESSED: set by hardware, not by software */
     
@@ -394,6 +396,7 @@ static uint32_t x64_flags_to_hal(uint64_t x64_flags) {
     if (x64_flags & PTE64_USER)          hal_flags |= HAL_PAGE_USER;
     if (x64_flags & PTE64_CACHE_DISABLE) hal_flags |= HAL_PAGE_NOCACHE;
     if (x64_flags & PTE64_COW)           hal_flags |= HAL_PAGE_COW;
+    if (x64_flags & PTE64_SHARED)        hal_flags |= HAL_PAGE_SHARED;
     if (x64_flags & PTE64_DIRTY)         hal_flags |= HAL_PAGE_DIRTY;
     if (x64_flags & PTE64_ACCESSED)      hal_flags |= HAL_PAGE_ACCESSED;
     if (!(x64_flags & PTE64_NX))         hal_flags |= HAL_PAGE_EXEC;
@@ -416,6 +419,7 @@ static pte64_t pte64_apply_flag_delta(pte64_t entry, uint32_t set_flags, uint32_
         { HAL_PAGE_USER,     PTE64_USER },
         { HAL_PAGE_NOCACHE,  PTE64_CACHE_DISABLE },
         { HAL_PAGE_COW,      PTE64_COW },
+        { HAL_PAGE_SHARED,   PTE64_SHARED },
         { HAL_PAGE_DIRTY,    PTE64_DIRTY },
         { HAL_PAGE_ACCESSED, PTE64_ACCESSED },
     };
@@ -1314,8 +1318,9 @@ static bool clone_page_table_recursive(paddr_t src_table_phys, int level,
         
         if (level == 1) {
             /* Level 1 (PT): entries point to physical pages */
-            /* Apply COW semantics: mark writable pages as read-only + COW */
-            if (flags & PTE64_WRITE) {
+            /* Apply COW semantics: mark writable pages as read-only + COW.
+             * Shared mappings stay as they are: both sides keep the same frame. */
+            if ((flags & PTE64_WRITE) && !(flags & PTE64_SHARED)) {
                 flags &= ~PTE64_WRITE;  /* Remove write permission */
                 flags |= PTE64_COW;     /* Mark as COW */
                 
@@ -1324,7 +1329,7 @@ static bool clone_page_table_recursive(paddr_t src_table_phys, int level,
             }
             
             /* Increment reference count for shared physical page */
-            mm::Pmm::frame_ref_inc(frame);
+            mm::Pmm::frame_ref_share(frame);
             
             /* Copy entry to destination */
             dst_table[i] = frame | flags;

@@ -2,7 +2,8 @@
 //
 // 内核只用串口做调试输出（kprintf / console_write）；接收方向完全在这里：
 // 认领串口中断，把收到的字节存进缓冲区，通过 IPC 交给读者。
-// x86 是 16550 (COM1)，arm64 是 PL011 (QEMU virt)。
+// x86 是 16550 (COM1)，通过 I/O 端口访问；arm64 是 PL011 (QEMU virt)，
+// 寄存器用 map_device 映射进自己的地址空间。
 
 #include <syscall.h>
 #include <stdio.h>
@@ -23,19 +24,29 @@
 #define PL011_INT_RX    (1 << 4)
 #define PL011_INT_RT    (1 << 6)    // 接收超时
 
+// 设备寄存器映射在自己的地址空间里
+static volatile uint32_t *regs;
+
 static uint32_t reg_read(uint32_t off) {
-    uint32_t v = 0;
-    io_read(UART_BASE + off, 4, &v);
-    return v;
+    return regs[off / 4];
 }
 
-static void hw_init(void) {
-    io_write(UART_BASE + PL011_ICR, 4, 0x7FF);
-    io_write(UART_BASE + PL011_IMSC, 4, reg_read(PL011_IMSC) | PL011_INT_RX | PL011_INT_RT);
+static void reg_write(uint32_t off, uint32_t value) {
+    regs[off / 4] = value;
+}
+
+static bool hw_init(void) {
+    regs = (volatile uint32_t *)map_device(UART_BASE, 0x1000);
+    if (regs == MAP_FAILED) {
+        return false;
+    }
+    reg_write(PL011_ICR, 0x7FF);
+    reg_write(PL011_IMSC, reg_read(PL011_IMSC) | PL011_INT_RX | PL011_INT_RT);
+    return true;
 }
 
 static void hw_irq_clear(void) {
-    io_write(UART_BASE + PL011_ICR, 4, PL011_INT_RX | PL011_INT_RT);
+    reg_write(PL011_ICR, PL011_INT_RX | PL011_INT_RT);
 }
 
 static bool hw_rx_ready(void) {
@@ -63,8 +74,8 @@ static uint32_t reg_read(uint32_t off) {
     return v;
 }
 
-static void hw_init(void) {
-    io_write(UART_BASE + UART_IER, 1, UART_IER_RX);
+static bool hw_init(void) {
+    return io_write(UART_BASE + UART_IER, 1, UART_IER_RX) == 0;
 }
 
 static void hw_irq_clear(void) {
@@ -124,7 +135,10 @@ int main() {
         printf("uart: cannot claim IRQ %d\n", UART_IRQ);
         return 1;
     }
-    hw_init();
+    if (!hw_init()) {
+        printf("uart: cannot access the device\n");
+        return 1;
+    }
     drain_hw();
     if (name_register("uart") != 0) {
         printf("uart: cannot register name\n");

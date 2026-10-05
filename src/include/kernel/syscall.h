@@ -9,7 +9,7 @@ typedef uintptr_t syscall_arg_t;
 // ============================================================================
 // 系统调用号（与 user/lib/include/syscall.h 保持一致）
 //
-// 内核只提供进程、内存、调试输出、进程间通信，以及给用户态驱动用的硬件访问；
+// 内核只提供进程、内存、调试输出、进程间通信（消息和共享内存），以及给用户态驱动用的硬件访问；
 // 文件系统、网络、设备驱动不在内核里。
 // ============================================================================
 
@@ -38,10 +38,12 @@ enum {
     SYS_IPC_RECV        = 14,  // ipc_recv(from, msg)：from 为 IPC_ANY 或指定 PID
     SYS_IPC_CALL        = 15,  // ipc_call(dest, msg)：发送后等待 dest 的应答
     SYS_IPC_REPLY       = 16,  // ipc_reply(dest, msg)：应答正在 call 自己的进程，从不阻塞
+    SYS_MEM_GRANT       = 17,  // mem_grant(pid, addr, len)：把自己的一段内存共享给 pid，返回它在对方的地址
 
     // 硬件访问（仅特权进程，供用户态驱动使用）
-    SYS_IO_READ         = 18,  // io_read(addr, width, value*)：x86 是 I/O 端口，arm64 是设备寄存器物理地址
-    SYS_IO_WRITE        = 19,  // io_write(addr, width, value)
+    SYS_IO_READ         = 18,  // io_read(port, width, value*)：x86 I/O 端口（arm64 上没有，恒失败）
+    SYS_IO_WRITE        = 19,  // io_write(port, width, value)
+    SYS_MAP_DEVICE      = 20,  // map_device(phys, len)：把设备内存映射进自己的地址空间
     SYS_IRQ_CLAIM       = 21,  // irq_claim(irq)：中断以 IPC 消息的形式投递（见 kernel/user_irq.h）
     SYS_IRQ_ACK         = 22,  // irq_ack(irq)：处理完毕，重新打开中断线
     SYS_DROP_PRIVILEGE  = 23,  // drop_privilege()：放弃特权，不可恢复

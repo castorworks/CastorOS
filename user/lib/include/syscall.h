@@ -25,8 +25,10 @@ enum {
     SYS_IPC_RECV        = 14,
     SYS_IPC_CALL        = 15,
     SYS_IPC_REPLY       = 16,
+    SYS_MEM_GRANT       = 17,
     SYS_IO_READ         = 18,
     SYS_IO_WRITE        = 19,
+    SYS_MAP_DEVICE      = 20,
     SYS_IRQ_CLAIM       = 21,
     SYS_IRQ_ACK         = 22,
     SYS_DROP_PRIVILEGE  = 23,
@@ -76,6 +78,13 @@ void *sbrk(int increment);
 void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
 int munmap(void *addr, size_t length);
 
+/**
+ * 把自己的 [addr, addr+length) 共享给进程 pid：之后两个进程读写的是同一批物理页。
+ * addr 必须页对齐，区间必须已映射且可写（例如 mmap 得到的内存）。
+ * @return 这段内存在对方地址空间里的地址（通过 IPC 告诉对方）；失败返回 MAP_FAILED
+ */
+void *mem_grant(int pid, void *addr, size_t length);
+
 // ============================================================================
 // 调试输出（内核串口控制台）
 // ============================================================================
@@ -115,12 +124,16 @@ int ipc_reply(int dest, const struct ipc_msg *msg);
 // 特权从 init 开始，fork 和 exec 都保留，drop_privilege 之后永久失去。
 // ============================================================================
 
+/** 读/写 x86 的 I/O 端口，width 是 1、2 或 4 字节。arm64 没有端口，恒返回 -1 */
+int io_read(uintptr_t port, int width, uint32_t *value);
+int io_write(uintptr_t port, int width, uint32_t value);
+
 /**
- * 读/写设备寄存器。addr 在 x86 上是 I/O 端口号，在 arm64 上是寄存器的物理地址；
- * width 是 1、2 或 4 字节。
+ * 把设备内存 [phys, phys+length) 映射进自己的地址空间（不缓存）。phys 必须页对齐，
+ * 且不能是普通内存。
+ * @return 映射的地址；失败返回 MAP_FAILED
  */
-int io_read(uintptr_t addr, int width, uint32_t *value);
-int io_write(uintptr_t addr, int width, uint32_t value);
+void *map_device(uintptr_t phys, size_t length);
 
 /**
  * 认领一条设备中断线。之后每次中断，内核屏蔽这条线并发来一条
