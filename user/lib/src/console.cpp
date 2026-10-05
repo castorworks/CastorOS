@@ -37,7 +37,7 @@ long console_read(char *buf, size_t len, uint32_t timeout_ms) {
     return (long)n;
 }
 
-long read_line(char *buf, size_t size) {
+long console_read_line(char *buf, size_t size) {
     size_t len = 0;
     for (;;) {
         char c;

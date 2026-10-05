@@ -3,6 +3,7 @@
 // 由 init 启动（非特权）。输入来自 uart 驱动。除了几个内置命令，一行的第一个词
 // 被当作文件服务里的程序：读出它的 ELF 映像，fork 之后带着这一行的参数 exec。
 // 行尾加 & 让程序在后台运行；前台程序运行期间按 Ctrl-C 终止它。
+// cmd < in > out 把程序的标准输入/输出换成文件，cmd1 | cmd2 把前一个的输出接到后一个的输入。
 // 启动时先执行文件 "rc" 里的每一行。
 //
 // sh 是终端的主人（见 <console.h>）：程序在前台运行期间，键盘输入归那个程序，
@@ -172,68 +173,196 @@ static void cmd_kill(const char *arg) {
 // 运行程序
 // ============================================================================
 
-// argv[0] 是程序名，同时也是文件服务里的文件名
-static void run_program(char **argv, bool background) {
-    const char *name = argv[0];
-    size_t size = 0;
-    void *image = load_file(name, &size);
-    if (!image) {
-        printf("%s: unknown command (try help)\n", name);
-        return;
-    }
+#define MAX_STAGES 4
 
-    int slot = -1;
-    for (int i = 0; background && i < MAX_JOBS && slot < 0; i++) {
-        if (jobs[i].pid == 0) {
-            slot = i;
+// 管道里的一段：一个程序，加上它的标准输入/输出来自哪里
+struct stage {
+    char *argv[MAX_ARGS + 2];   // argv[0] 是程序名，也是文件服务里的文件名；留一格给输入输出说明
+    int argc;
+    const char *in_file;        // < file
+    const char *out_file;       // > file 或 >> file
+    bool append;
+    void *image;
+    size_t image_size;
+    int pid;
+    int status;
+    bool exited;
+};
+
+// 在 fork 出来的子进程里：换成这一段的程序。标准输入/输出不是控制台时，
+// 在参数最后附上说明（格式见 <stdio.h>），由新程序的启动代码去设置
+static void exec_stage(struct stage *st, int in_pid, int out_pid) {
+    static char spec[2 * FS_NAME_MAX + 8];
+    char in[FS_NAME_MAX + 2] = "";
+    char out[FS_NAME_MAX + 2] = "";
+    if (st->in_file) {
+        snprintf(in, sizeof(in), "f%s", st->in_file);
+    } else if (in_pid != 0) {
+        snprintf(in, sizeof(in), "p%d", in_pid);
+    }
+    if (st->out_file) {
+        snprintf(out, sizeof(out), "%c%s", st->append ? 'a' : 'f', st->out_file);
+    } else if (out_pid != 0) {
+        snprintf(out, sizeof(out), "p%d", out_pid);
+    }
+    if (in[0] || out[0]) {
+        snprintf(spec, sizeof(spec), "%c%s%c%s", STDIO_ARG_MARK, in, STDIO_ARG_MARK, out);
+        st->argv[st->argc] = spec;
+        st->argv[st->argc + 1] = NULL;
+    }
+    exec(st->image, st->image_size, st->argv);
+    printf("%s: not an executable\n", st->argv[0]);
+    exit(126);
+}
+
+// 运行一条管道（只有一段时就是一个程序）
+static void run_pipeline(struct stage *stages, int count, bool background) {
+    // 先把每一段的程序都读进来：有一个找不到就什么都不运行
+    for (int i = 0; i < count; i++) {
+        stages[i].image = load_file(stages[i].argv[0], &stages[i].image_size);
+        if (!stages[i].image) {
+            printf("%s: unknown command (try help)\n", stages[i].argv[0]);
+            count = i;
+            background = false;
+            goto unload;
         }
-    }
-    if (background && slot < 0) {
-        printf("%s: too many background jobs\n", name);
-        munmap(image, size);
-        return;
-    }
-
-    int pid = fork();
-    if (pid == 0) {
-        exec(image, size, argv);
-        printf("%s: not an executable\n", name);
-        exit(126);
-    }
-    munmap(image, size);
-    if (pid < 0) {
-        printf("%s: fork failed\n", name);
-        return;
     }
 
     if (background) {
-        jobs[slot].pid = pid;
-        strncpy(jobs[slot].name, name, sizeof(jobs[slot].name) - 1);
-        jobs[slot].name[sizeof(jobs[slot].name) - 1] = '\0';
-        printf("[%d] %s\n", pid, name);
-        return;
+        int free_slots = 0;
+        for (int i = 0; i < MAX_JOBS; i++) {
+            free_slots += jobs[i].pid == 0;
+        }
+        if (free_slots < count) {
+            printf("%s: too many background jobs\n", stages[0].argv[0]);
+            background = false;
+            goto unload;
+        }
     }
 
-    // 前台：等它结束。键盘输入这段时间归它；我们短暂地去读串口，只会读到 Ctrl-C
-    set_foreground(pid);
-    int status = 0;
-    bool interrupted = false;
-    while (waitpid(pid, &status, WNOHANG) != pid) {
-        if (uart > 0 && !fetch_input(20)) {
-            uart = 0;           // 驱动没了：退回到单纯地等
+    // 每一段一个子进程。管道两头要知道对方的 PID，而后面的进程这时还没创建，
+    // 所以子进程先等我们把相邻两段的 PID 发过去，再 exec
+    for (int i = 0; i < count; i++) {
+        int pid = fork();
+        if (pid == 0) {
+            struct ipc_msg m = {};
+            if (count > 1 && ipc_recv(getppid(), &m) != 0) {
+                exit(126);
+            }
+            exec_stage(&stages[i], (int)m.data[0], (int)m.data[1]);
         }
-        if (uart <= 0) {
-            waitpid(pid, &status, 0);
-            break;
+        if (pid < 0) {
+            printf("%s: fork failed\n", stages[i].argv[0]);
+            for (int j = 0; j < i; j++) {
+                kill(stages[j].pid, SIGKILL);
+                waitpid(stages[j].pid, NULL, 0);
+            }
+            background = false;
+            goto unload;
         }
-        if (!interrupted && take_ctrl_c()) {
-            printf("^C\n");
-            kill(pid, SIGINT);
-            interrupted = true;
+        stages[i].pid = pid;
+    }
+    for (int i = 0; count > 1 && i < count; i++) {
+        struct ipc_msg m = {};
+        m.data[0] = i > 0 ? (uint64_t)stages[i - 1].pid : 0;
+        m.data[1] = i + 1 < count ? (uint64_t)stages[i + 1].pid : 0;
+        ipc_send(stages[i].pid, &m);
+    }
+
+    if (background) {
+        for (int i = 0, slot = 0; i < count; i++, slot++) {
+            while (jobs[slot].pid != 0) {
+                slot++;
+            }
+            jobs[slot].pid = stages[i].pid;
+            strncpy(jobs[slot].name, stages[i].argv[0], sizeof(jobs[slot].name) - 1);
+            jobs[slot].name[sizeof(jobs[slot].name) - 1] = '\0';
+            printf("[%d] %s\n", stages[i].pid, stages[i].argv[0]);
+        }
+    } else {
+        // 前台：等它们都结束。键盘输入这段时间归第一段；我们短暂地去读串口，只会读到 Ctrl-C
+        set_foreground(stages[0].pid);
+        bool interrupted = false;
+        for (;;) {
+            int running = 0;
+            for (int i = 0; i < count; i++) {
+                if (!stages[i].exited) {
+                    stages[i].exited = waitpid(stages[i].pid, &stages[i].status, uart > 0 ? WNOHANG : 0)
+                                       == stages[i].pid;
+                    running += !stages[i].exited;
+                }
+            }
+            if (running == 0) {
+                break;
+            }
+            if (uart > 0 && !fetch_input(20)) {
+                uart = 0;           // 驱动没了：退回到单纯地等
+            }
+            if (uart > 0 && !interrupted && take_ctrl_c()) {
+                printf("^C\n");
+                for (int i = 0; i < count; i++) {
+                    if (!stages[i].exited) {
+                        kill(stages[i].pid, SIGINT);
+                    }
+                }
+                interrupted = true;
+            }
+        }
+        set_foreground(0);
+        for (int i = 0; i < count; i++) {
+            report_exit(stages[i].argv[0], stages[i].status);
         }
     }
-    set_foreground(0);
-    report_exit(name, status);
+
+unload:
+    for (int i = 0; i < count; i++) {
+        if (stages[i].image) {
+            munmap(stages[i].image, stages[i].image_size);
+        }
+    }
+}
+
+// 把管道的一段按空格切成参数，摘出重定向（< file、> file、>> file，文件名可以紧跟符号）。
+// @return 写得对不对
+static bool parse_stage(char *text, struct stage *st) {
+    char *p = text;
+    while (*p == ' ') {
+        p++;
+    }
+    const char **target = NULL;     // 上一个词是重定向符号：这个词是它的文件名
+    while (*p) {
+        char *word = p;
+        while (*p && *p != ' ') {
+            p++;
+        }
+        while (*p == ' ') {
+            *p++ = '\0';
+        }
+
+        if (target) {
+            *target = word;
+            target = NULL;
+        } else if (word[0] == '<' || word[0] == '>') {
+            bool output = word[0] == '>';
+            if (output && word[1] == '>') {
+                st->append = true;
+                word++;
+            } else if (output) {
+                st->append = false;
+            }
+            target = output ? &st->out_file : &st->in_file;
+            if (word[1] != '\0') {
+                *target = word + 1;
+                target = NULL;
+            }
+        } else if (st->argc < MAX_ARGS) {
+            st->argv[st->argc++] = word;
+        }
+    }
+    st->argv[st->argc] = NULL;
+    return st->argc > 0 && target == NULL &&
+           (!st->in_file || strlen(st->in_file) < FS_NAME_MAX) &&
+           (!st->out_file || strlen(st->out_file) < FS_NAME_MAX);
 }
 
 static void run_command(char *line) {
@@ -248,7 +377,9 @@ static void run_command(char *line) {
         printf("builtins: help, jobs, kill <pid>\n");
         printf("anything else runs a program from the file service with the rest of the\n");
         printf("line as its arguments, e.g.: ls, cat <file>, write <file>, ping <ip>, hello\n");
-        printf("end a line with & to run it in the background; Ctrl-C stops the foreground program\n");
+        printf("  cmd &                  run in the background; Ctrl-C stops the foreground program\n");
+        printf("  cmd < file > file      read input from / write output to a file (>> appends)\n");
+        printf("  cmd | cmd              feed one program's output to the next, e.g.: ls | grep sh | wc\n");
         return;
     }
     if (strcmp(line, "jobs") == 0) {
@@ -267,32 +398,37 @@ static void run_command(char *line) {
         line[--len] = '\0';
     }
 
-    // 按空格切成参数
-    char *argv[MAX_ARGS + 1];
-    int argc = 0;
-    char *p = line;
-    while (*p && argc < MAX_ARGS) {
-        argv[argc++] = p;
-        while (*p && *p != ' ') {
-            p++;
+    // 按 | 切成几段。重定向只能在两头：第一段的输入、最后一段的输出
+    static struct stage stages[MAX_STAGES];
+    memset(stages, 0, sizeof(stages));
+    int count = 0;
+    bool ok = true;
+    for (char *text = line; ok && text; ) {
+        char *bar = strchr(text, '|');
+        if (bar) {
+            *bar++ = '\0';
         }
-        while (*p == ' ') {
-            *p++ = '\0';
-        }
+        ok = count < MAX_STAGES && parse_stage(text, &stages[count]);
+        count++;
+        text = bar;
     }
-    argv[argc] = NULL;
-    if (argc == 0) {
+    for (int i = 0; ok && i < count; i++) {
+        ok = (i == 0 || !stages[i].in_file) && (i == count - 1 || !stages[i].out_file);
+    }
+    if (!ok) {
+        printf("sh: syntax error\n");
         return;
     }
-    if (strcmp(argv[0], "kill") == 0) {
-        if (argc == 2) {
-            cmd_kill(argv[1]);
+
+    if (count == 1 && strcmp(stages[0].argv[0], "kill") == 0) {
+        if (stages[0].argc == 2) {
+            cmd_kill(stages[0].argv[1]);
         } else {
             printf("usage: kill <pid>\n");
         }
         return;
     }
-    run_program(argv, background);
+    run_pipeline(stages, count, background);
 }
 
 // 执行启动脚本：文件 "rc" 里每行一条命令

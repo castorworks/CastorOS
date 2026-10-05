@@ -1,5 +1,5 @@
 #!/bin/bash
-# 启动 QEMU，等命令行就绪后向串口输入一串命令，检查命令行的行为（后台任务、Ctrl-C、kill、程序读键盘输入）。
+# 启动 QEMU，等命令行就绪后向串口输入一串命令，检查命令行的行为（后台任务、Ctrl-C、kill、程序读键盘输入、重定向和管道）。
 # 由 make test 调用：
 #
 #   scripts/shell-test.sh <log> <results> <boot-timeout-seconds> <qemu command...>
@@ -135,6 +135,47 @@ background_input() {
     send 'abc\003'; expect '^write: killed by signal 2$'
 }
 check "input goes to the foreground only" background_input
+
+# ---- 重定向：输出到文件、追加、从文件输入 ----
+redirection() {
+    send 'echo hello there > out1\n'; expect '> $' || return 1
+    send 'echo more >>out1\n'; expect '> $' || return 1
+    send 'cat out1\n'; expect '^hello there$' && expect '^more$' || return 1
+    send 'wc < out1\n'; expect '^2 3 17$' || return 1
+    send 'cat < nosuchfile\n'; expect '^cannot read nosuchfile$'
+}
+check "redirection" redirection
+
+# ---- 管道：两段、三段、和重定向一起用 ----
+pipes() {
+    send 'cat out1 | wc\n'; expect '^2 3 17$' || return 1
+    send 'cat < out1 | grep more | wc > count\n'; expect '> $' || return 1
+    send 'cat count\n'; expect '^1 1 5$' || return 1
+    send 'ls | grep selftest\n'; expect '^ *[0-9]+  selftest$' || return 1
+    send 'hello a b | grep argv\n'; expect 'argv\[2\] = b$'
+}
+check "pipes" pipes
+
+# ---- 键盘输入进管道的第一段；Ctrl-C 终止管道里的每一段 ----
+pipe_keyboard() {
+    send 'cat | grep keep > kept\n'; sleep 0.5
+    send 'keep this\ndrop this\nkeep that\n\004'; expect '> $' || return 1
+    send 'wc < kept\n'; expect '^2 4 20$' || return 1
+    send 'sleep 60 | cat\n'; sleep 0.5
+    send '\003'; expect '^sleep: killed by signal 2$' && expect '^cat: killed by signal 2$'
+}
+check "pipes with keyboard input and ctrl-c" pipe_keyboard
+
+# ---- 写错的命令行、后台运行的管道 ----
+pipe_errors() {
+    send 'ls |\n'; expect '^sh: syntax error$' || return 1
+    send 'ls >\n'; expect '^sh: syntax error$' || return 1
+    send 'ls | nosuchprogram\n'; expect '^nosuchprogram: unknown command' || return 1
+    send 'echo one two | wc &\n'; expect '(^|> )1 2 8$' || return 1
+    expect '\] done  wc$' || return 1
+    send 'jobs\n'; expect '^\(no background jobs\)$'
+}
+check "pipe errors and background pipes" pipe_errors
 
 [ $failed -eq 0 ] && echo "shelltest: all passed" >> "$RESULTS"
 exit 0

@@ -640,15 +640,25 @@ static void test_tcp(const struct net_info *info) {
     long before = net_debug_drop(1, 0);                 // 丢掉我们的 SYN
     start = uptime_ms();
     conn = net_tcp_connect(echo_ip, 7, 5000);
-    ok = before >= 0 && conn >= 0 && uptime_ms() - start >= 250;    // 等了一个重传超时
+    uint64_t connect_ms = uptime_ms() - start;
+    int step = 0;                                       // 失败时指出是哪一步
+    ok = before >= 0 && conn >= 0 && connect_ms >= 250; // 等了一个重传超时
+    step += ok;
     net_debug_drop(1, 0);                               // 丢一个数据段
     ok = ok && tcp_echo_round(conn, 1000, 1, 8000);
+    step += ok;
     net_debug_drop(3, 0);                               // 一次发的三个段全丢
     ok = ok && tcp_echo_round(conn, 4000, 2, 8000);
+    step += ok;
     net_debug_drop(0, 1);                               // 丢一个收到的帧：对方的数据或确认
     ok = ok && tcp_echo_round(conn, 1000, 3, 8000);
+    step += ok;
     long after = net_debug_drop(0, 0);
     ok = ok && after - before >= 3;                     // 至少 SYN、一个段、一批段各重传一次
+    if (!ok) {
+        printf("selftest: (retransmission stopped at step %d: conn %d, connect took %u ms, drops %ld -> %ld)\n",
+               step, conn, (unsigned)connect_ms, before, after);
+    }
     report("tcp retransmission after lost frames", ok, "ok");
 
     // 接收窗口：先发 12000 字节而不去读，回显的数据填满我们 8KB 的接收缓冲区，

@@ -51,7 +51,7 @@ int main(int argc, char **argv) {
     while ((got = net_tcp_recv(conn, buf, sizeof(buf), 5000)) > 0) {
         if (total < SHOW_MAX) {
             size_t show = (size_t)got < SHOW_MAX - total ? (size_t)got : SHOW_MAX - total;
-            console_write(buf, show);
+            write_out(buf, show);
         }
         total += (size_t)got;
     }

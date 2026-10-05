@@ -11,6 +11,7 @@ char *strcpy(char *dest, const char *src);
 char *strncpy(char *dest, const char *src, size_t n);
 char *strcat(char *dest, const char *src);
 char *strchr(const char *str, int c);
+char *strstr(const char *str, const char *sub);
 
 // 内存函数声明
 extern "C" void *memset(void *ptr, int value, size_t num);

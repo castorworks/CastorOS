@@ -72,6 +72,17 @@ char *strchr(const char *str, int c) {
     return (*str == (char)c) ? (char *)str : 0;
 }
 
+// 查找子串
+char *strstr(const char *str, const char *sub) {
+    if (!str || !sub) return 0;
+    size_t n = strlen(sub);
+    for (; *str || n == 0; str++) {
+        if (strncmp(str, sub, n) == 0) return (char *)str;
+        if (!*str) break;
+    }
+    return 0;
+}
+
 // 内存设置
 void *memset(void *ptr, int value, size_t num) {
     if (!ptr) return ptr;

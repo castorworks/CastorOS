@@ -347,14 +347,7 @@ void printf(const char *format, ...) {
 
 void print(const char *msg) {
     if (!msg) return;
-    // 内核单次最多接受 4096 字节，分块写
-    size_t len = strlen(msg);
-    while (len > 0) {
-        size_t chunk = len > 4096 ? 4096 : len;
-        if (console_write(msg, chunk) <= 0) return;
-        msg += chunk;
-        len -= chunk;
-    }
+    write_out(msg, strlen(msg));
 }
 
 // snprintf 实现

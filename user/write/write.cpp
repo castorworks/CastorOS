@@ -1,12 +1,11 @@
 // write - 把文字写进文件
 //
 //   write <file> <text...>   把参数里的文字写成一行
-//   write <file>             从键盘读，每行写进文件，行首按 Ctrl-D 结束
+//   write <file>             从标准输入读，每行写进文件（键盘输入时行首按 Ctrl-D 结束）
 
 #include <syscall.h>
 #include <stdio.h>
 #include <string.h>
-#include <console.h>
 #include <fs.h>
 
 static int fd;

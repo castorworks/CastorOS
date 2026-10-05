@@ -8,6 +8,7 @@
  */
 
 #include <syscall.h>
+#include <stdio.h>
 
 typedef void (*ctor_func_t)(void);
 
@@ -68,6 +69,12 @@ void _start(void) {
     }
 
     int argc = build_argv();
+
+    // 命令行在参数最后附带的标准输入/输出说明不算程序的参数
+    if (argc > 0 && argv_storage[argc - 1][0] == STDIO_ARG_MARK) {
+        stdio_setup(argv_storage[--argc]);
+        argv_storage[argc] = nullptr;
+    }
     exit(main(argc, argv_storage));
 }
 
