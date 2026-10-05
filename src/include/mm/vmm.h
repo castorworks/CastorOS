@@ -18,21 +18,6 @@
  * 
  * ========================================================================== */
 
-/**
- * @brief VMM 错误码枚举
- * 
- * 与 HAL 错误码保持一致，便于错误码转换。
- */
-typedef enum vmm_error {
-    VMM_OK = 0,                     /**< 操作成功 */
-    VMM_ERR_INVALID_PARAM = -1,     /**< 无效参数（地址未对齐等） */
-    VMM_ERR_NO_MEMORY = -2,         /**< 内存不足（无法分配页表或物理页） */
-    VMM_ERR_NOT_SUPPORTED = -3,     /**< 不支持的操作 */
-    VMM_ERR_NOT_FOUND = -4,         /**< 映射不存在 */
-    VMM_ERR_ALREADY_MAPPED = -5,    /**< 地址已映射 */
-    VMM_ERR_PERMISSION = -6,        /**< 权限错误 */
-    VMM_ERR_COW_FAILED = -7,        /**< COW 处理失败 */
-} vmm_error_t;
 
 /**
  * @brief 检查 VMM 操作是否成功
@@ -110,8 +95,6 @@ typedef struct {
 /* 4-level paging: PML4/L0 -> PDPT/L1 -> PD/L2 -> PT/L3 */
 typedef page_directory_t pml4_t;   ///< PML4/Level 0 (Level 4)
 typedef page_directory_t pdpt_t;   ///< PDPT/Level 1 (Level 3)
-typedef page_directory_t pd_t;     ///< Page Directory/Level 2 (Level 2)
-typedef page_table_t pt_t;         ///< Page Table/Level 3 (Level 1)
 
 #else
 /* i686: 2-level paging with 32-bit entries, 1024 entries per level */
@@ -160,12 +143,6 @@ public:
      * Full 64-bit VMM support requires implementing 4-level paging.
      */
     static bool map_page(uintptr_t virt, uintptr_t phys, uint32_t flags);
-
-    /**
-     * @brief 刷新TLB缓存
-     * @param virt 虚拟地址（0表示刷新全部）
-     */
-    static void flush_tlb(uintptr_t virt);
 
     /**
      * @brief 获取当前页目录的物理地址

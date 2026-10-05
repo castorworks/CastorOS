@@ -57,27 +57,4 @@ void kprint(const char *msg);
  */
 void kputchar(char c);
 
-/* ============================================================================
- * 控制台颜色：串口控制台上是空操作，接口保留给测试框架
- * ============================================================================ */
-
-typedef enum {
-    KCOLOR_BLACK        = 0,
-    KCOLOR_BLUE         = 1,
-    KCOLOR_GREEN        = 2,
-    KCOLOR_CYAN         = 3,
-    KCOLOR_RED          = 4,
-    KCOLOR_MAGENTA      = 5,
-    KCOLOR_BROWN        = 6,
-    KCOLOR_LIGHT_GREY   = 7,
-    KCOLOR_DARK_GREY    = 8,
-    KCOLOR_LIGHT_BLUE   = 9,
-    KCOLOR_LIGHT_GREEN  = 10,
-    KCOLOR_LIGHT_CYAN   = 11,
-    KCOLOR_LIGHT_RED    = 12,
-    KCOLOR_LIGHT_MAGENTA = 13,
-    KCOLOR_YELLOW       = 14,
-    KCOLOR_WHITE        = 15
-} kcolor_t;
-
 #endif /* _LIB_KPRINTF_H_ */

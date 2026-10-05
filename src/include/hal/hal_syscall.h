@@ -27,20 +27,7 @@
  * Most system calls use 6 or fewer arguments. For system calls with more
  * arguments, the extra_args pointer can be used.
  */
-#define HAL_SYSCALL_MAX_ARGS    6
 
-/**
- * @brief Unified system call arguments structure
- * 
- * This structure provides an architecture-independent representation of
- * system call arguments. The HAL extracts arguments from architecture-specific
- * locations (registers, stack) and populates this structure.
- */
-typedef struct hal_syscall_args {
-    uint64_t syscall_nr;                    /**< System call number */
-    uint64_t args[HAL_SYSCALL_MAX_ARGS];    /**< Arguments 0-5 */
-    void *extra_args;                       /**< Extra arguments pointer (>6 args) */
-} hal_syscall_args_t;
 
 namespace hal {
 

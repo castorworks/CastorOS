@@ -62,23 +62,6 @@ typedef struct {
     pdpte64_t entries[PTE64_ENTRIES];
 } __attribute__((aligned(PAGE_SIZE))) pdpt_t;
 
-/**
- * @brief PD (Page Directory) 结构
- * 
- * 第三级页表，包含 512 个 PDE，每个指向一个 PT 或 2MB 大页
- */
-typedef struct {
-    pde64_t entries[PTE64_ENTRIES];
-} __attribute__((aligned(PAGE_SIZE))) pd64_t;
-
-/**
- * @brief PT (Page Table) 结构
- * 
- * 第四级页表，包含 512 个 PTE，每个映射一个 4KB 页
- */
-typedef struct {
-    pte64_t entries[PTE64_ENTRIES];
-} __attribute__((aligned(PAGE_SIZE))) pt64_t;
 
 /* ============================================================================
  * 页错误信息结构

@@ -78,15 +78,6 @@ struct timespec {
 
 // 文件类型常量（用于 dirent.d_type）
 
-// 目录项结构（POSIX 标准）
-// 参考：POSIX.1-2008 <dirent.h>
-struct dirent {
-    uint32_t d_ino;         // inode 编号
-    uint32_t d_off;         // 到下一个 dirent 的偏移量（文件系统相关）
-    uint16_t d_reclen;      // 此记录的长度（sizeof(struct dirent)）
-    uint8_t  d_type;        // 文件类型（DT_* 常量）
-    char     d_name[256];    // 文件名（以 null 结尾，最大 255 字符）
-};
 
 // 进程状态（用于 proc_info，与内核 task_state_t 对应）
 
@@ -96,14 +87,6 @@ struct dirent {
 // 进程退出状态宏
 // 这些宏用于解析 wait/waitpid 返回的 status 值
 
-// 进程信息结构（用于系统调用，用户态和内核态共享）
-struct proc_info {
-    uint32_t pid;           // 进程 ID
-    char name[32];          // 进程名称（以 null 结尾）
-    uint8_t state;          // 进程状态（PROC_STATE_*）
-    uint32_t priority;      // 优先级
-    uint64_t runtime_ms;   // 总运行时间（毫秒）
-} __attribute__((packed));
 
 /* ============================================================================
  * stat 结构体 - 文件状态信息
@@ -112,21 +95,6 @@ struct proc_info {
 #ifndef _STRUCT_STAT_DEFINED
 #define _STRUCT_STAT_DEFINED
 
-struct stat {
-    uint32_t st_dev;      // 设备 ID
-    uint32_t st_ino;      // inode 编号
-    uint32_t st_mode;     // 文件类型和权限
-    uint32_t st_nlink;    // 硬链接数
-    uint32_t st_uid;      // 所有者用户 ID
-    uint32_t st_gid;      // 所有者组 ID
-    uint32_t st_rdev;     // 设备类型（如果是特殊文件）
-    uint32_t st_size;     // 文件大小（字节）
-    uint32_t st_blksize;  // 文件系统 I/O 块大小
-    uint32_t st_blocks;   // 分配的 512B 块数
-    uint32_t st_atime;    // 最后访问时间
-    uint32_t st_mtime;    // 最后修改时间
-    uint32_t st_ctime;    // 最后状态改变时间
-};
 
 #endif // _STRUCT_STAT_DEFINED
 

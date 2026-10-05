@@ -65,22 +65,6 @@ typedef paddr_t hal_addr_space_t;
 /** @brief Use current address space (for hal_mmu_map/unmap/query/protect) */
 #define HAL_ADDR_SPACE_CURRENT  ((hal_addr_space_t)0)
 
-/**
- * @brief Page fault information structure
- * 
- * Architecture-independent representation of page fault details.
- * Filled by hal_mmu_parse_fault() from architecture-specific fault registers.
- */
-typedef struct hal_page_fault_info {
-    vaddr_t fault_addr;     /**< Virtual address that caused the fault */
-    bool is_present;        /**< Page was present (protection fault vs not-present) */
-    bool is_write;          /**< Fault was caused by a write operation */
-    bool is_user;           /**< Fault occurred in user mode */
-    bool is_exec;           /**< Fault was caused by instruction fetch */
-    bool is_reserved;       /**< Fault was caused by reserved bit violation */
-    uint32_t raw_error;     /**< Architecture-specific raw error code */
-} hal_page_fault_info_t;
-
 
 /**
  * @brief System call handler function type
@@ -579,12 +563,6 @@ public:
 
 namespace hal {
 
-/**
- * @brief 缓存维护操作
- */
-class Cache {
-public:
-};
 
 } // namespace hal
 

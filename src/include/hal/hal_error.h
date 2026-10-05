@@ -8,25 +8,6 @@
 #ifndef _HAL_HAL_ERROR_H_
 #define _HAL_HAL_ERROR_H_
 
-/**
- * @brief HAL 错误码枚举
- * 
- * 所有可能失败的 HAL 函数应返回此类型。
- * 成功返回 HAL_OK (0)，失败返回负值错误码。
- */
-typedef enum hal_error {
-    HAL_OK = 0,                 /**< 操作成功 */
-    HAL_ERR_INVALID_PARAM = -1, /**< 无效参数 */
-    HAL_ERR_NO_MEMORY = -2,     /**< 内存不足 */
-    HAL_ERR_NOT_SUPPORTED = -3, /**< 当前架构不支持此操作 */
-    HAL_ERR_NOT_FOUND = -4,     /**< 请求的资源未找到 */
-    HAL_ERR_BUSY = -5,          /**< 资源忙，请稍后重试 */
-    HAL_ERR_TIMEOUT = -6,       /**< 操作超时 */
-    HAL_ERR_IO = -7,            /**< I/O 错误 */
-    HAL_ERR_PERMISSION = -8,    /**< 权限不足 */
-    HAL_ERR_ALREADY_EXISTS = -9,/**< 资源已存在 */
-    HAL_ERR_NOT_INITIALIZED = -10, /**< 子系统未初始化 */
-} hal_error_t;
 
 /**
  * @brief 检查 HAL 操作是否成功

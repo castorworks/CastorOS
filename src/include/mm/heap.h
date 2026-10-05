@@ -41,17 +41,6 @@ void kfree(void* ptr);
 
 namespace mm {
 
-/**
- * @brief 堆统计信息结构体
- */
-struct HeapInfo {
-    size_t total;       ///< 堆总大小（字节）
-    size_t used;        ///< 已使用大小（字节）
-    size_t free;        ///< 空闲大小（字节）
-    size_t max;         ///< 堆最大大小（字节）
-    uint32_t block_count;  ///< 总块数
-    uint32_t free_block_count;  ///< 空闲块数
-};
 
 /**
  * @brief 内核堆管理（kmalloc/kfree 的后端；分配接口见上方的 kmalloc 系列函数）

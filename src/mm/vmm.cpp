@@ -240,23 +240,6 @@ bool mm::Vmm::map_page(uintptr_t virt, uintptr_t phys, uint32_t flags) {
 }
 
 /**
- * @brief 刷新TLB缓存
- * @param virt 虚拟地址（0表示刷新全部TLB）
- * 
- * 当修改页表后需要刷新TLB以确保CPU使用最新的页表项
- * 通过 HAL 接口调用架构特定的 TLB 刷新操作
- */
-void mm::Vmm::flush_tlb(uintptr_t virt) {
-    if (virt == 0) {
-        // 刷新整个TLB
-        hal::Mmu::flush_tlb_all();
-    } else {
-        // 刷新单个页
-        hal::Mmu::flush_tlb(virt);
-    }
-}
-
-/**
  * @brief 获取当前页目录的物理地址
  * @return 页目录的物理地址
  */

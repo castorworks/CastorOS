@@ -10,7 +10,6 @@
 //   - 页面映射 (mm::Vmm::map_page, mm::Vmm::map_page_in_directory)
 //   - 取消映射 (mm::Vmm::unmap_page, mm::Vmm::unmap_page_in_directory)
 //   - 页目录操作 (mm::Vmm::create_page_directory, mm::Vmm::clone_page_directory)
-//   - TLB 刷新 (mm::Vmm::flush_tlb)
 //   - COW 引用计数
 //   - MMIO 映射
 //
@@ -135,18 +134,6 @@ TEST_CASE(test_vmm_unmap_page_in_directory_alignment) {
     // 清理
     mm::Vmm::free_page_directory(dir);
 }
-
-// ============================================================================
-// 测试套件 1 (续): vmm_map_tests - 重复映射和覆盖测试
-// ============================================================================
-
-// ============================================================================
-// 测试套件 3: vmm_tlb_tests - TLB 刷新测试
-// ============================================================================
-//
-// 测试 mm::Vmm::flush_tlb() 函数的功能
-// **Validates: Requirements 3.2** - TLB 刷新后映射仍然有效
-// ============================================================================
 
 // ============================================================================
 // 测试套件 4: vmm_directory_tests - 页目录操作测试
@@ -681,8 +668,6 @@ TEST_SUITE(vmm_cow_tests) {
 /**
  * @brief TLB 刷新测试套件
  */
-TEST_SUITE(vmm_tlb_tests) {
-}
 
 /**
  * @brief 综合测试套件
@@ -903,7 +888,6 @@ TEST_SUITE(vmm_property_tests) {
  * 按功能组织的测试套件：
  *   1. vmm_map_tests - 页面映射测试
  *   2. vmm_unmap_tests - 取消映射测试
- *   3. vmm_tlb_tests - TLB 刷新测试
  *   4. vmm_directory_tests - 页目录操作测试
  *   5. vmm_cow_tests - COW 引用计数测试
  *   6. vmm_comprehensive_tests - 综合测试
@@ -922,8 +906,6 @@ void run_vmm_tests(void) {
     // 套件 2: 取消映射测试
     RUN_SUITE(vmm_unmap_tests);
     
-    // 套件 3: TLB 刷新测试
-    RUN_SUITE(vmm_tlb_tests);
     
     // 套件 4: 页目录操作测试
     RUN_SUITE(vmm_directory_tests);

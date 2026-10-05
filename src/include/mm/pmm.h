@@ -17,17 +17,6 @@
  * 内存区域定义
  *============================================================================*/
 
-/** 
- * @brief 内存区域类型
- * 
- * 用于 DMA 和特殊内存分配需求
- */
-typedef enum {
-    ZONE_DMA,       /**< DMA 区域 (0-16MB on x86) */
-    ZONE_NORMAL,    /**< 普通区域 */
-    ZONE_HIGH,      /**< 高端内存 (>896MB on i686) */
-    ZONE_COUNT
-} pmm_zone_t;
 
 struct boot_info;
 
