@@ -8,7 +8,6 @@
 
 #include <mm/pmm.h>
 #include <mm/mm_types.h>
-#include <boot/boot_info.h>
 #include <lib/klog.h>
 #include <lib/kprintf.h>
 #include <lib/string.h>
@@ -23,12 +22,11 @@ static pfn_t last_free_index = 0;         ///< 上次分配的空闲页帧索引
 static sync::Spinlock pmm_lock;               ///< PMM 自旋锁
 static uint16_t *frame_refcount = NULL;   ///< 页帧引用计数数组（每帧2字节，最大65535引用）
 static uintptr_t pmm_data_end_virt = 0;   ///< PMM 数据结构结束的虚拟地址（位图+引用计数表）
-extern char _kernel_start[];              ///< 内核起始地址
 extern char _kernel_end[];                ///< 内核结束地址
 
 // 堆保留区域：物理地址在此范围内的帧不会被分配，避免与堆虚拟地址重叠
 
-// 固件报告为可用内存的区域（Multiboot 内存映射）。区域之间的空洞是设备内存或保留区
+// 固件报告为可用内存的区域（Multiboot 内存映射或设备树）。区域之间的空洞是设备内存或保留区
 #define PMM_MAX_RAM_REGIONS 32
 static struct {
     paddr_t start;
@@ -128,382 +126,65 @@ static pfn_t find_free_frame(void) {
 
 /**
  * @brief 初始化物理内存管理器
- * @param mbi Multiboot信息结构指针
- * 
- * 解析内存映射，初始化位图，标记已使用和空闲的页帧
+ * @param regions 可用的物理内存区域（来自 Multiboot 内存映射或设备树）
+ *
+ * 位图和引用计数表紧跟在内核映像后面。先把所有页帧标记为已用，再把落在可用区域里、
+ * 又不属于内核和这两张表的页帧放出来。
  */
-void mm::Pmm::init(multiboot_info_t *mbi) {
-    if (!(mbi->flags & MULTIBOOT_INFO_MEM_MAP))
-        PANIC("No memory map");
-    
+void mm::Pmm::init(const mm::MemRegion *regions, uint32_t count) {
     memset(&pmm_info, 0, sizeof(mm::PmmInfo));
-    paddr_t kernel_start = 0x100000;  // 1MB，内核加载位置
-    paddr_t kernel_end = PAGE_ALIGN_UP(VIRT_TO_PHYS((uintptr_t)_kernel_end));
-    
-    // 计算总内存大小
-    multiboot_memory_map_t *mmap = (multiboot_memory_map_t*)PHYS_TO_VIRT(mbi->mmap_addr);
-    multiboot_memory_map_t *mmap_end = (multiboot_memory_map_t*)
-        PHYS_TO_VIRT(mbi->mmap_addr + mbi->mmap_length);
-    
-    paddr_t max_addr = 0;
-    while (mmap < mmap_end) {
-        if (mmap->type == MULTIBOOT_MEMORY_AVAILABLE) {
-            paddr_t end = mmap->addr + mmap->len;
-            
-#if defined(ARCH_I686)
-            // i686: 限制物理内存到 2GB（高半核设计限制）
-            if (end > 0x80000000ULL) {
-                if (max_addr < 0x80000000ULL) {
-                    LOG_WARN_MSG("Physical memory exceeds 2GB, truncating to 2GB\n");
-                    LOG_WARN_MSG("  Total physical memory: %llu MB\n", 
-                                (unsigned long long)(end / (1024*1024)));
-                    LOG_WARN_MSG("  Usable physical memory: 2048 MB\n");
-                }
-                end = 0x80000000ULL;
-            }
-#endif
-            
-            if (end > max_addr) max_addr = end;
-        }
-        mmap = (multiboot_memory_map_t*)((uintptr_t)mmap + mmap->size + 4);
-    }
-    
-    total_frames = max_addr / PAGE_SIZE;
-    pmm_info.total_frames = total_frames;
-    
-    // 初始化 PMM 锁
     pmm_lock.init();
-    
-    // 初始化位图（默认所有页帧已使用）
-    pfn_t bitmap_bytes = PAGE_ALIGN_UP((total_frames + 31) / 32 * 4);
-    uintptr_t kernel_end_virt = (uintptr_t)_kernel_end;
-    uintptr_t bitmap_virt = PAGE_ALIGN_UP(kernel_end_virt);
-    LOG_INFO_MSG("PMM: kernel_end_virt = 0x%llx\n", (unsigned long long)kernel_end_virt);
-    LOG_INFO_MSG("PMM: bitmap_virt (after PAGE_ALIGN_UP) = 0x%llx\n", (unsigned long long)bitmap_virt);
-    frame_bitmap = (uint32_t*)bitmap_virt;
-    bitmap_size = bitmap_bytes / 4;
-    memset(frame_bitmap, 0xFF, bitmap_bytes);
 
-    // 计算位图占用的物理地址范围
-    paddr_t bitmap_phys_start = VIRT_TO_PHYS((uintptr_t)frame_bitmap);
-    paddr_t bitmap_end_phys = PAGE_ALIGN_UP(bitmap_phys_start + bitmap_bytes);
-    
-    // 初始化引用计数表（紧跟位图之后）
-    pfn_t refcount_bytes = PAGE_ALIGN_UP(total_frames * sizeof(uint16_t));
-    frame_refcount = (uint16_t*)PHYS_TO_VIRT(bitmap_end_phys);
-    memset(frame_refcount, 0, refcount_bytes);
-    paddr_t refcount_end_phys = PAGE_ALIGN_UP(bitmap_end_phys + refcount_bytes);
-    
-    // 保存 PMM 数据结构结束地址（虚拟地址），供堆初始化使用
-    pmm_data_end_virt = PHYS_TO_VIRT(refcount_end_phys);
-    LOG_INFO_MSG("PMM: DEBUG refcount_end_phys=0x%llx, KERNEL_VIRTUAL_BASE=0x%llx\n",
-                 (unsigned long long)refcount_end_phys, (unsigned long long)KERNEL_VIRTUAL_BASE);
-    LOG_INFO_MSG("PMM: DEBUG PHYS_TO_VIRT result=0x%llx\n", 
-                 (unsigned long long)PHYS_TO_VIRT(refcount_end_phys));
-    
-    LOG_INFO_MSG("PMM: _kernel_end = %p (0x%llx)\n", _kernel_end, (unsigned long long)(uintptr_t)_kernel_end);
-    LOG_INFO_MSG("PMM: frame_bitmap = %p (virt)\n", frame_bitmap);
-    LOG_INFO_MSG("PMM: bitmap_phys_start = 0x%llx\n", (unsigned long long)bitmap_phys_start);
-    LOG_INFO_MSG("PMM: bitmap_end_phys = 0x%llx\n", (unsigned long long)bitmap_end_phys);
-    LOG_INFO_MSG("PMM: frame_refcount = %p (virt)\n", frame_refcount);
-    LOG_INFO_MSG("PMM: refcount_end_phys = 0x%llx\n", (unsigned long long)refcount_end_phys);
-    LOG_INFO_MSG("PMM: pmm_data_end_virt = 0x%llx\n", (unsigned long long)pmm_data_end_virt);
-    LOG_INFO_MSG("PMM: KERNEL_VIRTUAL_BASE = 0x%llx\n", (unsigned long long)KERNEL_VIRTUAL_BASE);
-    
-    LOG_DEBUG_MSG("PMM: Frame refcount table at virt=%p, phys=0x%llx, size=%llu bytes\n",
-                 frame_refcount, (unsigned long long)bitmap_end_phys, (unsigned long long)refcount_bytes);
-    LOG_DEBUG_MSG("PMM: Refcount table ends at phys=0x%llx (virt=0x%llx)\n", 
-                 (unsigned long long)refcount_end_phys, (unsigned long long)pmm_data_end_virt);
-    
-    // 标记引用计数表占用的帧为已使用
-    pfn_t refcount_start_frame = PADDR_TO_PFN(bitmap_end_phys);
-    pfn_t refcount_end_frame = PADDR_TO_PFN(refcount_end_phys);
-    LOG_DEBUG_MSG("PMM: Marking refcount table frames %llu-%llu as used\n", 
-                 (unsigned long long)refcount_start_frame, (unsigned long long)(refcount_end_frame - 1));
-    for (pfn_t f = refcount_start_frame; f < refcount_end_frame; f++) {
-        if (f < total_frames) {
-            set_frame(f);
-        }
-    }
-
-    // 标记空闲内存区域
-    mmap = (multiboot_memory_map_t*)PHYS_TO_VIRT(mbi->mmap_addr);
-    
-    while (mmap < mmap_end) {
-        if (mmap->type == MULTIBOOT_MEMORY_AVAILABLE) {
-            paddr_t start = PADDR_ALIGN_UP(mmap->addr);
-            paddr_t end = PADDR_ALIGN_DOWN(mmap->addr + mmap->len);
-            
-#if defined(ARCH_I686)
-            // i686: 强制限制不处理超过 2GB 的物理内存
-            if (end > 0x80000000ULL) {
-                end = 0x80000000ULL;
-            }
-#endif
-
-            if (end > start && ram_region_count < PMM_MAX_RAM_REGIONS) {
-                ram_regions[ram_region_count].start = start;
-                ram_regions[ram_region_count].end = end;
-                ram_region_count++;
-            }
-
-            // 跳过内核、位图和引用计数表占用的区域
-            if (start < kernel_end) start = kernel_end;
-            if (start < refcount_end_phys) start = refcount_end_phys;
-            
-            if (end > start) {
-                for (pfn_t f = PADDR_TO_PFN(start); f < PADDR_TO_PFN(end); f++) {
-                    clear_frame(f);
-                    pmm_info.free_frames++;
-                }
-            }
-        }
-        mmap = (multiboot_memory_map_t*)((uintptr_t)mmap + mmap->size + 4);
-    }
-    
-    // 处理 Multiboot 模块（如 initrd），标记为已使用
-    if (mbi->flags & MULTIBOOT_INFO_MODS && mbi->mods_count > 0) {
-        multiboot_module_t *mod = (multiboot_module_t*)PHYS_TO_VIRT(mbi->mods_addr);
-        for (uint32_t i = 0; i < mbi->mods_count; i++) {
-            pfn_t start_frame = PADDR_TO_PFN(PADDR_ALIGN_DOWN(mod[i].mod_start));
-            pfn_t end_frame = PADDR_TO_PFN(PADDR_ALIGN_UP(mod[i].mod_end));
-            
-            for (pfn_t f = start_frame; f < end_frame; f++) {
-                if (f < total_frames && !test_frame(f)) {
-                    set_frame(f);
-                    pmm_info.free_frames--;
-                }
-            }
-        }
-    }
-
-    pmm_info.used_frames = total_frames - pmm_info.free_frames;
-    
-    // 计算内核占用的页帧数（从 1MB 到 kernel_end）
-    pmm_info.kernel_frames = PADDR_TO_PFN(kernel_end - kernel_start);
-    
-    // 计算位图占用的页帧数
-    pmm_info.bitmap_frames = PADDR_TO_PFN(bitmap_end_phys - bitmap_phys_start);
-    
-    // 计算引用计数表占用的页帧数
-    pfn_t refcount_frames = PADDR_TO_PFN(refcount_end_phys - bitmap_end_phys);
-    
-    // 保留页帧数 = 内核 + 位图 + 引用计数表
-    pmm_info.reserved_frames = pmm_info.kernel_frames + pmm_info.bitmap_frames + refcount_frames;
-    
-    LOG_DEBUG_MSG("PMM: Reserved frames: kernel=%llu, bitmap=%llu, refcount=%llu, total=%llu\n",
-                 (unsigned long long)pmm_info.kernel_frames, 
-                 (unsigned long long)pmm_info.bitmap_frames, 
-                 (unsigned long long)refcount_frames, 
-                 (unsigned long long)pmm_info.reserved_frames);
-    
-    // 初始化引用计数：所有已使用的帧设置为 1
-    for (pfn_t i = 0; i < total_frames; i++) {
-        if (test_frame(i)) {
-            frame_refcount[i] = 1;
-        } else {
-            frame_refcount[i] = 0;
-        }
-    }
-    
-    mm::Pmm::print_info();
-}
-
-/**
- * @brief 初始化物理内存管理器 (boot_info_t)
- * @param boot_info 标准化引导信息结构指针
- * 
- * 使用架构无关的 boot_info_t 结构初始化 PMM。
- * 适用于 ARM64 (DTB) 和其他非 Multiboot 引导方式。
- */
-void mm::Pmm::init_boot_info(boot_info_t *boot_info) {
-    if (!boot_info || !boot_info->valid) {
-        PANIC("PMM: Invalid boot_info");
-    }
-    
-    if (boot_info->mmap_count == 0) {
-        PANIC("PMM: No memory map in boot_info");
-    }
-    
-    memset(&pmm_info, 0, sizeof(mm::PmmInfo));
-    
-    /* 
-     * ARM64 内核物理地址范围
-     * 从 boot_info 或链接器符号获取
-     */
-#if defined(ARCH_ARM64)
-    /* 
-     * ARM64: 内核链接在高半区，_kernel_start 和 _kernel_end 是虚拟地址
-     */
-    paddr_t kernel_phys_start = (paddr_t)VIRT_TO_PHYS((uintptr_t)_kernel_start);
-    paddr_t kernel_phys_end = PAGE_ALIGN_UP((paddr_t)VIRT_TO_PHYS((uintptr_t)_kernel_end));
-    
-    LOG_INFO_MSG("PMM: ARM64 kernel physical range: 0x%llx - 0x%llx\n",
-                 (unsigned long long)kernel_phys_start,
-                 (unsigned long long)kernel_phys_end);
-#else
-    /* 其他架构：使用默认值 */
-    paddr_t kernel_phys_start = 0x100000;  /* 1MB */
-    paddr_t kernel_phys_end = PAGE_ALIGN_UP(VIRT_TO_PHYS((uintptr_t)_kernel_end));
-#endif
-    
-    /* 计算总内存大小 - 遍历 boot_info 内存映射 */
     paddr_t max_addr = 0;
-    for (uint32_t i = 0; i < boot_info->mmap_count; i++) {
-        const boot_mmap_entry_t *entry = &boot_info->mmap[i];
-        
-        /* 只考虑可用内存区域 */
-        if (entry->type == BOOT_MEM_USABLE) {
-            paddr_t end = entry->base + entry->length;
-            
-            LOG_DEBUG_MSG("PMM: Memory region %u: base=0x%llx, len=0x%llx, type=%u\n",
-                         i, (unsigned long long)entry->base,
-                         (unsigned long long)entry->length, entry->type);
-            
-            if (end > max_addr) {
-                max_addr = end;
-            }
-        }
-    }
-    
-    if (max_addr == 0) {
-        PANIC("PMM: No usable memory found in boot_info");
-    }
-    
-    LOG_INFO_MSG("PMM: Maximum physical address: 0x%llx (%llu MB)\n",
-                 (unsigned long long)max_addr,
-                 (unsigned long long)(max_addr / (1024 * 1024)));
-    
-    total_frames = max_addr / PAGE_SIZE;
-    pmm_info.total_frames = total_frames;
-    
-    /* 初始化 PMM 锁 */
-    pmm_lock.init();
-    
-    /* 初始化位图（默认所有页帧已使用） */
-    pfn_t bitmap_bytes = PAGE_ALIGN_UP((total_frames + 31) / 32 * 4);
-    
-#if defined(ARCH_ARM64)
-    /* 
-     * ARM64: 位图放在内核结束后的虚拟地址空间
-     * （kernel_phys_end 是页对齐后的物理地址）
-     */
-    uintptr_t kernel_end_virt = PHYS_TO_VIRT(kernel_phys_end);
-#else
-    uintptr_t kernel_end_virt = (uintptr_t)_kernel_end;
-#endif
-    uintptr_t bitmap_virt = PAGE_ALIGN_UP(kernel_end_virt);
-    
-    LOG_INFO_MSG("PMM: kernel_end_virt = 0x%llx\n", (unsigned long long)kernel_end_virt);
-    LOG_INFO_MSG("PMM: bitmap_virt = 0x%llx\n", (unsigned long long)bitmap_virt);
-    
-    frame_bitmap = (uint32_t*)bitmap_virt;
-    bitmap_size = bitmap_bytes / 4;
-    memset(frame_bitmap, 0xFF, bitmap_bytes);
-    
-    /* 计算位图占用的物理地址范围 */
-    paddr_t bitmap_phys_start = VIRT_TO_PHYS((uintptr_t)frame_bitmap);
-    paddr_t bitmap_end_phys = PAGE_ALIGN_UP(bitmap_phys_start + bitmap_bytes);
-    
-    /* 初始化引用计数表（紧跟位图之后） */
-    pfn_t refcount_bytes = PAGE_ALIGN_UP(total_frames * sizeof(uint16_t));
-    frame_refcount = (uint16_t*)PHYS_TO_VIRT(bitmap_end_phys);
-    memset(frame_refcount, 0, refcount_bytes);
-    paddr_t refcount_end_phys = PAGE_ALIGN_UP(bitmap_end_phys + refcount_bytes);
-    
-    /* 保存 PMM 数据结构结束地址 */
-    pmm_data_end_virt = PHYS_TO_VIRT(refcount_end_phys);
-    
-    LOG_INFO_MSG("PMM: frame_bitmap = %p (virt), phys=0x%llx\n", 
-                 frame_bitmap, (unsigned long long)bitmap_phys_start);
-    LOG_INFO_MSG("PMM: frame_refcount = %p (virt), phys=0x%llx\n",
-                 frame_refcount, (unsigned long long)bitmap_end_phys);
-    LOG_INFO_MSG("PMM: pmm_data_end_virt = 0x%llx\n", (unsigned long long)pmm_data_end_virt);
-    
-    /* 标记引用计数表占用的帧为已使用 */
-    pfn_t refcount_start_frame = PADDR_TO_PFN(bitmap_end_phys);
-    pfn_t refcount_end_frame = PADDR_TO_PFN(refcount_end_phys);
-    for (pfn_t f = refcount_start_frame; f < refcount_end_frame; f++) {
-        if (f < total_frames) {
-            set_frame(f);
-        }
-    }
-    
-    /* 标记空闲内存区域 - 遍历 boot_info 内存映射 */
-    for (uint32_t i = 0; i < boot_info->mmap_count; i++) {
-        const boot_mmap_entry_t *entry = &boot_info->mmap[i];
-        
-        /* 只处理可用内存区域 */
-        if (entry->type != BOOT_MEM_USABLE) {
+    ram_region_count = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        paddr_t start = PADDR_ALIGN_UP(regions[i].start);
+        paddr_t end = PADDR_ALIGN_DOWN(regions[i].end);
+        if (end <= start || ram_region_count == PMM_MAX_RAM_REGIONS) {
             continue;
         }
-        
-        paddr_t start = PADDR_ALIGN_UP(entry->base);
-        paddr_t end = PADDR_ALIGN_DOWN(entry->base + entry->length);
-        
-        /* 跳过内核占用的区域 */
-        if (start < kernel_phys_end) {
-            start = kernel_phys_end;
-        }
-        
-        /* 跳过 PMM 数据结构占用的区域 */
-        if (start < refcount_end_phys) {
-            start = refcount_end_phys;
-        }
-        
-        if (end > start) {
-            for (pfn_t f = PADDR_TO_PFN(start); f < PADDR_TO_PFN(end); f++) {
-                if (f < total_frames) {
-                    clear_frame(f);
-                    pmm_info.free_frames++;
-                }
-            }
+        ram_regions[ram_region_count].start = start;
+        ram_regions[ram_region_count].end = end;
+        ram_region_count++;
+        if (end > max_addr) {
+            max_addr = end;
         }
     }
-    
-    /* 处理引导模块（如 initrd），标记为已使用 */
-    for (uint32_t i = 0; i < boot_info->module_count; i++) {
-        const boot_module_t *mod = &boot_info->modules[i];
-        pfn_t start_frame = PADDR_TO_PFN(PADDR_ALIGN_DOWN(mod->start));
-        pfn_t end_frame = PADDR_TO_PFN(PADDR_ALIGN_UP(mod->end));
-        
-        for (pfn_t f = start_frame; f < end_frame; f++) {
-            if (f < total_frames && !test_frame(f)) {
-                set_frame(f);
-                pmm_info.free_frames--;
-            }
+    if (max_addr == 0) {
+        PANIC("PMM: no usable memory");
+    }
+    total_frames = max_addr / PAGE_SIZE;
+    pmm_info.total_frames = total_frames;
+
+    // 位图：每个页帧一位，先全部标记为已用
+    pfn_t bitmap_bytes = PAGE_ALIGN_UP((total_frames + 31) / 32 * 4);
+    frame_bitmap = (uint32_t *)PAGE_ALIGN_UP((uintptr_t)_kernel_end);
+    bitmap_size = bitmap_bytes / 4;
+    memset(frame_bitmap, 0xFF, bitmap_bytes);
+    paddr_t bitmap_end_phys = PAGE_ALIGN_UP(VIRT_TO_PHYS((uintptr_t)frame_bitmap) + bitmap_bytes);
+
+    // 引用计数表：每个页帧 16 位，紧跟位图
+    pfn_t refcount_bytes = PAGE_ALIGN_UP(total_frames * sizeof(uint16_t));
+    frame_refcount = (uint16_t *)PHYS_TO_VIRT(bitmap_end_phys);
+    memset(frame_refcount, 0, refcount_bytes);
+    paddr_t data_end_phys = PAGE_ALIGN_UP(bitmap_end_phys + refcount_bytes);
+    pmm_data_end_virt = PHYS_TO_VIRT(data_end_phys);
+
+    // 可用区域里、内核和上面两张表之后的页帧是空闲的
+    for (uint32_t i = 0; i < ram_region_count; i++) {
+        paddr_t start = ram_regions[i].start < data_end_phys ? data_end_phys : ram_regions[i].start;
+        for (pfn_t f = PADDR_TO_PFN(start); f < PADDR_TO_PFN(ram_regions[i].end); f++) {
+            clear_frame(f);
+            pmm_info.free_frames++;
         }
     }
-    
     pmm_info.used_frames = total_frames - pmm_info.free_frames;
-    
-    /* 计算内核占用的页帧数 */
-    pmm_info.kernel_frames = PADDR_TO_PFN(kernel_phys_end - kernel_phys_start);
-    
-    /* 计算位图占用的页帧数 */
-    pmm_info.bitmap_frames = PADDR_TO_PFN(bitmap_end_phys - bitmap_phys_start);
-    
-    /* 计算引用计数表占用的页帧数 */
-    pfn_t refcount_frames = PADDR_TO_PFN(refcount_end_phys - bitmap_end_phys);
-    
-    /* 保留页帧数 = 内核 + 位图 + 引用计数表 */
-    pmm_info.reserved_frames = pmm_info.kernel_frames + pmm_info.bitmap_frames + refcount_frames;
-    
-    LOG_DEBUG_MSG("PMM: Reserved frames: kernel=%llu, bitmap=%llu, refcount=%llu, total=%llu\n",
-                 (unsigned long long)pmm_info.kernel_frames,
-                 (unsigned long long)pmm_info.bitmap_frames,
-                 (unsigned long long)refcount_frames,
-                 (unsigned long long)pmm_info.reserved_frames);
-    
-    /* 初始化引用计数：所有已使用的帧设置为 1 */
+
+    // 已用的页帧（内核、两张表、区域之间的空洞）引用计数为 1，永远不会被释放
     for (pfn_t i = 0; i < total_frames; i++) {
-        if (test_frame(i)) {
-            frame_refcount[i] = 1;
-        } else {
-            frame_refcount[i] = 0;
-        }
+        frame_refcount[i] = test_frame(i) ? 1 : 0;
     }
-    
+
     mm::Pmm::print_info();
 }
 
@@ -679,16 +360,6 @@ uintptr_t mm::Pmm::get_bitmap_end() {
     // 回退：如果还没有初始化，使用旧的计算方式
     pfn_t bitmap_bytes = PAGE_ALIGN_UP((total_frames + 31) / 32 * 4);
     return PAGE_ALIGN_UP((uintptr_t)frame_bitmap + bitmap_bytes);
-}
-
-/**
- * @brief 获取 PMM 数据结构结束地址（虚拟地址）
- * @return PMM 数据结构（位图+引用计数表）结束后的虚拟地址
- * 
- * 用于确定堆的起始位置，确保堆不会与 PMM 数据结构重叠。
- */
-uintptr_t mm::Pmm::get_data_end_virt() {
-    return mm::Pmm::get_bitmap_end();
 }
 
 /**

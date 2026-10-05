@@ -6,7 +6,6 @@
 /* The magic number passed by the bootloader in %eax */
 #define MULTIBOOT_BOOTLOADER_MAGIC 0x2BADB002
 
-#define MULTIBOOT_INFO_MODS           0x008
 #define MULTIBOOT_INFO_MEM_MAP        0x040
 
 /* Memory map entry */

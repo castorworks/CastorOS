@@ -1,524 +1,366 @@
 /**
- * @file dtb.c
- * @brief ARM64 Device Tree Blob (DTB) Parser Implementation
- * 
- * This file implements a parser for Device Tree Blob (DTB) data structures
- * used by ARM64 systems. The DTB is passed by the bootloader and contains
- * hardware configuration information.
- * 
- * DTB Structure:
- *   - Header: Contains offsets and sizes
- *   - Memory Reservation Block: Reserved memory regions
- *   - Structure Block: Tree of nodes and properties
- *   - Strings Block: Property name strings
- * 
- * Requirements: 4.3 - Parse device information from Device Tree Blob (DTB)
+ * @file dtb.cpp
+ * @brief 设备树解析（接口说明见 dtb.h）
+ *
+ * 设备树的二进制格式 (FDT)：一个头，后面是几块数据。所有的数都是大端的。
+ *   - 结构块：一串 32 位标记。BEGIN_NODE 后面跟节点名，PROP 后面跟属性值的长度、
+ *     属性名在字符串块里的偏移和属性值，END_NODE 结束一个节点，END 结束全部。
+ *     名字和属性值都补齐到 4 字节。一个节点的属性都排在它的子节点之前。
+ *   - 字符串块：属性名。
+ *
+ * 属性的含义要到节点结束时才能判断：一个节点是什么设备由 compatible 决定，而它的
+ * reg、interrupts 可能排在 compatible 前面。所以解析时先把每个打开着的节点的这几个
+ * 属性记下来（一个按深度排的栈），等节点结束再归类。
  */
 
 #include <types.h>
-#include <drivers/serial.h>
+#include <lib/klog.h>
+#include <lib/string.h>
 #include "../include/dtb.h"
 
-/* Forward declarations for serial output */
-extern "C" void serial_puts(const char *str);
-extern "C" void serial_put_hex64(uint64_t value);
+#define FDT_MAGIC           0xD00DFEED
+#define FDT_VERSION_MIN     16          /* last_comp_version：我们按第 16 版的格式读 */
 
-/* ============================================================================
- * Helper Functions
- * ========================================================================== */
+#define FDT_BEGIN_NODE      1
+#define FDT_END_NODE        2
+#define FDT_PROP            3
+#define FDT_NOP             4
+#define FDT_END             9
 
-/**
- * @brief Convert 32-bit big-endian to host byte order
- */
-static inline uint32_t be32_to_cpu(uint32_t be_val) {
-    return ((be_val & 0xFF000000) >> 24) |
-           ((be_val & 0x00FF0000) >> 8)  |
-           ((be_val & 0x0000FF00) << 8)  |
-           ((be_val & 0x000000FF) << 24);
+/** 节点嵌套最深记到这一层；更深的节点照样走过，只是不归类 */
+#define DTB_MAX_DEPTH       16
+
+/** 父节点没有声明时的默认值（设备树规范） */
+#define DEFAULT_ADDRESS_CELLS   2
+#define DEFAULT_SIZE_CELLS      1
+
+/** GIC 的中断说明符是 3 个单元：类型、编号、触发方式 */
+#define GIC_INTERRUPT_CELLS     3
+#define GIC_SPI                 0       /* 共享外设中断：中断号 = 编号 + 32 */
+#define GIC_PPI                 1       /* 每个 CPU 私有的外设中断：中断号 = 编号 + 16 */
+
+struct fdt_header {
+    uint32_t magic;
+    uint32_t totalsize;
+    uint32_t off_dt_struct;
+    uint32_t off_dt_strings;
+    uint32_t off_mem_rsvmap;
+    uint32_t version;
+    uint32_t last_comp_version;
+    uint32_t boot_cpuid_phys;
+    uint32_t size_dt_strings;
+    uint32_t size_dt_struct;
+};
+
+/** 一个属性值：指向设备树里的数据 */
+struct prop {
+    const uint8_t *data;
+    uint32_t len;
+};
+
+/** 一个打开着的节点：归类要用到的属性，以及它为子节点声明的单元数 */
+struct node {
+    const char *name;
+    struct prop compatible;
+    struct prop device_type;
+    struct prop reg;
+    struct prop interrupts;
+    uint32_t address_cells;     /* 子节点的 reg 里，地址占几个 32 位单元 */
+    uint32_t size_cells;        /* 长度占几个 */
+};
+
+static dtb_info_t g_info;
+static bool g_valid = false;
+
+static uint32_t be32(const uint8_t *p) {
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
 }
 
-/**
- * @brief Convert 64-bit big-endian to host byte order
- */
-static inline uint64_t be64_to_cpu(uint64_t be_val) {
-    return ((be_val & 0xFF00000000000000ULL) >> 56) |
-           ((be_val & 0x00FF000000000000ULL) >> 40) |
-           ((be_val & 0x0000FF0000000000ULL) >> 24) |
-           ((be_val & 0x000000FF00000000ULL) >> 8)  |
-           ((be_val & 0x00000000FF000000ULL) << 8)  |
-           ((be_val & 0x0000000000FF0000ULL) << 24) |
-           ((be_val & 0x000000000000FF00ULL) << 40) |
-           ((be_val & 0x00000000000000FFULL) << 56);
-}
-
-/**
- * @brief Simple string comparison
- */
-static int dtb_strcmp(const char *s1, const char *s2) {
-    while (*s1 && (*s1 == *s2)) {
-        s1++;
-        s2++;
+/** 读 cells 个单元组成的一个数。最多取低 64 位 */
+static uint64_t read_cells(const uint8_t *p, uint32_t cells) {
+    uint64_t value = 0;
+    for (uint32_t i = 0; i < cells; i++) {
+        value = (value << 32) | be32(p + 4 * i);
     }
-    return *(const unsigned char *)s1 - *(const unsigned char *)s2;
+    return value;
 }
 
-/**
- * @brief Check if string starts with prefix
- */
-static bool dtb_strstart(const char *str, const char *prefix) {
-    while (*prefix) {
-        if (*str++ != *prefix++) {
-            return false;
+/** 字符串属性的值是不是 str */
+static bool prop_is(const struct prop *p, const char *str) {
+    size_t n = strlen(str);
+    return p->len == n + 1 && memcmp(p->data, str, n + 1) == 0;
+}
+
+/** compatible 是一串以 NUL 分隔的字符串，从最具体到最一般：其中有没有 str */
+static bool compatible_with(const struct prop *compatible, const char *str) {
+    size_t n = strlen(str);
+    for (uint32_t i = 0; i < compatible->len; ) {
+        const char *item = (const char *)compatible->data + i;
+        size_t item_len = strnlen(item, compatible->len - i);
+        if (item_len == n && memcmp(item, str, n) == 0) {
+            return true;
         }
+        i += item_len + 1;
     }
+    return false;
+}
+
+/** 节点名去掉 @ 后面的地址之后是不是 base */
+static bool name_is(const char *name, const char *base) {
+    size_t n = strlen(base);
+    return strncmp(name, base, n) == 0 && (name[n] == '\0' || name[n] == '@');
+}
+
+/**
+ * 取 reg 属性里的第 index 项（地址、长度）。单元数由父节点声明。
+ * @return 有这一项返回 true
+ */
+static bool reg_entry(const struct node *n, const struct node *parent, uint32_t index,
+                      uint64_t *base, uint64_t *size) {
+    uint32_t entry = 4 * (parent->address_cells + parent->size_cells);
+    if (entry == 0 || n->reg.len < (uint64_t)entry * (index + 1)) {
+        return false;
+    }
+    const uint8_t *p = n->reg.data + entry * index;
+    *base = read_cells(p, parent->address_cells);
+    *size = read_cells(p + 4 * parent->address_cells, parent->size_cells);
     return true;
 }
 
 /**
- * @brief Copy string with length limit
+ * 取 interrupts 属性里的第 index 项，换算成 GIC 的中断号。
+ * 假定中断父节点是 GIC（QEMU virt 上都是）。
  */
-static void dtb_strncpy(char *dest, const char *src, size_t n) {
-    size_t i;
-    for (i = 0; i < n - 1 && src[i]; i++) {
+static bool interrupt_entry(const struct node *n, uint32_t index, uint32_t *irq) {
+    uint32_t entry = 4 * GIC_INTERRUPT_CELLS;
+    if (n->interrupts.len < (uint64_t)entry * (index + 1)) {
+        return false;
+    }
+    const uint8_t *p = n->interrupts.data + entry * index;
+    uint32_t type = be32(p);
+    uint32_t number = be32(p + 4);
+    if (type != GIC_SPI && type != GIC_PPI) {
+        return false;
+    }
+    *irq = number + (type == GIC_PPI ? 16 : 32);
+    return true;
+}
+
+/** 把 src 里最多 src_max 字节的字符串抄进 dest（DTB_MAX_NAME_LEN 字节），太长就截断 */
+static void copy_name(char *dest, const char *src, size_t src_max) {
+    size_t i = 0;
+    for (; i < DTB_MAX_NAME_LEN - 1 && i < src_max && src[i]; i++) {
         dest[i] = src[i];
     }
     dest[i] = '\0';
 }
 
-/**
- * @brief Get string length
- */
-static size_t dtb_strlen(const char *s) {
-    size_t len = 0;
-    while (*s++) len++;
-    return len;
-}
+/** 一个节点的属性都读完了：看它是什么，把内核关心的记下来 */
+static void classify_node(const struct node *n, const struct node *parent) {
+    uint64_t base = 0, size = 0;
 
-/**
- * @brief Align value up to 4-byte boundary
- */
-static inline uint32_t align4(uint32_t val) {
-    return (val + 3) & ~3;
-}
-
-/* ============================================================================
- * Global State
- * ========================================================================== */
-
-/** Global DTB information structure */
-static dtb_info_t g_dtb_info;
-
-/** Pointer to DTB base address */
-static uint8_t *g_dtb_base = NULL;
-
-/** Pointer to strings block */
-static const char *g_strings_block = NULL;
-
-/* ============================================================================
- * Property Parsing Helpers
- * ========================================================================== */
-
-/**
- * @brief Read a reg property (address + size pairs)
- * 
- * @param data Property data
- * @param len Property length
- * @param addr_cells Number of cells for address
- * @param size_cells Number of cells for size
- * @param base Output: base address
- * @param size Output: size
- * @return true if successful
- */
-static bool parse_reg_property(const uint32_t *data, uint32_t len,
-                               uint32_t addr_cells, uint32_t size_cells,
-                               uint64_t *base, uint64_t *size) {
-    uint32_t expected_len = (addr_cells + size_cells) * sizeof(uint32_t);
-    if (len < expected_len) {
-        return false;
-    }
-    
-    /* Parse base address */
-    *base = 0;
-    for (uint32_t i = 0; i < addr_cells; i++) {
-        *base = (*base << 32) | be32_to_cpu(data[i]);
-    }
-    
-    /* Parse size */
-    *size = 0;
-    for (uint32_t i = 0; i < size_cells; i++) {
-        *size = (*size << 32) | be32_to_cpu(data[addr_cells + i]);
-    }
-    
-    return true;
-}
-
-/* ============================================================================
- * Node Parsing State
- * ========================================================================== */
-
-/** Deepest node nesting tracked for #address-cells/#size-cells scoping */
-#define DTB_MAX_DEPTH           16
-
-/** Devicetree defaults when a parent does not declare the cells */
-#define DTB_DEFAULT_ADDR_CELLS  2
-#define DTB_DEFAULT_SIZE_CELLS  1
-
-/** Current parsing context */
-typedef struct {
-    /**
-     * Cells used to decode the current node's "reg". Per the devicetree
-     * spec these are the #address-cells/#size-cells declared by the
-     * *parent* node, not by the node itself and not by whichever node
-     * happened to be parsed last.
-     */
-    uint32_t addr_cells;
-    uint32_t size_cells;
-    int      depth;         /**< Current node depth (root node = 1) */
-    char     path[256];     /**< Current node path */
-    /** Cells each open node declares for its children, indexed by depth
-     *  (index 0 is the implicit parent of the root node). */
-    uint32_t child_addr_cells[DTB_MAX_DEPTH];
-    uint32_t child_size_cells[DTB_MAX_DEPTH];
-} parse_context_t;
-
-/** Index into the per-depth cell arrays (nodes deeper than the table share the last slot) */
-static inline int cells_slot(int depth) {
-    if (depth < 0) return 0;
-    return depth < DTB_MAX_DEPTH ? depth : DTB_MAX_DEPTH - 1;
-}
-
-/** Load the cells that apply to the "reg" of the node at ctx->depth */
-static void select_reg_cells(parse_context_t *ctx) {
-    int parent = cells_slot(ctx->depth - 1);
-    ctx->addr_cells = ctx->child_addr_cells[parent];
-    ctx->size_cells = ctx->child_size_cells[parent];
-}
-
-/* ============================================================================
- * Structure Block Parsing
- * ========================================================================== */
-
-/**
- * @brief Parse a single property
- * 
- * @param ctx Parse context
- * @param node_name Current node name
- * @param prop_name Property name
- * @param data Property data
- * @param len Property data length
- */
-static void parse_property(parse_context_t *ctx, const char *node_name,
-                          const char *prop_name, const uint32_t *data, 
-                          uint32_t len) {
-    /* Handle #address-cells and #size-cells */
-    /* They describe this node's children, not this node's own reg */
-    if (dtb_strcmp(prop_name, "#address-cells") == 0 && len >= 4) {
-        ctx->child_addr_cells[cells_slot(ctx->depth)] = be32_to_cpu(data[0]);
-        return;
-    }
-    if (dtb_strcmp(prop_name, "#size-cells") == 0 && len >= 4) {
-        ctx->child_size_cells[cells_slot(ctx->depth)] = be32_to_cpu(data[0]);
-        return;
-    }
-    
-    /* Parse memory node */
-    if (dtb_strstart(node_name, "memory") && 
-        dtb_strcmp(prop_name, "reg") == 0) {
-        uint64_t base, size;
-        uint32_t offset = 0;
-        uint32_t entry_size = (ctx->addr_cells + ctx->size_cells) * 4;
-        
-        /* entry_size 0 would never advance and fill the table with garbage */
-        while (entry_size != 0 && offset + entry_size <= len && 
-               g_dtb_info.num_memory_regions < DTB_MAX_MEMORY_REGIONS) {
-            if (parse_reg_property(&data[offset / 4], len - offset,
-                                   ctx->addr_cells, ctx->size_cells,
-                                   &base, &size)) {
-                uint32_t idx = g_dtb_info.num_memory_regions++;
-                g_dtb_info.memory[idx].base = base;
-                g_dtb_info.memory[idx].size = size;
-                g_dtb_info.total_memory += size;
+    // 内存：device_type = "memory"（老的设备树只靠节点名）。reg 可以有多项
+    if (prop_is(&n->device_type, "memory") || (n->device_type.len == 0 && name_is(n->name, "memory"))) {
+        for (uint32_t i = 0; reg_entry(n, parent, i, &base, &size); i++) {
+            if (size == 0 || g_info.num_memory_regions == DTB_MAX_MEMORY_REGIONS) {
+                continue;
             }
-            offset += entry_size;
+            g_info.memory[g_info.num_memory_regions].base = base;
+            g_info.memory[g_info.num_memory_regions].size = size;
+            g_info.num_memory_regions++;
+            g_info.total_memory += size;
         }
         return;
     }
-    
-    /* Parse GIC (interrupt controller) */
-    if ((dtb_strstart(node_name, "intc") || 
-         dtb_strstart(node_name, "gic") ||
-         dtb_strstart(node_name, "interrupt-controller"))) {
-        
-        if (dtb_strcmp(prop_name, "compatible") == 0) {
-            const char *compat = (const char *)data;
-            if (dtb_strstart(compat, "arm,gic-v3") ||
-                dtb_strstart(compat, "arm,cortex-a15-gic") ||
-                dtb_strstart(compat, "arm,gic-400")) {
-                g_dtb_info.gic.found = true;
-                if (dtb_strstart(compat, "arm,gic-v3")) {
-                    g_dtb_info.gic.version = 3;
-                } else {
-                    g_dtb_info.gic.version = 2;
-                }
-            }
+    if (n->compatible.len == 0) {
+        return;         // 没有 compatible 的节点不是设备（/chosen、/cpus、/aliases 之类）
+    }
+
+    // 中断控制器。reg 的第一项是 distributor，第二项是 CPU interface (v2) 或 redistributor (v3)
+    bool gic_v3 = compatible_with(&n->compatible, "arm,gic-v3");
+    bool gic_v2 = compatible_with(&n->compatible, "arm,cortex-a15-gic") ||
+                  compatible_with(&n->compatible, "arm,gic-400");
+    if ((gic_v3 || gic_v2) && !g_info.gic.found) {
+        g_info.gic.found = true;
+        g_info.gic.version = gic_v3 ? 3 : 2;
+        if (reg_entry(n, parent, 0, &base, &size)) {
+            g_info.gic.distributor_base = base;
         }
-        
-        if (dtb_strcmp(prop_name, "reg") == 0 && g_dtb_info.gic.found) {
-            uint64_t base, size;
-            /* First reg entry is distributor */
-            if (parse_reg_property(data, len, ctx->addr_cells, ctx->size_cells,
-                                   &base, &size)) {
-                g_dtb_info.gic.distributor_base = base;
-            }
-            /* Second reg entry is CPU interface (GICv2) or redistributor (GICv3) */
-            uint32_t entry_size = (ctx->addr_cells + ctx->size_cells) * 4;
-            if (len >= entry_size * 2) {
-                if (parse_reg_property(&data[entry_size / 4], len - entry_size,
-                                       ctx->addr_cells, ctx->size_cells,
-                                       &base, &size)) {
-                    if (g_dtb_info.gic.version == 3) {
-                        g_dtb_info.gic.redistributor_base = base;
-                    } else {
-                        g_dtb_info.gic.cpu_interface_base = base;
-                    }
-                }
+        if (reg_entry(n, parent, 1, &base, &size)) {
+            if (gic_v3) {
+                g_info.gic.redistributor_base = base;
+            } else {
+                g_info.gic.cpu_interface_base = base;
             }
         }
         return;
     }
-    
-    /* Parse timer */
-    if (dtb_strstart(node_name, "timer")) {
-        if (dtb_strcmp(prop_name, "compatible") == 0) {
-            const char *compat = (const char *)data;
-            if (dtb_strstart(compat, "arm,armv8-timer") ||
-                dtb_strstart(compat, "arm,armv7-timer")) {
-                g_dtb_info.timer_found = true;
-            }
-        }
-        if (dtb_strcmp(prop_name, "interrupts") == 0 && len >= 12) {
-            /* ARM timer has 4 interrupts, we want the physical timer (index 1) */
-            /* Format: <type irq flags> for each interrupt */
-            /* Skip first interrupt (secure physical), get second (non-secure physical) */
-            g_dtb_info.timer_irq = be32_to_cpu(data[4]) + 16; /* SPI offset */
-        }
+
+    // ARM 通用定时器。interrupts 依次是：安全物理、非安全物理、虚拟、hypervisor
+    if (compatible_with(&n->compatible, "arm,armv8-timer") ||
+        compatible_with(&n->compatible, "arm,armv7-timer")) {
+        g_info.timer_found = interrupt_entry(n, 1, &g_info.timer_irq);
         return;
     }
-    
-    /* Parse UART/serial */
-    if (dtb_strstart(node_name, "pl011") || 
-        dtb_strstart(node_name, "uart") ||
-        dtb_strstart(node_name, "serial")) {
-        
-        if (dtb_strcmp(prop_name, "compatible") == 0) {
-            const char *compat = (const char *)data;
-            if (dtb_strstart(compat, "arm,pl011") ||
-                dtb_strstart(compat, "arm,primecell")) {
-                g_dtb_info.uart_found = true;
-            }
-        }
-        
-        if (dtb_strcmp(prop_name, "reg") == 0 && !g_dtb_info.uart_base) {
-            uint64_t base, size;
-            if (parse_reg_property(data, len, ctx->addr_cells, ctx->size_cells,
-                                   &base, &size)) {
-                g_dtb_info.uart_base = base;
-            }
-        }
-        
-        if (dtb_strcmp(prop_name, "interrupts") == 0 && len >= 4) {
-            g_dtb_info.uart_irq = be32_to_cpu(data[0]) + 32; /* SPI offset */
-        }
+
+    // 串口：只记第一个 PL011
+    if (compatible_with(&n->compatible, "arm,pl011") && !g_info.uart_found) {
+        g_info.uart_found = reg_entry(n, parent, 0, &g_info.uart_base, &size);
+        interrupt_entry(n, 0, &g_info.uart_irq);
         return;
     }
-    
-    /* Track other devices */
-    if (dtb_strcmp(prop_name, "compatible") == 0 && 
-        g_dtb_info.num_devices < DTB_MAX_DEVICES) {
-        /* Check if we already have this device */
-        for (uint32_t i = 0; i < g_dtb_info.num_devices; i++) {
-            if (dtb_strcmp(g_dtb_info.devices[i].name, node_name) == 0) {
-                return; /* Already tracked */
-            }
+
+    // 其余的设备
+    if (g_info.num_devices < DTB_MAX_DEVICES) {
+        dtb_device_t *dev = &g_info.devices[g_info.num_devices++];
+        copy_name(dev->name, n->name, DTB_MAX_NAME_LEN);
+        copy_name(dev->compatible, (const char *)n->compatible.data, n->compatible.len);
+        if (reg_entry(n, parent, 0, &base, &size)) {
+            dev->base_addr = base;
+            dev->size = size;
         }
-        
-        uint32_t idx = g_dtb_info.num_devices++;
-        dtb_strncpy(g_dtb_info.devices[idx].name, node_name, DTB_MAX_NAME_LEN);
-        g_dtb_info.devices[idx].valid = true;
-    }
-    
-    if (dtb_strcmp(prop_name, "reg") == 0) {
-        /* Find the device entry and update its address */
-        for (uint32_t i = 0; i < g_dtb_info.num_devices; i++) {
-            if (dtb_strcmp(g_dtb_info.devices[i].name, node_name) == 0 &&
-                g_dtb_info.devices[i].base_addr == 0) {
-                uint64_t base, size;
-                if (parse_reg_property(data, len, ctx->addr_cells, ctx->size_cells,
-                                       &base, &size)) {
-                    g_dtb_info.devices[i].base_addr = base;
-                    g_dtb_info.devices[i].size = size;
-                }
-                break;
-            }
-        }
+        dev->has_irq = interrupt_entry(n, 0, &dev->irq);
     }
 }
 
 /**
- * @brief Parse the structure block
- * 
- * @param struct_block Pointer to structure block
- * @param struct_size Size of structure block
- * @return true if parsing succeeded
+ * 走一遍结构块。
+ * @return 格式正确（走到了 END 标记）返回 true
  */
-static bool parse_structure_block(const uint8_t *struct_block, 
-                                  uint32_t struct_size) {
-    parse_context_t ctx;
-    ctx.addr_cells = DTB_DEFAULT_ADDR_CELLS;
-    ctx.size_cells = DTB_DEFAULT_SIZE_CELLS;
-    ctx.depth = 0;
-    ctx.path[0] = '\0';
-    for (int i = 0; i < DTB_MAX_DEPTH; i++) {
-        ctx.child_addr_cells[i] = DTB_DEFAULT_ADDR_CELLS;
-        ctx.child_size_cells[i] = DTB_DEFAULT_SIZE_CELLS;
-    }
-    
-    const uint32_t *p = (const uint32_t *)struct_block;
-    const uint32_t *end = (const uint32_t *)(struct_block + struct_size);
-    char current_node[64];
-    current_node[0] = '\0';
-    
-    while (p < end) {
-        uint32_t token = be32_to_cpu(*p++);
-        
-        switch (token) {
-            case FDT_BEGIN_NODE: {
-                /* Node name follows the token */
-                const char *name = (const char *)p;
-                size_t name_len = dtb_strlen(name);
-                p = (const uint32_t *)((uintptr_t)p + align4(name_len + 1));
-                
-                /* Extract node name without unit address */
-                dtb_strncpy(current_node, name, sizeof(current_node));
-                char *at = current_node;
-                while (*at && *at != '@') at++;
-                *at = '\0';
-                
-                ctx.depth++;
-                /* reg of this node is decoded with the parent's cells; until
-                 * this node says otherwise its children get the defaults
-                 * (cells are not inherited from grandparents). */
-                select_reg_cells(&ctx);
-                ctx.child_addr_cells[cells_slot(ctx.depth)] = DTB_DEFAULT_ADDR_CELLS;
-                ctx.child_size_cells[cells_slot(ctx.depth)] = DTB_DEFAULT_SIZE_CELLS;
-                break;
+static bool walk(const uint8_t *p, const uint8_t *end, const char *strings, uint32_t strings_size) {
+    // stack[d] 是深度为 d 的那个打开着的节点；stack[0] 是根节点的虚拟父节点，只提供默认的单元数
+    static struct node stack[DTB_MAX_DEPTH + 1];
+    memset(stack, 0, sizeof(stack));
+    stack[0].address_cells = DEFAULT_ADDRESS_CELLS;
+    stack[0].size_cells = DEFAULT_SIZE_CELLS;
+    int depth = 0;
+
+    while (p + 4 <= end) {
+        uint32_t token = be32(p);
+        p += 4;
+
+        if (token == FDT_BEGIN_NODE) {
+            const char *name = (const char *)p;
+            size_t name_len = strnlen(name, (size_t)(end - p));
+            if (p + name_len >= end) {
+                return false;       // 名字没有结束
             }
-            
-            case FDT_END_NODE:
-                ctx.depth--;
-                select_reg_cells(&ctx);
-                current_node[0] = '\0';
-                break;
-            
-            case FDT_PROP: {
-                if (p + 2 > end) return false;
-                
-                uint32_t len = be32_to_cpu(p[0]);
-                uint32_t nameoff = be32_to_cpu(p[1]);
-                p += 2;
-                
-                const char *prop_name = g_strings_block + nameoff;
-                const uint32_t *prop_data = p;
-                
-                parse_property(&ctx, current_node, prop_name, prop_data, len);
-                
-                p = (const uint32_t *)((uintptr_t)p + align4(len));
-                break;
+            p += (name_len + 1 + 3) & ~(size_t)3;
+            depth++;
+            if (depth <= DTB_MAX_DEPTH) {
+                struct node *n = &stack[depth];
+                memset(n, 0, sizeof(*n));
+                n->name = name;
+                // 单元数不从祖先继承：这个节点自己不声明，它的子节点就用默认值
+                n->address_cells = DEFAULT_ADDRESS_CELLS;
+                n->size_cells = DEFAULT_SIZE_CELLS;
             }
-            
-            case FDT_NOP:
-                /* Skip */
-                break;
-            
-            case FDT_END:
-                return true;
-            
-            default:
-                /* Unknown token */
-                serial_puts("DTB: Unknown token: ");
-                serial_put_hex64(token);
-                serial_puts("\n");
+        } else if (token == FDT_END_NODE) {
+            if (depth == 0) {
                 return false;
+            }
+            if (depth <= DTB_MAX_DEPTH) {
+                classify_node(&stack[depth], &stack[depth - 1]);
+            }
+            depth--;
+        } else if (token == FDT_PROP) {
+            if (p + 8 > end) {
+                return false;
+            }
+            uint32_t len = be32(p);
+            uint32_t name_off = be32(p + 4);
+            p += 8;
+            if (len > (size_t)(end - p) || name_off >= strings_size || depth == 0) {
+                return false;
+            }
+            struct prop value = { p, len };
+            p += (len + 3) & ~(uint32_t)3;
+
+            if (depth > DTB_MAX_DEPTH) {
+                continue;
+            }
+            struct node *n = &stack[depth];
+            const char *name = strings + name_off;
+            if (strcmp(name, "compatible") == 0) {
+                n->compatible = value;
+            } else if (strcmp(name, "device_type") == 0) {
+                n->device_type = value;
+            } else if (strcmp(name, "reg") == 0) {
+                n->reg = value;
+            } else if (strcmp(name, "interrupts") == 0) {
+                n->interrupts = value;
+            } else if (strcmp(name, "#address-cells") == 0 && len == 4) {
+                n->address_cells = be32(value.data);
+            } else if (strcmp(name, "#size-cells") == 0 && len == 4) {
+                n->size_cells = be32(value.data);
+            }
+        } else if (token == FDT_END) {
+            return depth == 0;
+        } else if (token != FDT_NOP) {
+            return false;
         }
     }
-    
-    return true;
+    return false;
 }
 
-/* ============================================================================
- * Public API Implementation
- * ========================================================================== */
-
-dtb_info_t *dtb_parse(void *dtb_addr) {
-    serial_puts("DTB: Parsing Device Tree at ");
-    serial_put_hex64((uint64_t)dtb_addr);
-    serial_puts("\n");
-    
-    /* Initialize global state */
-    g_dtb_base = (uint8_t *)dtb_addr;
-    
-    /* Clear info structure */
-    for (size_t i = 0; i < sizeof(g_dtb_info); i++) {
-        ((uint8_t *)&g_dtb_info)[i] = 0;
-    }
-    
-    /* Validate DTB header */
-    if (!dtb_addr) {
-        serial_puts("DTB: NULL address\n");
-        return NULL;
-    }
-    
-    const dtb_header_t *header = (const dtb_header_t *)dtb_addr;
-    uint32_t magic = be32_to_cpu(header->magic);
-    
-    if (magic != DTB_MAGIC) {
-        serial_puts("DTB: Invalid magic: ");
-        serial_put_hex64(magic);
-        serial_puts(" (expected 0xD00DFEED)\n");
-        return NULL;
-    }
-    
-    uint32_t version = be32_to_cpu(header->version);
-    if (version < DTB_VERSION_MIN || version > DTB_VERSION_MAX) {
-        serial_puts("DTB: Unsupported version: ");
-        serial_put_hex64(version);
-        serial_puts("\n");
-        return NULL;
-    }
-    
-    serial_puts("DTB: Valid header, version ");
-    serial_put_hex64(version);
-    serial_puts("\n");
-    
-    /* Get block offsets */
-    uint32_t struct_offset = be32_to_cpu(header->off_dt_struct);
-    uint32_t strings_offset = be32_to_cpu(header->off_dt_strings);
-    uint32_t struct_size = be32_to_cpu(header->size_dt_struct);
-    
-    /* Set up strings block pointer */
-    g_strings_block = (const char *)(g_dtb_base + strings_offset);
-    
-    /* Parse structure block */
-    const uint8_t *struct_block = g_dtb_base + struct_offset;
-    if (!parse_structure_block(struct_block, struct_size)) {
-        serial_puts("DTB: Failed to parse structure block\n");
-        return NULL;
-    }
-    
-    g_dtb_info.valid = true;
-    serial_puts("DTB: Parsing complete\n");
-    
-    return &g_dtb_info;
+static bool is_dtb(const void *addr) {
+    return addr != NULL && be32((const uint8_t *)addr) == FDT_MAGIC;
 }
 
+const void *dtb_find(const void *hint) {
+    // QEMU 用 -kernel 加载 ELF 映像时不在 x0 里给地址；这时设备树在内存的开头，
+    // 或者内存末尾附近的几个固定位置之一
+    static const uint64_t candidates[] = {
+        0x40000000, 0x44000000, 0x47E00000, 0x48000000, 0x4FE00000, 0x50000000, 0x80000000,
+    };
+    if (is_dtb(hint)) {
+        return hint;
+    }
+    for (uint32_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+        if (is_dtb((const void *)candidates[i])) {
+            return (const void *)candidates[i];
+        }
+    }
+    return NULL;
+}
 
+const dtb_info_t *dtb_parse(const void *dtb) {
+    g_valid = false;
+    memset(&g_info, 0, sizeof(g_info));
+    if (!is_dtb(dtb)) {
+        return NULL;
+    }
+
+    const uint8_t *base = (const uint8_t *)dtb;
+    const struct fdt_header *header = (const struct fdt_header *)dtb;
+    uint32_t total = be32((const uint8_t *)&header->totalsize);
+    uint32_t struct_off = be32((const uint8_t *)&header->off_dt_struct);
+    uint32_t struct_size = be32((const uint8_t *)&header->size_dt_struct);
+    uint32_t strings_off = be32((const uint8_t *)&header->off_dt_strings);
+    uint32_t strings_size = be32((const uint8_t *)&header->size_dt_strings);
+
+    // 我们按第 16 版的格式读：设备树必须声明自己和它兼容；各块必须在设备树之内
+    if (be32((const uint8_t *)&header->last_comp_version) > FDT_VERSION_MIN ||
+        be32((const uint8_t *)&header->version) < FDT_VERSION_MIN ||
+        struct_off > total || struct_size > total - struct_off ||
+        strings_off > total || strings_size > total - strings_off) {
+        LOG_ERROR_MSG("DTB: unsupported version or corrupt header\n");
+        return NULL;
+    }
+
+    if (!walk(base + struct_off, base + struct_off + struct_size,
+              (const char *)base + strings_off, strings_size)) {
+        LOG_ERROR_MSG("DTB: malformed structure block\n");
+        return NULL;
+    }
+
+    g_valid = true;
+    LOG_INFO_MSG("DTB: %llu MB of memory in %u region(s), GIC v%u, %u other device(s)\n",
+                 (unsigned long long)(g_info.total_memory >> 20), g_info.num_memory_regions,
+                 g_info.gic.version, g_info.num_devices);
+    return &g_info;
+}
+
+const dtb_info_t *dtb_get_info(void) {
+    return g_valid ? &g_info : NULL;
+}

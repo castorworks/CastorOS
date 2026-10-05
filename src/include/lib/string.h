@@ -42,6 +42,9 @@ void uint64_to_str(uint64_t value, char *buffer);
  */
 size_t strlen(const char *str);
 
+/** 字符串长度，最多看 max 个字节（字符串可能没有结尾的 NUL） */
+size_t strnlen(const char *str, size_t max);
+
 /**
  * 比较两个字符串
  * @param s1 第一个字符串

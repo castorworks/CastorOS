@@ -473,16 +473,6 @@ public:
     static hal_addr_space_t current_space();
 
     /**
-     * @brief Translate virtual address to physical address
-     * 
-     * Convenience wrapper around hal_mmu_query() for the current address space.
-     * 
-     * @param virt Virtual address to translate
-     * @return Physical address, or PADDR_INVALID if not mapped
-     */
-    static paddr_t virt_to_phys(vaddr_t virt);
-
-    /**
      * @brief Get current page table physical address
      * 
      * @return Physical address of the current page table (CR3 on x86, TTBR on ARM)

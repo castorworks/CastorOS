@@ -38,6 +38,7 @@
 #ifdef ARCH_ARM64
 #include <tests/arch/arm64/arm64_mmu_test.h>
 #include <tests/arch/arm64/arm64_exception_test.h>
+#include <tests/arch/arm64/arm64_dtb_test.h>
 #endif
 #include <lib/kprintf.h>
 
@@ -282,6 +283,7 @@ static const test_entry_t test_suite[] = {
 #ifdef ARCH_ARM64
     TEST_ENTRY("ARM64 MMU Property Tests", run_arm64_mmu_tests),
     TEST_ENTRY("ARM64 Exception Register Preservation Tests", run_arm64_exception_tests),
+    TEST_ENTRY("ARM64 Device Tree Tests", run_arm64_dtb_tests),
 #endif
     
     // 内核核心测试 (kernel/)

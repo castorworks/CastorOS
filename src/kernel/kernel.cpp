@@ -27,15 +27,19 @@
 #include <mm/heap.h>
 
 #if defined(ARCH_ARM64)
-#include <boot/boot_info.h>
 #include <arch/arm64/arch_types.h>
+#include <dtb.h>
 #else
 #include <kernel/multiboot.h>
+#include <kernel/panic.h>
 #endif
 
 #ifdef KTEST
 #include <tests/test_runner.h>
 #endif
+
+/** 固件报告的内存区域最多记这么多个 */
+#define PMM_BOOT_REGIONS 32
 
 static void print_banner(void) {
     kprintf("\n================================================================================\n");
@@ -81,24 +85,31 @@ void kernel_main(void *dtb_addr) {
     drivers::Serial::init();  // PL011
     print_banner();
 
-    boot_info_t *boot_info = boot_info_init_dtb(dtb_addr);
-    if (!boot_info) {
-        kprintf("PANIC: no usable boot info in DTB at 0x%llx\n",
+    // 硬件的描述（包括物理内存的范围）来自固件给的设备树
+    const dtb_info_t *dtb = dtb_parse(dtb_find(dtb_addr));
+    if (!dtb || dtb->num_memory_regions == 0) {
+        kprintf("PANIC: no usable device tree (x0 was 0x%llx)\n",
                 (unsigned long long)(uintptr_t)dtb_addr);
         while (1) {
             hal::Cpu::halt();
         }
+    }
+    static mm::MemRegion regions[DTB_MAX_MEMORY_REGIONS];
+    uint32_t region_count = dtb->num_memory_regions;
+    for (uint32_t i = 0; i < region_count; i++) {
+        regions[i].start = (paddr_t)dtb->memory[i].base;
+        regions[i].end = (paddr_t)(dtb->memory[i].base + dtb->memory[i].size);
     }
 
     hal::Cpu::init();
     hal::Interrupt::init();   // 异常向量 + GIC
     syscall_init();
 
-    mm::Pmm::init_boot_info(boot_info);
+    mm::Pmm::init(regions, region_count);
     mm::Vmm::init();
 
     // 堆放在 PMM 数据结构之后，不超过物理内存末尾
-    uintptr_t heap_start = PAGE_ALIGN_UP(mm::Pmm::get_data_end_virt());
+    uintptr_t heap_start = PAGE_ALIGN_UP(mm::Pmm::get_bitmap_end());
     mm::PmmInfo pmm_info = mm::Pmm::get_info();
     uintptr_t max_heap_virt = PHYS_TO_VIRT((uint64_t)pmm_info.total_frames * PAGE_SIZE);
     uint64_t available_space = max_heap_virt - heap_start;
@@ -136,6 +147,38 @@ static uintptr_t heap_start_after_used_frames(uintptr_t heap_start, uint32_t hea
     return start;
 }
 
+/**
+ * 从 Multiboot 内存映射里取出可用的物理内存区域
+ */
+static uint32_t multiboot_memory_regions(const multiboot_info_t *mbi, mm::MemRegion *regions, uint32_t max) {
+    if (!(mbi->flags & MULTIBOOT_INFO_MEM_MAP)) {
+        return 0;
+    }
+    uint32_t count = 0;
+    uintptr_t entry = PHYS_TO_VIRT(mbi->mmap_addr);
+    uintptr_t end = entry + mbi->mmap_length;
+    while (entry < end && count < max) {
+        const multiboot_memory_map_t *mmap = (const multiboot_memory_map_t *)entry;
+        if (mmap->type == MULTIBOOT_MEMORY_AVAILABLE) {
+            uint64_t region_end = mmap->addr + mmap->len;
+#if defined(ARCH_I686)
+            // 内核的地址空间只有 2GB，直接映射区放不下更多的物理内存
+            const uint64_t limit = 0x80000000ULL;
+            if (region_end > limit) {
+                region_end = limit;
+            }
+#endif
+            if (region_end > mmap->addr) {
+                regions[count].start = (paddr_t)mmap->addr;
+                regions[count].end = (paddr_t)region_end;
+                count++;
+            }
+        }
+        entry += mmap->size + 4;        // size 字段不包括它自己
+    }
+    return count;
+}
+
 extern "C" void kernel_main(multiboot_info_t *mbi);
 void kernel_main(multiboot_info_t *mbi) {
     cxx_global_ctors_init();  // 运行 C++ 全局构造函数（必须最先执行）
@@ -147,7 +190,12 @@ void kernel_main(multiboot_info_t *mbi) {
     hal::Interrupt::init();   // IDT + PIC/APIC
     syscall_init();
 
-    mm::Pmm::init(mbi);
+    static mm::MemRegion regions[PMM_BOOT_REGIONS];
+    uint32_t region_count = multiboot_memory_regions(mbi, regions, PMM_BOOT_REGIONS);
+    if (region_count == 0) {
+        PANIC("No memory map from the boot loader");
+    }
+    mm::Pmm::init(regions, region_count);
     mm::Vmm::init();
 
     // 堆起始地址：PMM 位图之后，并且在 VMM 初始化已分配的页表帧之后

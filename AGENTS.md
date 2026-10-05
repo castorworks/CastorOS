@@ -123,7 +123,7 @@ CastorOS/
 │   ├── arch/               # Architecture-specific code
 │   │   ├── i686/           # boot, cpu (GDT/IDT), interrupt, mm, task, syscall, hal.cpp
 │   │   ├── x86_64/
-│   │   └── arm64/          # also dtb/ (device tree parsing)
+│   │   └── arm64/          # also dtb/ (device tree parser: memory, GIC, timer, UART, device list)
 │   ├── drivers/            # Only serial (debug output) and timer (tick)
 │   │   ├── x86/            # COM1, PIT
 │   │   └── arm/            # PL011, ARM Generic Timer

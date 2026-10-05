@@ -128,7 +128,7 @@ void kernel_main(multiboot_info_t *mbi) {
     hal::Interrupt::init();       // IDT、异常、PIC
     syscall_init();               // 系统调用表和入口
 
-    mm::Pmm::init(mbi);           // 物理内存
+    mm::Pmm::init(regions, n);    // 物理内存：regions 是从 Multiboot 内存映射里取出的可用区域
     mm::Vmm::init();              // 虚拟内存
     mm::Heap::init(...);          // 内核堆
 
@@ -147,8 +147,45 @@ static void kernel_start(void) {
 ```
 
 内核初始化到此为止。驱动、文件系统、命令行都由 init 在用户态启动
-（见 [../microkernel.md](../microkernel.md)）。arm64 的流程相同，只是启动信息来自
-设备树（DTB）而不是 Multiboot。
+（见 [../microkernel.md](../microkernel.md)）。
+
+arm64 的流程相同，只是硬件的描述来自设备树而不是 Multiboot。
+
+## 设备树（arm64）
+
+x86 上内核从 Multiboot 信息里得知内存有多少；arm64 上固件（这里是 QEMU）交给内核的是一份
+**设备树**：一棵描述硬件的树，每个节点是一个设备或一条总线，带着若干属性。
+
+```
+/ {
+    #address-cells = <2>;           子节点的 reg 里，地址占 2 个 32 位单元
+    #size-cells = <2>;              长度占 2 个
+    memory@40000000 {
+        device_type = "memory";
+        reg = <0x0 0x40000000 0x0 0x08000000>;      从 1GB 开始，128MB
+    };
+    pl011@9000000 {
+        compatible = "arm,pl011", "arm,primecell";   从最具体到最一般
+        reg = <0x0 0x09000000 0x0 0x1000>;
+        interrupts = <0 1 4>;                        SPI 1 → GIC 中断号 33
+    };
+    ...
+};
+```
+
+`dtb_parse()`（`src/arch/arm64/dtb/dtb.cpp`）走一遍这棵树，整理出物理内存的范围、
+中断控制器、定时器、串口，以及其余设备的列表。几条容易弄错的规则：
+
+- 一个节点是什么设备由 `compatible` 决定，而它的 `reg`、`interrupts` 可能排在 `compatible`
+  前面。所以要等节点的属性都读完（节点结束时）再归类，不能读到一个属性就下结论。
+- `reg` 里地址和长度各占几个单元，由**父节点**的 `#address-cells` / `#size-cells` 决定，
+  不是节点自己的，也不从祖先继承。
+- `compatible` 是一个字符串列表，要找的那一项不一定是第一项。
+- 中断号不是直接写在 `interrupts` 里的：GIC 的格式是三个单元（类型、编号、触发方式），
+  共享外设中断 (SPI) 的中断号是编号加 32，每 CPU 私有的 (PPI) 是编号加 16。
+
+目前内核只用了其中的内存范围，交给物理内存分配器。串口、GIC、定时器的地址在 QEMU virt
+上是固定的，驱动里仍然是写死的；内核测试会核对设备树里读出来的值和这些写死的值一致。
 
 ## Multiboot 信息结构
 

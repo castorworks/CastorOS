@@ -11,14 +11,11 @@
 
 #include <types.h>
 #include <mm/mm_types.h>
-#include <kernel/multiboot.h>
 
 /*============================================================================
  * 内存区域定义
  *============================================================================*/
 
-
-struct boot_info;
 
 /** @brief 大页大小 (2MB) */
 #define HUGE_PAGE_SIZE          (2 * 1024 * 1024)
@@ -35,9 +32,12 @@ struct PmmInfo {
     pfn_t total_frames;     ///< 总页帧数
     pfn_t free_frames;      ///< 空闲页帧数
     pfn_t used_frames;      ///< 已使用页帧数
-    pfn_t reserved_frames;  ///< 保留页帧数（内核+位图）
-    pfn_t kernel_frames;    ///< 内核占用页帧数
-    pfn_t bitmap_frames;    ///< 位图占用页帧数
+};
+
+/** 一段物理内存 [start, end) */
+struct MemRegion {
+    paddr_t start;
+    paddr_t end;
 };
 
 /**
@@ -50,21 +50,11 @@ public:
      *============================================================================*/
 
     /**
-     * @brief 初始化物理内存管理器 (Multiboot)
-     * @param mbi Multiboot信息结构指针（i686/x86_64）
-     * 
-     * 解析内存映射，初始化位图，标记已使用和空闲的页帧
+     * @brief 初始化物理内存管理器
+     * @param regions 固件报告的可用物理内存区域
+     * @param count 区域个数
      */
-    static void init(multiboot_info_t *mbi);
-
-    /**
-     * @brief 初始化物理内存管理器 (boot_info_t)
-     * @param boot_info 标准化引导信息结构指针（ARM64 DTB 或其他来源）
-     * 
-     * 使用架构无关的 boot_info_t 结构初始化 PMM。
-     * 适用于 ARM64 (DTB) 和其他非 Multiboot 引导方式。
-     */
-    static void init_boot_info(struct boot_info *boot_info);
+    static void init(const MemRegion *regions, uint32_t count);
 
     /**
      * @brief 分配一个物理页帧
@@ -165,14 +155,6 @@ public:
      * @return 物理内存信息结构
      */
     static PmmInfo get_info();
-
-    /**
-     * @brief 获取 PMM 数据结构结束的虚拟地址
-     * @return PMM 数据结构（位图+引用计数表）结束后的虚拟地址
-     * 
-     * 用于确定堆的起始位置，确保堆不会与 PMM 数据结构重叠。
-     */
-    static uintptr_t get_data_end_virt();
 
     /**
      * @brief 打印物理内存使用信息
