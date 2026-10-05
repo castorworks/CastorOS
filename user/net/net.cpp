@@ -71,6 +71,22 @@ static bool is_tcp_frame(const uint8_t *frame, size_t len) {
     return len >= 34 && frame[12] == 0x08 && frame[13] == 0x00 && frame[23] == IP_PROTO_TCP;
 }
 
+// 带 SYN 或数据的 TCP 帧：丢了会被重传的那种。发送方向只丢这种——纯确认谁都可能
+// 随时发一个（比如确认上一个连接迟到的 FIN），让它把名额占掉，要验证的重传就不会发生
+static bool is_tcp_frame_with_payload(const uint8_t *frame, size_t len) {
+    if (!is_tcp_frame(frame, len)) {
+        return false;
+    }
+    size_t ip_len = (size_t)(frame[14] & 0x0F) * 4;
+    size_t total = ((size_t)frame[16] << 8) | frame[17];
+    if (len < 14 + ip_len + 20) {
+        return false;
+    }
+    const uint8_t *tcp = frame + 14 + ip_len;
+    size_t tcp_len = (size_t)(tcp[12] >> 4) * 4;
+    return (tcp[13] & 0x02) != 0 || total > ip_len + tcp_len;
+}
+
 static bool nic_init(void) {
     if (!virtio_find(&nic, VIRTIO_ID_NET)) {
         return false;
@@ -125,7 +141,7 @@ static void nic_send(const uint8_t *frame, size_t len) {
     if (tx_free_count == 0 || len > FRAME_MAX) {
         return;
     }
-    if (drop_tx > 0 && is_tcp_frame(frame, len)) {
+    if (drop_tx > 0 && is_tcp_frame_with_payload(frame, len)) {
         drop_tx--;
         return;
     }

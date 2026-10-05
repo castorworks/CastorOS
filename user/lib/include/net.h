@@ -41,7 +41,8 @@ enum {
     NET_TCP_ACCEPT  = 15,   // data[0]: 监听号, data[1]: 超时（毫秒，0 = 不等待）。阻塞到有连接进来；
                             //   应答 data[0]: 连接号, data[1]: 对方 IP, data[2]: 对方端口
 
-    NET_DEBUG_DROP  = 20,   // 调试：data[0] / data[1]: 丢掉接下来发出 / 收到的这么多个 TCP 帧。
+    NET_DEBUG_DROP  = 20,   // 调试：data[0] / data[1]: 丢掉接下来发出 / 收到的这么多个 TCP 帧
+                            //   （发出的只算带 SYN 或数据的帧，纯确认不算）。
                             //   应答 data[1]: TCP 至今重传的次数
 };
 

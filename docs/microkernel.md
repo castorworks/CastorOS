@@ -70,7 +70,7 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 - 监听：监听端口上收到 SYN 就建一条半开的连接并回 SYN+ACK，握手完成后排队等 `accept`（每个监听最多积压 4 条）。握手完成之后、`accept` 之前到的数据照常进接收缓冲区。关掉监听时还没被接受的连接一并复位。
 - 没有拥塞控制、选择确认、窗口缩放、延迟确认，没有 TIME_WAIT。
 
-为了能验证重传，服务有一个调试请求 `NET_DEBUG_DROP`（`net_debug_drop(tx, rx)`）：丢掉接下来发出的 tx 个、收到的 rx 个 TCP 帧，并返回至今的重传次数。它没有访问控制，任何进程都能调用。
+为了能验证重传，服务有一个调试请求 `NET_DEBUG_DROP`（`net_debug_drop(tx, rx)`）：丢掉接下来发出的 tx 个、收到的 rx 个 TCP 帧，并返回至今的重传次数。发出方向只算带 SYN 或数据的帧：纯确认随时可能冒出一个（比如确认上一个连接迟到的 FIN），如果它也占名额，想丢的那个 SYN 就照常发出去了，测试会偶尔失败。它没有访问控制，任何进程都能调用。
 
 `make run` 和 `make test` 都给 QEMU 挂一块接用户网络的 virtio-net 网卡，并用 `guestfwd` 把 10.0.2.100:7 接到宿主机的 `cat` 上，得到一个不依赖外网的 TCP 回显服务（自检用它）。工具有 `ifconfig`、`ping <ip>`、`dns <name>`、`http <host> [path]`（对 80 端口做一次 GET，打印应答的开头）和 `echod [port] [connections]`（TCP 回显服务）。`dns` 和 `http` 要经 QEMU 的转发器访问外网，能不能成取决于宿主机能否上网。
 
