@@ -412,12 +412,14 @@ static bool is_device_range(uint64_t phys, size_t length) {
     /* QEMU virt：RAM 从 1GB 开始，之下全是设备 */
     return phys + length <= 0x40000000ULL;
 #else
-    /* 传统的 640K-1M 空洞（VGA、ROM），或者物理内存之上的 MMIO */
+    /* 传统的 640K-1M 空洞（VGA、ROM），或者 4GB 以下不是内存的地方（PCI 设备的 MMIO）。
+     * 不能用"高于内存的最高地址"来判断：内存超过 3GB 时，一部分内存在 4GB 之上，
+     * 而设备仍然在 3GB-4GB 的空洞里 */
     if (phys >= 0xA0000 && phys + length <= 0x100000) {
         return true;
     }
-    uint64_t ram_end = (uint64_t)mm::Pmm::get_info().total_frames * PAGE_SIZE;
-    return phys >= ram_end && phys + length <= 0x100000000ULL;
+    return phys >= 0x100000 && phys + length <= 0x100000000ULL &&
+           !mm::Pmm::overlaps_ram((paddr_t)phys, (paddr_t)(phys + length));
 #endif
 }
 

@@ -151,6 +151,14 @@ public:
     static bool pin_device_frame(paddr_t frame);
 
     /**
+     * @brief [start, end) 里有没有固件报告为可用内存的部分
+     *
+     * 只在用 Multiboot 内存映射初始化的架构（x86）上有内容。可用内存区域之间的空洞
+     * （640K-1M、4GB 以下的 PCI 空洞）是设备内存，即使它们的地址比内存的最高地址低。
+     */
+    static bool overlaps_ram(paddr_t start, paddr_t end);
+
+    /**
      * @brief 减少物理页帧的引用计数
      * @param frame 页帧的物理地址
      * @return 新的引用计数值

@@ -774,7 +774,31 @@ TEST_CASE(test_frames_above_1gb_are_usable) {
     ASSERT_TRUE(mm::Pmm::get_info().free_frames == before.free_frames);
 }
 
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
+/**
+ * 哪些物理地址是内存、哪些是设备：map_device 靠这个判断拒绝谁。
+ * 4GB 以下的 PCI 空洞是设备内存，不管机器有多少内存——内存超过 3GB 时它的地址
+ * 比内存的最高地址还低。
+ */
+TEST_CASE(test_ram_regions_exclude_device_holes) {
+    // 内核自己所在的地方是内存
+    paddr_t kernel = (paddr_t)VIRT_TO_PHYS((uintptr_t)&test_test_direct_map_covers_all_memory) & ~(paddr_t)(PAGE_SIZE - 1);
+    ASSERT_TRUE(mm::Pmm::overlaps_ram(kernel, kernel + PAGE_SIZE));
+
+    // 640K-1M 的传统空洞、IOAPIC 和 HPET 所在的页不是
+    ASSERT_FALSE(mm::Pmm::overlaps_ram(0xA0000, 0x100000));
+    ASSERT_FALSE(mm::Pmm::overlaps_ram(0xFEC00000ULL, 0xFEC01000ULL));
+    ASSERT_FALSE(mm::Pmm::overlaps_ram(0xFED00000ULL, 0xFED01000ULL));
+
+    // 跨着内存和空洞的范围算有内存
+    ASSERT_TRUE(mm::Pmm::overlaps_ram(0x9F000, 0x101000));
+}
+#endif
+
 TEST_SUITE(pmm_high_memory_tests) {
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
+    RUN_TEST(test_ram_regions_exclude_device_holes);
+#endif
     RUN_TEST(test_direct_map_covers_all_memory);
     RUN_TEST(test_frames_above_1gb_are_usable);
 }

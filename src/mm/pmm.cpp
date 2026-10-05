@@ -28,6 +28,14 @@ extern char _kernel_end[];                ///< 内核结束地址
 
 // 堆保留区域：物理地址在此范围内的帧不会被分配，避免与堆虚拟地址重叠
 
+// 固件报告为可用内存的区域（Multiboot 内存映射）。区域之间的空洞是设备内存或保留区
+#define PMM_MAX_RAM_REGIONS 32
+static struct {
+    paddr_t start;
+    paddr_t end;
+} ram_regions[PMM_MAX_RAM_REGIONS];
+static uint32_t ram_region_count = 0;
+
 static paddr_t heap_reserved_phys_start = 0;  ///< 堆保留区物理起始地址
 static paddr_t heap_reserved_phys_end = 0;    ///< 堆保留区物理结束地址
 
@@ -232,6 +240,12 @@ void mm::Pmm::init(multiboot_info_t *mbi) {
                 end = 0x80000000ULL;
             }
 #endif
+
+            if (end > start && ram_region_count < PMM_MAX_RAM_REGIONS) {
+                ram_regions[ram_region_count].start = start;
+                ram_regions[ram_region_count].end = end;
+                ram_region_count++;
+            }
 
             // 跳过内核、位图和引用计数表占用的区域
             if (start < kernel_end) start = kernel_end;
@@ -807,6 +821,15 @@ void mm::Pmm::frame_ref_share(paddr_t frame) {
 #define PMM_MAX_PINNED_FRAMES 64
 static paddr_t pinned_frames[PMM_MAX_PINNED_FRAMES];
 static uint32_t pinned_frame_count = 0;
+
+bool mm::Pmm::overlaps_ram(paddr_t start, paddr_t end) {
+    for (uint32_t i = 0; i < ram_region_count; i++) {
+        if (start < ram_regions[i].end && ram_regions[i].start < end) {
+            return true;
+        }
+    }
+    return false;
+}
 
 bool mm::Pmm::pin_device_frame(paddr_t frame) {
     if (frame == PADDR_INVALID || !IS_PADDR_ALIGNED(frame)) {
