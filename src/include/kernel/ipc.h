@@ -38,6 +38,9 @@
  */
 #define IPC_LABEL_GRANT     0x80000002u
 
+/** sender == IPC_KERNEL：进程用 timer_set 设的定时器到期了 */
+#define IPC_LABEL_TIMER     0x80000003u
+
 #define IPC_MSG_WORDS   6
 
 /** 消息布局在所有架构上相同（与 user/lib/include/syscall.h 保持一致） */
@@ -86,7 +89,7 @@ public:
     static int reply(uint32_t dest, const ipc_msg *msg);
 
     /**
-     * task 有了待处理的内核消息（设备中断）：如果它正阻塞在 recv(IPC_ANY) 上，
+     * task 有了待处理的内核消息（设备中断、到期的定时器）：如果它正阻塞在 recv 上等这类消息，
      * 把消息交给它并唤醒。可以在中断上下文调用。
      */
     static void notify(struct task *task);

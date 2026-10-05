@@ -33,6 +33,8 @@ enum {
     SYS_IRQ_ACK         = 22,
     SYS_DROP_PRIVILEGE  = 23,
     SYS_DMA_ALLOC       = 24,
+    SYS_UPTIME_MS       = 25,
+    SYS_TIMER_SET       = 26,
 };
 
 typedef uintptr_t syscall_arg_t;
@@ -74,6 +76,20 @@ unsigned int sleep(unsigned int seconds);
 int usleep(unsigned int usec);
 
 // ============================================================================
+// 时间
+// ============================================================================
+
+/** 开机以来的毫秒数（x86 上精度是一个时钟滴答，10ms） */
+uint64_t uptime_ms(void);
+
+/**
+ * 设置本进程的一次性定时器：ms 毫秒后内核发来一条 sender == IPC_KERNEL、
+ * label == IPC_LABEL_TIMER 的消息（ipc_recv 时收到）。再次调用覆盖上一次，ms 为 0 取消。
+ * 服务进程用它在等消息的同时处理超时。
+ */
+void timer_set(uint32_t ms);
+
+// ============================================================================
 // 内存
 // ============================================================================
 
@@ -112,6 +128,7 @@ ssize_t console_write(const void *buf, size_t count);
 #define IPC_LABEL_RESERVED  0x80000000u
 #define IPC_LABEL_IRQ       0x80000001u     // sender == IPC_KERNEL：设备中断，data[0] 是中断号
 #define IPC_LABEL_GRANT     0x80000002u     // sender 用 mem_grant 共享来一段内存：data[0] 地址，data[1] 长度
+#define IPC_LABEL_TIMER     0x80000003u     // sender == IPC_KERNEL：timer_set 设的定时器到期
 #define IPC_MSG_WORDS   6
 
 struct ipc_msg {

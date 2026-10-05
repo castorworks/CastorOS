@@ -49,6 +49,10 @@ enum {
     SYS_DROP_PRIVILEGE  = 23,  // drop_privilege()：放弃特权，不可恢复
     SYS_DMA_ALLOC       = 24,  // dma_alloc(len, phys*)：物理连续的内存，返回虚拟地址并告知物理地址
 
+    // 时间
+    SYS_UPTIME_MS       = 25,  // uptime_ms(ms*)：开机以来的毫秒数
+    SYS_TIMER_SET       = 26,  // timer_set(ms)：ms 毫秒后收到一条 IPC_LABEL_TIMER 消息；0 取消
+
     SYS_MAX
 };
 

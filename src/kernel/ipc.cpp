@@ -19,6 +19,21 @@
 
 namespace kernel {
 
+/** task 有待处理的内核消息（设备中断、到期的定时器）时取出一条填进 *msg */
+static bool take_kernel_msg(task_t *task, ipc_msg *msg) {
+    if (UserIrq::take_pending(task, msg)) {
+        return true;
+    }
+    if (task->timer_pending) {
+        task->timer_pending = false;
+        *msg = {};
+        msg->sender = IPC_KERNEL;
+        msg->label = IPC_LABEL_TIMER;
+        return true;
+    }
+    return false;
+}
+
 /** pid 对应的、还能参与通信的任务（存在且尚未退出） */
 static task_t *live_task(uint32_t pid) {
     if (pid == 0) {
@@ -143,8 +158,8 @@ int Ipc::recv(uint32_t from, ipc_msg *msg) {
 
     InterruptGuard guard;
 
-    // 待处理的设备中断优先于普通消息
-    if ((from == IPC_ANY || from == IPC_FROM_KERNEL) && UserIrq::take_pending(current, msg)) {
+    // 待处理的内核消息（设备中断、定时器）优先于普通消息
+    if ((from == IPC_ANY || from == IPC_FROM_KERNEL) && take_kernel_msg(current, msg)) {
         return 0;
     }
 
@@ -197,7 +212,7 @@ void Ipc::notify(task_t *task) {
 
     if (task->state == TASK_BLOCKED && task->ipc_state == IPC_RECEIVING &&
         (task->ipc_peer == IPC_ANY || task->ipc_peer == IPC_FROM_KERNEL) &&
-        UserIrq::take_pending(task, &task->ipc_buf)) {
+        take_kernel_msg(task, &task->ipc_buf)) {
         finish_wait(task, 0);
     }
 }

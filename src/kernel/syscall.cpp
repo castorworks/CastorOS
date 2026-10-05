@@ -18,6 +18,8 @@
 #include <kernel/ipc.h>
 #include <kernel/user_irq.h>
 #include <kernel/task.h>
+#include <kernel/interrupt.h>
+#include <drivers/timer.h>
 #include <hal/hal.h>
 #include <lib/klog.h>
 #include <lib/kprintf.h>
@@ -314,6 +316,26 @@ static syscall_arg_t sys_drop_privilege_wrapper(syscall_arg_t *frame, syscall_ar
     return 0;
 }
 
+static syscall_arg_t sys_uptime_ms_wrapper(syscall_arg_t *frame, syscall_arg_t ms_ptr, syscall_arg_t p2,
+                                           syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
+    if (!user_wr(ms_ptr, sizeof(uint64_t))) return SYSCALL_FAIL;
+    *(uint64_t *)(uintptr_t)ms_ptr = drivers::Timer::get_uptime_ms();
+    return 0;
+}
+
+/** 每个进程一个一次性定时器：到期时内核发来一条 IPC_LABEL_TIMER 消息。重新设置会覆盖上一次 */
+static syscall_arg_t sys_timer_set_wrapper(syscall_arg_t *frame, syscall_arg_t ms, syscall_arg_t p2,
+                                           syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
+    task_t *current = kernel::Scheduler::get_current();
+    if (!current) return SYSCALL_FAIL;
+    kernel::InterruptGuard guard;
+    current->timer_pending = false;
+    current->timer_deadline_ms = ms ? drivers::Timer::get_uptime_ms() + ms : 0;
+    return 0;
+}
+
 syscall_arg_t syscall_dispatcher(syscall_arg_t syscall_num, syscall_arg_t p1, syscall_arg_t p2, 
                                  syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5, 
                                  syscall_arg_t *frame) {
@@ -366,6 +388,8 @@ void syscall_init(void) {
     syscall_table[SYS_MAP_DEVICE]    = sys_map_device_wrapper;
     syscall_table[SYS_MEM_GRANT]     = sys_mem_grant_wrapper;
     syscall_table[SYS_DMA_ALLOC]     = sys_dma_alloc_wrapper;
+    syscall_table[SYS_UPTIME_MS]     = sys_uptime_ms_wrapper;
+    syscall_table[SYS_TIMER_SET]     = sys_timer_set_wrapper;
     syscall_table[SYS_IRQ_CLAIM]     = sys_irq_claim_wrapper;
     syscall_table[SYS_IRQ_ACK]       = sys_irq_ack_wrapper;
     syscall_table[SYS_DROP_PRIVILEGE] = sys_drop_privilege_wrapper;

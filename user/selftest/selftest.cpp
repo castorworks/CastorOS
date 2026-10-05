@@ -169,6 +169,24 @@ static void test_ipc_blocking(void) {
     report("ipc send to a process that exits without receiving", ok, "refused");
 }
 
+static void test_timer(void) {
+    // 定时器到期时内核发来一条消息；时间确实过去了那么久
+    uint64_t start = uptime_ms();
+    timer_set(50);
+    struct ipc_msg m;
+    int ok = ipc_recv(IPC_FROM_KERNEL, &m) == 0 && m.sender == IPC_KERNEL && m.label == IPC_LABEL_TIMER;
+    uint64_t elapsed = uptime_ms() - start;
+    ok = ok && elapsed >= 40 && elapsed < 500;
+
+    // 取消的定时器不会到期：之后设的短定时器先到，而且只到一次
+    timer_set(30);
+    timer_set(0);
+    timer_set(60);
+    start = uptime_ms();
+    ok = ok && ipc_recv(IPC_FROM_KERNEL, &m) == 0 && m.label == IPC_LABEL_TIMER && uptime_ms() - start >= 50;
+    report("uptime and timer", ok, "ok");
+}
+
 static void test_privilege(void) {
     // 本程序没有特权：不能访问设备寄存器，也不能认领中断
     int pid = fork();
@@ -423,6 +441,7 @@ int main(int argc, char **argv) {
     test_memory_and_fork();
     test_ipc();
     test_ipc_blocking();
+    test_timer();
     test_privilege();
     test_shared_memory();
     test_names();

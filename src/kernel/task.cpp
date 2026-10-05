@@ -1024,6 +1024,8 @@ void kernel::Scheduler::timer_tick() {
     // 收集需要唤醒的任务（避免在持有锁时调用 kernel::Scheduler::ready_queue_add）
     task_t *tasks_to_wake[MAX_TASKS];
     uint32_t wake_count = 0;
+    task_t *tasks_to_notify[MAX_TASKS];
+    uint32_t notify_count = 0;
     
     {
         sync::SpinlockIrqGuard guard(task_lock);
@@ -1037,12 +1039,25 @@ void kernel::Scheduler::timer_tick() {
                     tasks_to_wake[wake_count++] = task;
                 }
             }
+
+            // 用户态定时器（timer_set）到期：记成待处理的内核消息
+            if (task->state != TASK_UNUSED && task->timer_deadline_ms != 0 &&
+                current_time_ms >= task->timer_deadline_ms) {
+                task->timer_deadline_ms = 0;
+                task->timer_pending = true;
+                tasks_to_notify[notify_count++] = task;
+            }
         }
     }
     
     // 在锁外将任务添加到就绪队列
     for (uint32_t i = 0; i < wake_count; i++) {
         kernel::Scheduler::ready_queue_add(tasks_to_wake[i]);
+    }
+
+    // 正在 recv 上等内核消息的任务：把定时器消息交给它
+    for (uint32_t i = 0; i < notify_count; i++) {
+        kernel::Ipc::notify(tasks_to_notify[i]);
     }
     
     // 时间片轮转调度

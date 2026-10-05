@@ -281,6 +281,8 @@ typedef struct task {
     bool ipc_calling;                ///< SENDING 且处于 call 中：消息被取走后直接转为等应答
     ipc_msg ipc_buf;                 ///< SENDING: 待取走的消息；RECEIVING: 投递进来的消息
     uint32_t irq_pending;            ///< 已到达、还没被 recv 取走的设备中断（kernel/user_irq.h）
+    uint64_t timer_deadline_ms;      ///< timer_set 设的到期时刻（开机以来的毫秒数），0 表示没有
+    bool timer_pending;              ///< 定时器已到期、消息还没被 recv 取走
 
     /**
      * 特权进程：可以 kill 任意用户进程、访问设备寄存器、认领设备中断。
