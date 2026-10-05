@@ -4,7 +4,7 @@ TARGET = ramfs
 SOURCES = ramfs.cpp
 ASM_SOURCES = bootfs.S
 
-BOOT_PROGRAMS = ls cat cp rm echo hello disk selftest
+BOOT_PROGRAMS = ls cat cp rm echo hello disk ping ifconfig dns selftest
 
 BOOTFS_DIR = build/$(ARCH)/bootfs
 BOOTFS_TAR = build/$(ARCH)/bootfs.tar

@@ -26,10 +26,11 @@ CastorOS 的内核只保留五件事：CPU/中断、内存管理、任务调度�
 
 `user/init` 是第一个用户进程，负责启动模块并充当名字服务。内核保证它的 PID 是 1（普通任务从 2 开始编号），用户态把这个 PID 当作名字服务的固定地址。构建内核时先编译出 `user/init/build/<arch>/init.elf`，再由 `src/kernel/init_image.S` 用 `.incbin` 嵌进内核映像，不需要磁盘或文件系统。
 
-init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/init/modules.S`），启动方式是 `fork` + `exec`。目前有五个：
+init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/init/modules.S`），启动方式是 `fork` + `exec`。目前有六个：
 
 - `user/uart`：串口输入驱动，保留特权启动。
 - `user/blk`：virtio-blk 块设备驱动，保留特权启动。没有磁盘时它直接退出。
+- `user/net`：网络服务（virtio-net 驱动加协议栈），保留特权启动。没有网卡时它直接退出。
 - `user/ramfs`：内存文件系统服务，放弃特权后启动。启动映像嵌在它里面。
 - `user/diskfs`：磁盘文件系统服务，放弃特权后启动。没有块设备时它直接退出。
 - `user/sh`：命令行，放弃特权后启动。输入来自 uart 驱动，文件操作交给文件服务。
@@ -39,7 +40,24 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 - `user/selftest`：用户态自检（程序参数、内存、进程、IPC 的各条阻塞和退出路径、特权、共享内存、名字服务、文件服务、块设备、磁盘文件系统），开机时由 `rc` 脚本运行一次，每项打印一行结果。`make test` 要求它全部通过。
 - `user/ls`、`user/cat`、`user/cp`、`user/rm`、`user/echo`：小工具。
 - `user/disk`：显示磁盘容量、直接读写扇区。
+- `user/ping`、`user/ifconfig`、`user/dns`：网络工具。
 - `user/hello`：最小的示例程序，打印自己的 PID 和参数。
+
+## 网络
+
+网络的协议和客户端接口在 `user/lib`（`net.h`），服务进程以 `"net"` 登记：
+
+- `net_info`：本机的 MAC、IP、掩码、网关。
+- `net_ping(ip, timeout, &rtt)`：发一个 ICMP 回显请求，阻塞到收到应答或超时。
+- `net_udp_open` / `net_udp_send` / `net_udp_recv` / `net_udp_close`：UDP 套接字。`recv` 带超时；数据经共享缓冲区传递。
+
+`user/net` 把 virtio-net 驱动和协议栈放在同一个进程里：主循环用一个 `ipc_recv(IPC_ANY)` 同时等网卡中断、定时器和客户请求，收到的帧直接交给协议栈，不需要在驱动和协议栈两个进程之间再传一次。阻塞的请求（ping、recv）不立刻应答，等回显或数据报到了、或者定时器发现它超时了再 `ipc_reply`。
+
+协议栈包括以太网、ARP（带重试，地址解析期间挂起一个待发的包）、IPv4（不分片）、ICMP 回显（也应答别人的 ping）、UDP。发给自己地址的包在协议栈内部回环，不经过网卡。地址是 QEMU 用户网络的固定配置：10.0.2.15/24，网关 10.0.2.2，DNS 转发器 10.0.2.3。
+
+`make run` 和 `make test` 都给 QEMU 挂一块接用户网络的 virtio-net 网卡。工具有 `ifconfig`、`ping <ip>`、`dns <name>`（用 UDP 向 10.0.2.3 查询，能不能查到取决于宿主机能否上网）。
+
+当前的限制：没有 TCP；地址是写死的，没有 DHCP；不处理 IP 分片；每个套接字最多积压 4 个数据报，最多 8 个套接字、8 个同时进行的 ping；只支持 virtio 的 legacy 接口。
 
 ## 启动映像和运行程序
 
@@ -55,7 +73,7 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 
 ## 系统调用
 
-共 25 个，编号在 `src/include/kernel/syscall.h`，用户态包装在 `user/lib`。
+共 27 个，编号在 `src/include/kernel/syscall.h`，用户态包装在 `user/lib`。
 
 | 编号 | 调用 | 说明 |
 |------|------|------|
@@ -80,6 +98,8 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 | 21 / 22 | `irq_claim(irq)` / `irq_ack(irq)` | 认领设备中断 / 处理完毕后重新打开，仅特权进程 |
 | 23 | `drop_privilege()` | 放弃特权，不可恢复 |
 | 24 | `dma_alloc(len, phys*)` | 物理连续的内存，返回虚拟地址并告知物理地址，仅特权进程 |
+| 25 | `uptime_ms(ms*)` | 开机以来的毫秒数 |
+| 26 | `timer_set(ms)` | 一次性定时器：到期时收到内核发来的 `IPC_LABEL_TIMER` 消息；0 取消 |
 
 ## 进程间通信
 
@@ -88,7 +108,7 @@ IPC 是模块之间、模块与客户进程之间唯一的通信方式（`src/ke
 - **同步会合，没有缓冲**：`send` 阻塞到对方 `recv`，`recv` 阻塞到有人 `send`。消息只存放在阻塞一方的 PCB 里，内核里没有消息队列。
 - **请求-应答**：`call` 发出请求后原子地转入“等这个服务的应答”；服务用 `reply` 应答，`reply` 只投递给正在等自己的进程，否则立刻返回 -1，从不阻塞。所以客户无法把服务卡住。
 - **定长消息**：`struct ipc_msg { sender; label; data[6]; }`，共 56 字节，布局在三个架构上相同。`sender` 由内核填写，无法伪造；`label` 和 `data` 的含义由通信双方约定。
-- **内核保留的 label**：最高位为 1 的 label 只有内核能发（设备中断 `IPC_LABEL_IRQ`、内存授予 `IPC_LABEL_GRANT`），用户进程发这样的消息会被拒绝，所以接收方可以相信它们的内容。
+- **内核保留的 label**：最高位为 1 的 label 只有内核能发（设备中断 `IPC_LABEL_IRQ`、内存授予 `IPC_LABEL_GRANT`、定时器到期 `IPC_LABEL_TIMER`），用户进程发这样的消息会被拒绝，所以接收方可以相信它们的内容。
 - **按 PID 寻址**：PID 不复用，向已退出的进程发送会失败。
 - **退出与 kill**：进程退出时，正在向它发送或只等它消息的进程带着 -1 返回；阻塞在 IPC 上的进程可以被 `kill`。
 
@@ -104,6 +124,8 @@ for (;;) {
 ```
 
 客户进程用 `ipc_call(server_pid, &m)` 一次完成请求和应答。`user/init/init.cpp` 里有一个完整的例子。
+
+**超时。** 服务进程在 `recv` 上等请求的同时如果还要处理超时，用 `timer_set(ms)`：到期时内核发来一条 `IPC_LABEL_TIMER` 消息，和设备中断一样排在普通消息前面。每个进程一个一次性定时器，需要周期性的就在收到后重新设置。`uptime_ms()` 读开机以来的时间。
 
 消息只有 48 字节的载荷，大块数据用共享内存传递（见下）。
 
@@ -157,12 +179,12 @@ for (;;) {
 
 块设备的协议和客户端接口在 `user/lib`（`blk.h`）：`blk_capacity`、`blk_read`、`blk_write`，以 512 字节扇区为单位，数据同样经客户与驱动之间的共享缓冲区传递。驱动以 `"blk"` 登记。
 
-`user/blk` 是 virtio-blk 驱动，用 virtio 的 legacy 接口。两种接入方式只是寄存器的访问方法不同：
+`user/blk` 是 virtio-blk 驱动。virtio 设备的公共部分（legacy 接口：找设备、寄存器访问、队列）在 `user/lib` 的 `virtio.h` 里，块设备和网卡驱动共用。两种接入方式只是寄存器的访问方法不同：
 
-- **x86**：`virtio-blk-pci`。驱动自己通过 0xCF8/0xCFC 端口扫描 PCI 配置空间找到设备，寄存器在它的 I/O 端口 BAR 里，中断线从配置空间读出。
-- **arm64**：`virtio-mmio`。QEMU virt 上有 32 个槽位，驱动用 `map_device` 把它们映射进来逐个查看。
+- **x86**：virtio-pci。通过 0xCF8/0xCFC 端口扫描 PCI 配置空间找到设备，寄存器在它的 I/O 端口 BAR 里，中断线从配置空间读出。
+- **arm64**：virtio-mmio。QEMU virt 上有 32 个槽位，用 `map_device` 把它们映射进来逐个查看。
 
-队列和请求缓冲区来自 `dma_alloc`（设备只认物理地址）。驱动一次处理一个请求：提交给设备后用 `ipc_recv(IPC_FROM_KERNEL)` 只等中断，这期间其他客户的请求留在各自的 `call` 里排队。
+队列和请求缓冲区来自 `dma_alloc`（设备只认物理地址）。块设备驱动一次处理一个请求：提交给设备后用 `ipc_recv(IPC_FROM_KERNEL)` 只等中断，这期间其他客户的请求留在各自的 `call` 里排队。
 
 `make run` 给 QEMU 挂上 `disk.img`（第一次运行时创建，16MB，`make clean` 不删，三个架构共用）；`make test` 每次用一块新的 2MB 临时磁盘，小到自检可以把它写满来检查“磁盘满”的处理（大于 4MB 的磁盘上这一项会跳过）。
 
@@ -176,7 +198,8 @@ for (;;) {
 - **I/O 端口**（仅 x86）：`io_read` / `io_write`，宽度 1/2/4 字节。
 - **设备内存**：`map_device(phys, len)` 把设备的寄存器或显存映射进调用者的地址空间（不缓存）。只接受设备地址区：arm64 上是 QEMU virt 的 1GB 以下，x86 上是 640K–1M 的传统空洞和物理内存之上的地址；普通内存一律拒绝。映射同样带“共享”标记，`fork` 后父子都能访问设备。
 - **DMA 内存**：`dma_alloc(len, phys*)` 分配物理上连续、已清零的内存并映射进调用者，同时告知物理地址，供驱动把缓冲区交给设备。
-- **设备中断**：`irq_claim(irq)` 认领一条内核自己没在用的中断线（x86 是 PIC 的 IRQ 号，arm64 是 GIC 的 SPI 中断号）。中断到来时内核屏蔽这条线，并向属主投递一条 `sender == IPC_KERNEL`、`label == IPC_LABEL_IRQ`、`data[0] == irq` 的消息；属主没在 `recv` 时记为待处理，下一次 `recv(IPC_ANY)` 先收到它。驱动处理完设备后调用 `irq_ack(irq)` 重新打开中断线。进程退出时它认领的中断线被屏蔽并释放。
+- **设备中断**：`irq_claim(irq)` 认领一条内核自己没在用的中断线（x86 是 PIC 的 IRQ 号，arm64 是 GIC 的 SPI 中断号）。中断到来时内核屏蔽这条线，并向属主投递一条 `sender == IPC_KERNEL`、`label == IPC_LABEL_IRQ`、`data[0] == irq` 的消息；属主没在 `recv` 时记为待处理，下一次 `recv(IPC_ANY)` 先收到它。驱动处理完设备后调用 `irq_ack(irq)` 重新打开中断线。进程退出时它的认领被释放。
+  一条线可以被多个进程认领（x86 上磁盘和网卡就共用 IRQ 11）：中断到来时每个属主都收到消息，驱动要自己看设备状态、没有事就直接 `irq_ack`；所有属主都应答之后内核才重新打开这条线。
 
 实现在 `src/kernel/user_irq.cpp`、`src/kernel/syscall.cpp` 和 `src/kernel/syscalls/mm.cpp`。
 

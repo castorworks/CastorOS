@@ -204,7 +204,7 @@ check: $(BOOT_IMAGE)
 
 QEMU_BASE = $(QEMU) $(QEMU_MACHINE) -kernel $(BOOT_IMAGE) -serial stdio -display none
 
-# virtio-blk 磁盘：x86 挂在 PCI 上，arm64 挂在 virtio-mmio 上
+# virtio 设备：x86 挂在 PCI 上，arm64 挂在 virtio-mmio 上
 ifeq ($(ARCH),arm64)
     VIRTIO_BLK = virtio-blk-device
 else
@@ -212,13 +212,21 @@ else
 endif
 qemu_disk = -drive file=$(1),format=raw,if=none,id=disk0 -device $(VIRTIO_BLK),drive=disk0
 
+# virtio-net 网卡，接 QEMU 的用户网络（来宾 10.0.2.15，网关 10.0.2.2，DNS 10.0.2.3）
+ifeq ($(ARCH),arm64)
+    VIRTIO_NET = virtio-net-device
+else
+    VIRTIO_NET = virtio-net-pci
+endif
+QEMU_NET = -netdev user,id=net0 -device $(VIRTIO_NET),netdev=net0
+
 # make run 用的磁盘：内容跨重启保留，三个架构共用，make clean 不删它
 DISK ?= disk.img
 DISK_SIZE_MB ?= 16
 # make test 用的磁盘：每次重新创建（2MB，小到 selftest 可以把它写满）
 TEST_DISK = $(BUILD_DIR)/test-disk.img
 
-QEMU_RUN = $(QEMU_BASE) $(call qemu_disk,$(DISK))
+QEMU_RUN = $(QEMU_BASE) $(call qemu_disk,$(DISK)) $(QEMU_NET)
 
 $(DISK):
 	dd if=/dev/zero of=$@ bs=1048576 count=$(DISK_SIZE_MB) 2>/dev/null
@@ -238,7 +246,7 @@ test:
 run-test: $(BOOT_IMAGE)
 	@echo "━━━ $(ARCH): running kernel tests (timeout $(TEST_TIMEOUT)s) ━━━"
 	@dd if=/dev/zero of=$(TEST_DISK) bs=1048576 count=2 2>/dev/null
-	-@$(TIMEOUT_CMD) $(TEST_TIMEOUT) $(QEMU_BASE) $(call qemu_disk,$(TEST_DISK)) < /dev/null > $(BUILD_DIR)/test.log 2>&1
+	-@$(TIMEOUT_CMD) $(TEST_TIMEOUT) $(QEMU_BASE) $(call qemu_disk,$(TEST_DISK)) $(QEMU_NET) < /dev/null > $(BUILD_DIR)/test.log 2>&1
 	@awk 'function num(key,  s) { if (!match($$0, key ": *[0-9]+")) return 0; \
 	         s = substr($$0, RSTART, RLENGTH); sub(/.*: */, "", s); return s + 0 } \
 	     { t += num("Total tests"); p += num("Passed tests"); f += num("Failed tests") } \

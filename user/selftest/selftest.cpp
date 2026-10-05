@@ -10,6 +10,7 @@
 #include <names.h>
 #include <fs.h>
 #include <blk.h>
+#include <net.h>
 
 static int failures = 0;
 
@@ -434,6 +435,53 @@ static void test_disk_full(void) {
     report("disk full", ok, "ok");
 }
 
+static void test_network(void) {
+    // 网络服务与我们同时启动，给它一点时间登记；没有网卡时它会直接退出
+    for (int i = 0; i < 25 && name_lookup(NET_SERVICE_NAME) == 0; i++) {
+        usleep(20000);
+    }
+    struct net_info info;
+    if (net_info(&info) != 0) {
+        printf("selftest: network: skipped (no network device)\n");
+        return;
+    }
+
+    // ping 网关（要经过网卡和 ARP）和自己（协议栈内部回环）；不存在的地址要超时
+    uint32_t rtt = 0;
+    uint64_t start = uptime_ms();
+    int ok = net_ping(info.gateway, 1000, &rtt) == 0 && rtt < 1000 &&
+             net_ping(info.ip, 1000, &rtt) == 0;
+    report("ping gateway and self", ok, "ok");
+
+    start = uptime_ms();
+    ok = net_ping((info.ip & info.netmask) | 77, 300, &rtt) == -1 && uptime_ms() - start >= 250;
+    report("ping to an unused address", ok, "refused");
+
+    // UDP：两个套接字，经协议栈回环互发
+    int a = net_udp_open(4000);
+    int b = net_udp_open(0);
+    static char out[1200], in[1500];
+    for (size_t i = 0; i < sizeof(out); i++) {
+        out[i] = (char)(i * 3 + 1);
+    }
+    uint32_t src_ip = 0;
+    uint16_t src_port = 0;
+    ok = a >= 0 && b >= 0 && a != b && net_udp_open(4000) == -1 &&
+         net_udp_send(b, info.ip, 4000, out, sizeof(out)) == 0 &&
+         net_udp_recv(a, in, sizeof(in), 500, &src_ip, &src_port) == (long)sizeof(out) &&
+         memcmp(out, in, sizeof(out)) == 0 && src_ip == info.ip && src_port >= 49152 &&
+         net_udp_send(a, info.ip, src_port, "pong", 4) == 0 &&
+         net_udp_recv(b, in, sizeof(in), 500, NULL, NULL) == 4 && memcmp(in, "pong", 4) == 0;
+
+    // 没有数据时：不等待立刻返回，等待则在超时后返回
+    start = uptime_ms();
+    ok = ok && net_udp_recv(a, in, sizeof(in), 0, NULL, NULL) == -1 &&
+         net_udp_recv(a, in, sizeof(in), 200, NULL, NULL) == -1 && uptime_ms() - start >= 150 &&
+         net_udp_close(a) == 0 && net_udp_close(b) == 0 &&
+         net_udp_send(a, info.ip, 4000, out, 1) == -1;
+    report("udp sockets", ok, "ok");
+}
+
 int main(int argc, char **argv) {
     // 命令行（或 rc）是带着程序名启动我们的
     report("program arguments", argc >= 1 && strcmp(argv[0], "selftest") == 0 && argv[argc] == NULL, "ok");
@@ -450,6 +498,7 @@ int main(int argc, char **argv) {
     test_block_device();
     test_disk_fs();
     test_disk_full();
+    test_network();
 
     if (failures == 0) {
         printf("selftest: all passed\n");

@@ -4,7 +4,7 @@ TARGET = init
 SOURCES = init.cpp
 ASM_SOURCES = modules.S
 
-MODULE_NAMES = uart blk ramfs diskfs sh
+MODULE_NAMES = uart blk net ramfs diskfs sh
 MODULES = $(foreach m,$(MODULE_NAMES),../$(m)/build/$(ARCH)/$(m).elf)
 ASM_DEFINES = $(foreach m,$(MODULE_NAMES),-D$(m)_IMAGE='"../$(m)/build/$(ARCH)/$(m).stripped.elf"')
 

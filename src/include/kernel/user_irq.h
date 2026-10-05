@@ -12,6 +12,10 @@
  * 并给属主投递一条 sender == IPC_KERNEL、label == IPC_LABEL_IRQ 的消息
  * （data[0] 是中断号）；属主处理完设备后用 irq_ack 重新打开这条线。
  * 属主没在 recv 时中断记为待处理，下一次 recv(IPC_ANY) 先收到它。
+ *
+ * 一条中断线可以被多个进程认领。中断到来时每个属主都收到消息（内核分不清是
+ * 哪个设备发的，驱动要自己看设备状态，没有事就直接 ack），所有属主都 ack 之后
+ * 才重新打开这条线。
  */
 
 /** 一共能认领多少条中断线（待处理位图是 task_t 里的一个 uint32_t） */
@@ -23,7 +27,7 @@ namespace kernel {
 
 class UserIrq {
 public:
-    /** 当前进程认领 irq。@return 0 成功；-1 线号无效、已被内核或别的进程占用、表满 */
+    /** 当前进程认领 irq。@return 0 成功；-1 线号无效、内核自己在用、已经认领过、表满 */
     static int claim(uint32_t irq);
 
     /** 当前进程处理完了 irq：重新打开中断线。@return 0 成功；-1 不是属主 */
