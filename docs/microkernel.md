@@ -24,7 +24,7 @@ CastorOS 的内核只保留五件事：CPU/中断、内存管理、任务调度�
 
 ## init 和模块
 
-`user/init` 是第一个用户进程（PID 1），负责启动模块并充当名字服务。构建内核时先编译出 `user/init/build/<arch>/init.elf`，再由 `src/kernel/init_image.S` 用 `.incbin` 嵌进内核映像，不需要磁盘或文件系统。
+`user/init` 是第一个用户进程，负责启动模块并充当名字服务。内核保证它的 PID 是 1（普通任务从 2 开始编号），用户态把这个 PID 当作名字服务的固定地址。构建内核时先编译出 `user/init/build/<arch>/init.elf`，再由 `src/kernel/init_image.S` 用 `.incbin` 嵌进内核映像，不需要磁盘或文件系统。
 
 init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/init/modules.S`），启动方式是 `fork` + `exec(image, size)`。目前有三个：
 

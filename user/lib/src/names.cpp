@@ -32,7 +32,7 @@ int name_wait(const char *name) {
     for (;;) {
         int pid = name_lookup(name);
         if (pid != 0) {
-            return pid;
+            return pid;     // 找到了，或者名字服务不可达 (-1)
         }
         usleep(20000);
     }

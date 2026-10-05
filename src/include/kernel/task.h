@@ -35,6 +35,12 @@
 #define USER_SPACE_END 0x80000000
 #endif
 
+/**
+ * @brief init 的 PID。用户态把它当作名字服务的固定地址，所以必须是确定的值：
+ * 普通任务的 PID 从 2 开始分配，这个号留给内核加载的第一个用户进程。
+ */
+#define INIT_PID 1
+
 /** @brief 默认时间片（10ms） */
 #define DEFAULT_TIME_SLICE 10
 
@@ -340,6 +346,12 @@ public:
      */
     static uint32_t create_user_process(const char *name, uintptr_t entry_point,
                                        page_directory_t *page_dir, uintptr_t program_end);
+
+    /**
+     * @brief 把刚创建、还没运行过的任务 pid 改成 init（PID 1）
+     * @return 成功返回 true；找不到该任务或 PID 1 已被占用返回 false
+     */
+    static bool make_init(uint32_t pid);
 
     /**
      * @brief 主动让出 CPU（切换到其他任务）

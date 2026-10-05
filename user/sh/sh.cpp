@@ -173,6 +173,10 @@ int main() {
     run_rc();
 
     int uart = name_wait("uart");
+    if (uart <= 0) {
+        printf("sh: cannot find the uart driver\n");
+        return 1;
+    }
     printf("sh: ready, reading commands from uart (pid %d); try help\n> ", uart);
 
     static char line[128];

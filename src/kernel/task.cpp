@@ -47,8 +47,8 @@ static task_t *ready_queue_head = NULL;
 /** @brief 就绪队列尾指针 */
 static task_t *ready_queue_tail = NULL;
 
-/** @brief 下一个可用的 PID */
-static uint32_t next_pid = 1;
+/** @brief 下一个可用的 PID（INIT_PID 留给 init） */
+static uint32_t next_pid = INIT_PID + 1;
 
 /** @brief 活动任务计数 */
 static uint32_t active_task_count = 0;
@@ -209,6 +209,28 @@ task_t* kernel::Scheduler::get_by_pid(uint32_t pid) {
     }
     
     return NULL;
+}
+
+bool kernel::Scheduler::make_init(uint32_t pid) {
+    sync::SpinlockIrqGuard guard(task_lock);
+
+    task_t *found = NULL;
+    for (uint32_t i = 0; i < MAX_TASKS; i++) {
+        if (task_pool[i].state == TASK_UNUSED) {
+            continue;
+        }
+        if (task_pool[i].pid == INIT_PID) {
+            return false;
+        }
+        if (task_pool[i].pid == pid) {
+            found = &task_pool[i];
+        }
+    }
+    if (!found) {
+        return false;
+    }
+    found->pid = INIT_PID;
+    return true;
 }
 
 /**
@@ -1363,7 +1385,7 @@ void kernel::Scheduler::init() {
     current_task = NULL;
     ready_queue_head = NULL;
     ready_queue_tail = NULL;
-    next_pid = 1;
+    next_pid = INIT_PID + 1;
     active_task_count = 0;
     
     // 创建 idle 任务

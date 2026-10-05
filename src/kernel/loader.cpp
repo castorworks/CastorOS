@@ -50,7 +50,13 @@ bool load_init(void) {
         return false;
     }
 
-    LOG_INFO_MSG("init loaded (PID %u, %u bytes, entry 0x%llx)\n",
-                 pid, size, (unsigned long long)entry_point);
+    // 用户态把 init 的 PID 当作名字服务的固定地址
+    if (!kernel::Scheduler::make_init(pid)) {
+        LOG_ERROR_MSG("init: cannot assign PID %d\n", INIT_PID);
+        return false;
+    }
+
+    LOG_INFO_MSG("init loaded (PID %d, %u bytes, entry 0x%llx)\n",
+                 INIT_PID, size, (unsigned long long)entry_point);
     return true;
 }

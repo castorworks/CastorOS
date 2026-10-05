@@ -16,11 +16,15 @@ ASM_DEFINES = -DBOOTFS_IMAGE='"$(BOOTFS_TAR)"'
 
 include ../program.mk
 
+# 每次都交给程序自己的 Makefile 判断是否需要重建
 define PROGRAM_RULE
-../$(1)/build/$$(ARCH)/$(1).elf: $$(wildcard ../$(1)/*.cpp ../$(1)/*.h ../$(1)/Makefile) $$(LIBRARY)
+../$(1)/build/$$(ARCH)/$(1).elf: FORCE
 	@$$(MAKE) --no-print-directory -C ../$(1) ARCH=$$(ARCH)
 endef
 $(foreach p,$(BOOT_PROGRAMS),$(eval $(call PROGRAM_RULE,$(p))))
+
+.PHONY: FORCE
+FORCE:
 
 # COPYFILE_DISABLE: 不让 macOS 的 tar 往归档里加 ._ 文件
 $(BOOTFS_TAR): $(BOOT_ELFS) $(BOOT_FILES)

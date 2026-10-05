@@ -10,8 +10,12 @@ ASM_DEFINES = $(foreach m,$(MODULE_NAMES),-D$(m)_IMAGE='"../$(m)/build/$(ARCH)/$
 
 include ../program.mk
 
+# 模块有自己的依赖（ramfs 还依赖启动映像里的程序），所以每次都交给它自己的 Makefile 判断
 define MODULE_RULE
-../$(1)/build/$$(ARCH)/$(1).elf: $$(wildcard ../$(1)/*.cpp ../$(1)/*.h ../$(1)/Makefile ../uart/*.h) $$(LIBRARY)
+../$(1)/build/$$(ARCH)/$(1).elf: FORCE
 	@$$(MAKE) --no-print-directory -C ../$(1) ARCH=$$(ARCH)
 endef
 $(foreach m,$(MODULE_NAMES),$(eval $(call MODULE_RULE,$(m))))
+
+.PHONY: FORCE
+FORCE:
