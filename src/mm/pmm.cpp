@@ -27,10 +27,6 @@ extern char _kernel_start[];              ///< 内核起始地址
 extern char _kernel_end[];                ///< 内核结束地址
 
 // 堆保留区域：物理地址在此范围内的帧不会被分配，避免与堆虚拟地址重叠
-#if defined(ARCH_X86_64)
-/// x86_64 引导页表建立的直接映射区大小（boot64.asm：一个 PD，512 个 2MB 页）
-#define PMM_X86_64_DIRECT_MAP_LIMIT 0x40000000ULL
-#endif
 
 static paddr_t heap_reserved_phys_start = 0;  ///< 堆保留区物理起始地址
 static paddr_t heap_reserved_phys_end = 0;    ///< 堆保留区物理结束地址
@@ -157,16 +153,6 @@ void mm::Pmm::init(multiboot_info_t *mbi) {
                 }
                 end = 0x80000000ULL;
             }
-#elif defined(ARCH_X86_64)
-            // x86_64: 引导页表只把前 1GB 物理内存映射到直接映射区，而
-            // mm::Vmm::init 目前不扩展它。PMM 通过 PHYS_TO_VIRT 清零每个分配出去的帧，
-            // 所以 1GB 以上的内存暂时不能交给分配器。
-            if (end > PMM_X86_64_DIRECT_MAP_LIMIT) {
-                if (max_addr < PMM_X86_64_DIRECT_MAP_LIMIT) {
-                    LOG_WARN_MSG("Physical memory exceeds the 1GB direct mapping, truncating to 1GB\n");
-                }
-                end = PMM_X86_64_DIRECT_MAP_LIMIT;
-            }
 #endif
             
             if (end > max_addr) max_addr = end;
@@ -244,11 +230,6 @@ void mm::Pmm::init(multiboot_info_t *mbi) {
             // i686: 强制限制不处理超过 2GB 的物理内存
             if (end > 0x80000000ULL) {
                 end = 0x80000000ULL;
-            }
-#elif defined(ARCH_X86_64)
-            // x86_64: 不处理直接映射区之外的物理内存（见上）
-            if (end > PMM_X86_64_DIRECT_MAP_LIMIT) {
-                end = PMM_X86_64_DIRECT_MAP_LIMIT;
             }
 #endif
 

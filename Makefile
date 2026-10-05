@@ -200,7 +200,8 @@ check: $(BOOT_IMAGE)
 # 运行 / 调试 / 测试（控制台是串口，接到终端）
 # ============================================================================
 
-QEMU_BASE = $(QEMU) $(QEMU_MACHINE) -kernel $(BOOT_IMAGE) -serial stdio -display none
+# QEMU_MEMORY=4G 之类：给虚拟机的内存（不写就是 QEMU 的默认值 128MB），run 和 test 都认
+QEMU_BASE = $(QEMU) $(QEMU_MACHINE) $(if $(QEMU_MEMORY),-m $(QEMU_MEMORY)) -kernel $(BOOT_IMAGE) -serial stdio -display none
 
 # virtio 设备：x86 挂在 PCI 上，arm64 挂在 virtio-mmio 上
 ifeq ($(ARCH),arm64)

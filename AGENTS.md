@@ -232,6 +232,8 @@ make test ARCH=x86_64
 make test ARCH=arm64
 make test-all
 make test TEST_TIMEOUT=300     # 机器很忙时放宽上限（默认 180 秒）
+make test ARCH=x86_64 QEMU_MEMORY=3G   # 给虚拟机更多内存（默认是 QEMU 的 128MB）；
+                               # 超过 1GB 时"高处的物理内存"那组内核测试才有内容
 ```
 
 内核不会自己关机：`make test` 通过 `scripts/shell-test.sh` 启动 QEMU，等日志里出现 `sh: ready`

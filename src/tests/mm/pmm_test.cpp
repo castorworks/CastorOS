@@ -20,6 +20,7 @@
 #include <tests/test_module.h>
 #include <mm/pmm.h>
 #include <mm/mm_types.h>
+#include <hal/hal.h>
 #include <lib/kprintf.h>
 #include <types.h>
 
@@ -691,6 +692,93 @@ TEST_SUITE(pmm_refcount_property_tests) {
  *   5. pmm_property_tests - 分配属性测试 (PBT)
  *   6. pmm_refcount_property_tests - 引用计数属性测试 (PBT)
  */
+// ============================================================================
+// 高处的物理内存
+// ============================================================================
+
+/**
+ * 物理内存的最后一页也在内核的直接映射区里。
+ *
+ * 引导页表只映射了开头的一段（i686 16MB，x86_64 1GB），其余的由各架构的
+ * hal::Mmu::map_physical_memory() 在启动时补上。
+ */
+TEST_CASE(test_direct_map_covers_all_memory) {
+    mm::PmmInfo info = mm::Pmm::get_info();
+    ASSERT_TRUE(info.total_frames > 0);
+    paddr_t last = (paddr_t)(info.total_frames - 1) * PAGE_SIZE;
+
+    paddr_t phys = 0;
+    ASSERT_TRUE(hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, PADDR_TO_KVADDR(last), &phys, NULL));
+    ASSERT_TRUE((phys & ~(paddr_t)(PAGE_SIZE - 1)) == last);
+
+    // 读得到（内容无所谓）
+    volatile uint8_t *byte = (volatile uint8_t *)PADDR_TO_KVADDR(last);
+    uint8_t value = *byte;
+    (void)value;
+}
+
+/**
+ * 1GB 以上的页帧分配得出来、写得进去、读得回来。
+ *
+ * 只在物理内存超过 1GB 时有内容（make test QEMU_MEMORY=3G）。分配器从低地址开始给，
+ * 所以要一直分配到拿到一个高处的页帧为止；已经拿到的页帧用它们自己的第一个字串成链表
+ * 记着，这样既不需要额外的存储，也顺带把每一页都写了一遍。
+ */
+TEST_CASE(test_frames_above_1gb_are_usable) {
+    const paddr_t boundary = (paddr_t)1 << 30;
+    mm::PmmInfo before = mm::Pmm::get_info();
+    if ((paddr_t)before.total_frames * PAGE_SIZE <= boundary) {
+        kprintf("    (skipped: physical memory does not reach 1GB)\n");
+        return;
+    }
+
+    paddr_t chain = 0;          // 链表头：上一个分配到的页帧
+    paddr_t high = PADDR_INVALID;
+    uint64_t taken = 0;
+    for (;;) {
+        paddr_t frame = mm::Pmm::alloc_frame();
+        if (frame == PADDR_INVALID) {
+            break;
+        }
+        taken++;
+        *(paddr_t *)PADDR_TO_KVADDR(frame) = chain;
+        chain = frame;
+        if (frame >= boundary) {
+            high = frame;
+            break;
+        }
+    }
+    ASSERT_TRUE(high != PADDR_INVALID);
+
+    if (high != PADDR_INVALID) {
+        volatile uint64_t *words = (volatile uint64_t *)PADDR_TO_KVADDR(high);
+        for (uint32_t i = 1; i < PAGE_SIZE / sizeof(uint64_t); i++) {
+            words[i] = 0xC0FFEE0000000000ULL + i;
+        }
+        bool intact = true;
+        for (uint32_t i = 1; i < PAGE_SIZE / sizeof(uint64_t); i++) {
+            intact = intact && words[i] == 0xC0FFEE0000000000ULL + i;
+        }
+        ASSERT_TRUE(intact);
+    }
+
+    // 全部还回去
+    uint64_t returned = 0;
+    while (chain != 0) {
+        paddr_t next = *(paddr_t *)PADDR_TO_KVADDR(chain);
+        mm::Pmm::free_frame(chain);
+        chain = next;
+        returned++;
+    }
+    ASSERT_TRUE(returned == taken);
+    ASSERT_TRUE(mm::Pmm::get_info().free_frames == before.free_frames);
+}
+
+TEST_SUITE(pmm_high_memory_tests) {
+    RUN_TEST(test_direct_map_covers_all_memory);
+    RUN_TEST(test_frames_above_1gb_are_usable);
+}
+
 void run_pmm_tests(void) {
     // 初始化测试框架
     
@@ -719,6 +807,9 @@ void run_pmm_tests(void) {
     
     // 套件 6: 引用计数属性测试
     RUN_SUITE(pmm_refcount_property_tests);
+
+    // 套件 7: 高处的物理内存
+    RUN_SUITE(pmm_high_memory_tests);
     
     // 打印测试摘要
 }

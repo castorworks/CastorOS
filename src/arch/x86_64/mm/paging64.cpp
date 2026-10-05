@@ -278,10 +278,48 @@ static pte64_t* get_pml4(hal_addr_space_t space) {
 /**
  * @brief 让内核的直接映射区覆盖全部物理内存
  *
- * x86_64 的引导页表已经把前 1GB 物理内存映射好了，而 PMM 只把这 1GB 交给分配器
- * （见 PMM_X86_64_DIRECT_MAP_LIMIT），所以这里没有要做的事。
+ * 引导页表只映射了前 1GB（一张页目录，512 个 2MB 大页）。这里按同样的方式为其余的
+ * 物理内存每 1GB 建一张页目录，挂到内核那一半的 PDPT 上。PDPT 是所有地址空间共用的，
+ * 所以新映射在每个地址空间里都看得到。
+ *
+ * 这时 1GB 以上的页帧还访问不到（PMM 清零新页时要通过直接映射区访问它），所以新页目录
+ * 必须来自 1GB 以下——PMM 从低地址开始分配，启动阶段拿到的总是低处的页帧，这里再确认一下。
  */
 void hal::Mmu::map_physical_memory() {
+    const uint64_t GB = 1ULL << 30;
+    const uint64_t huge = 2ULL << 20;
+    uint64_t max_phys = (uint64_t)mm::Pmm::get_info().total_frames * PAGE_SIZE;
+
+    pte64_t *pml4 = get_pml4(HAL_ADDR_SPACE_CURRENT);
+    pte64_t *pdpt = (pte64_t *)PADDR_TO_KVADDR(pte64_get_frame(pml4[(KERNEL_VIRTUAL_BASE >> 39) & 0x1FF]));
+
+    for (uint64_t base = GB; base < max_phys; base += GB) {
+        uint64_t slot = base >> 30;
+        if (slot >= 512) {
+            LOG_WARN_MSG("MMU: physical memory above 512GB is not mapped\n");
+            break;
+        }
+        if (pte64_is_present(pdpt[slot])) {
+            continue;
+        }
+        paddr_t pd_phys = mm::Pmm::alloc_frame();
+        if (pd_phys == PADDR_INVALID || pd_phys >= GB) {
+            LOG_ERROR_MSG("MMU: no low frame for the direct map of %llu-%llu GB\n",
+                          (unsigned long long)slot, (unsigned long long)slot + 1);
+            if (pd_phys != PADDR_INVALID) {
+                mm::Pmm::free_frame(pd_phys);
+            }
+            break;
+        }
+        pte64_t *pd = (pte64_t *)PADDR_TO_KVADDR(pd_phys);
+        for (uint64_t i = 0; i < 512; i++) {
+            pd[i] = (base + i * huge) | PTE64_PRESENT | PTE64_WRITE | PTE64_HUGE;
+        }
+        pdpt[slot] = pd_phys | PTE64_PRESENT | PTE64_WRITE;
+    }
+    hal::Mmu::flush_tlb_all();
+    LOG_INFO_MSG("MMU: direct map covers %llu MB of physical memory\n",
+                 (unsigned long long)(max_phys >> 20));
 }
 
 /**
