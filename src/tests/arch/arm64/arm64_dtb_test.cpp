@@ -10,6 +10,8 @@
 #include <lib/string.h>
 #include <types.h>
 #include "../../../arch/arm64/include/dtb.h"
+#include "../../../arch/arm64/include/gic.h"
+#include <drivers/serial.h>
 
 // ---------------------------------------------------------------------------
 // QEMU virt 的设备树
@@ -28,7 +30,7 @@ TEST_CASE(test_dtb_qemu_virt_devices) {
     const dtb_info_t *info = dtb_parse(dtb_find(NULL));
     ASSERT_TRUE(info != NULL);
 
-    // 和驱动里写死的地址、中断号一致
+    // QEMU virt 上这些设备的位置是固定的
     ASSERT_TRUE(info->gic.found);
     ASSERT_TRUE(info->gic.distributor_base == 0x08000000ULL);
     if (info->gic.version == 2) {
@@ -57,6 +59,19 @@ TEST_CASE(test_dtb_qemu_virt_devices) {
         virtio++;
     }
     ASSERT_TRUE(virtio >= 2);
+}
+
+/* 定义在 arch/arm64/hal.cpp */
+uint32_t arm64_timer_irq(void);
+
+TEST_CASE(test_dtb_values_reach_the_drivers) {
+    // 启动时驱动拿到的就是设备树里的值
+    const dtb_info_t *info = dtb_parse(dtb_find(NULL));
+    ASSERT_TRUE(info != NULL);
+    ASSERT_TRUE(drivers::Serial::base() == info->uart_base);
+    ASSERT_TRUE(gic_distributor_base() == info->gic.distributor_base);
+    ASSERT_TRUE(gic_cpu_interface_base() == info->gic.cpu_interface_base);
+    ASSERT_EQ_UINT(info->timer_irq, arm64_timer_irq());
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +305,7 @@ TEST_CASE(test_dtb_restore_real_tree) {
 TEST_SUITE(arm64_dtb_tests) {
     RUN_TEST(test_dtb_qemu_virt_memory);
     RUN_TEST(test_dtb_qemu_virt_devices);
+    RUN_TEST(test_dtb_values_reach_the_drivers);
     RUN_TEST(test_dtb_memory_regions);
     RUN_TEST(test_dtb_property_order_does_not_matter);
     RUN_TEST(test_dtb_cells_come_from_the_parent);

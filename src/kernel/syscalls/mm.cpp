@@ -406,21 +406,16 @@ static void rollback_mappings(uintptr_t dir_phys, uintptr_t vaddr, uintptr_t end
     }
 }
 
-/** [phys, phys+length) 是否整个落在设备内存区（而不是普通内存） */
+/**
+ * [phys, phys+length) 是否整个落在设备内存区（而不是普通内存）。
+ *
+ * 设备内存就是固件没有报告为可用内存的地方：x86 上是 640K-1M 的传统空洞和 PCI 设备的
+ * MMIO 空洞，arm64 上是设备树的内存节点之外的地址。不能用"高于内存的最高地址"或者
+ * "低于内存的起始地址"这类规则：内存可以不止一段，设备可以夹在中间。
+ */
 static bool is_device_range(uint64_t phys, size_t length) {
-#if defined(ARCH_ARM64)
-    /* QEMU virt：RAM 从 1GB 开始，之下全是设备 */
-    return phys + length <= 0x40000000ULL;
-#else
-    /* 传统的 640K-1M 空洞（VGA、ROM），或者 4GB 以下不是内存的地方（PCI 设备的 MMIO）。
-     * 不能用"高于内存的最高地址"来判断：内存超过 3GB 时，一部分内存在 4GB 之上，
-     * 而设备仍然在 3GB-4GB 的空洞里 */
-    if (phys >= 0xA0000 && phys + length <= 0x100000) {
-        return true;
-    }
-    return phys >= 0x100000 && phys + length <= 0x100000000ULL &&
+    return phys + length > phys &&
            !mm::Pmm::overlaps_ram((paddr_t)phys, (paddr_t)(phys + length));
-#endif
 }
 
 uintptr_t syscall::Mm::map_device(uint64_t phys, size_t length) {

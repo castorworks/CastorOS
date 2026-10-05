@@ -13,7 +13,8 @@
  * - Programmable FIFO trigger levels
  * - Interrupt support
  * 
- * For QEMU virt machine, the UART is at 0x09000000 with IRQ 33.
+ * The address comes from the device tree (Serial::set_base). Before that is parsed the
+ * driver talks to the UART at the QEMU virt address, as an early console.
  * 
  * Requirements: 9.3 - ARM64 device discovery and drivers
  */
@@ -30,12 +31,12 @@
  * Based on ARM PrimeCell UART (PL011) Technical Reference Manual
  * ========================================================================== */
 
-/** Default UART base address for QEMU virt machine */
-#define PL011_DEFAULT_BASE  0x09000000ULL
+/** 早期控制台：设备树解析之前用 QEMU virt 上 PL011 的地址 */
+#define PL011_EARLY_BASE    0x09000000ULL
 
-/** UART base address (can be updated from DTB) */
+static uint64_t uart_phys = PL011_EARLY_BASE;
 /* 经内核高半区映射访问：进程的 TTBR0 里没有设备映射 */
-static volatile uint8_t *uart_base = (volatile uint8_t *)PHYS_TO_VIRT(PL011_DEFAULT_BASE);
+static volatile uint8_t *uart_base = (volatile uint8_t *)PHYS_TO_VIRT(PL011_EARLY_BASE);
 
 /* Register offsets from base address */
 #define PL011_DR        0x000   /**< Data Register */
@@ -195,6 +196,19 @@ void drivers::Serial::init() {
  * 
  * @param c Character to output
  */
+void drivers::Serial::set_base(uint64_t phys) {
+    if (phys == uart_phys) {
+        return;                 // 早期控制台用的就是它，已经配置好了
+    }
+    uart_phys = phys;
+    uart_base = (volatile uint8_t *)PHYS_TO_VIRT(phys);
+    drivers::Serial::init();
+}
+
+uint64_t drivers::Serial::base() {
+    return uart_phys;
+}
+
 void drivers::Serial::putchar(char c) {
     /* Wait until transmit FIFO is not full */
     while (pl011_read(PL011_FR) & PL011_FR_TXFF) {

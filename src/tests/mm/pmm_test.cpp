@@ -718,23 +718,35 @@ TEST_CASE(test_direct_map_covers_all_memory) {
 }
 
 /**
- * 1GB 以上的页帧分配得出来、写得进去、读得回来。
+ * 离内存起点 1GB 以外的页帧分配得出来、写得进去、读得回来。
  *
  * 只在物理内存超过 1GB 时有内容（make test QEMU_MEMORY=3G）。分配器从低地址开始给，
  * 所以要一直分配到拿到一个高处的页帧为止；已经拿到的页帧用它们自己的第一个字串成链表
  * 记着，这样既不需要额外的存储，也顺带把每一页都写了一遍。
+ *
+ * 界线按内存的起点算而不是按绝对地址：arm64 上内存从 1GB 开始，绝对地址 1GB 以上
+ * 就是全部内存，什么也检验不了。
  */
-TEST_CASE(test_frames_above_1gb_are_usable) {
-    const paddr_t boundary = (paddr_t)1 << 30;
+TEST_CASE(test_frames_far_into_memory_are_usable) {
+    const paddr_t distance = (paddr_t)1 << 30;
     mm::PmmInfo before = mm::Pmm::get_info();
+
+    paddr_t first = mm::Pmm::alloc_frame();
+    ASSERT_TRUE(first != PADDR_INVALID);
+    if (first == PADDR_INVALID) {
+        return;
+    }
+    paddr_t boundary = (first & ~(distance - 1)) + distance;
     if ((paddr_t)before.total_frames * PAGE_SIZE <= boundary) {
-        kprintf("    (skipped: physical memory does not reach 1GB)\n");
+        mm::Pmm::free_frame(first);
+        kprintf("    (skipped: less than 1GB of physical memory)\n");
         return;
     }
 
-    paddr_t chain = 0;          // 链表头：上一个分配到的页帧
+    *(paddr_t *)PADDR_TO_KVADDR(first) = 0;
+    paddr_t chain = first;      // 链表头：上一个分配到的页帧
     paddr_t high = PADDR_INVALID;
-    uint64_t taken = 0;
+    uint64_t taken = 1;
     for (;;) {
         paddr_t frame = mm::Pmm::alloc_frame();
         if (frame == PADDR_INVALID) {
@@ -800,7 +812,7 @@ TEST_SUITE(pmm_high_memory_tests) {
     RUN_TEST(test_ram_regions_exclude_device_holes);
 #endif
     RUN_TEST(test_direct_map_covers_all_memory);
-    RUN_TEST(test_frames_above_1gb_are_usable);
+    RUN_TEST(test_frames_far_into_memory_are_usable);
 }
 
 void run_pmm_tests(void) {

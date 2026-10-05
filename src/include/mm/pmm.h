@@ -127,8 +127,8 @@ public:
     /**
      * @brief [start, end) 里有没有固件报告为可用内存的部分
      *
-     * 只在用 Multiboot 内存映射初始化的架构（x86）上有内容。可用内存区域之间的空洞
-     * （640K-1M、4GB 以下的 PCI 空洞）是设备内存，即使它们的地址比内存的最高地址低。
+     * 可用内存区域之外的地址（x86 的 640K-1M 和 PCI 空洞，arm64 上设备树的内存节点
+     * 之外的地址）是设备内存或保留区，即使它们夹在两段内存之间。
      */
     static bool overlaps_ram(paddr_t start, paddr_t end);
 

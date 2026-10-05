@@ -241,19 +241,6 @@ paddr_t mm::Pmm::alloc_frame() {
         pmm_info.used_frames--;
         return PADDR_INVALID;
     }
-#elif defined(ARCH_ARM64)
-    // ARM64: 安全检查确保物理地址在实际 RAM 范围内
-    // QEMU virt machine: RAM at 0x40000000 - 0x60000000 (with -m 512M)
-    // 检查地址是否在 RAM 范围内
-    if (addr < 0x40000000ULL || addr >= 0x60000000ULL) {
-        LOG_ERROR_MSG("PMM: Allocated frame outside RAM range (0x%llx), this should not happen!\n", 
-                     (unsigned long long)addr);
-        clear_frame(idx);
-        frame_refcount[idx] = 0;
-        pmm_info.free_frames++;
-        pmm_info.used_frames--;
-        return PADDR_INVALID;
-    }
 #endif
     
     // 诊断日志：记录页目录区域的分配

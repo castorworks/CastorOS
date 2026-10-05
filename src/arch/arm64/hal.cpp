@@ -12,6 +12,10 @@
 #include <types.h>
 #include "include/exception.h"
 #include "include/gic.h"
+#include "include/dtb.h"
+#include <drivers/serial.h>
+#include <lib/klog.h>
+#include <lib/kprintf.h>
 
 /* Forward declaration for serial output (defined in stubs.c) */
 extern "C" void serial_puts(const char *str);
@@ -140,8 +144,8 @@ static uint32_t g_timer_frequency = 0;
 /** User timer callback */
 static hal_timer_callback_t g_timer_callback = NULL;
 
-/** ARM Generic Timer IRQ number (typically 30 for physical timer) */
-#define ARM_TIMER_IRQ   30
+/** 非安全物理定时器的 GIC 中断号。来自设备树；30 (PPI 14) 是架构建议的值，几乎所有平台都用它 */
+static uint32_t g_timer_irq = 30;
 
 /**
  * @brief Internal timer IRQ handler
@@ -178,7 +182,7 @@ void hal::Timer::init(uint32_t freq_hz, hal_timer_callback_t callback) {
 
     /* The HAL owns the IRQ registration and the scheduler callback;
      * the driver programs and enables the timer itself. */
-    hal::Interrupt::register_handler(ARM_TIMER_IRQ, hal_timer_irq_handler, NULL);
+    hal::Interrupt::register_handler(g_timer_irq, hal_timer_irq_handler, NULL);
     drivers::Timer::init(freq_hz);
 }
 
@@ -198,4 +202,54 @@ void hal::Timer::init(uint32_t freq_hz, hal_timer_callback_t callback) {
  */
 const char *hal_arch_name(void) {
     return "arm64";
+}
+
+/* ============================================================================
+ * 用设备树里的值配置平台设备
+ * ========================================================================== */
+
+/** 内核的高半区映射能访问到的设备地址上限（引导页表映射了前 4GB） */
+#define DEVICE_MAP_LIMIT    0x100000000ULL
+
+/**
+ * @brief 让串口、中断控制器、定时器的驱动使用设备树描述的地址和中断号
+ *
+ * 在 hal::Interrupt::init() 和 hal::Timer::init() 之前调用。驱动自带 QEMU virt 上的
+ * 默认值，设备树里没有某个设备（或者值没法用）时保持默认并说明。
+ *
+ * @return 这个平台能不能用：中断控制器不是驱动支持的型号时返回 false
+ */
+bool arm64_configure_from_device_tree(const dtb_info_t *dtb) {
+    if (dtb->uart_found && dtb->uart_base < DEVICE_MAP_LIMIT) {
+        drivers::Serial::set_base(dtb->uart_base);
+    } else {
+        LOG_WARN_MSG("no PL011 in the device tree, staying on the early console\n");
+    }
+
+    if (!dtb->gic.found) {
+        LOG_WARN_MSG("no GIC in the device tree, assuming the QEMU virt addresses\n");
+    } else if (dtb->gic.version != 2) {
+        // 驱动只会 GICv2：v3 的 CPU 接口是系统寄存器，照 v2 的方式去写内存什么都不会发生
+        kprintf("PANIC: the device tree describes a GICv%u, only GICv2 is supported\n", dtb->gic.version);
+        return false;
+    } else if (dtb->gic.distributor_base < DEVICE_MAP_LIMIT && dtb->gic.cpu_interface_base < DEVICE_MAP_LIMIT) {
+        gic_set_bases(dtb->gic.distributor_base, dtb->gic.cpu_interface_base);
+    }
+
+    if (dtb->timer_found) {
+        g_timer_irq = dtb->timer_irq;
+    } else {
+        LOG_WARN_MSG("no timer in the device tree, assuming IRQ %u\n", g_timer_irq);
+    }
+
+    LOG_INFO_MSG("platform: PL011 at 0x%llx, GIC at 0x%llx / 0x%llx, timer IRQ %u\n",
+                 (unsigned long long)drivers::Serial::base(),
+                 (unsigned long long)gic_distributor_base(),
+                 (unsigned long long)gic_cpu_interface_base(), g_timer_irq);
+    return true;
+}
+
+/** 定时器用的中断号 */
+uint32_t arm64_timer_irq(void) {
+    return g_timer_irq;
 }

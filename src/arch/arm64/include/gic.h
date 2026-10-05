@@ -91,6 +91,17 @@
 void gic_init(void);
 
 /**
+ * @brief Tell the driver where the GIC is (physical addresses from the device tree)
+ *
+ * Call before gic_init(). Without it the driver uses the QEMU virt addresses.
+ */
+void gic_set_bases(uint64_t distributor_phys, uint64_t cpu_interface_phys);
+
+/** Physical addresses in use */
+uint64_t gic_distributor_base(void);
+uint64_t gic_cpu_interface_base(void);
+
+/**
  * @brief Enable an interrupt
  * @param irq Interrupt number
  */

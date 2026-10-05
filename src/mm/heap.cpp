@@ -34,62 +34,21 @@ static bool expand(size_t size) {
     size_t pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
     if (pages * PAGE_SIZE > heap_max - heap_end) return false;
     
-#if defined(ARCH_X86_64)
-    // x86_64: 引导时已经映射了前 1GB 物理内存到高半核
-    // 堆虚拟地址 = KERNEL_VIRTUAL_BASE + 物理地址
-    // 所以堆扩展只需要确保对应的物理地址在已映射范围内
-    // 
-    // 堆地址布局：
-    //   heap_start = PHYS_TO_VIRT(pmm_data_end_phys)
-    //   heap_end 对应的物理地址 = VIRT_TO_PHYS(heap_end)
-    //
-    // 由于引导时使用恒等映射（物理地址 X 映射到虚拟地址 KERNEL_VIRTUAL_BASE + X），
-    // 我们只需要验证堆扩展后的物理地址仍在已映射范围内（< 1GB）
-    
+#if !defined(ARCH_I686)
+    // 64 位架构：堆就在内核的直接映射区里（虚拟地址 = KERNEL_VIRTUAL_BASE + 物理地址），
+    // 它占的那段物理内存启动时已经向 PMM 保留（set_heap_reserved_range）。扩展只是把
+    // 堆顶往后挪，前提是没有走出物理内存
     uintptr_t new_heap_end = heap_end + pages * PAGE_SIZE;
-    uintptr_t new_heap_end_phys = VIRT_TO_PHYS(new_heap_end);
-    
-    // 验证扩展后的堆仍在已映射范围内（前 1GB）
-    if (new_heap_end_phys > 0x40000000) {  // 1GB
-        LOG_ERROR_MSG("heap: expand would exceed boot mapping (phys 0x%lx > 1GB)\n", 
-                     (unsigned long)new_heap_end_phys);
+    uint64_t memory_end = (uint64_t)mm::Pmm::get_info().total_frames * PAGE_SIZE;
+    if ((uint64_t)VIRT_TO_PHYS(new_heap_end) > memory_end) {
+        LOG_ERROR_MSG("heap: expand would run past the end of physical memory\n");
         return false;
     }
-    
-    // 清零新扩展的堆空间（已经通过引导时的恒等映射可访问）
-    memset((void*)heap_end, 0, pages * PAGE_SIZE);
-    heap_end = new_heap_end;
-    return true;
-#elif defined(ARCH_ARM64)
-    // ARM64: 引导时已经使用 1GB 块映射了物理内存到高半核
-    // 堆虚拟地址 = KERNEL_VIRTUAL_BASE + 物理地址
-    // 所以堆扩展只需要确保对应的物理地址在已映射范围内
-    //
-    // 堆地址布局：
-    //   heap_start = PHYS_TO_VIRT(pmm_data_end_phys)
-    //   heap_end 对应的物理地址 = VIRT_TO_PHYS(heap_end)
-    //
-    // 由于引导时使用 1GB 块映射（物理地址 X 映射到虚拟地址 KERNEL_VIRTUAL_BASE + X），
-    // 我们只需要验证堆扩展后的物理地址仍在已映射范围内
-    
-    uintptr_t new_heap_end = heap_end + pages * PAGE_SIZE;
-    uintptr_t new_heap_end_phys = VIRT_TO_PHYS(new_heap_end);
-    
-    // 验证扩展后的堆仍在物理内存范围内
-    // ARM64 QEMU virt machine: RAM at 0x40000000 - 0x60000000 (512MB with -m 512M)
-    // 但引导代码映射了 4GB，所以只需检查不超过 4GB
-    if (new_heap_end_phys > 0x100000000ULL) {  // 4GB
-        LOG_ERROR_MSG("heap: expand would exceed boot mapping (phys 0x%llx > 4GB)\n", 
-                     (unsigned long long)new_heap_end_phys);
-        return false;
-    }
-    
-    // 清零新扩展的堆空间（已经通过引导时的块映射可访问）
-    memset((void*)heap_end, 0, pages * PAGE_SIZE);
+    memset((void *)heap_end, 0, pages * PAGE_SIZE);
     heap_end = new_heap_end;
     return true;
 #else
-    // i686: 原有实现
+    // i686：堆有自己的一段虚拟地址，扩展时向 PMM 要页并映射进来
     uintptr_t old_heap_end = heap_end;
     uintptr_t current_dir_phys = mm::Vmm::get_page_directory();
     

@@ -78,11 +78,14 @@ static void kernel_start(void) {
 
 #if defined(ARCH_ARM64)
 
+/* 定义在 arch/arm64/hal.cpp */
+bool arm64_configure_from_device_tree(const dtb_info_t *dtb);
+
 extern "C" void kernel_main(void *dtb_addr);
 void kernel_main(void *dtb_addr) {
     cxx_global_ctors_init();  // 运行 C++ 全局构造函数（必须最先执行）
 
-    drivers::Serial::init();  // PL011
+    drivers::Serial::init();  // 早期控制台：PL011，地址先用 QEMU virt 的
     print_banner();
 
     // 硬件的描述（包括物理内存的范围）来自固件给的设备树
@@ -99,6 +102,13 @@ void kernel_main(void *dtb_addr) {
     for (uint32_t i = 0; i < region_count; i++) {
         regions[i].start = (paddr_t)dtb->memory[i].base;
         regions[i].end = (paddr_t)(dtb->memory[i].base + dtb->memory[i].size);
+    }
+
+    // 串口、中断控制器、定时器在哪里，也听设备树的
+    if (!arm64_configure_from_device_tree(dtb)) {
+        while (1) {
+            hal::Cpu::halt();
+        }
     }
 
     hal::Cpu::init();

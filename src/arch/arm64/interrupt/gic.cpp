@@ -20,8 +20,26 @@ extern "C" void serial_put_hex64(uint64_t value);
 
 /** GIC base addresses (virtual, after MMU setup) */
 /* 设备寄存器经内核高半区映射访问：进程的 TTBR0 里没有设备映射 */
+/* 地址来自设备树（gic_set_bases）；没有设置时用 QEMU virt 上的地址 */
+static uint64_t gicd_phys = GICD_BASE;
+static uint64_t gicc_phys = GICC_BASE;
 static volatile uint32_t *gicd_base = (volatile uint32_t *)PHYS_TO_VIRT(GICD_BASE);
 static volatile uint32_t *gicc_base = (volatile uint32_t *)PHYS_TO_VIRT(GICC_BASE);
+
+void gic_set_bases(uint64_t distributor_phys, uint64_t cpu_interface_phys) {
+    gicd_phys = distributor_phys;
+    gicc_phys = cpu_interface_phys;
+    gicd_base = (volatile uint32_t *)PHYS_TO_VIRT(distributor_phys);
+    gicc_base = (volatile uint32_t *)PHYS_TO_VIRT(cpu_interface_phys);
+}
+
+uint64_t gic_distributor_base(void) {
+    return gicd_phys;
+}
+
+uint64_t gic_cpu_interface_base(void) {
+    return gicc_phys;
+}
 
 /** Number of supported interrupts */
 static uint32_t gic_num_interrupts = 0;
