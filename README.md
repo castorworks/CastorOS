@@ -39,18 +39,22 @@ make clean-all
 make help
 ```
 
-内核启动后加载内嵌的 `user/init`：它启动用户态串口驱动 `user/uart`、内存文件系统服务 `user/ramfs` 和示例程序 `user/demo`，自己充当名字服务。demo 先自检（内存、进程、IPC、特权、共享内存、名字服务、文件服务），然后提供一个很小的命令行：
+内核启动后加载内嵌的 `user/init`：它启动用户态串口驱动 `user/uart`、内存文件系统服务 `user/ramfs` 和命令行 `user/sh`，自己充当名字服务。ramfs 从构建时打好的启动映像里装载文件和程序；sh 先执行 `rc`（运行用户态自检 `selftest`），然后接受命令：
 
 ```
-> write hello.txt hello from the shell
 > ls
-      21  hello.txt
-> cat hello.txt
-hello from the shell
-> rm hello.txt
+   39904  hello
+      55  rc
+     215  readme.txt
+   54144  selftest
+> hello
+hello from pid 12 (parent 4)
+> write a.txt hi there
+> cat a.txt
+hi there
 ```
 
-键盘输入经 串口中断 → uart 驱动 → IPC 到达 demo，文件操作经 IPC 和共享缓冲区交给 ramfs。
+键盘输入经 串口中断 → uart 驱动 → IPC 到达 sh；文件操作经 IPC 和共享缓冲区交给 ramfs；运行程序是从 ramfs 读出 ELF 后 `fork` + `exec`。
 
 ## 目录
 
@@ -64,14 +68,17 @@ src/tests/     内核测试 (KTEST=1)
 user/lib/      用户态库
 user/init/     第一个用户进程：启动模块 + 名字服务
 user/uart/     用户态串口输入驱动
-user/ramfs/    内存文件系统服务
-user/demo/     示例程序（非特权）：自检 + 命令行
+user/ramfs/    内存文件系统服务（内嵌启动映像）
+user/sh/       命令行
+user/selftest/ 用户态自检程序（在启动映像里）
+user/hello/    最小的示例程序（在启动映像里）
+user/bootfs/   启动映像里的静态文件
 docs/          文档
 ```
 
 ## 文档
 
-+ [微内核结构](./docs/microkernel.md)：内核边界、启动流程、系统调用表、IPC、共享内存、名字服务、文件服务、硬件访问、如何加模块
++ [微内核结构](./docs/microkernel.md)：内核边界、启动流程、系统调用表、IPC、共享内存、名字服务、文件服务、启动映像、硬件访问、如何加模块
 + [概念讲解](./docs/concepts/00-overview.md)
 + 开发过程记录（写于精简为微内核之前，其中提到的 GRUB 磁盘镜像、VGA、shell 等已不在代码里）：
   [环境](./docs/00-environment.md)、[引导](./docs/01-boot.md)、[基础设施](./docs/02-infrastructure.md)、

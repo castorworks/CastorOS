@@ -18,7 +18,7 @@ bool load_init(void) {
     }
 
     if (!kernel::Elf::validate_header(init_image_start, size)) {
-        LOG_ERROR_MSG("init: invalid ELF image\n");
+        LOG_ERROR_MSG("init: invalid ELF image (set klog level to DEBUG for the reason)\n");
         return false;
     }
 

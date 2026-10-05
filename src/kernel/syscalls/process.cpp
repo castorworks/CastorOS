@@ -365,7 +365,7 @@ uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size
     // 完整校验 ELF 映像（文件头、程序头表、各段的文件范围和地址范围、入口点），
     // 在创建新地址空间之前就拒绝不合法的映像
     if (!kernel::Elf::validate(elf_data, file_size)) {
-        LOG_ERROR_MSG("syscall::Process::exec: invalid ELF image\n");
+        LOG_DEBUG_MSG("syscall::Process::exec: invalid ELF image\n");
         kfree(elf_data);
         return (uint32_t)-1;
     }
@@ -703,7 +703,7 @@ uint32_t syscall::Process::kill(uint32_t pid, uint32_t signal) {
     // 查找目标进程
     task_t *target = kernel::Scheduler::get_by_pid(pid);
     if (!target || target->state == TASK_UNUSED || target->state == TASK_TERMINATED) {
-        LOG_WARN_MSG("syscall::Process::kill: process %u not found\n", pid);
+        LOG_DEBUG_MSG("syscall::Process::kill: process %u not found\n", pid);
         return (uint32_t)-1;
     }
 

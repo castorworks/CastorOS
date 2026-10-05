@@ -77,9 +77,13 @@ make info
 `user/lib` is the user library (syscall wrappers, printf, string). `user/init` is the first
 process; its ELF is embedded into the kernel image by `src/kernel/init_image.S` (`.incbin`),
 so there is no disk image. init starts the modules and is the name server (`names.h` in
-`user/lib`). Modules are embedded into init the same way (`user/init/modules.S`):
+`user/lib`). Resident modules are embedded into init the same way (`user/init/modules.S`):
 `user/uart` (privileged serial input driver), `user/ramfs` (in-memory file service, protocol
-and client in `fs.h`), and `user/demo` (unprivileged self-checks plus a tiny command line). Every user program's
+and client in `fs.h`) and `user/sh` (command line). Other programs (`user/selftest`,
+`user/hello`) go into the boot image: a ustar archive of `user/bootfs/*` plus the programs
+in `BOOT_PROGRAMS` (`user/ramfs/Makefile`), embedded in ramfs and unpacked at startup. sh
+runs them with fork + exec, and runs the `rc` file (which starts `selftest`) at boot.
+To add a program, create `user/<name>/` and add it to `BOOT_PROGRAMS`. Every user program's
 Makefile just sets `TARGET`/`SOURCES` and includes `user/program.mk`. The kernel Makefile
 rebuilds all of it when `user/` changes.
 
@@ -119,8 +123,11 @@ CastorOS/
 │   ├── lib/                # User library
 │   ├── init/               # First user process: starts modules, name service
 │   ├── uart/               # Serial input driver (privileged module)
-│   ├── ramfs/              # In-memory file service (unprivileged module)
-│   ├── demo/               # Example client (unprivileged module): self-checks, tiny command line
+│   ├── ramfs/              # In-memory file service (unprivileged module), holds the boot image
+│   ├── sh/                 # Command line (unprivileged module): file builtins, runs programs
+│   ├── selftest/           # User-space self-checks, in the boot image, run from rc at boot
+│   ├── hello/              # Minimal example program, in the boot image
+│   ├── bootfs/             # Static files for the boot image (rc, readme.txt)
 │   ├── program.mk          # Shared build rules for user programs
 │   └── linker/             # User linker scripts
 ├── docs/                   # Documentation (Chinese)
@@ -182,13 +189,14 @@ make test TEST_TIMEOUT=120     # 自定义超时
 
 内核不会自己关机，QEMU 运行到超时为止。`make test` 把完整日志写到
 `build/<arch>-ktest/test.log`，并汇总各模块的 `Total/Passed/Failed tests` 计数；
-有失败用例或用户态没有起来（日志里没有 `demo: ready`）时返回非零。
+有失败用例、用户态没有起来（日志里没有 `sh: ready`）或用户态自检没有通过
+（没有 `selftest: all passed`）时返回非零。
 
 ### 手动运行
 
 ```bash
-# 控制台是串口；向 QEMU 的标准输入写入的内容经 uart 驱动送到 demo 的命令行
-# （ls / cat <file> / write <file> <text> / rm <file> / help）
+# 控制台是串口；向 QEMU 的标准输入写入的内容经 uart 驱动送到 sh
+# （ls / cat <file> / write <file> <text> / rm <file> / help，其他名字当作程序运行）
 timeout 20 qemu-system-i386 -kernel build/i686/castor.bin -serial stdio -display none
 timeout 20 qemu-system-x86_64 -kernel build/x86_64/castor32.elf -serial stdio -display none
 timeout 20 qemu-system-aarch64 -M virt -cpu cortex-a72 -kernel build/arm64/castor.bin -serial stdio -display none

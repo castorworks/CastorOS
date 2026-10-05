@@ -12,7 +12,7 @@
 
 extern "C" const char uart_image_start[], uart_image_end[];
 extern "C" const char ramfs_image_start[], ramfs_image_end[];
-extern "C" const char demo_image_start[], demo_image_end[];
+extern "C" const char sh_image_start[], sh_image_end[];
 
 // ============================================================================
 // 模块启动
@@ -59,9 +59,15 @@ static void reap_children(void) {
 
 static int find_name(const char *name) {
     for (int i = 0; i < MAX_NAMES; i++) {
-        if (names[i].pid != 0 && strcmp(names[i].name, name) == 0) {
-            return i;
+        if (names[i].pid == 0 || strcmp(names[i].name, name) != 0) {
+            continue;
         }
+        // 登记者不一定是 init 的子进程，退出时这里收不到通知：用到时再确认它还在
+        if (kill(names[i].pid, 0) != 0) {
+            names[i].pid = 0;
+            return -1;
+        }
+        return i;
     }
     return -1;
 }
@@ -85,7 +91,7 @@ int main() {
 
     start_module("uart", uart_image_start, uart_image_end, true);
     start_module("ramfs", ramfs_image_start, ramfs_image_end, false);
-    start_module("demo", demo_image_start, demo_image_end, false);
+    start_module("sh", sh_image_start, sh_image_end, false);
 
     struct ipc_msg m;
     for (;;) {

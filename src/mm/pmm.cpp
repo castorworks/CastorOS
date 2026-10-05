@@ -198,8 +198,10 @@ void mm::Pmm::unprotect_frame(paddr_t frame) {
     
     protected_frame_t *entry = find_protected_frame_unsafe(frame);
     if (!entry) {
-        LOG_WARN_MSG("PMM: Attempted to unprotect unknown frame 0x%llx\n", 
-                    (unsigned long long)frame);
+        // 正常情况：只有 fork 克隆出来的页表会被保护，映射时新建的页表不会，
+        // 而释放地址空间时两种都会走到这里
+        LOG_DEBUG_MSG("PMM: unprotect of a frame that was not protected: 0x%llx\n", 
+                     (unsigned long long)frame);
         return;
     }
     

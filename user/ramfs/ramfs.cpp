@@ -1,7 +1,8 @@
 // ramfs - 内存文件系统服务
 //
 // 非特权的用户态服务，以 "fs" 登记，实现 fs.h 里的协议。文件内容放在自己
-// mmap 来的内存里；命名空间是平的。每个客户有一块共享缓冲区（客户用 mem_grant
+// mmap 来的内存里；命名空间是平的。启动时装载构建时嵌进来的启动映像
+// （user/bootfs 里的文件加上 Makefile 里列出的程序）。每个客户有一块共享缓冲区（客户用 mem_grant
 // 送来），文件名和读写的数据都经过它。
 
 #include <syscall.h>
@@ -238,12 +239,57 @@ static int64_t do_list(struct client *c, uint64_t index, uint64_t *size) {
     return -1;
 }
 
+// ============================================================================
+// 启动映像：构建时打好的 ustar 归档（bootfs.S），启动时展开成文件
+// ============================================================================
+
+extern "C" const char bootfs_start[], bootfs_end[];
+
+// ustar 头里的数字是八进制 ASCII
+static uint32_t parse_octal(const char *field, size_t len) {
+    uint32_t value = 0;
+    for (size_t i = 0; i < len && field[i] >= '0' && field[i] <= '7'; i++) {
+        value = value * 8 + (uint32_t)(field[i] - '0');
+    }
+    return value;
+}
+
+static int load_bootfs(void) {
+    int count = 0;
+    const char *p = bootfs_start;
+    // 每个成员：512 字节的头（名字在 0，大小在 124，类型在 156），后面是按 512 对齐的内容
+    while (p + 512 <= bootfs_end && p[0] != '\0') {
+        uint32_t size = parse_octal(p + 124, 12);
+        char type = p[156];
+        const char *content = p + 512;
+        if (content + size > bootfs_end) {
+            break;
+        }
+
+        const char *name = p;
+        if (name[0] == '.' && name[1] == '/') {
+            name += 2;
+        }
+        if ((type == '0' || type == '\0') && name[0] != '\0' && strlen(name) < FS_NAME_MAX) {
+            int index = create_file(name);
+            if (index >= 0 && reserve(&files[index], size ? size : 1)) {
+                memcpy(files[index].data, content, size);
+                files[index].size = size;
+                count++;
+            }
+        }
+        p = content + ((size + 511) & ~511u);
+    }
+    return count;
+}
+
 int main() {
+    int boot_files = load_bootfs();
     if (name_register(FS_SERVICE_NAME) != 0) {
         printf("ramfs: cannot register name\n");
         return 1;
     }
-    printf("ramfs: ready (pid %d)\n", getpid());
+    printf("ramfs: ready (pid %d), %d files from the boot image\n", getpid(), boot_files);
 
     struct ipc_msg m;
     for (;;) {
@@ -284,6 +330,13 @@ int main() {
                     if (index >= 0) {
                         remove_file(index);
                         result = 0;
+                    }
+                    break;
+                }
+                case FS_SIZE: {
+                    struct file *f = file_of(c->pid, m.data[0]);
+                    if (f) {
+                        result = f->size;
                     }
                     break;
                 }

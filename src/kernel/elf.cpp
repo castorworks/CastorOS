@@ -40,53 +40,53 @@ bool kernel::Elf::validate_header(const void *elf_data, size_t size) {
     if (!elf_data) return false;
     /* 文件至少要装得下完整的 ELF 头，否则下面读到的就是缓冲区之外的内容 */
     if (size < sizeof(elf_native_ehdr_t)) {
-        LOG_ERROR_MSG("ELF: File too small for ELF header (%u bytes)\n", (unsigned)size);
+        LOG_DEBUG_MSG("ELF: File too small for ELF header (%u bytes)\n", (unsigned)size);
         return false;
     }
     const uint8_t *ident = (const uint8_t *)elf_data;
     if (ident[0] != 0x7F || ident[1] != 'E' || ident[2] != 'L' || ident[3] != 'F') {
-        LOG_ERROR_MSG("ELF: Invalid magic number\n");
+        LOG_DEBUG_MSG("ELF: Invalid magic number\n");
         return false;
     }
     if (ident[5] != ELF_DATA_LSB) {
-        LOG_ERROR_MSG("ELF: Not little-endian\n");
+        LOG_DEBUG_MSG("ELF: Not little-endian\n");
         return false;
     }
     if (ident[6] != EV_CURRENT) {
-        LOG_ERROR_MSG("ELF: Invalid version\n");
+        LOG_DEBUG_MSG("ELF: Invalid version\n");
         return false;
     }
     const elf_native_ehdr_t *ehdr = (const elf_native_ehdr_t *)elf_data;
 #if defined(ARCH_X86_64)
     if (ident[4] != ELF_CLASS_64) {
-        LOG_ERROR_MSG("ELF: Expected 64-bit ELF for x86_64\n");
+        LOG_DEBUG_MSG("ELF: Expected 64-bit ELF for x86_64\n");
         return false;
     }
     if (ehdr->e_machine != EM_X86_64) {
-        LOG_ERROR_MSG("ELF: Not x86_64 (machine=%d)\n", ehdr->e_machine);
+        LOG_DEBUG_MSG("ELF: Not x86_64 (machine=%d)\n", ehdr->e_machine);
         return false;
     }
 #elif defined(ARCH_ARM64)
     if (ident[4] != ELF_CLASS_64) {
-        LOG_ERROR_MSG("ELF: Expected 64-bit ELF for ARM64\n");
+        LOG_DEBUG_MSG("ELF: Expected 64-bit ELF for ARM64\n");
         return false;
     }
     if (ehdr->e_machine != EM_AARCH64) {
-        LOG_ERROR_MSG("ELF: Not ARM64 (machine=%d)\n", ehdr->e_machine);
+        LOG_DEBUG_MSG("ELF: Not ARM64 (machine=%d)\n", ehdr->e_machine);
         return false;
     }
 #else
     if (ident[4] != ELF_CLASS_32) {
-        LOG_ERROR_MSG("ELF: Expected 32-bit ELF for i686\n");
+        LOG_DEBUG_MSG("ELF: Expected 32-bit ELF for i686\n");
         return false;
     }
     if (ehdr->e_machine != EM_386) {
-        LOG_ERROR_MSG("ELF: Not i386 (machine=%d)\n", ehdr->e_machine);
+        LOG_DEBUG_MSG("ELF: Not i386 (machine=%d)\n", ehdr->e_machine);
         return false;
     }
 #endif
     if (ehdr->e_type != ET_EXEC) {
-        LOG_ERROR_MSG("ELF: Not executable (type=%d)\n", ehdr->e_type);
+        LOG_DEBUG_MSG("ELF: Not executable (type=%d)\n", ehdr->e_type);
         return false;
     }
     return true;
@@ -98,13 +98,13 @@ bool kernel::Elf::validate(const void *elf_data, size_t size) {
     /* 以下所有来自文件的偏移/长度/地址都按 64 位、用“先比较再相减”的写法检查，不会回绕 */
     const elf_native_ehdr_t *ehdr = (const elf_native_ehdr_t *)elf_data;
     if (ehdr->e_phentsize != sizeof(elf_native_phdr_t)) {
-        LOG_ERROR_MSG("ELF: Unexpected program header size %u\n", ehdr->e_phentsize);
+        LOG_DEBUG_MSG("ELF: Unexpected program header size %u\n", ehdr->e_phentsize);
         return false;
     }
     uint64_t phoff = ehdr->e_phoff;
     uint64_t phsize = (uint64_t)ehdr->e_phnum * sizeof(elf_native_phdr_t);
     if (ehdr->e_phnum == 0 || phoff > size || phsize > size - phoff) {
-        LOG_ERROR_MSG("ELF: Program header table outside file\n");
+        LOG_DEBUG_MSG("ELF: Program header table outside file\n");
         return false;
     }
 
@@ -124,16 +124,16 @@ bool kernel::Elf::validate(const void *elf_data, size_t size) {
         uint64_t vaddr = ph->p_vaddr;
 
         if (filesz > memsz) {
-            LOG_ERROR_MSG("ELF: Segment %u has p_filesz > p_memsz\n", i);
+            LOG_DEBUG_MSG("ELF: Segment %u has p_filesz > p_memsz\n", i);
             return false;
         }
         if (offset > size || filesz > size - offset) {
-            LOG_ERROR_MSG("ELF: Segment %u exceeds file size\n", i);
+            LOG_DEBUG_MSG("ELF: Segment %u exceeds file size\n", i);
             return false;
         }
         /* 段必须整体位于用户映像区内：既不能进入内核半区，也不能压到用户栈 */
         if (vaddr >= limit || memsz > limit - vaddr) {
-            LOG_ERROR_MSG("ELF: Segment %u outside user image area (vaddr=0x%llx, memsz=0x%llx)\n",
+            LOG_DEBUG_MSG("ELF: Segment %u outside user image area (vaddr=0x%llx, memsz=0x%llx)\n",
                           i, (unsigned long long)vaddr, (unsigned long long)memsz);
             return false;
         }
@@ -145,7 +145,7 @@ bool kernel::Elf::validate(const void *elf_data, size_t size) {
     /* 入口点不在任何可执行段内的映像不能运行；x86_64 上非规范入口地址
      * 还会让 SYSRET 在 Ring 0 触发 #GP */
     if (!entry_ok) {
-        LOG_ERROR_MSG("ELF: Entry point 0x%llx is not inside an executable segment\n",
+        LOG_DEBUG_MSG("ELF: Entry point 0x%llx is not inside an executable segment\n",
                       (unsigned long long)entry);
         return false;
     }

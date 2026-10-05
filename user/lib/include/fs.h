@@ -25,6 +25,7 @@ enum {
     FS_READ   = 3,  // data[0]: 句柄, data[1]: 偏移, data[2]: 长度。应答 data[0]: 读到的字节数，内容在缓冲区
     FS_WRITE  = 4,  // data[0]: 句柄, data[1]: 偏移, data[2]: 长度；缓冲区: 内容。应答 data[0]: 写入的字节数
     FS_UNLINK = 5,  // 缓冲区: 文件名
+    FS_SIZE   = 7,  // data[0]: 句柄。应答 data[0]: 文件大小
     FS_LIST   = 6,  // data[0]: 序号（从 0 开始）。应答 data[0]: 0 有这一项 / -1 没有了，
                     //   data[1]: 文件大小，文件名在缓冲区
 };
@@ -42,6 +43,9 @@ long fs_read(int fd, uint32_t offset, void *buf, size_t len);
 
 /** 从 offset 处写 len 字节，文件按需变大。@return 写入的字节数，失败返回 -1 */
 long fs_write(int fd, uint32_t offset, const void *buf, size_t len);
+
+/** 文件大小（字节），失败返回 -1 */
+long fs_size(int fd);
 
 int fs_unlink(const char *name);
 

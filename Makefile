@@ -109,10 +109,9 @@ endif
 
 # 第一个用户进程，以 .incbin 嵌入内核 (src/kernel/init_image.S)
 INIT_ELF = user/init/build/$(ARCH)/init.elf
-INIT_DEPS = $(wildcard user/program.mk user/linker/*.ld \
-              user/init/* user/uart/* user/ramfs/* user/demo/* \
-              user/lib/Makefile user/lib/src/*.cpp user/lib/src/arch/$(ARCH)/*.S \
-              user/lib/include/*.h)
+INIT_DEPS = $(wildcard user/program.mk user/linker/*.ld user/bootfs/* \
+              user/*/Makefile user/*/*.cpp user/*/*.h user/*/*.S \
+              user/lib/src/*.cpp user/lib/src/arch/$(ARCH)/*.S user/lib/include/*.h)
 
 # ============================================================================
 # 源文件
@@ -223,10 +222,10 @@ run-test: $(BOOT_IMAGE)
 	@awk 'function num(key,  s) { if (!match($$0, key ": *[0-9]+")) return 0; \
 	         s = substr($$0, RSTART, RLENGTH); sub(/.*: */, "", s); return s + 0 } \
 	     { t += num("Total tests"); p += num("Passed tests"); f += num("Failed tests") } \
-	     /demo: ready/ { booted = 1 } \
+	     /sh: ready/ { booted = 1 } /selftest: all passed/ { selftest_passed = 1 } \
 	     END { printf "$(ARCH): %d tests, %d passed, %d failed; user space %s (log: $(BUILD_DIR)/test.log)\n", \
-	               t, p, f, booted ? "started" : "NOT started"; \
-	           exit (t == 0 || f > 0 || !booted) }' $(BUILD_DIR)/test.log
+	               t, p, f, booted ? (selftest_passed ? "started, selftest passed" : "started, selftest FAILED") : "NOT started"; \
+	           exit (t == 0 || f > 0 || !booted || !selftest_passed) }' $(BUILD_DIR)/test.log
 
 test-all:
 	@for arch in $(VALID_ARCHS); do \
@@ -238,12 +237,7 @@ test-all:
 # ============================================================================
 
 clean:
-	rm -rf build/$(ARCH) build/$(ARCH)-ktest
-	@$(MAKE) --no-print-directory -C user/init clean ARCH=$(ARCH)
-	@$(MAKE) --no-print-directory -C user/uart clean ARCH=$(ARCH)
-	@$(MAKE) --no-print-directory -C user/demo clean ARCH=$(ARCH)
-	@$(MAKE) --no-print-directory -C user/ramfs clean ARCH=$(ARCH)
-	@$(MAKE) --no-print-directory -C user/lib clean ARCH=$(ARCH)
+	rm -rf build/$(ARCH) build/$(ARCH)-ktest user/*/build/$(ARCH)
 
 clean-all:
 	rm -rf build user/*/build

@@ -123,6 +123,16 @@ long fs_write(int fd, uint32_t offset, const void *buf, size_t len) {
     return (long)done;
 }
 
+long fs_size(int fd) {
+    if (!fs_connect()) {
+        return -1;
+    }
+    struct ipc_msg m = {};
+    m.label = FS_SIZE;
+    m.data[0] = (uint64_t)fd;
+    return fs_request(&m);
+}
+
 int fs_unlink(const char *name) {
     if (!put_name(name)) {
         return -1;
