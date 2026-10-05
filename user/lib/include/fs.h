@@ -5,12 +5,18 @@
 
 // 文件服务：协议和客户端接口。
 //
-// 服务进程以 "fs" 这个名字登记（目前是 user/ramfs，内存文件系统）。
+// 有两个实现同一套协议的服务进程，客户端按文件名的前缀选择：
+//   - 没有前缀：登记为 "fs" 的 user/ramfs（内存文件系统，开机时从启动映像装载）
+//   - "disk:" 前缀：登记为 "diskfs" 的 user/diskfs（磁盘文件系统，内容跨重启保留）
+// 例如 fs_open("hello", 0) 和 fs_open("disk:notes.txt", FS_O_CREATE)。
+//
 // 文件名、读写的数据都不放在消息里，而是放在客户与服务之间的一块共享缓冲区：
 // 客户第一次使用时用 mem_grant 把缓冲区共享给服务，之后每个请求只在消息里
 // 带参数，内容在缓冲区里。命名空间是平的，没有目录。
 
-#define FS_SERVICE_NAME "fs"
+#define FS_SERVICE_NAME         "fs"
+#define FS_DISK_SERVICE_NAME    "diskfs"
+#define FS_DISK_PREFIX          "disk:"
 
 /** 文件名最大长度（含结尾 NUL） */
 #define FS_NAME_MAX     64
@@ -51,9 +57,10 @@ int fs_unlink(const char *name);
 
 /**
  * 列出第 index 个文件
- * @param name 至少 FS_NAME_MAX 字节
- * @return 0 成功，-1 没有这一项
+ * @param where "" 列内存文件系统，FS_DISK_PREFIX 列磁盘文件系统
+ * @param name 至少 FS_NAME_MAX 字节，得到不带前缀的文件名
+ * @return 0 成功，-1 没有这一项（或那个文件系统不存在）
  */
-int fs_list(int index, char *name, uint32_t *size);
+int fs_list(const char *where, int index, char *name, uint32_t *size);
 
 #endif // _USERLAND_LIB_FS_H_

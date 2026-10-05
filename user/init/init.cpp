@@ -13,6 +13,7 @@
 extern "C" const char uart_image_start[], uart_image_end[];
 extern "C" const char blk_image_start[], blk_image_end[];
 extern "C" const char ramfs_image_start[], ramfs_image_end[];
+extern "C" const char diskfs_image_start[], diskfs_image_end[];
 extern "C" const char sh_image_start[], sh_image_end[];
 
 // ============================================================================
@@ -94,6 +95,7 @@ int main() {
     start_module("uart", uart_image_start, uart_image_end, true);
     start_module("blk", blk_image_start, blk_image_end, true);
     start_module("ramfs", ramfs_image_start, ramfs_image_end, false);
+    start_module("diskfs", diskfs_image_start, diskfs_image_end, false);
     start_module("sh", sh_image_start, sh_image_end, false);
 
     struct ipc_msg m;

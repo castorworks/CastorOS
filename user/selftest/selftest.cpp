@@ -193,7 +193,7 @@ static void test_fs(void) {
     char name[FS_NAME_MAX];
     uint32_t size = 0;
     int listed = 0;
-    for (int i = 0; fs_list(i, name, &size) == 0; i++) {
+    for (int i = 0; fs_list("", i, name, &size) == 0; i++) {
         if (strcmp(name, "selftest.dat") == 0 && size == sizeof(out)) {
             listed = 1;
         }
@@ -242,6 +242,48 @@ static void test_block_device(void) {
     report("block device", ok, "ok");
 }
 
+static void test_disk_fs(void) {
+    if (blk_capacity() == 0) {
+        printf("selftest: disk file system: skipped (no disk)\n");
+        return;
+    }
+    // diskfs 要等块设备驱动就绪后才挂载
+    for (int i = 0; i < 100 && name_lookup(FS_DISK_SERVICE_NAME) == 0; i++) {
+        usleep(20000);
+    }
+
+    // 跨多个块的文件：写、读回、从中间读、大小、列表、清空、删除
+    static char out[10000], in[10000];
+    for (size_t i = 0; i < sizeof(out); i++) {
+        out[i] = (char)(i * 11 + i / 127);
+    }
+    const char *path = FS_DISK_PREFIX "selftest.tmp";
+    int fd = fs_open(path, FS_O_CREATE | FS_O_TRUNC);
+    int ok = fd >= 0 &&
+             fs_write(fd, 0, out, sizeof(out)) == (long)sizeof(out) &&
+             fs_size(fd) == (long)sizeof(out) &&
+             fs_read(fd, 0, in, sizeof(in)) == (long)sizeof(in) && memcmp(out, in, sizeof(out)) == 0 &&
+             fs_read(fd, 4090, in, 20) == 20 && memcmp(out + 4090, in, 20) == 0 &&
+             fs_write(fd, 4090, "0123456789", 10) == 10 &&
+             fs_read(fd, 4085, in, 20) == 20 && memcmp(in, out + 4085, 5) == 0 &&
+             memcmp(in + 5, "0123456789", 10) == 0 && memcmp(in + 15, out + 4100, 5) == 0;
+
+    char name[FS_NAME_MAX];
+    uint32_t size = 0;
+    int listed = 0;
+    for (int i = 0; fs_list(FS_DISK_PREFIX, i, name, &size) == 0; i++) {
+        if (strcmp(name, "selftest.tmp") == 0 && size == sizeof(out)) {
+            listed = 1;
+        }
+    }
+    ok = ok && listed && fs_close(fd) == 0;
+
+    fd = fs_open(path, FS_O_TRUNC);
+    ok = ok && fd >= 0 && fs_size(fd) == 0 && fs_read(fd, 0, in, 10) == 0 && fs_close(fd) == 0 &&
+         fs_unlink(path) == 0 && fs_open(path, 0) == -1;
+    report("disk file system", ok, "ok");
+}
+
 int main(int argc, char **argv) {
     // 命令行（或 rc）是带着程序名启动我们的
     report("program arguments", argc >= 1 && strcmp(argv[0], "selftest") == 0 && argv[argc] == NULL, "ok");
@@ -253,6 +295,7 @@ int main(int argc, char **argv) {
     test_names();
     test_fs();
     test_block_device();
+    test_disk_fs();
 
     if (failures == 0) {
         printf("selftest: all passed\n");

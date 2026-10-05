@@ -8,8 +8,8 @@ CastorOS is an educational microkernel for learning and experimentation.
 
 - Targets i686, x86_64 and ARM64; all three build, boot and pass the kernel tests in QEMU
 - The kernel contains only CPU/interrupt setup, memory management, scheduling, sync
-  primitives and a 24-call syscall interface (process, memory, debug output, synchronous IPC,
-  shared memory, and I/O port / device memory / IRQ access for privileged user-space drivers)
+  primitives and a 25-call syscall interface (process, memory, debug output, synchronous IPC,
+  shared memory, and I/O port / device memory / DMA / IRQ access for privileged user-space drivers)
 - File systems, networking, device drivers and shells are **not** in the kernel; they are
   meant to come back as user-space modules (see `docs/microkernel.md`). Do not add them
   to `src/`.
@@ -60,7 +60,7 @@ make ARCH=x86_64
 make ARCH=arm64
 make build-all
 
-make run                # Run in QEMU, serial console on stdio
+make run                # Run in QEMU, serial console on stdio; attaches disk.img (created on first use)
 make debug              # Same, waiting for GDB on :1234
 
 make test               # Build with in-kernel tests (KTEST=1) and run with a timeout
@@ -78,9 +78,12 @@ make info
 process; its ELF is embedded into the kernel image by `src/kernel/init_image.S` (`.incbin`),
 so there is no disk image. init starts the modules and is the name server (`names.h` in
 `user/lib`). Resident modules are embedded into init the same way (`user/init/modules.S`):
-`user/uart` (privileged serial input driver), `user/ramfs` (in-memory file service, protocol
-and client in `fs.h`) and `user/sh` (command line). Other programs (`user/selftest`,
-`user/ls`, `user/cat`, `user/rm`, `user/echo`, `user/hello`) go into the boot image: a ustar archive of `user/bootfs/*` plus the programs
+`user/uart` (privileged serial input driver), `user/blk` (privileged virtio-blk driver,
+protocol and client in `blk.h`), `user/ramfs` (in-memory file service), `user/diskfs`
+(persistent file service on top of blk; files are addressed with a `disk:` prefix) and
+`user/sh` (command line). Both file services share the protocol in `fs.h` and the server
+skeleton in `fs_server.h`. Other programs (`user/selftest`, `user/ls`, `user/cat`, `user/cp`,
+`user/rm`, `user/echo`, `user/disk`, `user/hello`) go into the boot image: a ustar archive of `user/bootfs/*` plus the programs
 in `BOOT_PROGRAMS` (`user/ramfs/Makefile`), embedded in ramfs and unpacked at startup. sh
 runs them with fork + exec, and runs the `rc` file (which starts `selftest`) at boot.
 To add a program, create `user/<name>/` and add it to `BOOT_PROGRAMS`. Every user program's
@@ -123,10 +126,12 @@ CastorOS/
 │   ├── lib/                # User library
 │   ├── init/               # First user process: starts modules, name service
 │   ├── uart/               # Serial input driver (privileged module)
+│   ├── blk/                # virtio-blk driver (privileged module): virtio-pci on x86, virtio-mmio on arm64
+│   ├── diskfs/             # Persistent file service on the block device (unprivileged module)
 │   ├── ramfs/              # In-memory file service (unprivileged module), holds the boot image
 │   ├── sh/                 # Command line (unprivileged module): runs programs with arguments
 │   ├── selftest/           # User-space self-checks, in the boot image, run from rc at boot
-│   ├── ls/ cat/ rm/ echo/ hello/   # Small programs in the boot image
+│   ├── ls/ cat/ cp/ rm/ echo/ disk/ hello/   # Small programs in the boot image
 │   ├── bootfs/             # Static files for the boot image (rc, readme.txt)
 │   ├── program.mk          # Shared build rules for user programs
 │   └── linker/             # User linker scripts
@@ -197,6 +202,9 @@ make test TEST_TIMEOUT=120     # 自定义超时
 ### 手动运行
 
 ```bash
+# 下面的命令不带磁盘（blk 和 diskfs 会直接退出，selftest 跳过磁盘相关的检查）；要带磁盘加上：
+#   x86:   -drive file=disk.img,format=raw,if=none,id=disk0 -device virtio-blk-pci,drive=disk0
+#   arm64: -drive file=disk.img,format=raw,if=none,id=disk0 -device virtio-blk-device,drive=disk0
 # 控制台是串口；向 QEMU 的标准输入写入的内容经 uart 驱动送到 sh
 # （help、write <file> <text> 是内置命令；其余如 ls、cat <file>、echo <words> 是程序）
 timeout 20 qemu-system-i386 -kernel build/i686/castor.bin -serial stdio -display none

@@ -39,28 +39,28 @@ make clean-all
 make help
 ```
 
-内核启动后加载内嵌的 `user/init`：它启动用户态串口驱动 `user/uart`、内存文件系统服务 `user/ramfs` 和命令行 `user/sh`，自己充当名字服务。ramfs 从构建时打好的启动映像里装载文件和程序；sh 先执行 `rc`（运行用户态自检 `selftest`），然后接受命令：
+内核启动后加载内嵌的 `user/init`：它启动用户态的串口驱动 `user/uart`、块设备驱动 `user/blk`、内存文件系统 `user/ramfs`、磁盘文件系统 `user/diskfs` 和命令行 `user/sh`，自己充当名字服务。ramfs 从构建时打好的启动映像里装载文件和程序；sh 先执行 `rc`（运行用户态自检 `selftest`），然后接受命令：
 
 ```
 > ls
-   20916  cat
-   16780  echo
+   24960  cat
+   24960  cp
    16820  hello
-   20876  ls
-      55  rc
-     232  readme.txt
-   20908  rm
-   21244  selftest
+   ...
 > hello one two
-hello from pid 15 (parent 5)
+hello from pid 17 (parent 7)
   argv[1] = one
   argv[2] = two
-> write a.txt hi there
-> cat a.txt
-hi there
+> write disk:note.txt saved on disk
+> cp hello disk:hello
+> ls disk:
+      14  disk:note.txt
+   16820  disk:hello
 ```
 
-键盘输入经 串口中断 → uart 驱动 → IPC 到达 sh；文件操作经 IPC 和共享缓冲区交给 ramfs；运行程序是从 ramfs 读出 ELF 后 `fork` + `exec`，这一行的其余部分作为参数传给 `main(argc, argv)`。
+带 `disk:` 前缀的文件在磁盘（`disk.img`，`make run` 第一次运行时创建）上，重启后还在；磁盘上的程序同样可以直接运行（`disk:hello`）。
+
+键盘输入经 串口中断 → uart 驱动 → IPC 到达 sh；文件操作经 IPC 和共享缓冲区交给文件服务，磁盘文件再经块设备服务到 virtio-blk 驱动；运行程序是从文件服务读出 ELF 后 `fork` + `exec`，这一行的其余部分作为参数传给 `main(argc, argv)`。
 
 ## 目录
 
@@ -74,17 +74,19 @@ src/tests/     内核测试 (KTEST=1)
 user/lib/      用户态库
 user/init/     第一个用户进程：启动模块 + 名字服务
 user/uart/     用户态串口输入驱动
+user/blk/      用户态 virtio-blk 块设备驱动
 user/ramfs/    内存文件系统服务（内嵌启动映像）
+user/diskfs/   磁盘文件系统服务
 user/sh/       命令行
 user/selftest/ 用户态自检程序（在启动映像里）
-user/ls/ cat/ rm/ echo/ hello/   小程序（在启动映像里）
+user/ls/ cat/ cp/ rm/ echo/ disk/ hello/   小程序（在启动映像里）
 user/bootfs/   启动映像里的静态文件
 docs/          文档
 ```
 
 ## 文档
 
-+ [微内核结构](./docs/microkernel.md)：内核边界、启动流程、系统调用表、IPC、共享内存、名字服务、文件服务、启动映像、硬件访问、如何加模块
++ [微内核结构](./docs/microkernel.md)：内核边界、启动流程、系统调用表、IPC、共享内存、名字服务、文件服务、块设备、启动映像、硬件访问、如何加模块
 + [概念讲解](./docs/concepts/00-overview.md)
 + 开发过程记录（写于精简为微内核之前，其中提到的 GRUB 磁盘镜像、VGA、shell 等已不在代码里）：
   [环境](./docs/00-environment.md)、[引导](./docs/01-boot.md)、[基础设施](./docs/02-infrastructure.md)、
