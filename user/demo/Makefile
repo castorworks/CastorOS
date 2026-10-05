@@ -1,4 +1,4 @@
-# demo - 非特权的示例程序：演示各类系统调用，然后回显 uart 驱动送来的输入
+# demo - 非特权的示例程序：检查各类系统调用和服务，然后提供一个很小的命令行
 TARGET = demo
 SOURCES = demo.cpp
 INCLUDES = -I../uart

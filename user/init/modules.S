@@ -11,4 +11,5 @@
 
     .section .rodata
     module uart, uart_IMAGE
+    module ramfs, ramfs_IMAGE
     module demo, demo_IMAGE

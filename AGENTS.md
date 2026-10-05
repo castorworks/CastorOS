@@ -77,8 +77,9 @@ make info
 `user/lib` is the user library (syscall wrappers, printf, string). `user/init` is the first
 process; its ELF is embedded into the kernel image by `src/kernel/init_image.S` (`.incbin`),
 so there is no disk image. init starts the modules and is the name server (`names.h` in
-`user/lib`). Modules (`user/uart`, the privileged serial input driver; `user/demo`, an
-unprivileged example client) are embedded into init the same way (`user/init/modules.S`). Every user program's
+`user/lib`). Modules are embedded into init the same way (`user/init/modules.S`):
+`user/uart` (privileged serial input driver), `user/ramfs` (in-memory file service, protocol
+and client in `fs.h`), and `user/demo` (unprivileged self-checks plus a tiny command line). Every user program's
 Makefile just sets `TARGET`/`SOURCES` and includes `user/program.mk`. The kernel Makefile
 rebuilds all of it when `user/` changes.
 
@@ -118,7 +119,8 @@ CastorOS/
 │   ├── lib/                # User library
 │   ├── init/               # First user process: starts modules, name service
 │   ├── uart/               # Serial input driver (privileged module)
-│   ├── demo/               # Example client (unprivileged module): syscall demos, echoes input
+│   ├── ramfs/              # In-memory file service (unprivileged module)
+│   ├── demo/               # Example client (unprivileged module): self-checks, tiny command line
 │   ├── program.mk          # Shared build rules for user programs
 │   └── linker/             # User linker scripts
 ├── docs/                   # Documentation (Chinese)
@@ -185,7 +187,8 @@ make test TEST_TIMEOUT=120     # 自定义超时
 ### 手动运行
 
 ```bash
-# 控制台是串口；向 QEMU 的标准输入写入的内容经 uart 驱动送到 demo 回显
+# 控制台是串口；向 QEMU 的标准输入写入的内容经 uart 驱动送到 demo 的命令行
+# （ls / cat <file> / write <file> <text> / rm <file> / help）
 timeout 20 qemu-system-i386 -kernel build/i686/castor.bin -serial stdio -display none
 timeout 20 qemu-system-x86_64 -kernel build/x86_64/castor32.elf -serial stdio -display none
 timeout 20 qemu-system-aarch64 -M virt -cpu cortex-a72 -kernel build/arm64/castor.bin -serial stdio -display none

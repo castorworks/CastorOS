@@ -110,7 +110,7 @@ endif
 # 第一个用户进程，以 .incbin 嵌入内核 (src/kernel/init_image.S)
 INIT_ELF = user/init/build/$(ARCH)/init.elf
 INIT_DEPS = $(wildcard user/program.mk user/linker/*.ld \
-              user/init/* user/uart/* user/demo/* \
+              user/init/* user/uart/* user/ramfs/* user/demo/* \
               user/lib/Makefile user/lib/src/*.cpp user/lib/src/arch/$(ARCH)/*.S \
               user/lib/include/*.h)
 
@@ -242,6 +242,7 @@ clean:
 	@$(MAKE) --no-print-directory -C user/init clean ARCH=$(ARCH)
 	@$(MAKE) --no-print-directory -C user/uart clean ARCH=$(ARCH)
 	@$(MAKE) --no-print-directory -C user/demo clean ARCH=$(ARCH)
+	@$(MAKE) --no-print-directory -C user/ramfs clean ARCH=$(ARCH)
 	@$(MAKE) --no-print-directory -C user/lib clean ARCH=$(ARCH)
 
 clean-all:

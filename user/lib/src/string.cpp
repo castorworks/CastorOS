@@ -94,6 +94,17 @@ void *memcpy(void *dest, const void *src, size_t num) {
 }
 
 // 判断是否是数字
+int memcmp(const void *a, const void *b, size_t num) {
+    const unsigned char *pa = (const unsigned char *)a;
+    const unsigned char *pb = (const unsigned char *)b;
+    for (size_t i = 0; i < num; i++) {
+        if (pa[i] != pb[i]) {
+            return pa[i] - pb[i];
+        }
+    }
+    return 0;
+}
+
 int isdigit(int c) {
     return (c >= '0' && c <= '9');
 }

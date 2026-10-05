@@ -1,11 +1,13 @@
 // demo - 非特权的示例程序
 //
-// 由 init 启动。依次演示内存、进程、IPC 和特权，然后按名字找到 uart 驱动，
-// 把它送来的控制台输入回显出来。
+// 由 init 启动。依次检查内存、进程、IPC、特权、共享内存、名字服务和文件服务，
+// 然后变成一个很小的命令行：输入来自 uart 驱动，文件操作交给文件服务。
 
 #include <syscall.h>
 #include <stdio.h>
+#include <string.h>
 #include <names.h>
+#include <fs.h>
 #include <uart.h>
 
 // 演示用的“服务”协议
@@ -160,6 +162,128 @@ static void demo_names(void) {
     printf("demo: name service: %s\n", ok ? "ok" : "FAILED");
 }
 
+static void demo_fs(void) {
+    // 文件服务（user/ramfs）：内容经共享缓冲区传递，一次读写会被拆成多个请求
+    static char out[10000], in[10000];
+    for (size_t i = 0; i < sizeof(out); i++) {
+        out[i] = (char)(i * 7 + i / 251);
+    }
+
+    int fd = fs_open("demo.dat", FS_O_CREATE | FS_O_TRUNC);
+    int ok = fd >= 0 &&
+             fs_write(fd, 0, out, sizeof(out)) == (long)sizeof(out) &&
+             fs_read(fd, 0, in, sizeof(in)) == (long)sizeof(in) &&
+             memcmp(out, in, sizeof(out)) == 0 &&
+             fs_read(fd, 9990, in, 100) == 10 && memcmp(out + 9990, in, 10) == 0 &&
+             fs_open("no-such-file", 0) == -1;
+
+    // 能在列表里找到它，大小正确
+    char name[FS_NAME_MAX];
+    uint32_t size = 0;
+    int listed = 0;
+    for (int i = 0; fs_list(i, name, &size) == 0; i++) {
+        if (strcmp(name, "demo.dat") == 0 && size == sizeof(out)) {
+            listed = 1;
+        }
+    }
+
+    // 另一个进程自己建立连接后能读到同一个文件，但用不了别人的句柄
+    int child = fork();
+    if (child == 0) {
+        char byte = 0;
+        int mine = fs_open("demo.dat", 0);
+        exit(mine >= 0 && fs_read(mine, 5000, &byte, 1) == 1 && byte == out[5000] &&
+             fs_read(fd, 0, &byte, 1) == -1 ? 0 : 1);
+    }
+    int status = 1;
+    waitpid(child, &status, 0);
+
+    ok = ok && listed && WEXITSTATUS(status) == 0 &&
+         fs_close(fd) == 0 && fs_read(fd, 0, in, 1) == -1 &&
+         fs_unlink("demo.dat") == 0 && fs_open("demo.dat", 0) == -1;
+    printf("demo: file service: %s\n", ok ? "ok" : "FAILED");
+}
+
+// ============================================================================
+// 一个很小的命令行：输入来自 uart 驱动，文件操作交给文件服务
+// ============================================================================
+
+static void cmd_ls(void) {
+    char name[FS_NAME_MAX];
+    uint32_t size;
+    int i = 0;
+    for (; fs_list(i, name, &size) == 0; i++) {
+        printf("%8u  %s\n", size, name);
+    }
+    if (i == 0) {
+        printf("(no files)\n");
+    }
+}
+
+static void cmd_cat(const char *name) {
+    int fd = fs_open(name, 0);
+    if (fd < 0) {
+        printf("cat: %s: no such file\n", name);
+        return;
+    }
+    char buf[256];
+    uint32_t offset = 0;
+    long n;
+    while ((n = fs_read(fd, offset, buf, sizeof(buf))) > 0) {
+        console_write(buf, (size_t)n);
+        offset += (uint32_t)n;
+    }
+    fs_close(fd);
+}
+
+static void cmd_write(char *args) {
+    char *text = strchr(args, ' ');
+    if (!text) {
+        printf("usage: write <file> <text>\n");
+        return;
+    }
+    *text++ = '\0';
+    int fd = fs_open(args, FS_O_CREATE | FS_O_TRUNC);
+    size_t len = strlen(text);
+    if (fd < 0 || fs_write(fd, 0, text, len) != (long)len || fs_write(fd, (uint32_t)len, "\n", 1) != 1) {
+        printf("write: %s: failed\n", args);
+    }
+    if (fd >= 0) {
+        fs_close(fd);
+    }
+}
+
+static void run_command(char *line) {
+    while (*line == ' ') {
+        line++;
+    }
+    if (*line == '\0') {
+        return;
+    }
+    char *args = strchr(line, ' ');
+    if (args) {
+        *args++ = '\0';
+    } else {
+        args = line + strlen(line);
+    }
+
+    if (strcmp(line, "help") == 0) {
+        printf("commands: ls, cat <file>, write <file> <text>, rm <file>, help\n");
+    } else if (strcmp(line, "ls") == 0) {
+        cmd_ls();
+    } else if (strcmp(line, "cat") == 0 && *args) {
+        cmd_cat(args);
+    } else if (strcmp(line, "write") == 0 && *args) {
+        cmd_write(args);
+    } else if (strcmp(line, "rm") == 0 && *args) {
+        if (fs_unlink(args) != 0) {
+            printf("rm: %s: no such file\n", args);
+        }
+    } else {
+        printf("%s: unknown command (try help)\n", line);
+    }
+}
+
 int main() {
     printf("demo: started, pid=%d\n", getpid());
 
@@ -168,9 +292,13 @@ int main() {
     demo_privilege();
     demo_shared_memory();
     demo_names();
+    demo_fs();
 
     int uart = name_wait("uart");
-    printf("demo: ready, echoing console input from uart (pid %d)\n", uart);
+    printf("demo: ready, reading commands from uart (pid %d); try help\n> ", uart);
+
+    static char line[128];
+    size_t len = 0;
     for (;;) {
         struct ipc_msg m = {};
         m.label = UART_READ;
@@ -178,6 +306,24 @@ int main() {
             printf("demo: uart driver is gone\n");
             return 1;
         }
-        console_write(&m.data[1], (size_t)m.data[0]);
+        const char *in = (const char *)&m.data[1];
+        for (size_t i = 0; i < (size_t)m.data[0]; i++) {
+            char c = in[i];
+            if (c == '\r' || c == '\n') {
+                console_write("\n", 1);
+                line[len] = '\0';
+                run_command(line);
+                len = 0;
+                console_write("> ", 2);
+            } else if (c == 0x7F || c == '\b') {
+                if (len > 0) {
+                    len--;
+                    console_write("\b \b", 3);
+                }
+            } else if (len < sizeof(line) - 1) {
+                line[len++] = c;
+                console_write(&c, 1);
+            }
+        }
     }
 }
