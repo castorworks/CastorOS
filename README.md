@@ -65,7 +65,7 @@ HTTP/1.1 200 OK
 ...
 ```
 
-`cmd > file`、`cmd < file`、`cmd 2> file`、`cmd1 | cmd2`（如 `ls | grep sh | wc`）可以重定向和接管道，`"带 空格"` 的参数用引号。行尾加 `&` 让程序在后台运行（`jobs` 查看，`kill <pid>` 终止），Ctrl-C 终止前台程序。
+`cmd > file`、`cmd < file`、`cmd 2> file`、`cmd1 | cmd2`（如 `ls | grep sh | wc`）可以重定向和接管道，`"带 空格"` 的参数用引号。文本文件可以当脚本运行（每行一条命令，`$1`-`$9` 是参数）。行尾加 `&` 让程序在后台运行（`jobs` 查看，`kill <pid>` 终止），Ctrl-C 终止前台程序。
 
 带 `disk:` 前缀的文件在磁盘（`disk.img`，`make run` 第一次运行时创建）上，重启后还在；磁盘上的程序同样可以直接运行（`disk:hello`）。
 

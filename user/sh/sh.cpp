@@ -5,7 +5,7 @@
 // 行尾加 & 让程序在后台运行；前台程序运行期间按 Ctrl-C 终止它。
 // cmd < in > out 2> err 把程序的标准输入/输出/错误输出换成文件，cmd1 | cmd2 把前一个的输出
 // 接到后一个的输入；引号里的内容原样作为参数。
-// 启动时先执行文件 "rc" 里的每一行。
+// 不是 ELF 映像的文件当作脚本，逐行执行；启动时先执行脚本 "rc"。
 //
 // sh 是终端的主人（见 <console.h>）：程序在前台运行期间，键盘输入归那个程序，
 // sh 只收到 Ctrl-C。
@@ -224,6 +224,9 @@ static void exec_stage(struct stage *st, int in_pid, int out_pid) {
 }
 
 // 运行一条管道（只有一段时就是一个程序）
+// 前台程序被 Ctrl-C 打断过：正在执行的脚本据此停下来，不再执行后面的行
+static bool interrupted_by_user = false;
+
 static void run_pipeline(struct stage *stages, int count, bool background) {
     // 先把每一段的程序都读进来：有一个找不到就什么都不运行
     for (int i = 0; i < count; i++) {
@@ -314,6 +317,7 @@ static void run_pipeline(struct stage *stages, int count, bool background) {
                     }
                 }
                 interrupted = true;
+                interrupted_by_user = true;
             }
         }
         set_foreground(0);
@@ -333,6 +337,9 @@ unload:
 // ============================================================================
 // 解析命令行
 // ============================================================================
+
+static bool is_script(const char *name);
+static void run_script_command(char **argv, int argc, bool background);
 
 #define MAX_TOKENS 64
 
@@ -505,6 +512,7 @@ static void run_command(char *line) {
             printf("  cmd < file > file      read input from / write output to a file (>> appends)\n");
             printf("  cmd 2> file            write error messages to a file\n");
             printf("  cmd | cmd              feed one program's output to the next, e.g.: ls | grep sh | wc\n");
+            printf("a text file is run as a script, one command per line; $1-$9 are its arguments\n");
             return;
         }
         if (strcmp(st->argv[0], "jobs") == 0) {
@@ -520,29 +528,142 @@ static void run_command(char *line) {
             return;
         }
     }
+
+    // 不是 ELF 映像的文件当作脚本：由命令行自己逐行执行，而不是交给内核去 exec
+    for (int i = 0; i < count; i++) {
+        struct stage *st = &stages[i];
+        if (!is_script(st->argv[0])) {
+            continue;
+        }
+        if (count > 1 || st->in_file || st->out_file || st->err_file) {
+            printf("sh: %s is a script: it cannot be piped or redirected\n", st->argv[0]);
+        } else {
+            run_script_command(st->argv, st->argc, background);
+        }
+        return;
+    }
     run_pipeline(stages, count, background);
 }
 
-// 执行启动脚本：文件 "rc" 里每行一条命令
-static void run_rc(void) {
-    size_t size = 0;
-    char *script = (char *)load_file("rc", &size);
-    if (!script) {
-        return;
+// ============================================================================
+// 脚本
+// ============================================================================
+//
+// 脚本是一个文本文件，每行一条命令，和在提示符下敲的一样（# 开头的行是注释）。
+// 命令行里 $0 是脚本名，$1 - $9 是调用它时给的参数，没有给的是空的；替换是纯文本的，
+// 发生在分词之前，所以引号里的也会被替换。开机时执行的 rc 就是一个脚本。
+
+#define SCRIPT_MAX_DEPTH    4       // 脚本里可以再调脚本，最多这么多层
+#define SCRIPT_MAX_ARGS     10      // $0 - $9
+#define SCRIPT_LINE_MAX     256
+
+static const char ELF_MAGIC[4] = { 0x7F, 'E', 'L', 'F' };
+static int script_depth = 0;
+
+/** 文件存在而且不是 ELF 映像 */
+static bool is_script(const char *name) {
+    int fd = fs_open(name, 0);
+    if (fd < 0) {
+        return false;
     }
-    static char line[128];
-    size_t len = 0;
-    for (size_t i = 0; i <= size; i++) {
-        char c = i < size ? script[i] : '\n';
-        if (c == '\n') {
-            line[len] = '\0';
-            run_command(line);
-            len = 0;
-        } else if (len < sizeof(line) - 1) {
-            line[len++] = c;
+    char head[4];
+    long n = fs_read(fd, 0, head, sizeof(head));
+    fs_close(fd);
+    return n >= 0 && !(n == (long)sizeof(head) && memcmp(head, ELF_MAGIC, sizeof(head)) == 0);
+}
+
+/** 把一行里的 $0 - $9 换成参数，写进 out。太长的行截断 */
+static void expand_args(const char *line, size_t len, char **argv, int argc, char *out, size_t out_size) {
+    size_t n = 0;
+    for (size_t i = 0; i < len && n + 1 < out_size; i++) {
+        if (line[i] == '$' && i + 1 < len && line[i + 1] >= '0' && line[i + 1] <= '9') {
+            int index = line[++i] - '0';
+            const char *value = index < argc ? argv[index] : "";
+            while (*value && n + 1 < out_size) {
+                out[n++] = *value++;
+            }
+        } else {
+            out[n++] = line[i];
         }
     }
+    out[n] = '\0';
+}
+
+/** 逐行执行一个脚本。argv[0] 是脚本的文件名 */
+static void run_script(char **argv, int argc) {
+    if (script_depth == SCRIPT_MAX_DEPTH) {
+        printf("sh: %s: scripts nested too deeply\n", argv[0]);
+        return;
+    }
+    size_t size = 0;
+    char *script = (char *)load_file(argv[0], &size);
+    if (!script) {
+        return;         // 空文件：没有什么可执行的
+    }
+
+    script_depth++;
+    char line[SCRIPT_LINE_MAX];     // 在栈上：脚本可以嵌套
+    for (size_t start = 0; start < size && !interrupted_by_user; ) {
+        size_t end = start;
+        while (end < size && script[end] != '\n') {
+            end++;
+        }
+        expand_args(script + start, end - start, argv, argc, line, sizeof(line));
+        run_command(line);
+        start = end + 1;
+    }
+    script_depth--;
     munmap(script, size);
+}
+
+/** 运行一个脚本命令。参数先复制出来：执行脚本里的命令会覆盖解析用的缓冲区 */
+static void run_script_command(char **argv, int argc, bool background) {
+    char storage[SCRIPT_LINE_MAX];
+    char *args[SCRIPT_MAX_ARGS];
+    int count = 0;
+    size_t used = 0;
+    for (int i = 0; i < argc && count < SCRIPT_MAX_ARGS; i++) {
+        size_t len = strlen(argv[i]) + 1;
+        if (used + len > sizeof(storage)) {
+            break;
+        }
+        memcpy(storage + used, argv[i], len);
+        args[count++] = storage + used;
+        used += len;
+    }
+
+    if (!background) {
+        run_script(args, count);
+        return;
+    }
+
+    // 后台：一个 sh 的副本去执行它。副本不是终端的主人，它启动的程序读不到键盘
+    int slot = -1;
+    for (int i = 0; i < MAX_JOBS && slot < 0; i++) {
+        if (jobs[i].pid == 0) {
+            slot = i;
+        }
+    }
+    if (slot < 0) {
+        printf("%s: too many background jobs\n", args[0]);
+        return;
+    }
+    int pid = fork();
+    if (pid == 0) {
+        uart = 0;
+        pending_len = 0;
+        memset(jobs, 0, sizeof(jobs));
+        run_script(args, count);
+        exit(0);
+    }
+    if (pid < 0) {
+        printf("%s: fork failed\n", args[0]);
+        return;
+    }
+    jobs[slot].pid = pid;
+    strncpy(jobs[slot].name, args[0], sizeof(jobs[slot].name) - 1);
+    jobs[slot].name[sizeof(jobs[slot].name) - 1] = '\0';
+    printf("[%d] %s\n", pid, args[0]);
 }
 
 int main() {
@@ -553,7 +674,12 @@ int main() {
         printf("sh: cannot use the uart driver\n");
         return 1;
     }
-    run_rc();
+    // 启动脚本
+    if (is_script("rc")) {
+        char rc_name[] = "rc";
+        char *rc_argv[] = { rc_name };
+        run_script(rc_argv, 1);
+    }
     printf("sh: ready, reading commands from uart (pid %d); try help\n> ", uart);
 
     static char line[128];
@@ -575,6 +701,7 @@ int main() {
         if (c == '\r' || c == '\n') {
             console_write("\n", 1);
             line[len] = '\0';
+            interrupted_by_user = false;
             run_command(line);
             len = 0;
             reap_jobs();

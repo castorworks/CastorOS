@@ -10,7 +10,7 @@
 #include <fs.h>
 #include <fs_server.h>
 
-#define MAX_FILES       32
+#define MAX_FILES       128
 #define MAX_FILE_SIZE   (4u * 1024 * 1024)
 
 struct file {

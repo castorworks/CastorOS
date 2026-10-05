@@ -1,5 +1,5 @@
 #!/bin/bash
-# 启动 QEMU，等命令行就绪后向串口输入一串命令，检查命令行的行为（后台任务、Ctrl-C、kill、程序读键盘输入、重定向和管道、引号、标准错误）。
+# 启动 QEMU，等命令行就绪后向串口输入一串命令，检查命令行的行为（后台任务、Ctrl-C、kill、程序读键盘输入、重定向和管道、引号、标准错误、脚本）。
 # 由 make test 调用：
 #
 #   scripts/shell-test.sh <log> <results> <boot-timeout-seconds> <qemu command...>
@@ -201,6 +201,30 @@ standard_error() {
     send 'cat both\n'; expect '^hello   world$'
 }
 check "standard error" standard_error
+
+# ---- 脚本：逐行执行、参数、嵌套、后台、Ctrl-C 停下整个脚本 ----
+scripts() {
+    send 'write greet "echo hello $1"\n'; expect '> $' || return 1
+    send "echo 'echo from \$0, second \$2' >> greet\n"; expect '> $' || return 1
+    send 'greet world again\n'; expect '^hello world$' && expect '^from greet, second again$' || return 1
+    send 'write outer "greet nested"\n'; expect '> $' || return 1
+    send 'outer\n'; expect '^hello nested$' || return 1
+    send 'greet later &\n'; expect '(^|> )hello later$' && expect '\] done  greet$' || return 1
+    send 'write forever forever\n'; expect '> $' || return 1
+    send 'forever\n'; expect '^sh: forever: scripts nested too deeply$' || return 1
+    send 'greet | wc\n'; expect 'is a script: it cannot be piped or redirected$'
+}
+check "scripts" scripts
+
+script_interrupt() {
+    send 'write slow "sleep 60"\n'; expect '> $' || return 1
+    send 'echo "echo not reached" >> slow\n'; expect '> $' || return 1
+    send 'slow\n'; sleep 0.5
+    send '\003'; expect '^sleep: killed by signal 2$' || return 1
+    send 'echo after the script\n'; expect '^after the script$' || return 1
+    ! output | grep -aq '^not reached$'
+}
+check "ctrl-c stops a script" script_interrupt
 
 [ $failed -eq 0 ] && echo "shelltest: all passed" >> "$RESULTS"
 exit 0
