@@ -271,36 +271,73 @@ bool hal::Mmu::protect(hal_addr_space_t space, vaddr_t virt,
 }
 
 /**
- * @brief 克隆地址空间 (i686, COW 语义)
- * 
- * 创建地址空间的副本，用户空间页面使用 Copy-on-Write 语义：
- * - 用户页面被标记为只读 + COW
- * - 物理页面的引用计数增加
- * - 内核空间直接共享（不复制）
- * 
- * @param src 源地址空间句柄
- * @return 新地址空间句柄，失败返回 HAL_ADDR_SPACE_INVALID
+ * @brief 克隆地址空间（fork 用），写时复制
+ *
+ * 内核半区的页目录项原样共享。用户半区的页表各复制一份，页表项指向同一批物理页：
+ * 可写的页在两边都改成只读并打上 COW 标记（PAGE_SHARED 的共享映射除外，保持原样），
+ * 每个被共享的物理页引用计数加一。第一次写入时由缺页处理复制。
  */
 hal_addr_space_t hal::Mmu::clone_space(hal_addr_space_t src) {
-    /* Validate source address space */
     if (src == HAL_ADDR_SPACE_INVALID) {
         return HAL_ADDR_SPACE_INVALID;
     }
-    
-    /* Get source page directory */
-    paddr_t src_phys = (src == HAL_ADDR_SPACE_CURRENT || src == 0) 
-                       ? hal::Mmu::get_current_page_table() 
+    paddr_t src_phys = (src == HAL_ADDR_SPACE_CURRENT || src == 0)
+                       ? hal::Mmu::get_current_page_table()
                        : src;
-    
-    /* Use VMM's clone function which already implements COW */
-    uintptr_t new_dir_phys = mm::Vmm::clone_page_directory((uintptr_t)src_phys);
-    
-    if (new_dir_phys == 0) {
+
+    paddr_t new_phys = mm::Pmm::alloc_frame();
+    if (new_phys == PADDR_INVALID) {
         return HAL_ADDR_SPACE_INVALID;
     }
-    
-    return (hal_addr_space_t)new_dir_phys;
+    page_directory_t *src_dir = (page_directory_t *)PHYS_TO_VIRT((uintptr_t)src_phys);
+    page_directory_t *new_dir = (page_directory_t *)PHYS_TO_VIRT((uintptr_t)new_phys);
+    memset(new_dir, 0, sizeof(page_directory_t));
+    for (uint32_t i = 512; i < 1024; i++) {
+        new_dir->entries[i] = src_dir->entries[i];
+    }
+
+    bool failed = false;
+    for (uint32_t i = 0; i < 512 && !failed; i++) {
+        if (!i686_is_present(src_dir->entries[i])) {
+            continue;
+        }
+        paddr_t new_table_phys = mm::Pmm::alloc_frame();
+        if (new_table_phys == PADDR_INVALID) {
+            failed = true;
+            break;
+        }
+        page_table_t *src_table = (page_table_t *)PHYS_TO_VIRT(i686_get_frame(src_dir->entries[i]));
+        page_table_t *new_table = (page_table_t *)PHYS_TO_VIRT((uintptr_t)new_table_phys);
+
+        for (uint32_t j = 0; j < 1024; j++) {
+            uint32_t entry = src_table->entries[j];
+            if (!i686_is_present(entry)) {
+                new_table->entries[j] = 0;
+                continue;
+            }
+            if ((entry & PAGE_WRITE) && !(entry & PAGE_SHARED)) {
+                entry = (entry & ~(uint32_t)PAGE_WRITE) | PAGE_COW;
+                src_table->entries[j] = entry;
+            }
+            new_table->entries[j] = entry;
+            mm::Pmm::frame_ref_share(i686_get_frame(entry));
+        }
+        new_dir->entries[i] = (uint32_t)new_table_phys | (src_dir->entries[i] & 0xFFF);
+    }
+
+    // 源地址空间的页表项被改成了只读：它正在使用的话，旧的 TLB 项必须作废
+    if (src_phys == hal::Mmu::get_current_page_table()) {
+        hal::Mmu::flush_tlb_all();
+    }
+
+    if (failed) {
+        // 源这边已经打上的 COW 标记不用撤销：引用计数为 1 的 COW 页在写入时直接恢复可写
+        hal::Mmu::destroy_space((hal_addr_space_t)new_phys);
+        return HAL_ADDR_SPACE_INVALID;
+    }
+    return (hal_addr_space_t)new_phys;
 }
+
 
 /**
  * @brief 创建新地址空间 (i686)
@@ -338,27 +375,44 @@ hal_addr_space_t hal::Mmu::create_space() {
 }
 
 /**
- * @brief 销毁地址空间 (i686)
- * 
- * 释放页目录和所有用户空间页表，递减共享物理页的引用计数。
- * 
- * @param space 要销毁的地址空间句柄
- * 
- * @warning 不能销毁当前活动的地址空间
+ * @brief 销毁地址空间：释放用户半区的物理页、页表和页目录本身
+ *
+ * 物理页由引用计数管理（Pmm::free_frame 只在计数归零时真正释放），所以和别的
+ * 地址空间共享的 COW 页、共享映射不会被提前释放。内核半区的页表是共享的，不动。
  */
 void hal::Mmu::destroy_space(hal_addr_space_t space) {
     if (space == HAL_ADDR_SPACE_INVALID || space == 0) {
         return;
     }
-    
-    /* Don't destroy current address space */
-    if (space == hal::Mmu::current_space()) {
-        LOG_ERROR_MSG("HAL MMU: Cannot destroy current address space\n");
+    if (space == hal::Mmu::current_space() ||
+        space == (hal_addr_space_t)VIRT_TO_PHYS((uintptr_t)boot_page_directory)) {
+        LOG_ERROR_MSG("HAL MMU: Cannot destroy the current or the boot address space\n");
         return;
     }
-    
-    mm::Vmm::free_page_directory((uintptr_t)space);
+
+    page_directory_t *dir = (page_directory_t *)PHYS_TO_VIRT((uintptr_t)space);
+    for (uint32_t i = 0; i < 512; i++) {
+        if (!i686_is_present(dir->entries[i])) {
+            continue;
+        }
+        uint32_t table_phys = i686_get_frame(dir->entries[i]);
+        page_table_t *table = (page_table_t *)PHYS_TO_VIRT(table_phys);
+        for (uint32_t j = 0; j < 1024; j++) {
+            if (!i686_is_present(table->entries[j])) {
+                continue;
+            }
+            uint32_t frame = i686_get_frame(table->entries[j]);
+            // 物理内存之上的设备内存（map_device）不归 PMM 管，没有什么可释放的
+            if (frame != 0 && frame < 0x80000000) {
+                mm::Pmm::free_frame(frame);
+            }
+        }
+        mm::Pmm::free_frame(table_phys);
+        dir->entries[i] = 0;
+    }
+    mm::Pmm::free_frame((paddr_t)space);
 }
+
 
 /**
  * @brief 映射虚拟页到物理页 (i686)

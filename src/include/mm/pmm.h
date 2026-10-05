@@ -112,18 +112,6 @@ public:
         return (addr & (HUGE_PAGE_SIZE - 1)) == 0;
     }
 
-    /**
-     * @brief 将物理页帧标记为受保护（禁止释放）
-     * @param frame 页帧的物理地址
-     */
-    static void protect_frame(paddr_t frame);
-
-    /**
-     * @brief 取消物理页帧的保护标记
-     * @param frame 页帧的物理地址
-     */
-    static void unprotect_frame(paddr_t frame);
-
     /*============================================================================
      * 引用计数接口（COW 支持）
      *============================================================================*/

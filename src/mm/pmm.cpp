@@ -15,21 +15,12 @@
 #include <kernel/panic.h>
 #include <kernel/sync/spinlock.h>
 
-#define MAX_PROTECTED_FRAMES 65536
-
-typedef struct {
-    paddr_t frame;
-    uint32_t refcount;
-} protected_frame_t;
-
 static uint32_t *frame_bitmap = NULL;     ///< 页帧位图
 static pfn_t bitmap_size = 0;             ///< 位图大小（32位字数量）
 static pfn_t total_frames = 0;            ///< 总页帧数
 static mm::PmmInfo pmm_info = {};         ///< 物理内存信息
 static pfn_t last_free_index = 0;         ///< 上次分配的空闲页帧索引（优化搜索）
 static sync::Spinlock pmm_lock;               ///< PMM 自旋锁
-static protected_frame_t protected_frames[MAX_PROTECTED_FRAMES];
-static uint32_t protected_frame_count = 0;
 static uint16_t *frame_refcount = NULL;   ///< 页帧引用计数数组（每帧2字节，最大65535引用）
 static uintptr_t pmm_data_end_virt = 0;   ///< PMM 数据结构结束的虚拟地址（位图+引用计数表）
 extern char _kernel_start[];              ///< 内核起始地址
@@ -43,15 +34,6 @@ extern char _kernel_end[];                ///< 内核结束地址
 
 static paddr_t heap_reserved_phys_start = 0;  ///< 堆保留区物理起始地址
 static paddr_t heap_reserved_phys_end = 0;    ///< 堆保留区物理结束地址
-
-static inline protected_frame_t* find_protected_frame_unsafe(paddr_t frame) {
-    for (uint32_t i = 0; i < protected_frame_count; i++) {
-        if (protected_frames[i].frame == frame) {
-            return &protected_frames[i];
-        }
-    }
-    return NULL;
-}
 
 /**
  * @brief 标记页帧为已使用
@@ -138,82 +120,6 @@ static pfn_t find_free_frame(void) {
     }
     
     return PFN_INVALID;
-}
-
-/**
- * @brief 将物理帧加入保护列表
- */
-void mm::Pmm::protect_frame(paddr_t frame) {
-    if (frame == 0 || frame == PADDR_INVALID) {
-        return;
-    }
-    if (!IS_PADDR_ALIGNED(frame)) {
-        LOG_WARN_MSG("PMM: mm::Pmm::protect_frame received unaligned frame 0x%llx, aligning down\n", 
-                    (unsigned long long)frame);
-        frame = PADDR_ALIGN_DOWN(frame);
-    }
-    
-    sync::SpinlockIrqGuard guard(pmm_lock);
-    
-    // 确保受保护的帧在位图中被标记为已使用
-    pfn_t idx = PADDR_TO_PFN(frame);
-    if (idx < total_frames && !test_frame(idx)) {
-        LOG_WARN_MSG("PMM: Protecting frame 0x%llx that was FREE in bitmap! Marking as used.\n", 
-                    (unsigned long long)frame);
-        set_frame(idx);
-        pmm_info.free_frames--;
-        pmm_info.used_frames++;
-        frame_refcount[idx] = 1;
-    }
-    
-    protected_frame_t *entry = find_protected_frame_unsafe(frame);
-    if (entry) {
-        entry->refcount++;
-    } else if (protected_frame_count < MAX_PROTECTED_FRAMES) {
-        protected_frames[protected_frame_count].frame = frame;
-        protected_frames[protected_frame_count].refcount = 1;
-        protected_frame_count++;
-    } else {
-        LOG_ERROR_MSG("PMM: Protected frame table full! Cannot protect 0x%llx\n", 
-                     (unsigned long long)frame);
-    }
-}
-
-/**
- * @brief 将物理帧从保护列表移除
- */
-void mm::Pmm::unprotect_frame(paddr_t frame) {
-    if (frame == 0 || frame == PADDR_INVALID) {
-        return;
-    }
-    if (!IS_PADDR_ALIGNED(frame)) {
-        LOG_WARN_MSG("PMM: mm::Pmm::unprotect_frame received unaligned frame 0x%llx, aligning down\n", 
-                    (unsigned long long)frame);
-        frame = PADDR_ALIGN_DOWN(frame);
-    }
-    
-    sync::SpinlockIrqGuard guard(pmm_lock);
-    
-    protected_frame_t *entry = find_protected_frame_unsafe(frame);
-    if (!entry) {
-        // 正常情况：只有 fork 克隆出来的页表会被保护，映射时新建的页表不会，
-        // 而释放地址空间时两种都会走到这里
-        LOG_DEBUG_MSG("PMM: unprotect of a frame that was not protected: 0x%llx\n", 
-                     (unsigned long long)frame);
-        return;
-    }
-    
-    if (entry->refcount == 0) {
-        LOG_ERROR_MSG("PMM: Frame 0x%llx has zero refcount while protected!\n", 
-                     (unsigned long long)frame);
-    } else {
-        entry->refcount--;
-    }
-    
-    if (entry->refcount == 0) {
-        protected_frame_count--;
-        *entry = protected_frames[protected_frame_count];
-    }
 }
 
 /**
@@ -680,17 +586,6 @@ paddr_t mm::Pmm::alloc_frame() {
                     (unsigned long long)addr);
     }
     
-    // 关键安全检查：确保我们没有分配一个受保护的帧
-    if (find_protected_frame_unsafe(addr)) {
-        LOG_ERROR_MSG("PMM: CRITICAL! Allocated frame 0x%llx is protected!\n", 
-                     (unsigned long long)addr);
-        clear_frame(idx);
-        frame_refcount[idx] = 0;
-        pmm_info.free_frames++;
-        pmm_info.used_frames--;
-        return PADDR_INVALID;
-    }
-    
     // 清零页帧内容
     memset((void*)PHYS_TO_VIRT(addr), 0, PAGE_SIZE);
     
@@ -742,12 +637,6 @@ void mm::Pmm::free_frame(paddr_t frame) {
             LOG_WARN_MSG("PMM: Double free or freeing unused frame 0x%llx (idx %llu)\n", 
                         (unsigned long long)frame, (unsigned long long)idx);
         }
-        return;
-    }
-    
-    if (find_protected_frame_unsafe(frame)) {
-        LOG_ERROR_MSG("PMM: Attempt to free protected frame 0x%llx blocked\n", 
-                     (unsigned long long)frame);
         return;
     }
     
@@ -898,11 +787,11 @@ paddr_t mm::Pmm::alloc_contiguous(size_t count) {
 
     sync::SpinlockIrqGuard guard(pmm_lock);
 
-    // 找一段连续的空闲帧（跳过受保护的帧）
+    // 找一段连续的空闲帧
     pfn_t run_start = 0;
     size_t run = 0;
     for (pfn_t i = 1; i < total_frames && run < count; i++) {
-        if (test_frame(i) || find_protected_frame_unsafe(PFN_TO_PADDR(i))) {
+        if (test_frame(i)) {
             run = 0;
             continue;
         }
