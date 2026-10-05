@@ -68,6 +68,12 @@ void hal::Cpu::halt() {
     __asm__ volatile("hlt");
 }
 
+void hal::Cpu::idle() {
+    /* sti only takes effect after the following instruction, so no interrupt
+     * can slip in between enabling interrupts and halting */
+    __asm__ volatile("sti; hlt");
+}
+
 /* ============================================================================
  * Interrupt Management
  * ========================================================================== */

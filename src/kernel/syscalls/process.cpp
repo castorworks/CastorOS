@@ -888,24 +888,13 @@ uint32_t syscall::Process::waitpid(int32_t pid, uint32_t *wstatus, uint32_t opti
             return 0;
         }
         
-        // 自己被 kill 了：不再等下去，返回到系统调用出口去执行退出
+        // 自己被 kill 了（request_kill 会把等子进程的任务唤醒）：返回到系统调用出口去执行退出
         if (current->kill_pending) {
             return (uint32_t)-1;
         }
 
-        // 阻塞等待：让出 CPU，稍后重试
-        // 这里使用简单的轮询 + yield 策略
-        // 更好的实现应该让进程进入 BLOCKED 状态，并在子进程退出时唤醒
-        kernel::Scheduler::yield();
-
-        // 回到这里说明暂时没有别的任务可运行。开中断等下一次中断再重试：
-        // arm64 的系统调用全程屏蔽中断，不这样做时钟中断进不来，
-        // 正在 sleep 的子进程永远不会被唤醒。
-        bool irq_was_enabled = kernel::Interrupts::disable();
-        kernel::Interrupts::enable();
-        hal::Cpu::halt();
-        if (!irq_was_enabled) {
-            kernel::Interrupts::disable();
-        }
+        // 阻塞到有子进程退出：exit_current 在子进程变成僵尸时唤醒我们
+        // （等待对象就是自己的 PCB）。从上面的检查到这里没有调度点，不会错过唤醒。
+        kernel::Scheduler::block(current);
     }
 }

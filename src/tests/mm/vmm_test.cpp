@@ -1287,7 +1287,7 @@ TEST_CASE(test_pbt_vmm_user_mapping_flags) {
     
     // Property: All user space mappings should have USER flag set
     // We verify this by checking the page table entries
-    page_directory_t *pd = (page_directory_t*)PHYS_TO_VIRT(dir);
+    [[maybe_unused]] page_directory_t *pd = (page_directory_t*)PHYS_TO_VIRT(dir);
     
     for (uint32_t i = 0; i < mapped; i++) {
         uintptr_t virt = virt_addrs[i];
@@ -1331,7 +1331,7 @@ TEST_CASE(test_pbt_vmm_kernel_mapping_no_user_flag) {
     uintptr_t dir = mm::Vmm::get_page_directory();
     ASSERT_NE_U(dir, 0);
     
-    page_directory_t *pd = (page_directory_t*)PHYS_TO_VIRT(dir);
+    [[maybe_unused]] page_directory_t *pd = (page_directory_t*)PHYS_TO_VIRT(dir);
     
 #if !defined(ARCH_X86_64)
     // Check kernel space entries (512-1023 for i686)

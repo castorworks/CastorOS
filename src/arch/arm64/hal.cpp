@@ -77,6 +77,12 @@ void hal::Cpu::halt() {
     __asm__ volatile("wfi");
 }
 
+void hal::Cpu::idle() {
+    /* wfi wakes up for a pending interrupt even while IRQs are masked;
+     * unmasking afterwards lets the handler run */
+    __asm__ volatile("wfi; msr daifclr, #2" ::: "memory");
+}
+
 /* ============================================================================
  * Interrupt Management
  * ========================================================================== */

@@ -30,6 +30,6 @@ FORCE:
 $(BOOTFS_TAR): $(BOOT_ELFS) $(BOOT_FILES)
 	@rm -rf $(BOOTFS_DIR) && mkdir -p $(BOOTFS_DIR)
 	@cp $(BOOT_FILES) $(BOOTFS_DIR)/
-	@for p in $(BOOT_PROGRAMS); do $(CROSS)strip -o $(BOOTFS_DIR)/$$p ../$$p/build/$(ARCH)/$$p.elf; done
+	@for p in $(BOOT_PROGRAMS); do cp ../$$p/build/$(ARCH)/$$p.stripped.elf $(BOOTFS_DIR)/$$p; done
 	@cd $(BOOTFS_DIR) && COPYFILE_DISABLE=1 tar --format=ustar -cf ../bootfs.tar *
 	@echo "[OK] boot image: $(BOOTFS_TAR) ($(notdir $(BOOT_FILES)) $(BOOT_PROGRAMS))"

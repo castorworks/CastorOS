@@ -641,39 +641,6 @@ static void print_arch_diagnostics(void) {
     kprintf("\n");
 }
 
-/**
- * @brief 打印架构特定的调试提示
- * 
- * 当测试失败时提供架构特定的调试建议
- * **Validates: Requirements 7.3**
- */
-static void print_arch_debug_hints(void) {
-    kprintf("\n");
-    kprintf("--------------------------------------------------------------------------------\n");
-    kprintf("Architecture-Specific Debugging Hints:\n");
-    kprintf("--------------------------------------------------------------------------------\n");
-    
-#if defined(ARCH_I686)
-    kprintf("  - Check 32-bit address calculations (4GB limit)\n");
-    kprintf("  - Verify 2-level page table operations (PDE/PTE)\n");
-    kprintf("  - Ensure PAGE_SIZE is 4096 bytes\n");
-    kprintf("  - Check GDT/IDT setup for protected mode\n");
-#elif defined(ARCH_X86_64)
-    kprintf("  - Check 64-bit address sign extension (canonical form)\n");
-    kprintf("  - Verify 4-level page table operations\n");
-    kprintf("  - Ensure NX bit handling is correct\n");
-    kprintf("  - Check long mode GDT setup\n");
-#elif defined(ARCH_ARM64)
-    kprintf("  - Check TTBR0/TTBR1 configuration\n");
-    kprintf("  - Verify 4-level page table operations\n");
-    kprintf("  - Ensure memory attributes are correct (MAIR)\n");
-    kprintf("  - Check exception level (EL1 expected)\n");
-#endif
-    
-    kprintf("--------------------------------------------------------------------------------\n");
-    kprintf("\n");
-}
-
 // ============================================================================
 // 运行所有测试
 // ============================================================================

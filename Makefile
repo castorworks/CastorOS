@@ -182,7 +182,7 @@ $(INIT_ELF): $(INIT_DEPS)
 
 $(INIT_OBJECT): $(SRC_DIR)/kernel/init_image.S $(INIT_ELF)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -DINIT_IMAGE='"$(INIT_ELF)"' -c $< -o $@
+	$(CC) $(CFLAGS) -DINIT_IMAGE='"$(INIT_ELF:.elf=.stripped.elf)"' -c $< -o $@
 
 init: $(INIT_ELF)
 
@@ -215,7 +215,7 @@ qemu_disk = -drive file=$(1),format=raw,if=none,id=disk0 -device $(VIRTIO_BLK),d
 # make run 用的磁盘：内容跨重启保留，三个架构共用，make clean 不删它
 DISK ?= disk.img
 DISK_SIZE_MB ?= 16
-# make test 用的磁盘：每次重新创建
+# make test 用的磁盘：每次重新创建（2MB，小到 selftest 可以把它写满）
 TEST_DISK = $(BUILD_DIR)/test-disk.img
 
 QEMU_RUN = $(QEMU_BASE) $(call qemu_disk,$(DISK))
@@ -237,7 +237,7 @@ test:
 
 run-test: $(BOOT_IMAGE)
 	@echo "━━━ $(ARCH): running kernel tests (timeout $(TEST_TIMEOUT)s) ━━━"
-	@dd if=/dev/zero of=$(TEST_DISK) bs=1048576 count=4 2>/dev/null
+	@dd if=/dev/zero of=$(TEST_DISK) bs=1048576 count=2 2>/dev/null
 	-@$(TIMEOUT_CMD) $(TEST_TIMEOUT) $(QEMU_BASE) $(call qemu_disk,$(TEST_DISK)) < /dev/null > $(BUILD_DIR)/test.log 2>&1
 	@awk 'function num(key,  s) { if (!match($$0, key ": *[0-9]+")) return 0; \
 	         s = substr($$0, RSTART, RLENGTH); sub(/.*: */, "", s); return s + 0 } \

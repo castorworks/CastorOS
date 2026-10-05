@@ -111,6 +111,64 @@ static void test_ipc(void) {
     report("kill of blocked receiver", WIFSIGNALED(status), "ok");
 }
 
+static void test_ipc_blocking(void) {
+    int self = getpid();
+    int status = 0;
+
+    // 发送者先到：对方还没开始接收，send 阻塞到它来取为止
+    int late = fork();
+    if (late == 0) {
+        usleep(30000);
+        struct ipc_msg m;
+        exit(ipc_recv(self, &m) == 0 && m.label == 42 && m.sender == (uint32_t)self ? 0 : 1);
+    }
+    struct ipc_msg hello = {};
+    hello.label = 42;
+    int ok = ipc_send(late, &hello) == 0;
+    waitpid(late, &status, 0);
+    report("ipc send before the receiver is ready", ok && WEXITSTATUS(status) == 0, "ok");
+
+    // 两个发送者都在排队时，按指定的 PID 接收，不受排队顺序影响
+    int senders[2];
+    for (int i = 0; i < 2; i++) {
+        senders[i] = fork();
+        if (senders[i] == 0) {
+            struct ipc_msg m = {};
+            m.label = (uint32_t)(100 + i);
+            exit(ipc_send(self, &m) == 0 ? 0 : 1);
+        }
+    }
+    usleep(30000);
+    struct ipc_msg m;
+    ok = ipc_recv(senders[1], &m) == 0 && m.sender == (uint32_t)senders[1] && m.label == 101 &&
+         ipc_recv(senders[0], &m) == 0 && m.sender == (uint32_t)senders[0] && m.label == 100;
+    waitpid(senders[0], NULL, 0);
+    waitpid(senders[1], NULL, 0);
+    report("ipc receive from a specific sender", ok, "ok");
+
+    // 对方收下请求后没应答就退出：call 带着错误返回，而不是永远等下去
+    int quitter = fork();
+    if (quitter == 0) {
+        struct ipc_msg req;
+        ipc_recv(IPC_ANY, &req);
+        exit(0);
+    }
+    struct ipc_msg req = {};
+    ok = ipc_call(quitter, &req) == -1;
+    waitpid(quitter, NULL, 0);
+    report("ipc call to a server that exits without replying", ok, "refused");
+
+    // 对方一直不接收就退出了：阻塞中的 send 同样带着错误返回
+    int deaf = fork();
+    if (deaf == 0) {
+        usleep(30000);
+        exit(0);
+    }
+    ok = ipc_send(deaf, &hello) == -1;
+    waitpid(deaf, NULL, 0);
+    report("ipc send to a process that exits without receiving", ok, "refused");
+}
+
 static void test_privilege(void) {
     // 本程序没有特权：不能访问设备寄存器，也不能认领中断
     int pid = fork();
@@ -172,6 +230,21 @@ static void test_names(void) {
     int ok = name_register("selftest") == 0 && name_lookup("selftest") == getpid() &&
              name_register("selftest") == -1 && name_lookup("no-such-service") == 0;
     report("name service", ok, "ok");
+
+    // 登记者退出后名字失效，别人可以重新登记
+    int child = fork();
+    if (child == 0) {
+        exit(name_register("selftest-child") == 0 ? 0 : 1);
+    }
+    int status = 1;
+    waitpid(child, &status, 0);
+    ok = WEXITSTATUS(status) == 0 && name_lookup("selftest-child") == 0;
+    child = fork();
+    if (child == 0) {
+        exit(name_register("selftest-child") == 0 ? 0 : 1);
+    }
+    waitpid(child, &status, 0);
+    report("names of exited processes are released", ok && WEXITSTATUS(status) == 0, "ok");
 }
 
 static void test_fs(void) {
@@ -214,6 +287,24 @@ static void test_fs(void) {
          fs_close(fd) == 0 && fs_read(fd, 0, in, 1) == -1 &&
          fs_unlink("selftest.dat") == 0 && fs_open("selftest.dat", 0) == -1;
     report("file service", ok, "ok");
+}
+
+static void test_fs_client_reclaim(void) {
+    // 文件服务同时只能记住 16 个客户；已经退出的客户要被回收，否则第 17 个就连不上了
+    int ok = 1;
+    for (int i = 0; i < 20; i++) {
+        int child = fork();
+        if (child == 0) {
+            int fd = fs_open("rc", 0);
+            exit(fd >= 0 && fs_size(fd) > 0 ? 0 : 1);
+        }
+        int status = 1;
+        waitpid(child, &status, 0);
+        if (WEXITSTATUS(status) != 0) {
+            ok = 0;
+        }
+    }
+    report("file service reclaims exited clients", ok, "ok");
 }
 
 static void test_block_device(void) {
@@ -284,18 +375,62 @@ static void test_disk_fs(void) {
     report("disk file system", ok, "ok");
 }
 
+static void test_disk_full(void) {
+    uint64_t sectors = blk_capacity();
+    if (sectors == 0 || name_lookup(FS_DISK_SERVICE_NAME) <= 0) {
+        return;     // 没有磁盘：上面已经报告过 skipped
+    }
+    if (sectors > 4 * 2048) {
+        // 要把整块盘写满；只在 make test 那样的小盘上做，不去折腾真正在用的磁盘
+        printf("selftest: disk full: skipped (disk larger than 4 MB)\n");
+        return;
+    }
+
+    static char chunk[16384];
+    for (size_t i = 0; i < sizeof(chunk); i++) {
+        chunk[i] = (char)i;
+    }
+    const char *fill = FS_DISK_PREFIX "selftest.fill";
+    const char *other = FS_DISK_PREFIX "selftest.other";
+
+    // 一直写到写不下：最后一次是部分写入或失败，之前写进去的都算数
+    int fd = fs_open(fill, FS_O_CREATE | FS_O_TRUNC);
+    uint32_t total = 0;
+    long n = 0;
+    while (fd >= 0 && (n = fs_write(fd, total, chunk, sizeof(chunk))) == (long)sizeof(chunk)) {
+        total += (uint32_t)n;
+    }
+    if (n > 0) {
+        total += (uint32_t)n;
+    }
+    uint64_t disk_bytes = sectors * BLK_SECTOR_SIZE;
+    int ok = fd >= 0 && total > disk_bytes / 2 && total < disk_bytes && fs_size(fd) == (long)total &&
+             fs_write(fd, total, chunk, 1) == -1;
+
+    // 盘满时别的文件也写不进去；删掉大文件之后空间回来了
+    int fd2 = fs_open(other, FS_O_CREATE | FS_O_TRUNC);
+    ok = ok && fd2 >= 0 && fs_write(fd2, 0, chunk, 1) == -1 &&
+         fs_unlink(fill) == 0 &&
+         fs_write(fd2, 0, chunk, sizeof(chunk)) == (long)sizeof(chunk) &&
+         fs_close(fd2) == 0 && fs_unlink(other) == 0;
+    report("disk full", ok, "ok");
+}
+
 int main(int argc, char **argv) {
     // 命令行（或 rc）是带着程序名启动我们的
     report("program arguments", argc >= 1 && strcmp(argv[0], "selftest") == 0 && argv[argc] == NULL, "ok");
 
     test_memory_and_fork();
     test_ipc();
+    test_ipc_blocking();
     test_privilege();
     test_shared_memory();
     test_names();
     test_fs();
+    test_fs_client_reclaim();
     test_block_device();
     test_disk_fs();
+    test_disk_full();
 
     if (failures == 0) {
         printf("selftest: all passed\n");

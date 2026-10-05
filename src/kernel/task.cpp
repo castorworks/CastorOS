@@ -801,11 +801,16 @@ static void idle_task_loop(void) {
     LOG_DEBUG_MSG("Idle task started\n");
     
     while (1) {
-        // 暂停 CPU 直到下一次中断
-        hal::Cpu::halt();
-        
-        // 在中断返回后，主动让出 CPU
-        // 这样如果有任务被唤醒，它们就能得到执行
+        // 先关中断再看有没有就绪任务：中断处理函数（设备中断、时钟）随时可能唤醒任务，
+        // 如果“检查”和“停机”之间有空档，刚被唤醒的任务就要白等到下一次时钟中断
+        kernel::Interrupts::disable();
+        if (ready_queue_head == NULL) {
+            hal::Cpu::idle();       // 原子地开中断并等待；返回时中断已打开
+        } else {
+            kernel::Interrupts::enable();
+        }
+
+        // 有任务就绪（或者刚处理完一个中断）：让出 CPU
         kernel::Scheduler::yield();
     }
 }
@@ -1145,6 +1150,8 @@ void kernel::Scheduler::exit_current(uint32_t exit_code, bool signaled, uint32_t
     // 否则直接终止（孤儿进程）
     if (current_task->parent && current_task->parent->state != TASK_UNUSED) {
         current_task->state = TASK_ZOMBIE;
+        // 父进程可能正阻塞在 waitpid 里等我们
+        kernel::Scheduler::wakeup(current_task->parent);
         LOG_DEBUG_MSG("Task %u becomes zombie, waiting for parent %u\n", 
                      current_task->pid, current_task->parent->pid);
     } else {
@@ -1279,12 +1286,13 @@ bool kernel::Scheduler::request_kill(task_t *target, uint32_t signal) {
             target->kill_signal = signal;
         }
 
-        // 正在 sleep 或等待 IPC 的任务提前唤醒，让它尽快走到系统调用出口
-        // （IPC 的等待循环看到 kill_pending 会放弃）。
+        // 正在 sleep、等待 IPC 或等待子进程的任务提前唤醒，让它尽快走到系统调用出口
+        // （这些等待循环看到 kill_pending 都会放弃）。
         // 阻塞在 Mutex/Semaphore 上的任务不能唤醒：它们醒来后会重新检查条件
         // 并再次阻塞，要等到被正常唤醒后才会走到出口。
         if (target->state == TASK_BLOCKED &&
-            (target->sleep_until_ms > 0 || target->ipc_state != IPC_IDLE)) {
+            (target->sleep_until_ms > 0 || target->ipc_state != IPC_IDLE ||
+             target->wait_object == target /* 在 waitpid 里等子进程 */)) {
             target->sleep_until_ms = 0;
             target->wait_object = NULL;
             target->state = TASK_READY;
