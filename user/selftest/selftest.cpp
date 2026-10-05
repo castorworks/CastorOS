@@ -493,6 +493,59 @@ static void test_network(void) {
          net_udp_close(a) == 0 && net_udp_close(b) == 0 &&
          net_udp_send(a, info.ip, 4000, out, 1) == -1;
     report("udp sockets", ok, "ok");
+
+    // TCP：连到一个没人监听的端口会被拒绝（网关把它转给宿主机的 127.0.0.1:1）
+    start = uptime_ms();
+    ok = net_tcp_connect(info.gateway, 1, 3000) == -1 && uptime_ms() - start < 2500;
+    report("tcp connect to a closed port", ok, "refused");
+
+    // 回显服务：make run / make test 用 QEMU 的 guestfwd 把 10.0.2.100:7 接到宿主机的 cat 上
+    int conn = net_tcp_connect(NET_IP(10, 0, 2, 100), 7, 1500);
+    if (conn < 0) {
+        printf("selftest: tcp echo: skipped (no echo service at 10.0.2.100:7)\n");
+        return;
+    }
+
+    // 一次发 5000 字节（要拆成多个段），再原样读回来
+    static char tx[5000], rx[5000];
+    for (size_t i = 0; i < sizeof(tx); i++) {
+        tx[i] = (char)(i * 7 + i / 255);
+    }
+    ok = net_tcp_send(conn, tx, sizeof(tx)) == (long)sizeof(tx);
+    size_t got = 0;
+    while (ok && got < sizeof(rx)) {
+        long n = net_tcp_recv(conn, rx + got, sizeof(rx) - got, 3000);
+        if (n <= 0) {
+            ok = 0;
+            break;
+        }
+        got += (size_t)n;
+    }
+    ok = ok && memcmp(tx, rx, sizeof(tx)) == 0;
+
+    // 再来回 20 轮、每轮 1000 字节：总量超过两个方向的缓冲区，序号和环形缓冲区都要绕回去
+    for (int round = 0; ok && round < 20; round++) {
+        for (int i = 0; i < 1000; i++) {
+            tx[i] = (char)(round * 31 + i);
+        }
+        ok = net_tcp_send(conn, tx, 1000) == 1000;
+        got = 0;
+        while (ok && got < 1000) {
+            long n = net_tcp_recv(conn, rx + got, 1000 - got, 3000);
+            if (n <= 0) {
+                ok = 0;
+                break;
+            }
+            got += (size_t)n;
+        }
+        ok = ok && memcmp(tx, rx, 1000) == 0;
+    }
+
+    // 没有数据时 recv 按时超时；关闭之后这个连接号不能再用
+    start = uptime_ms();
+    ok = ok && net_tcp_recv(conn, rx, 10, 200) == -1 && uptime_ms() - start >= 150 &&
+         net_tcp_close(conn) == 0 && net_tcp_send(conn, tx, 1) == -1;
+    report("tcp echo", ok, "ok");
 }
 
 int main(int argc, char **argv) {

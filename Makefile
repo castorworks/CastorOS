@@ -18,10 +18,8 @@ endif
 # KTEST=1: 把 src/tests 编进内核，启动时运行（make test 会自动设置）
 KTEST ?= 0
 
-# 测试超时时间 (秒)
-TEST_TIMEOUT ?= 60
-# timeout 命令 (macOS 需要安装 coreutils: brew install coreutils)
-TIMEOUT_CMD = timeout
+# 测试最多等多少秒。内核不会自己关机：命令行一就绪测试就结束，这只是卡住时的上限
+TEST_TIMEOUT ?= 180
 
 # ============================================================================
 # 架构特定工具链配置
@@ -218,7 +216,8 @@ ifeq ($(ARCH),arm64)
 else
     VIRTIO_NET = virtio-net-pci
 endif
-QEMU_NET = -netdev user,id=net0 -device $(VIRTIO_NET),netdev=net0
+# guestfwd：来宾连 10.0.2.100:7 时 QEMU 启动一个 cat，得到一个回显服务（selftest 用它测 TCP）
+QEMU_NET = -netdev user,id=net0,guestfwd=tcp:10.0.2.100:7-cmd:cat -device $(VIRTIO_NET),netdev=net0
 
 # make run 用的磁盘：内容跨重启保留，三个架构共用，make clean 不删它
 DISK ?= disk.img
@@ -238,22 +237,26 @@ run: $(BOOT_IMAGE) $(DISK)
 debug: $(BOOT_IMAGE) $(DISK)
 	$(QEMU_RUN) -s -S
 
-# 构建带内核测试的版本并运行。内核不会自己关机：到超时为止，完整日志写入
-# $(BUILD_DIR)/test.log，这里只汇总各测试模块的计数。
+# 构建带内核测试的版本并运行，等到命令行就绪（或超时）为止。完整日志写入
+# $(BUILD_DIR)/test.log，这里只汇总各测试模块的计数和用户态自检的结果。
 test:
 	@$(MAKE) --no-print-directory run-test ARCH=$(ARCH) KTEST=1
 
 run-test: $(BOOT_IMAGE)
-	@echo "━━━ $(ARCH): running kernel tests (timeout $(TEST_TIMEOUT)s) ━━━"
+	@echo "━━━ $(ARCH): running kernel tests and user-space selftest ━━━"
 	@dd if=/dev/zero of=$(TEST_DISK) bs=1048576 count=2 2>/dev/null
-	-@$(TIMEOUT_CMD) $(TEST_TIMEOUT) $(QEMU_BASE) $(call qemu_disk,$(TEST_DISK)) $(QEMU_NET) < /dev/null > $(BUILD_DIR)/test.log 2>&1
+	@$(QEMU_BASE) $(call qemu_disk,$(TEST_DISK)) $(QEMU_NET) < /dev/null > $(BUILD_DIR)/test.log 2>&1 & \
+	 pid=$$!; i=0; \
+	 while [ $$i -lt $(TEST_TIMEOUT) ] && kill -0 $$pid 2>/dev/null && \
+	       ! grep -aq "sh: ready" $(BUILD_DIR)/test.log; do sleep 1; i=$$((i + 1)); done; \
+	 kill $$pid 2>/dev/null; wait $$pid 2>/dev/null; true
 	@awk 'function num(key,  s) { if (!match($$0, key ": *[0-9]+")) return 0; \
 	         s = substr($$0, RSTART, RLENGTH); sub(/.*: */, "", s); return s + 0 } \
 	     { t += num("Total tests"); p += num("Passed tests"); f += num("Failed tests") } \
-	     /sh: ready/ { booted = 1 } /selftest: all passed/ { selftest_passed = 1 } \
+	     /sh: ready/ { booted = 1 } /selftest: all passed/ { selftest_passed = 1 } /selftest: .*skipped/ { skipped = 1 } \
 	     END { printf "$(ARCH): %d tests, %d passed, %d failed; user space %s (log: $(BUILD_DIR)/test.log)\n", \
-	               t, p, f, booted ? (selftest_passed ? "started, selftest passed" : "started, selftest FAILED") : "NOT started"; \
-	           exit (t == 0 || f > 0 || !booted || !selftest_passed) }' $(BUILD_DIR)/test.log
+	               t, p, f, booted ? (selftest_passed ? (skipped ? "started, selftest SKIPPED some checks" : "started, selftest passed") : "started, selftest FAILED") : "NOT started"; \
+	           exit (t == 0 || f > 0 || !booted || !selftest_passed || skipped) }' $(BUILD_DIR)/test.log
 
 test-all:
 	@for arch in $(VALID_ARCHS); do \
@@ -298,7 +301,7 @@ help:
 	@echo "  build-all      Build all architectures"
 	@echo "  run            Run in QEMU (serial console on stdio)"
 	@echo "  debug          Run in QEMU waiting for GDB on :1234"
-	@echo "  test           Build with in-kernel tests (KTEST=1) and run with a timeout"
+	@echo "  test           Build with in-kernel tests (KTEST=1), boot, and check the results"
 	@echo "  test-all       test for every architecture"
 	@echo "  clean          Clean current arch;  clean-all: everything"
 	@echo "  info / sources / compile-db"

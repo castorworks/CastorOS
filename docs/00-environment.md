@@ -196,7 +196,7 @@ make run                # 在 QEMU 里运行 i686，串口控制台接到当前�
 make test-all           # 三个架构各跑一遍内核测试和用户态自检
 ```
 
-`make test` 需要 `timeout` 命令（macOS: `brew install coreutils`）。不需要安装 GRUB。
+不需要安装 GRUB。
 
 ## 目录结构
 

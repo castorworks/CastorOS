@@ -1,12 +1,13 @@
 // net - 网络服务
 //
 // 特权的用户态服务，以 "net" 登记，实现 net.h 里的协议。它把两样东西放在同一个
-// 进程里：virtio-net 网卡驱动，和一个很小的协议栈（以太网、ARP、IPv4、ICMP 回显、UDP）。
+// 进程里：virtio-net 网卡驱动，和一个很小的协议栈（以太网、ARP、IPv4、ICMP 回显、UDP，
+// 以及 tcp.cpp 里的 TCP）。
 // 放在一起是因为收包是由中断驱动的：一个主循环同时等中断、定时器和客户请求，
 // 帧到了直接交给协议栈，不需要驱动和协议栈之间再来回传一次。
 //
 // 地址在启动时用 DHCP 获取；等不到应答就退回 QEMU 用户网络（-netdev user）的固定配置
-// 10.0.2.15/24，网关 10.0.2.2。没有 TCP、分片重组，也不续租。
+// 10.0.2.15/24，网关 10.0.2.2。没有分片重组，也不续租。
 
 #include <syscall.h>
 #include <stdio.h>
@@ -15,13 +16,14 @@
 #include <net.h>
 #include <virtio.h>
 #include <clients.h>
+#include "net_internal.h"
 
 // ============================================================================
 // 配置
 // ============================================================================
 
 // 地址配置：DHCP 完成（或放弃）之前 my_ip 是 0
-static uint32_t my_ip = 0;
+uint32_t my_ip = 0;
 static uint32_t netmask = 0;
 static uint32_t gateway = 0;
 static uint32_t dns_server = 0;
@@ -30,12 +32,6 @@ static bool from_dhcp = false;
 #define IP_BROADCAST 0xFFFFFFFFu
 
 static uint8_t my_mac[6];
-
-// 网络字节序是大端，三个架构都是小端
-static uint16_t swap16(uint16_t v) { return (uint16_t)((v << 8) | (v >> 8)); }
-static uint32_t swap32(uint32_t v) {
-    return (v << 24) | ((v << 8) & 0x00FF0000) | ((v >> 8) & 0x0000FF00) | (v >> 24);
-}
 
 // ============================================================================
 // 网卡：virtio-net
@@ -333,8 +329,7 @@ struct ip_header {
     uint32_t dst;
 } __attribute__((packed));
 
-/** 互联网校验和：16 位反码求和。start 用来接着前一段（伪首部）的和算 */
-static uint16_t checksum(const void *data, size_t len, uint32_t start) {
+uint16_t checksum(const void *data, size_t len, uint32_t start) {
     const uint8_t *p = (const uint8_t *)data;
     uint32_t sum = start;
     while (len > 1) {
@@ -353,7 +348,7 @@ static uint16_t checksum(const void *data, size_t len, uint32_t start) {
 
 static void ip_input(const uint8_t *packet, size_t len);
 
-static void ip_send(uint32_t dst, uint8_t protocol, const uint8_t *payload, size_t len) {
+void ip_send(uint32_t dst, uint8_t protocol, const uint8_t *payload, size_t len) {
     static uint8_t packet[FRAME_MAX - ETH_HDR];
     static uint16_t next_id = 1;
     if (len > sizeof(packet) - IP_HDR) {
@@ -420,6 +415,8 @@ static void ip_input(const uint8_t *packet, size_t len) {
         icmp_input(swap32(h.src), payload, payload_len);
     } else if (h.protocol == IP_PROTO_UDP) {
         udp_input(swap32(h.src), dst, payload, payload_len);
+    } else if (h.protocol == IP_PROTO_TCP) {
+        tcp_input(swap32(h.src), dst, payload, payload_len);
     }
 }
 
@@ -464,8 +461,7 @@ static struct ping {
 
 static uint16_t ping_seq = 1;
 
-/** 应答一个阻塞在请求里的客户 */
-static void reply_client(int pid, uint32_t label, int64_t result, uint64_t d1, uint64_t d2) {
+void reply_client(int pid, uint32_t label, int64_t result, uint64_t d1, uint64_t d2) {
     struct ipc_msg m = {};
     m.label = label;
     m.data[0] = (uint64_t)result;
@@ -590,6 +586,7 @@ static void close_sockets_of(int pid) {
             sockets[i].owner = 0;
         }
     }
+    tcp_drop_owner(pid);
 }
 
 static int64_t udp_open(int pid, uint16_t port, uint64_t *bound_port) {
@@ -639,9 +636,8 @@ static void udp_deliver(struct udp_socket *s, int pid) {
     reply_client(pid, NET_UDP_RECV, d->len, d->src_ip, d->src_port);
 }
 
-/** 伪首部（源、目的地址，协议，长度）的校验和部分 */
-static uint32_t udp_pseudo_sum(uint32_t src, uint32_t dst, size_t len) {
-    return (src >> 16) + (src & 0xFFFF) + (dst >> 16) + (dst & 0xFFFF) + IP_PROTO_UDP + (uint32_t)len;
+uint32_t pseudo_sum(uint32_t src, uint32_t dst, uint8_t protocol, size_t len) {
+    return (src >> 16) + (src & 0xFFFF) + (dst >> 16) + (dst & 0xFFFF) + protocol + (uint32_t)len;
 }
 
 static void dhcp_input(const uint8_t *data, size_t len);
@@ -658,7 +654,7 @@ static void udp_send_raw(uint16_t src_port, uint32_t dst, uint16_t dst_port, con
     h.length = swap16((uint16_t)(UDP_HDR + len));
     memcpy(msg, &h, UDP_HDR);
     memcpy(msg + UDP_HDR, data, len);
-    uint16_t sum = checksum(msg, UDP_HDR + len, udp_pseudo_sum(my_ip, dst, UDP_HDR + len));
+    uint16_t sum = checksum(msg, UDP_HDR + len, pseudo_sum(my_ip, dst, IP_PROTO_UDP, UDP_HDR + len));
     sum = swap16(sum == 0 ? 0xFFFF : sum);      // 算出来是 0 时按规定发全 1
     memcpy(msg + 6, &sum, 2);
     ip_send(dst, IP_PROTO_UDP, msg, UDP_HDR + len);
@@ -675,7 +671,7 @@ static void udp_input(uint32_t src, uint32_t dst, const uint8_t *data, size_t le
         return;
     }
     // 校验和为 0 表示发送方没算
-    if (h.checksum != 0 && checksum(data, total, udp_pseudo_sum(src, dst, total)) != 0) {
+    if (h.checksum != 0 && checksum(data, total, pseudo_sum(src, dst, IP_PROTO_UDP, total)) != 0) {
         return;
     }
     size_t payload = total - UDP_HDR;
@@ -893,6 +889,7 @@ static bool expire_waiters(void) {
     uint64_t now = uptime_ms();
     bool waiting = arp_tick(now);
     waiting = dhcp_tick(now) || waiting;
+    waiting = tcp_tick(now) || waiting;
 
     for (int i = 0; i < MAX_PINGS; i++) {
         struct ping *p = &pings[i];
@@ -932,6 +929,11 @@ static void handle_request(struct ipc_msg *m) {
     struct ipc_msg reply = {};
     reply.label = m->label;
     int64_t result = -1;
+
+    if (m->label >= NET_TCP_CONNECT && m->label <= NET_TCP_CLOSE) {
+        tcp_request(m);
+        return;
+    }
 
     switch (m->label) {
         case NET_INFO:

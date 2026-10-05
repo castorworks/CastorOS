@@ -30,7 +30,7 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 
 - `user/uart`：串口输入驱动，保留特权启动。
 - `user/blk`：virtio-blk 块设备驱动，保留特权启动。没有磁盘时它直接退出。
-- `user/net`：网络服务（virtio-net 驱动加协议栈，启动时用 DHCP 取地址），保留特权启动。没有网卡时它直接退出。
+- `user/net`：网络服务（virtio-net 驱动加协议栈：ARP、IPv4、ICMP、UDP、TCP，启动时用 DHCP 取地址），保留特权启动。没有网卡时它直接退出。
 - `user/ramfs`：内存文件系统服务，放弃特权后启动。启动映像嵌在它里面。
 - `user/diskfs`：磁盘文件系统服务，放弃特权后启动。没有块设备时它直接退出。
 - `user/sh`：命令行，放弃特权后启动。输入来自 uart 驱动，文件操作交给文件服务。
@@ -40,7 +40,7 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 - `user/selftest`：用户态自检（程序参数、内存、进程、IPC 的各条阻塞和退出路径、特权、共享内存、名字服务、文件服务、块设备、磁盘文件系统），开机时由 `rc` 脚本运行一次，每项打印一行结果。`make test` 要求它全部通过。
 - `user/ls`、`user/cat`、`user/cp`、`user/rm`、`user/echo`：小工具。
 - `user/disk`：显示磁盘容量、直接读写扇区。
-- `user/ping`、`user/ifconfig`、`user/dns`：网络工具。
+- `user/ping`、`user/ifconfig`、`user/dns`、`user/http`：网络工具。
 - `user/hello`：最小的示例程序，打印自己的 PID 和参数。
 
 ## 网络
@@ -50,6 +50,8 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 - `net_info`：本机的 MAC、IP、掩码、网关、DNS 服务器，以及地址是否来自 DHCP。IP 为 0 表示还在配置。
 - `net_ping(ip, timeout, &rtt)`：发一个 ICMP 回显请求，阻塞到收到应答或超时。
 - `net_udp_open` / `net_udp_send` / `net_udp_recv` / `net_udp_close`：UDP 套接字。`recv` 带超时；数据经共享缓冲区传递。
+- `net_tcp_connect` / `net_tcp_send` / `net_tcp_recv` / `net_tcp_close`：TCP 的主动连接。`connect` 和 `recv` 带超时；`recv` 返回 0 表示对方已关闭。
+- `net_resolve(name, &ip)`：把主机名解析成地址（库里用 UDP 向配置的 DNS 服务器发一个 A 记录查询）。
 
 `user/net` 把 virtio-net 驱动和协议栈放在同一个进程里：主循环用一个 `ipc_recv(IPC_ANY)` 同时等网卡中断、定时器和客户请求，收到的帧直接交给协议栈，不需要在驱动和协议栈两个进程之间再传一次。阻塞的请求（ping、recv）不立刻应答，等回显或数据报到了、或者定时器发现它超时了再 `ipc_reply`。
 
@@ -57,9 +59,16 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 
 **地址配置。** 服务启动时用 DHCP 获取地址、掩码、网关和 DNS 服务器：DISCOVER → OFFER → REQUEST → ACK，每 500ms 重发一次。DHCP 客户端在服务内部，直接用协议栈收发（这时还没有地址，只能发广播、收广播），所以不需要一个“配置地址”的对外接口。3 秒内没有应答就退回 QEMU 用户网络的固定配置（10.0.2.15/24，网关 10.0.2.2，DNS 10.0.2.3）。配置完成之前 `net_info` 报告的 IP 是 0，ping 和 UDP 发送会失败。
 
-`make run` 和 `make test` 都给 QEMU 挂一块接用户网络的 virtio-net 网卡。工具有 `ifconfig`、`ping <ip>`、`dns <name>`（用 UDP 向配置到的 DNS 服务器查询；在 QEMU 用户网络里那是一个转发器，能不能查到取决于宿主机能否上网）。
+**TCP**（`user/net/tcp.cpp`）是一个刻意保持简单的实现，目前只有主动连接这一半：
 
-当前的限制：没有 TCP；DHCP 不续租（租约到期后继续用原地址）；不处理 IP 分片；每个套接字最多积压 4 个数据报，最多 8 个套接字、8 个同时进行的 ping；只支持 virtio 的 legacy 接口。
+- 发送：每条连接一个 8KB 的环形缓冲区，放着还没被确认的数据。能发多少由对方通告的窗口决定；超时没被确认就从最早未确认处重发，超时时间每次翻倍（300ms 起，最多 4 秒），重试 8 次后放弃连接。对方窗口为 0 时发 1 字节探测。
+- 接收：只接受按序到达的数据，放进 8KB 的环形缓冲区，通告窗口就是剩余空间；乱序的段丢掉并重复确认，靠对方重传。
+- 关闭：`close` 之后已经交出去的数据仍会发完，再发 FIN，四次挥手在后台完成；支持对方先关、双方同时关。被复位或重试耗尽的连接，等着的请求都以失败返回。
+- 没有拥塞控制、选择确认、窗口缩放、延迟确认，没有 TIME_WAIT，也没有监听（被动打开）。
+
+`make run` 和 `make test` 都给 QEMU 挂一块接用户网络的 virtio-net 网卡，并用 `guestfwd` 把 10.0.2.100:7 接到宿主机的 `cat` 上，得到一个不依赖外网的 TCP 回显服务（自检用它）。工具有 `ifconfig`、`ping <ip>`、`dns <name>`、`http <host> [path]`（对 80 端口做一次 GET，打印应答的开头）。后两个要经 QEMU 的转发器访问外网，能不能成取决于宿主机能否上网。
+
+当前的限制：TCP 不能监听；DHCP 不续租（租约到期后继续用原地址）；不处理 IP 分片；最多 8 条 TCP 连接、8 个 UDP 套接字（每个最多积压 4 个数据报）、8 个同时进行的 ping；只支持 virtio 的 legacy 接口。
 
 ## 启动映像和运行程序
 
@@ -188,7 +197,7 @@ for (;;) {
 
 队列和请求缓冲区来自 `dma_alloc`（设备只认物理地址）。块设备驱动一次处理一个请求：提交给设备后用 `ipc_recv(IPC_FROM_KERNEL)` 只等中断，这期间其他客户的请求留在各自的 `call` 里排队。
 
-`make run` 给 QEMU 挂上 `disk.img`（第一次运行时创建，16MB，`make clean` 不删，三个架构共用）；`make test` 每次用一块新的 2MB 临时磁盘，小到自检可以把它写满来检查“磁盘满”的处理（大于 4MB 的磁盘上这一项会跳过）。
+`make run` 给 QEMU 挂上 `disk.img`（第一次运行时创建，16MB，`make clean` 不删，三个架构共用）；`make test` 每次用一块新的 2MB 临时磁盘，小到自检可以把它写满来检查“磁盘满”的处理（大于 4MB 的磁盘上这一项会跳过）。`make test` 的环境里磁盘、网卡、回显服务都在，所以自检里出现任何 skipped 也算失败。
 
 当前的限制：只支持 legacy 接口（QEMU 的默认配置）；一次一个请求，没有并发；每个请求最多 8 个扇区。
 

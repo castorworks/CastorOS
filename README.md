@@ -59,13 +59,15 @@ hello from pid 17 (parent 7)
 > ping 10.0.2.2
 reply from 10.0.2.2: seq=1 time<10ms
 ...
-> dns example.com
-example.com has address 104.20.23.154
+> http example.com
+connecting to example.com (104.20.23.154) port 80
+HTTP/1.1 200 OK
+...
 ```
 
 带 `disk:` 前缀的文件在磁盘（`disk.img`，`make run` 第一次运行时创建）上，重启后还在；磁盘上的程序同样可以直接运行（`disk:hello`）。
 
-键盘输入经 串口中断 → uart 驱动 → IPC 到达 sh；文件操作经 IPC 和共享缓冲区交给文件服务，磁盘文件再经块设备服务到 virtio-blk 驱动；网络请求交给 `user/net`（virtio-net 驱动加 ARP/IPv4/ICMP/UDP 协议栈，启动时用 DHCP 取地址，接 QEMU 的用户网络）；运行程序是从文件服务读出 ELF 后 `fork` + `exec`，这一行的其余部分作为参数传给 `main(argc, argv)`。
+键盘输入经 串口中断 → uart 驱动 → IPC 到达 sh；文件操作经 IPC 和共享缓冲区交给文件服务，磁盘文件再经块设备服务到 virtio-blk 驱动；网络请求交给 `user/net`（virtio-net 驱动加 ARP/IPv4/ICMP/UDP/TCP 协议栈，启动时用 DHCP 取地址，接 QEMU 的用户网络）；运行程序是从文件服务读出 ELF 后 `fork` + `exec`，这一行的其余部分作为参数传给 `main(argc, argv)`。
 
 ## 目录
 
@@ -85,7 +87,7 @@ user/ramfs/    内存文件系统服务（内嵌启动映像）
 user/diskfs/   磁盘文件系统服务
 user/sh/       命令行
 user/selftest/ 用户态自检程序（在启动映像里）
-user/ls/ cat/ cp/ rm/ echo/ disk/ ping/ ifconfig/ dns/ hello/   小程序（在启动映像里）
+user/ls/ cat/ cp/ rm/ echo/ disk/ ping/ ifconfig/ dns/ http/ hello/   小程序（在启动映像里）
 user/bootfs/   启动映像里的静态文件
 docs/          文档
 ```

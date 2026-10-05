@@ -66,7 +66,7 @@ make run                # Run in QEMU, serial console on stdio; attaches disk.im
                         # first use) and a virtio-net card on QEMU user networking
 make debug              # Same, waiting for GDB on :1234
 
-make test               # Build with in-kernel tests (KTEST=1) and run with a timeout
+make test               # Build with in-kernel tests (KTEST=1), boot, and check kernel tests + selftest
 make test-all
 
 make clean              # Current arch only
@@ -83,14 +83,15 @@ so there is no disk image. init starts the modules and is the name server (`name
 `user/lib`). Resident modules are embedded into init the same way (`user/init/modules.S`):
 `user/uart` (privileged serial input driver), `user/blk` (privileged virtio-blk driver,
 protocol and client in `blk.h`), `user/net` (privileged virtio-net driver plus a small
-ARP/IPv4/ICMP/UDP stack with a DHCP client, protocol and client in `net.h`), `user/ramfs` (in-memory file
+ARP/IPv4/ICMP/UDP/TCP stack with a DHCP client; TCP is active-open only; protocol and client
+in `net.h`), `user/ramfs` (in-memory file
 service), `user/diskfs`
 (persistent file service on top of blk; files are addressed with a `disk:` prefix) and
 `user/sh` (command line). Both file services share the protocol in `fs.h` and the server
 skeleton in `fs_server.h`; virtio drivers share `virtio.h`; servers that take a shared buffer
 from each client use `clients.h`. Other programs (`user/selftest`, `user/ls`, `user/cat`,
 `user/cp`, `user/rm`, `user/echo`, `user/disk`, `user/ping`, `user/ifconfig`, `user/dns`,
-`user/hello`) go into the boot image: a ustar archive of `user/bootfs/*` plus the programs
+`user/http`, `user/hello`) go into the boot image: a ustar archive of `user/bootfs/*` plus the programs
 in `BOOT_PROGRAMS` (`user/ramfs/Makefile`), embedded in ramfs and unpacked at startup. sh
 runs them with fork + exec, and runs the `rc` file (which starts `selftest`) at boot.
 To add a program, create `user/<name>/` and add it to `BOOT_PROGRAMS`. Every user program's
@@ -106,7 +107,6 @@ boot, before init starts. `make test` builds into `build/<arch>-ktest/`.
 
 - QEMU for emulation
 - Cross-compiler toolchain (see `scripts/cross-compiler-install.sh`)
-- `timeout` (coreutils) for `make test`
 
 ## Project Structure
 
@@ -134,12 +134,12 @@ CastorOS/
 │   ├── init/               # First user process: starts modules, name service
 │   ├── uart/               # Serial input driver (privileged module)
 │   ├── blk/                # virtio-blk driver (privileged module): virtio-pci on x86, virtio-mmio on arm64
-│   ├── net/                # Network service (privileged module): virtio-net + ARP/IPv4/ICMP/UDP
+│   ├── net/                # Network service (privileged module): virtio-net + ARP/IPv4/ICMP/UDP/TCP
 │   ├── diskfs/             # Persistent file service on the block device (unprivileged module)
 │   ├── ramfs/              # In-memory file service (unprivileged module), holds the boot image
 │   ├── sh/                 # Command line (unprivileged module): runs programs with arguments
 │   ├── selftest/           # User-space self-checks, in the boot image, run from rc at boot
-│   ├── ls/ cat/ cp/ rm/ echo/ disk/ ping/ ifconfig/ dns/ hello/   # Small programs in the boot image
+│   ├── ls/ cat/ cp/ rm/ echo/ disk/ ping/ ifconfig/ dns/ http/ hello/   # Small programs in the boot image
 │   ├── bootfs/             # Static files for the boot image (rc, readme.txt)
 │   ├── program.mk          # Shared build rules for user programs
 │   └── linker/             # User linker scripts
@@ -195,24 +195,24 @@ CastorOS/
 ### 测试
 
 ```bash
-make test                      # i686：构建 KTEST=1 内核并运行（默认 60 秒超时）
+make test                      # i686：构建 KTEST=1 内核并运行，命令行就绪即结束（通常十几秒）
 make test ARCH=x86_64
 make test ARCH=arm64
 make test-all
-make test TEST_TIMEOUT=120     # 自定义超时
+make test TEST_TIMEOUT=300     # 机器很忙时放宽上限（默认 180 秒）
 ```
 
-内核不会自己关机，QEMU 运行到超时为止。`make test` 把完整日志写到
-`build/<arch>-ktest/test.log`，并汇总各模块的 `Total/Passed/Failed tests` 计数；
-有失败用例、用户态没有起来（日志里没有 `sh: ready`）或用户态自检没有通过
-（没有 `selftest: all passed`）时返回非零。
+内核不会自己关机：`make test` 在日志里出现 `sh: ready` 时结束 QEMU（卡住时以 `TEST_TIMEOUT`
+为上限）。完整日志写到 `build/<arch>-ktest/test.log`，并汇总各模块的 `Total/Passed/Failed tests`
+计数；有失败用例、用户态没有起来、用户态自检没有通过（没有 `selftest: all passed`）
+或者自检跳过了任何一项（测试环境里磁盘、网卡、回显服务都在）时返回非零。
 
 ### 手动运行
 
 ```bash
 # 下面的命令不带磁盘和网卡（blk、diskfs、net 会直接退出，selftest 跳过相关的检查）；要带上就加：
 #   x86:   -drive file=disk.img,format=raw,if=none,id=disk0 -device virtio-blk-pci,drive=disk0
-#          -netdev user,id=net0 -device virtio-net-pci,netdev=net0
+#          -netdev user,id=net0,guestfwd=tcp:10.0.2.100:7-cmd:cat -device virtio-net-pci,netdev=net0
 #   arm64: 同上，设备名换成 virtio-blk-device / virtio-net-device
 # 控制台是串口；向 QEMU 的标准输入写入的内容经 uart 驱动送到 sh
 # （help、write <file> <text> 是内置命令；其余如 ls、cat <file>、echo <words> 是程序）
@@ -235,7 +235,7 @@ make sources                   # 列出源文件
 
 ### 常见问题
 
-1. **timeout 未找到**: `brew install coreutils` (macOS)
+1. **手动运行用的 timeout 未找到**: `brew install coreutils` (macOS；`make test` 本身不需要)
 2. **交叉编译器未找到**: 运行 `scripts/cross-compiler-install.sh`
 3. **QEMU 未找到**: `brew install qemu`
 4. **QEMU 无输出或卡住**: 先看主机负载（`uptime`），不要并行跑构建和测试
