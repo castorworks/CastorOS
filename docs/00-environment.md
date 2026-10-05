@@ -193,7 +193,7 @@ qemu-system-aarch64 --version
 ```bash
 make build-all          # 构建三个架构
 make run                # 在 QEMU 里运行 i686，串口控制台接到当前终端
-make test-all           # 三个架构各跑一遍内核测试和用户态自检
+make test-all           # 三个架构各跑一遍内核测试、用户态自检和命令行检查
 ```
 
 不需要安装 GRUB。

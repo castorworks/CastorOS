@@ -4,7 +4,7 @@
 #   make                    # 构建 i686 内核（内嵌 user/init）
 #   make ARCH=arm64         # 构建 ARM64 内核
 #   make run                # 在 QEMU 中运行（串口控制台）
-#   make test               # 构建带内核测试的版本并运行
+#   make test               # 构建带内核测试的版本并运行（内核测试、用户态自检、命令行检查）
 #   make build-all          # 构建所有架构
 # ============================================================================
 
@@ -237,26 +237,28 @@ run: $(BOOT_IMAGE) $(DISK)
 debug: $(BOOT_IMAGE) $(DISK)
 	$(QEMU_RUN) -s -S
 
-# 构建带内核测试的版本并运行，等到命令行就绪（或超时）为止。完整日志写入
-# $(BUILD_DIR)/test.log，这里只汇总各测试模块的计数和用户态自检的结果。
+# 构建带内核测试的版本并运行：等命令行就绪后，scripts/shell-test.sh 再向串口输入一串命令，
+# 检查命令行的行为（后台任务、Ctrl-C、kill）。完整日志写入 $(BUILD_DIR)/test.log，
+# 命令行检查的结果写入 $(BUILD_DIR)/shell-test.log，这里只汇总。
 test:
 	@$(MAKE) --no-print-directory run-test ARCH=$(ARCH) KTEST=1
 
 run-test: $(BOOT_IMAGE)
-	@echo "━━━ $(ARCH): running kernel tests and user-space selftest ━━━"
+	@echo "━━━ $(ARCH): running kernel tests, user-space selftest and shell checks ━━━"
 	@dd if=/dev/zero of=$(TEST_DISK) bs=1048576 count=2 2>/dev/null
-	@$(QEMU_BASE) $(call qemu_disk,$(TEST_DISK)) $(QEMU_NET) < /dev/null > $(BUILD_DIR)/test.log 2>&1 & \
-	 pid=$$!; i=0; \
-	 while [ $$i -lt $(TEST_TIMEOUT) ] && kill -0 $$pid 2>/dev/null && \
-	       ! grep -aq "sh: ready" $(BUILD_DIR)/test.log; do sleep 1; i=$$((i + 1)); done; \
-	 kill $$pid 2>/dev/null; wait $$pid 2>/dev/null; true
+	@scripts/shell-test.sh $(BUILD_DIR)/test.log $(BUILD_DIR)/shell-test.log $(TEST_TIMEOUT) \
+	     $(QEMU_BASE) $(call qemu_disk,$(TEST_DISK)) $(QEMU_NET)
+	@grep -a "FAILED" $(BUILD_DIR)/shell-test.log || true
 	@awk 'function num(key,  s) { if (!match($$0, key ": *[0-9]+")) return 0; \
 	         s = substr($$0, RSTART, RLENGTH); sub(/.*: */, "", s); return s + 0 } \
 	     { t += num("Total tests"); p += num("Passed tests"); f += num("Failed tests") } \
 	     /sh: ready/ { booted = 1 } /selftest: all passed/ { selftest_passed = 1 } /selftest: .*skipped/ { skipped = 1 } \
+	     /shelltest: all passed/ { shell_passed = 1 } \
 	     END { printf "$(ARCH): %d tests, %d passed, %d failed; user space %s (log: $(BUILD_DIR)/test.log)\n", \
-	               t, p, f, booted ? (selftest_passed ? (skipped ? "started, selftest SKIPPED some checks" : "started, selftest passed") : "started, selftest FAILED") : "NOT started"; \
-	           exit (t == 0 || f > 0 || !booted || !selftest_passed || skipped) }' $(BUILD_DIR)/test.log
+	               t, p, f, booted ? (selftest_passed ? (skipped ? "started, selftest SKIPPED some checks" : "started, selftest passed") : "started, selftest FAILED") \
+	                                 (shell_passed ? ", shell checks passed" : ", shell checks FAILED") : "NOT started"; \
+	           exit (t == 0 || f > 0 || !booted || !selftest_passed || skipped || !shell_passed) }' \
+	     $(BUILD_DIR)/test.log $(BUILD_DIR)/shell-test.log
 
 test-all:
 	@for arch in $(VALID_ARCHS); do \

@@ -1,0 +1,114 @@
+#!/bin/bash
+# 启动 QEMU，等命令行就绪后向串口输入一串命令，检查命令行的行为（后台任务、Ctrl-C、kill）。
+# 由 make test 调用：
+#
+#   scripts/shell-test.sh <log> <results> <boot-timeout-seconds> <qemu command...>
+#
+# QEMU 的全部输出写入 <log>；每项检查在 <results> 里留一行 "shelltest: <名字>: ok|FAILED"，
+# 全部通过时最后一行是 "shelltest: all passed"。命令行没有起来时 <results> 为空。
+# 不按固定时间等待：每一步都等日志里出现预期的那一行（最多 STEP_TIMEOUT 秒）。
+
+LOG=$1; RESULTS=$2; BOOT_TIMEOUT=$3; shift 3
+STEP_TIMEOUT=${STEP_TIMEOUT:-30}
+FIFO=$LOG.stdin
+
+rm -f "$FIFO"; mkfifo "$FIFO" || exit 1
+: > "$LOG"; : > "$RESULTS"
+"$@" < "$FIFO" > "$LOG" 2>&1 &
+QEMU_PID=$!
+exec 3> "$FIFO"
+trap 'kill $QEMU_PID 2>/dev/null; wait $QEMU_PID 2>/dev/null; exec 3>&-; rm -f "$FIFO"' EXIT
+
+MARK=0          # 日志里的字节位置：expect 只看这之后的输出
+MATCH=          # 最近一次 expect 匹配到的那一行
+failed=0
+
+# 位置 MARK 之后的输出，去掉颜色转义和回车
+output() { tail -c +$((MARK + 1)) "$LOG" | sed $'s/\x1b\\[[0-9;]*m//g' | tr -d '\r'; }
+
+# expect <扩展正则> [秒]：等到 MARK 之后有一行匹配
+expect() {
+    local deadline=$((SECONDS + ${2:-$STEP_TIMEOUT}))
+    while :; do
+        MATCH=$(output | grep -aE -m1 -- "$1") && return 0
+        [ $SECONDS -ge $deadline ] && return 1
+        kill -0 $QEMU_PID 2>/dev/null || return 1
+        sleep 0.2
+    done
+}
+
+# send <printf 格式串>：记下当前位置，然后把输入写给串口
+send() { MARK=$(wc -c < "$LOG"); printf "$1" >&3; }
+
+# check <名字> <命令...>：记录一项检查的结果
+check() {
+    local name=$1; shift
+    if "$@"; then echo "shelltest: $name: ok" >> "$RESULTS"
+    else echo "shelltest: $name: FAILED" >> "$RESULTS"; failed=1; fi
+}
+
+# "[12] sleep" 这样的一行里的进程号
+job_pid() { echo "$MATCH" | sed -E 's/.*\[([0-9]+)\].*/\1/'; }
+
+expect "sh: ready" "$BOOT_TIMEOUT" || exit 0
+
+# ---- 前台运行 ----
+run_program() { send 'echo one two\n'; expect '^one two$'; }
+check "run a program" run_program
+
+unknown_command() { send 'nosuchprogram\n'; expect '^nosuchprogram: unknown command'; }
+check "unknown command" unknown_command
+
+# ---- 后台任务：启动后提示符马上可用，jobs 能看到它，结束时有报告 ----
+background_job() {
+    send 'sleep 2 &\n'; expect '\[[0-9]+\] sleep$' || return 1
+    local pid start=$MARK; pid=$(job_pid)
+    send 'jobs\n'; expect "^\[$pid\] running  sleep$" || return 1
+    send 'echo still here\n'; expect '^still here$' || return 1
+    MARK=$start; expect "\[$pid\] done  sleep$" || return 1
+    send 'jobs\n'; expect '^\(no background jobs\)$'
+}
+check "background job" background_job
+
+# ---- Ctrl-C 终止前台程序，之后命令行照常工作 ----
+ctrl_c_foreground() {
+    send 'sleep 60\n'; expect 'sleep 60$' || return 1      # 命令行回显了这一行：已经读到
+    sleep 0.5
+    send '\003'; expect '^sleep: killed by signal 2$' || return 1
+    send 'echo after\n'; expect '^after$'
+}
+check "ctrl-c stops the foreground program" ctrl_c_foreground
+
+# ---- Ctrl-C 在提示符下放弃已经输入的半行 ----
+ctrl_c_prompt() {
+    send 'nosuch'; expect 'nosuch$' || return 1
+    send '\003'
+    send 'echo fresh\n'; expect '^fresh$'       # 没有放弃的话这一行会是 "nosuchecho fresh"
+}
+check "ctrl-c discards the line" ctrl_c_prompt
+
+# ---- kill 终止后台任务；不能终止 init ----
+kill_job() {
+    send 'sleep 60 &\n'; expect '\[[0-9]+\] sleep$' || return 1
+    local pid; pid=$(job_pid)
+    send "kill $pid\\n"; expect '^sleep: killed by signal 9$' || return 1
+    send 'jobs\n'; expect '^\(no background jobs\)$'
+}
+check "kill a background job" kill_job
+
+kill_init() { send 'kill 1\n'; expect '^kill: cannot kill 1$'; }
+check "kill init is refused" kill_init
+
+# ---- 被 Ctrl-C 终止的服务留下的监听端口可以马上重新使用 ----
+listener_reclaimed() {
+    send 'echod 7 1\n'; expect '^echod: listening on port 7$' || return 1
+    send '\003'; expect '^echod: killed by signal 2$' || return 1
+    send 'echod 7 1 &\n'; expect '\[[0-9]+\] echod$' || return 1
+    local pid; pid=$(job_pid)
+    expect 'echod: listening on port 7$' || return 1     # 前面可能带着提示符
+    send "kill $pid\\n"; expect '^echod: killed by signal 9$'
+}
+check "killed server's port is reusable" listener_reclaimed
+
+[ $failed -eq 0 ] && echo "shelltest: all passed" >> "$RESULTS"
+exit 0

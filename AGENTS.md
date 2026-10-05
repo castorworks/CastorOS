@@ -66,7 +66,7 @@ make run                # Run in QEMU, serial console on stdio; attaches disk.im
                         # first use) and a virtio-net card on QEMU user networking
 make debug              # Same, waiting for GDB on :1234
 
-make test               # Build with in-kernel tests (KTEST=1), boot, and check kernel tests + selftest
+make test               # Build with in-kernel tests (KTEST=1), boot, and check kernel tests + selftest + shell checks
 make test-all
 
 make clean              # Current arch only
@@ -100,7 +100,12 @@ rebuilds all of it when `user/` changes.
 ### Testing
 
 Kernel tests (`src/tests`, `ktest` framework) are compiled in only with `KTEST=1` and run during
-boot, before init starts. `make test` builds into `build/<arch>-ktest/`.
+boot, before init starts. `make test` builds into `build/<arch>-ktest/`. User-space behaviour
+is checked in two places: `user/selftest` (runs inside the system from `rc`; add checks there
+for anything a program can observe) and `scripts/shell-test.sh` (drives the command line over
+the serial port from the host; add checks there for anything that needs typed input, such as
+job control). Patterns in shell-test.sh must not assume a line starts at column 0 unless the
+shell is known to be idle: output of background programs follows the `> ` prompt.
 
 ### Dependencies
 
@@ -143,7 +148,7 @@ CastorOS/
 │   ├── program.mk          # Shared build rules for user programs
 │   └── linker/             # User linker scripts
 ├── docs/                   # Documentation (Chinese)
-├── scripts/                # cross-compiler-install.sh
+├── scripts/                # cross-compiler-install.sh, shell-test.sh (used by make test)
 ├── build/                  # Build output: build/<arch>/, build/<arch>-ktest/
 ├── Makefile
 └── linker.ld, linker_x86_64.ld, linker_arm64.ld
@@ -194,17 +199,24 @@ CastorOS/
 ### 测试
 
 ```bash
-make test                      # i686：构建 KTEST=1 内核并运行，命令行就绪即结束（通常十几秒）
+make test                      # i686：构建 KTEST=1 内核并运行，命令行检查做完即结束（通常十几秒）
 make test ARCH=x86_64
 make test ARCH=arm64
 make test-all
 make test TEST_TIMEOUT=300     # 机器很忙时放宽上限（默认 180 秒）
 ```
 
-内核不会自己关机：`make test` 在日志里出现 `sh: ready` 时结束 QEMU（卡住时以 `TEST_TIMEOUT`
-为上限）。完整日志写到 `build/<arch>-ktest/test.log`，并汇总各模块的 `Total/Passed/Failed tests`
-计数；有失败用例、用户态没有起来、用户态自检没有通过（没有 `selftest: all passed`）
-或者自检跳过了任何一项（测试环境里磁盘、网卡、回显服务都在）时返回非零。
+内核不会自己关机：`make test` 通过 `scripts/shell-test.sh` 启动 QEMU，等日志里出现 `sh: ready`
+（以 `TEST_TIMEOUT` 为上限），然后向串口输入一串命令检查命令行的行为（运行程序、后台任务、
+Ctrl-C、`kill`、被终止的服务的端口能否重用），每一步等到预期的输出出现为止（每步最多
+`STEP_TIMEOUT` 秒，默认 30），做完就结束 QEMU。完整日志写到 `build/<arch>-ktest/test.log`，
+命令行检查的结果写到 `build/<arch>-ktest/shell-test.log`（每项一行 `shelltest: <名字>: ok|FAILED`）。
+最后汇总各模块的 `Total/Passed/Failed tests` 计数；有失败用例、用户态没有起来、用户态自检
+没有通过（没有 `selftest: all passed`）、自检跳过了任何一项（测试环境里磁盘、网卡、回显服务
+都在）或者命令行检查没有全部通过时返回非零。
+
+主机负载极高时（load 上百），自检里有时间上限的检查（如 TCP 重传）可能超时失败；先看 `uptime`
+再判断是不是真的坏了。
 
 ### 手动运行
 

@@ -37,7 +37,7 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 
 其余程序不嵌在 init 里，而是放在启动映像中，由命令行从文件服务里读出来运行：
 
-- `user/selftest`：用户态自检（程序参数、内存、进程、IPC 的各条阻塞和退出路径、特权、共享内存、名字服务、文件服务、块设备、磁盘文件系统），开机时由 `rc` 脚本运行一次，每项打印一行结果。`make test` 要求它全部通过。
+- `user/selftest`：用户态自检（程序参数、内存、进程、IPC 的各条阻塞和退出路径、特权、共享内存、名字服务、文件服务、块设备、磁盘文件系统），开机时由 `rc` 脚本运行一次，每项打印一行结果。`make test` 要求它全部通过。需要有人敲键盘才能测的行为（后台任务、Ctrl-C、`kill`）不在这里，而是由宿主机上的 `scripts/shell-test.sh` 通过串口输入命令来检查，同样是 `make test` 的一部分。
 - `user/ls`、`user/cat`、`user/cp`、`user/rm`、`user/echo`、`user/sleep`：小工具。
 - `user/disk`：显示磁盘容量、直接读写扇区。
 - `user/ping`、`user/ifconfig`、`user/dns`、`user/http`、`user/echod`：网络工具。
