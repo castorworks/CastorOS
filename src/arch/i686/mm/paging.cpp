@@ -464,6 +464,13 @@ bool hal::Mmu::map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t 
             pde_flags |= PAGE_USER;
         }
         *pde = (uint32_t)table_phys | pde_flags;
+
+        /* 内核半区的页目录项每个地址空间各有一份副本：新建的要记进主内核页目录，
+         * 别的地址空间访问到这里缺页时从那里同步（sync_kernel_mapping） */
+        page_directory_t *master = (page_directory_t *)boot_page_directory;
+        if (pd_idx >= 512 && dir != master) {
+            master->entries[pd_idx] = *pde;
+        }
     } else {
         /* Get existing page table */
         paddr_t table_phys = i686_get_frame(*pde);
@@ -543,3 +550,125 @@ paddr_t hal::Mmu::unmap(hal_addr_space_t space, vaddr_t virt) {
 /** @brief 2MB 大页包含的 4KB 页数 (local definition to avoid conflict with pmm.h) */
 #define HUGE_PAGE_FRAMES_I686   (HUGE_PAGE_SIZE_2MB / PAGE_SIZE)
 
+/**
+ * @brief 让内核的直接映射区覆盖全部物理内存
+ *
+ * 引导代码只映射了前 16MB。这里把其余的物理内存（最多 2GB）映射到
+ * KERNEL_VIRTUAL_BASE 之上（PMM 清零新分配的帧时要通过这个区域访问它们）。
+ */
+void hal::Mmu::map_physical_memory() {
+    page_directory_t *current_dir = (page_directory_t *)boot_page_directory;
+    uintptr_t current_dir_phys = VIRT_TO_PHYS((uintptr_t)current_dir);
+    
+    // 检查并更新页表基址寄存器 (通过 HAL 接口)
+    uintptr_t current_page_table = hal::Mmu::get_current_page_table();
+    if (current_page_table != current_dir_phys)
+        hal::Mmu::switch_space(current_dir_phys);
+    
+    // 扩展高半核映射以覆盖所有可用的物理内存
+    // 引导时已经映射了前8MB（页目录项512-513）
+    // 现在需要扩展到所有可用内存（最多2GB）
+    mm::PmmInfo pmm_info = mm::Pmm::get_info();
+    uint32_t max_phys = pmm_info.total_frames * PAGE_SIZE;
+    
+    // 限制在2GB以内（高半核虚拟地址空间限制）
+    if (max_phys > 0x80000000) {
+        max_phys = 0x80000000;
+    }
+    
+    // 计算需要映射的页目录项数量（每个页目录项映射4MB）
+    // 引导时已经映射了前 16MB（索引 512-515），从索引 516 开始
+    uint32_t start_pde = 516;  // 对应虚拟地址 0x81000000
+    // 修复：使用向上取整，确保覆盖所有物理内存。如果 max_phys 不是 4MB 对齐，
+    // 向下取整会导致末尾的内存无法被映射。
+    uint32_t end_pde = 512 + ((max_phys + 0x3FFFFF) >> 22); 
+    
+    LOG_INFO_MSG("VMM: Extending high-half kernel mapping\n");
+    LOG_INFO_MSG("  Physical memory: %u MB\n", max_phys / (1024*1024));
+    LOG_INFO_MSG("  Mapping PDEs: %u-%u (phys: 0x%x-0x%x)\n",
+                 start_pde, end_pde - 1,
+                 (start_pde - 512) << 22, ((end_pde - 512) << 22) - 1);
+    
+    // 为每个页目录项创建页表并映射
+    // 注意：每映射完一个 PDE 后立即刷新 TLB，这样后续的 mm::Pmm::alloc_frame 
+    // 可以使用新映射的内存区域（因为 mm::Pmm::alloc_frame 会清零新分配的帧）
+    uint32_t mapped_pdes = 0;
+    for (uint32_t pde = start_pde; pde < end_pde; pde++) {
+        // 检查页目录项是否已存在
+        if (i686_is_present(current_dir->entries[pde])) {
+            continue;  // 已经映射，跳过
+        }
+        
+        // 分配页表
+        // 注意：mm::Pmm::alloc_frame 会清零新分配的帧，需要确保帧在已映射范围内
+        paddr_t table_phys = mm::Pmm::alloc_frame();
+        if (table_phys == PADDR_INVALID) {
+            LOG_WARN_MSG("VMM: Failed to allocate page table for PDE %u\n", pde);
+            break;  // 分配失败，停止扩展
+        }
+        
+        // 安全检查：确保页表帧在已映射范围内（引导时映射了前 16MB）
+        // 如果帧超出范围，mm::Pmm::alloc_frame 内部的 memset 就会失败
+        // 但由于 PMM 优先分配低地址帧，这种情况不应该发生
+        if (table_phys >= 0x1000000) {  // >= 16MB
+            LOG_ERROR_MSG("VMM: Page table frame 0x%llx exceeds boot mapping! This is a bug.\n", (unsigned long long)table_phys);
+            mm::Pmm::free_frame(table_phys);
+            break;
+        }
+        
+        page_table_t *table = (page_table_t*)PHYS_TO_VIRT((uintptr_t)table_phys);
+        
+        // 计算这个页表对应的物理地址范围
+        // PDE索引pde对应虚拟地址 pde * 4MB
+        // 对应的物理地址也是 pde * 4MB（高半核恒等映射）
+        uint32_t phys_base = (pde - 512) << 22;  // 物理地址基址
+        
+        // 填充页表项：每个页表项映射一个4KB页
+        // 映射整个 4MB 区域，包括保留内存（如 ACPI 表）
+        // 这样可以确保所有物理地址都可以通过高半核访问
+        for (uint32_t pte = 0; pte < 1024; pte++) {
+            uint32_t phys_addr = phys_base + (pte << 12);
+            // 设置页表项：Present | Read/Write | Supervisor
+            table->entries[pte] = phys_addr | PAGE_PRESENT | PAGE_WRITE;
+        }
+        
+        // 设置页目录项：指向页表
+        current_dir->entries[pde] = (uint32_t)table_phys | PAGE_PRESENT | PAGE_WRITE;
+        
+        // 立即刷新 TLB，使新映射生效
+        // 这样下一次 mm::Pmm::alloc_frame 就可以安全地访问更高地址的内存了
+        hal::Mmu::flush_tlb_all();
+        mapped_pdes++;
+    }
+    
+    LOG_INFO_MSG("VMM: Extended mapping by %u PDEs (now covers 0-%u MB)\n", 
+                 mapped_pdes, ((end_pde - 512) * 4));
+    
+    LOG_INFO_MSG("VMM: High-half kernel mapping extended\n");
+}
+
+/**
+ * @brief 内核地址缺页时，从主内核页目录同步缺少的页目录项
+ *
+ * i686 的每个地址空间在创建时复制一份内核半区的页目录项，之后新建的内核页表
+ * 只记在主内核页目录（和创建它的那个地址空间）里。别的地址空间第一次访问到时缺页，
+ * 在这里补上。
+ *
+ * @return 补上了返回 true（重试访问即可）；否则是真正的缺页
+ */
+bool hal::Mmu::sync_kernel_mapping(vaddr_t addr) {
+    if (addr < KERNEL_VIRTUAL_BASE) {
+        return false;
+    }
+    uint32_t pd_idx = i686_pde_index((uint32_t)addr);
+    page_directory_t *master = (page_directory_t *)boot_page_directory;
+    page_directory_t *current = (page_directory_t *)PHYS_TO_VIRT((uintptr_t)hal::Mmu::get_current_page_table());
+
+    // 主内核页目录里也没有，或者当前页目录已经有同样的项（缺的是页表项）：同步解决不了
+    if (!i686_is_present(master->entries[pd_idx]) || current->entries[pd_idx] == master->entries[pd_idx]) {
+        return false;
+    }
+    current->entries[pd_idx] = master->entries[pd_idx];
+    hal::Mmu::flush_tlb(addr);
+    return true;
+}

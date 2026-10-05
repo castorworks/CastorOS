@@ -162,6 +162,10 @@ CastorOS/
 - `src/include/hal/hal.h` - Unified interface for all architectures
 - `src/arch/$(ARCH)/hal.cpp` - Architecture-specific implementation
 - Use `hal_*` functions for portable code
+- `src/mm/vmm.cpp` has no `#if ARCH_*`: address-space creation, cloning (COW), teardown, extending
+  the kernel's direct mapping and the i686 kernel-mapping sync are `hal::Mmu` functions implemented
+  per architecture. New architecture-dependent memory code goes behind a `hal::Mmu` function, not
+  into a conditional in generic code.
 
 #### Header Organization
 

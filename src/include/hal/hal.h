@@ -427,6 +427,24 @@ public:
     static void flush_tlb_all();
 
     /**
+     * @brief Extend the kernel's direct mapping to cover all physical memory
+     *
+     * Called once by Vmm::init. The boot page tables only map what the kernel
+     * needs to start; the PMM reaches every frame through the direct mapping.
+     */
+    static void map_physical_memory();
+
+    /**
+     * @brief On a kernel-address fault, copy a missing kernel mapping into the current space
+     *
+     * Only does something where every address space carries its own copy of the
+     * kernel's top-level entries (i686).
+     *
+     * @return true if a mapping was added and the access should be retried
+     */
+    static bool sync_kernel_mapping(vaddr_t addr);
+
+    /**
      * @brief Create a new address space
      * 
      * Allocates and initializes a new page table hierarchy. The kernel portion

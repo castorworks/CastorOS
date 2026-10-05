@@ -386,9 +386,7 @@ bool kernel::Scheduler::setup_user_stack(task_t *task) {
                     mm::Pmm::free_frame(phys);
                 }
             }
-            
-            // 清理空的页表
-            mm::Vmm::cleanup_empty_page_tables(task->page_dir_phys, stack_bottom, stack_top);
+
             
             task->user_stack_base = 0;
             task->user_stack = 0;
@@ -409,9 +407,7 @@ bool kernel::Scheduler::setup_user_stack(task_t *task) {
                     mm::Pmm::free_frame(cleanup_phys);
                 }
             }
-            
-            // 清理空的页表
-            mm::Vmm::cleanup_empty_page_tables(task->page_dir_phys, stack_bottom, stack_top);
+
             
             return false;
         }
@@ -432,9 +428,7 @@ bool kernel::Scheduler::setup_user_stack(task_t *task) {
                     mm::Pmm::free_frame(cleanup_phys);
                 }
             }
-            
-            // 清理空的页表
-            mm::Vmm::cleanup_empty_page_tables(task->page_dir_phys, stack_bottom, stack_top);
+
             
             return false;
         }

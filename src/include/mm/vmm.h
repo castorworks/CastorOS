@@ -237,19 +237,6 @@ public:
     static uintptr_t unmap_page_in_directory(uintptr_t dir_phys, uintptr_t virt);
 
     /**
-     * @brief 清理指定范围内的空页表
-     * @param dir_phys 页目录的物理地址
-     * @param start_virt 起始虚拟地址（页对齐）
-     * @param end_virt 结束虚拟地址（页对齐）
-     * 
-     * 检查指定虚拟地址范围内的页表，如果页表为空（所有条目都未映射），
-     * 则释放该页表并清除对应的页目录项。
-     * 
-     * 注意：只处理用户空间页表，不会影响内核空间。
-     */
-    static void cleanup_empty_page_tables(uintptr_t dir_phys, uintptr_t start_virt, uintptr_t end_virt);
-
-    /**
      * @brief 处理内核空间缺页异常（同步内核页目录）
      * @param addr 缺页地址
      * @return 是否成功处理（如果成功，不需要 panic）

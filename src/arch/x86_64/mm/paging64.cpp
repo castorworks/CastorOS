@@ -989,3 +989,21 @@ hal_addr_space_t hal::Mmu::clone_space(hal_addr_space_t src) {
     return (hal_addr_space_t)new_pml4_phys;
 }
 
+/**
+ * @brief 让内核的直接映射区覆盖全部物理内存
+ *
+ * x86_64 的引导页表已经把前 1GB 物理内存映射好了，而 PMM 只把这 1GB 交给分配器
+ * （见 PMM_X86_64_DIRECT_MAP_LIMIT），所以这里没有要做的事。
+ */
+void hal::Mmu::map_physical_memory() {
+}
+
+/**
+ * @brief 内核地址缺页时同步内核映射：这个架构不需要
+ *
+ * 内核半区的顶层表项指向所有地址空间共享的下级页表，没有可同步的东西。
+ */
+bool hal::Mmu::sync_kernel_mapping(vaddr_t addr) {
+    (void)addr;
+    return false;
+}

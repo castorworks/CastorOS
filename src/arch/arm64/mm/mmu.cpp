@@ -1369,3 +1369,75 @@ bool hal::Mmu::map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint
     return true;
 }
 
+/**
+ * @brief 让内核的直接映射区覆盖全部物理内存
+ *
+ * 引导代码只映射了内核附近的一小段。这里用 2MB 块把其余的物理内存映射到
+ * KERNEL_VIRTUAL_BASE 之上（PMM 清零新分配的帧时要通过这个区域访问它们）。
+ */
+void hal::Mmu::map_physical_memory() {
+    
+    // 获取 PMM 信息以确定需要映射的物理内存范围
+    mm::PmmInfo pmm_info = mm::Pmm::get_info();
+    uint64_t max_phys = (uint64_t)pmm_info.total_frames * PAGE_SIZE;
+    
+    LOG_INFO_MSG("VMM: Physical memory: %llu MB (%llu frames)\n", 
+                 (unsigned long long)(max_phys / (1024*1024)),
+                 (unsigned long long)pmm_info.total_frames);
+    
+    // ARM64 内核直接映射区：0xFFFF_0000_0000_0000 开始
+    // 引导代码已经映射了基本的内核区域，这里扩展映射以覆盖所有物理内存
+    // 使用 2MB 块映射提高效率
+    LOG_INFO_MSG("VMM: Extending kernel direct mapping using 2MB blocks...\n");
+    
+    // 计算需要映射的 2MB 块数量
+    uint64_t block_size = 2 * 1024 * 1024;  // 2MB
+    uint64_t num_blocks = (max_phys + block_size - 1) / block_size;
+    uint32_t mapped_blocks = 0;
+    
+    for (uint64_t i = 0; i < num_blocks; i++) {
+        uint64_t phys = i * block_size;
+        vaddr_t virt = (vaddr_t)(KERNEL_VIRTUAL_BASE + phys);
+        
+        // 检查是否已经映射（引导代码可能已经映射了部分区域）
+        paddr_t existing_phys;
+        if (hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, virt, &existing_phys, NULL)) {
+            // 已映射，跳过
+            continue;
+        }
+        
+        // 使用 2MB 块映射
+        uint32_t hal_flags = HAL_PAGE_PRESENT | HAL_PAGE_WRITE | HAL_PAGE_EXEC;
+        if (hal::Mmu::map_huge(HAL_ADDR_SPACE_CURRENT, virt, (paddr_t)phys, hal_flags)) {
+            mapped_blocks++;
+        } else {
+            // 如果 2MB 块映射失败，尝试使用 4KB 页映射
+            LOG_WARN_MSG("VMM: 2MB block mapping failed at 0x%llx, falling back to 4KB pages\n",
+                        (unsigned long long)virt);
+            for (uint64_t offset = 0; offset < block_size; offset += PAGE_SIZE) {
+                vaddr_t page_virt = virt + offset;
+                paddr_t page_phys = phys + offset;
+                if (!hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, page_virt, NULL, NULL)) {
+                    hal::Mmu::map(HAL_ADDR_SPACE_CURRENT, page_virt, page_phys, hal_flags);
+                }
+            }
+        }
+    }
+    
+    // 刷新 TLB
+    hal::Mmu::flush_tlb_all();
+    
+    LOG_INFO_MSG("VMM: Extended mapping by %u 2MB blocks (total %llu MB)\n", 
+                 mapped_blocks, (unsigned long long)(num_blocks * 2));
+    LOG_INFO_MSG("VMM: ARM64 VMM initialization complete\n");
+}
+
+/**
+ * @brief 内核地址缺页时同步内核映射：这个架构不需要
+ *
+ * 内核半区用单独的 TTBR1 页表，所有地址空间共享，没有可同步的东西。
+ */
+bool hal::Mmu::sync_kernel_mapping(vaddr_t addr) {
+    (void)addr;
+    return false;
+}

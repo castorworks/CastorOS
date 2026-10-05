@@ -14,77 +14,12 @@
 #include <kernel/sync/spinlock.h>
 #include <kernel/task.h>
 #include <hal/hal.h>
-#include <hal/pgtable.h>
 #include <hal/hal_error.h>
 
-static page_directory_t *current_dir = NULL;  ///< 当前页目录虚拟地址
 static uintptr_t current_dir_phys = 0;         ///< 当前页目录物理地址
 
-/* 引导时的页目录 - 使用 pgtable 抽象层获取条目大小 */
-#if defined(ARCH_X86_64)
-extern uint64_t boot_page_directory[];         ///< 引导时的 PML4 (x86_64)
-#else
-extern uint32_t boot_page_directory[];         ///< 引导时的页目录 (i686)
-#endif
 
 static sync::Spinlock vmm_lock;                    ///< VMM 自旋锁，保护页表操作
-
-
-/* ============================================================================
- * 页表索引提取函数 - 使用 pgtable 抽象层
- * 
- * 这些函数封装了 pgtable 抽象层的索引提取功能，提供向后兼容的接口。
- * ========================================================================== */
-
-#if defined(ARCH_X86_64)
-/* x86_64: 4-level paging address decomposition using pgtable abstraction */
-static inline uint32_t pml4_idx(uintptr_t v) { return pgtable_get_index((vaddr_t)v, 3); }
-static inline uint32_t pdpt_idx(uintptr_t v) { return pgtable_get_index((vaddr_t)v, 2); }
-static inline uint32_t pd_idx(uintptr_t v)   { return pgtable_get_index((vaddr_t)v, 1); }
-static inline uint32_t pt_idx(uintptr_t v)   { return pgtable_get_index((vaddr_t)v, 0); }
-/* 使用 pgtable 抽象层提取物理地址和检查存在位 */
-static inline uintptr_t get_frame64(pte_t e) { return (uintptr_t)pgtable_get_phys(e); }
-static inline bool is_present64(pte_t e) { return pgtable_is_present(e); }
-/* Compatibility aliases for x86_64 */
-#define pde_idx(v) pml4_idx(v)
-#define pte_idx(v) pt_idx(v)
-#define get_frame(e) get_frame64(e)
-#define is_present(e) is_present64(e)
-#else
-/* i686: 2-level paging address decomposition using pgtable abstraction */
-/**
- * @brief 获取页目录索引
- * @param v 虚拟地址
- * @return 页目录索引（高10位）
- */
-static inline uint32_t pde_idx(uintptr_t v) { return pgtable_get_index((vaddr_t)v, 1); }
-
-/**
- * @brief 获取页表索引
- * @param v 虚拟地址
- * @return 页表索引（中间10位）
- */
-static inline uint32_t pte_idx(uintptr_t v) { return pgtable_get_index((vaddr_t)v, 0); }
-
-/**
- * @brief 从页表项/页目录项中提取物理地址
- * @param e 页表项或页目录项
- * @return 物理地址（页对齐）
- * 
- * 使用 pgtable 抽象层提取物理地址
- */
-static inline uintptr_t get_frame(pte_t e) { return (uintptr_t)pgtable_get_phys(e); }
-
-/**
- * @brief 检查页表项/页目录项是否存在
- * @param e 页表项或页目录项
- * @return 存在返回 true，否则返回 false
- * 
- * 使用 pgtable 抽象层检查存在位
- */
-static inline bool is_present(pte_t e) { return pgtable_is_present(e); }
-#endif
-
 
 /**
  * @brief 初始化虚拟内存管理器
@@ -93,179 +28,13 @@ static inline bool is_present(pte_t e) { return pgtable_is_present(e); }
  * 扩展高半核映射以覆盖所有可用的物理内存
  */
 void mm::Vmm::init() {
-    // 初始化 VMM 自旋锁
     vmm_lock.init();
-    
-#if defined(ARCH_ARM64)
-    // ARM64: 引导代码已经设置了 4 级页表
-    // 使用 HAL MMU 接口获取当前页表
+
+    // 引导页表只映射了一部分物理内存：让各架构把内核的直接映射扩展到全部
+    hal::Mmu::map_physical_memory();
+
     current_dir_phys = hal::Mmu::get_current_page_table();
-    current_dir = (page_directory_t*)PADDR_TO_KVADDR(current_dir_phys);
-    
-    LOG_INFO_MSG("VMM: ARM64 mode - using boot page tables\n");
-    LOG_INFO_MSG("VMM: L0 table at phys 0x%llx, virt 0x%llx\n", 
-                 (unsigned long long)current_dir_phys, (unsigned long long)current_dir);
-    
-    // 获取 PMM 信息以确定需要映射的物理内存范围
-    mm::PmmInfo pmm_info = mm::Pmm::get_info();
-    uint64_t max_phys = (uint64_t)pmm_info.total_frames * PAGE_SIZE;
-    
-    LOG_INFO_MSG("VMM: Physical memory: %llu MB (%llu frames)\n", 
-                 (unsigned long long)(max_phys / (1024*1024)),
-                 (unsigned long long)pmm_info.total_frames);
-    
-    // ARM64 内核直接映射区：0xFFFF_0000_0000_0000 开始
-    // 引导代码已经映射了基本的内核区域，这里扩展映射以覆盖所有物理内存
-    // 使用 2MB 块映射提高效率
-    LOG_INFO_MSG("VMM: Extending kernel direct mapping using 2MB blocks...\n");
-    
-    // 计算需要映射的 2MB 块数量
-    uint64_t block_size = 2 * 1024 * 1024;  // 2MB
-    uint64_t num_blocks = (max_phys + block_size - 1) / block_size;
-    uint32_t mapped_blocks = 0;
-    
-    for (uint64_t i = 0; i < num_blocks; i++) {
-        uint64_t phys = i * block_size;
-        vaddr_t virt = (vaddr_t)(KERNEL_VIRTUAL_BASE + phys);
-        
-        // 检查是否已经映射（引导代码可能已经映射了部分区域）
-        paddr_t existing_phys;
-        if (hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, virt, &existing_phys, NULL)) {
-            // 已映射，跳过
-            continue;
-        }
-        
-        // 使用 2MB 块映射
-        uint32_t hal_flags = HAL_PAGE_PRESENT | HAL_PAGE_WRITE | HAL_PAGE_EXEC;
-        if (hal::Mmu::map_huge(HAL_ADDR_SPACE_CURRENT, virt, (paddr_t)phys, hal_flags)) {
-            mapped_blocks++;
-        } else {
-            // 如果 2MB 块映射失败，尝试使用 4KB 页映射
-            LOG_WARN_MSG("VMM: 2MB block mapping failed at 0x%llx, falling back to 4KB pages\n",
-                        (unsigned long long)virt);
-            for (uint64_t offset = 0; offset < block_size; offset += PAGE_SIZE) {
-                vaddr_t page_virt = virt + offset;
-                paddr_t page_phys = phys + offset;
-                if (!hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, page_virt, NULL, NULL)) {
-                    hal::Mmu::map(HAL_ADDR_SPACE_CURRENT, page_virt, page_phys, hal_flags);
-                }
-            }
-        }
-    }
-    
-    // 刷新 TLB
-    hal::Mmu::flush_tlb_all();
-    
-    LOG_INFO_MSG("VMM: Extended mapping by %u 2MB blocks (total %llu MB)\n", 
-                 mapped_blocks, (unsigned long long)(num_blocks * 2));
-    LOG_INFO_MSG("VMM: ARM64 VMM initialization complete\n");
-    
-#elif defined(ARCH_X86_64)
-    // x86_64: 引导代码已经设置了 4 级页表，映射了前 1GB
-    // 暂时不扩展映射，直接使用引导时的页表
-    // boot_page_directory 在 x86_64 上是指向 PML4 的指针
-    current_dir_phys = hal::Mmu::get_current_page_table();
-    current_dir = (page_directory_t*)PHYS_TO_VIRT(current_dir_phys);
-    
-    LOG_INFO_MSG("VMM: x86_64 mode - using boot page tables\n");
-    LOG_INFO_MSG("VMM: PML4 at phys 0x%llx, virt 0x%llx\n", 
-                 (unsigned long long)current_dir_phys, (unsigned long long)current_dir);
-    LOG_INFO_MSG("VMM: Boot mapping covers first 1GB of physical memory\n");
-    
-    // x86_64 暂时不需要扩展映射，引导代码已经映射了足够的内存
-    // TODO: 实现完整的 x86_64 VMM，支持动态页表管理
-#else
-    // i686: 原有的 32 位实现
-    current_dir = (page_directory_t*)boot_page_directory;
-    current_dir_phys = VIRT_TO_PHYS((uintptr_t)current_dir);
-    
-    // 检查并更新页表基址寄存器 (通过 HAL 接口)
-    uintptr_t current_page_table = hal::Mmu::get_current_page_table();
-    if (current_page_table != current_dir_phys)
-        hal::Mmu::switch_space(current_dir_phys);
-    
-    // 扩展高半核映射以覆盖所有可用的物理内存
-    // 引导时已经映射了前8MB（页目录项512-513）
-    // 现在需要扩展到所有可用内存（最多2GB）
-    mm::PmmInfo pmm_info = mm::Pmm::get_info();
-    uint32_t max_phys = pmm_info.total_frames * PAGE_SIZE;
-    
-    // 限制在2GB以内（高半核虚拟地址空间限制）
-    if (max_phys > 0x80000000) {
-        max_phys = 0x80000000;
-    }
-    
-    // 计算需要映射的页目录项数量（每个页目录项映射4MB）
-    // 引导时已经映射了前 16MB（索引 512-515），从索引 516 开始
-    uint32_t start_pde = 516;  // 对应虚拟地址 0x81000000
-    // 修复：使用向上取整，确保覆盖所有物理内存。如果 max_phys 不是 4MB 对齐，
-    // 向下取整会导致末尾的内存无法被映射。
-    uint32_t end_pde = 512 + ((max_phys + 0x3FFFFF) >> 22); 
-    
-    LOG_INFO_MSG("VMM: Extending high-half kernel mapping\n");
-    LOG_INFO_MSG("  Physical memory: %u MB\n", max_phys / (1024*1024));
-    LOG_INFO_MSG("  Mapping PDEs: %u-%u (phys: 0x%x-0x%x)\n",
-                 start_pde, end_pde - 1,
-                 (start_pde - 512) << 22, ((end_pde - 512) << 22) - 1);
-    
-    // 为每个页目录项创建页表并映射
-    // 注意：每映射完一个 PDE 后立即刷新 TLB，这样后续的 mm::Pmm::alloc_frame 
-    // 可以使用新映射的内存区域（因为 mm::Pmm::alloc_frame 会清零新分配的帧）
-    uint32_t mapped_pdes = 0;
-    for (uint32_t pde = start_pde; pde < end_pde; pde++) {
-        // 检查页目录项是否已存在
-        if (is_present(current_dir->entries[pde])) {
-            continue;  // 已经映射，跳过
-        }
-        
-        // 分配页表
-        // 注意：mm::Pmm::alloc_frame 会清零新分配的帧，需要确保帧在已映射范围内
-        paddr_t table_phys = mm::Pmm::alloc_frame();
-        if (table_phys == PADDR_INVALID) {
-            LOG_WARN_MSG("VMM: Failed to allocate page table for PDE %u\n", pde);
-            break;  // 分配失败，停止扩展
-        }
-        
-        // 安全检查：确保页表帧在已映射范围内（引导时映射了前 16MB）
-        // 如果帧超出范围，mm::Pmm::alloc_frame 内部的 memset 就会失败
-        // 但由于 PMM 优先分配低地址帧，这种情况不应该发生
-        if (table_phys >= 0x1000000) {  // >= 16MB
-            LOG_ERROR_MSG("VMM: Page table frame 0x%llx exceeds boot mapping! This is a bug.\n", (unsigned long long)table_phys);
-            mm::Pmm::free_frame(table_phys);
-            break;
-        }
-        
-        page_table_t *table = (page_table_t*)PHYS_TO_VIRT((uintptr_t)table_phys);
-        
-        // 计算这个页表对应的物理地址范围
-        // PDE索引pde对应虚拟地址 pde * 4MB
-        // 对应的物理地址也是 pde * 4MB（高半核恒等映射）
-        uint32_t phys_base = (pde - 512) << 22;  // 物理地址基址
-        
-        // 填充页表项：每个页表项映射一个4KB页
-        // 映射整个 4MB 区域，包括保留内存（如 ACPI 表）
-        // 这样可以确保所有物理地址都可以通过高半核访问
-        for (uint32_t pte = 0; pte < 1024; pte++) {
-            uint32_t phys_addr = phys_base + (pte << 12);
-            // 设置页表项：Present | Read/Write | Supervisor
-            table->entries[pte] = phys_addr | PAGE_PRESENT | PAGE_WRITE;
-        }
-        
-        // 设置页目录项：指向页表
-        current_dir->entries[pde] = (uint32_t)table_phys | PAGE_PRESENT | PAGE_WRITE;
-        
-        // 立即刷新 TLB，使新映射生效
-        // 这样下一次 mm::Pmm::alloc_frame 就可以安全地访问更高地址的内存了
-        mm::Vmm::flush_tlb(0);
-        mapped_pdes++;
-    }
-    
-    LOG_INFO_MSG("VMM: Extended mapping by %u PDEs (now covers 0-%u MB)\n", 
-                 mapped_pdes, ((end_pde - 512) * 4));
-    
-    LOG_INFO_MSG("VMM: High-half kernel mapping extended\n");
-    LOG_INFO_MSG("VMM: Boot page directory registered at phys 0x%x\n", current_dir_phys);
-#endif
+    LOG_INFO_MSG("VMM: kernel page table at phys 0x%llx\n", (unsigned long long)current_dir_phys);
 }
 
 
@@ -275,40 +44,8 @@ void mm::Vmm::init() {
  * @return 是否成功处理
  */
 bool mm::Vmm::handle_kernel_page_fault(uintptr_t addr) {
-#if !defined(ARCH_I686)
-    // x86_64 / arm64: 内核空间由所有地址空间共享同一组页表，不需要同步
-    // （下面的同步逻辑按 i686 的两级页目录格式访问 boot_page_directory）
-    (void)addr;
-    return false;
-#else
-    // 必须是内核空间地址
-    if (addr < KERNEL_VIRTUAL_BASE) return false;
-    
-    uint32_t pd_idx = (uint32_t)(addr >> 22);
-    page_directory_t *k_dir = (page_directory_t *)boot_page_directory;
-    
-    // 检查主内核页目录中是否存在该映射
-    // 注意：我们检查 PDE 是否存在 (Present 位)
-    if (k_dir->entries[pd_idx] & PAGE_PRESENT) {
-        // 当前页目录已经有同样的 PDE：缺的是页表项而不是页目录项，
-        // 同步解决不了，交给调用者按真正的缺页处理（否则会无限重试）
-        if (current_dir->entries[pd_idx] == k_dir->entries[pd_idx]) {
-            return false;
-        }
-        // 将条目复制到当前页目录
-        current_dir->entries[pd_idx] = k_dir->entries[pd_idx];
-        
-        // 刷新 TLB，确保 CPU 看到新的映射
-        // 虽然 Intel 手册说修改 PDE 后需要刷新 TLB，但有些实现可能缓存了 PDE
-        // 对于缺页处理，invlpg 通常足够，但这里我们修改了 PDE，安全起见可以刷新整个 TLB
-        // 不过针对特定地址的 invlpg 应该也足以让 CPU 重新遍历页表结构
-        mm::Vmm::flush_tlb(addr);
-        
-        return true;
-    }
-    
-    return false;
-#endif
+    // 只有内核半区按地址空间各有一份顶层表项的架构（i686）才需要同步
+    return hal::Mmu::sync_kernel_mapping((vaddr_t)addr);
 }
 
 /**
@@ -497,18 +234,6 @@ bool mm::Vmm::map_page(uintptr_t virt, uintptr_t phys, uint32_t flags) {
     if (result) {
         // 刷新 TLB
         hal::Mmu::flush_tlb((vaddr_t)virt);
-        
-#if defined(ARCH_I686)
-        // i686: 如果是内核空间的新映射，同步到主内核页目录
-        // 这样其他进程可以通过 page fault handler 同步这个新映射
-        if (virt >= KERNEL_VIRTUAL_BASE) {
-            page_directory_t *k_dir = (page_directory_t *)boot_page_directory;
-            uint32_t pd = pde_idx(virt);
-            if (k_dir != current_dir && is_present(current_dir->entries[pd])) {
-                k_dir->entries[pd] = current_dir->entries[pd];
-            }
-        }
-#endif
     }
     
     return result;
@@ -629,7 +354,6 @@ void mm::Vmm::sync_current_dir(uintptr_t dir_phys) {
     sync::SpinlockIrqGuard guard(vmm_lock);
     
     current_dir_phys = dir_phys;
-    current_dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
 }
 
 /**
@@ -644,7 +368,6 @@ void mm::Vmm::switch_page_directory(uintptr_t dir_phys) {
     sync::SpinlockIrqGuard guard(vmm_lock);
     
     current_dir_phys = dir_phys;
-    current_dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
     
     // 通过 HAL 接口切换地址空间
     hal::Mmu::switch_space(dir_phys);
@@ -712,68 +435,4 @@ uintptr_t mm::Vmm::unmap_page_in_directory(uintptr_t dir_phys, uintptr_t virt) {
         }
     }
     return (uintptr_t)old_phys;
-}
-
-/**
- * @brief 清理指定范围内的空页表
- * @param dir_phys 页目录的物理地址
- * @param start_virt 起始虚拟地址（页对齐）
- * @param end_virt 结束虚拟地址（页对齐）
- * 
- * 检查指定虚拟地址范围内的页表，如果页表为空（所有条目都未映射），
- * 则释放该页表并清除对应的页目录项。
- */
-void mm::Vmm::cleanup_empty_page_tables(uintptr_t dir_phys, uintptr_t start_virt, uintptr_t end_virt) {
-    if (!dir_phys || start_virt >= end_virt) {
-        return;
-    }
-    
-    // 只处理用户空间
-    if (start_virt >= KERNEL_VIRTUAL_BASE || end_virt > KERNEL_VIRTUAL_BASE) {
-        return;
-    }
-    
-    sync::SpinlockIrqGuard guard(vmm_lock);
-    
-    page_directory_t *dir = (page_directory_t*)PHYS_TO_VIRT(dir_phys);
-    
-#if !defined(ARCH_I686)
-    // x86_64 / arm64: 4-level paging - more complex cleanup needed
-    // For now, skip cleanup as it requires walking multiple levels
-    (void)dir;
-    (void)start_virt;
-    (void)end_virt;
-#else
-    // i686: 2-level paging
-    uint32_t start_pde = pde_idx(start_virt);
-    uint32_t end_pde = pde_idx(end_virt - 1);  // -1 because end_virt is exclusive
-    
-    for (uint32_t pd = start_pde; pd <= end_pde; pd++) {
-        pde_t pde = dir->entries[pd];
-        
-        // Skip if PDE is not present
-        if (!is_present(pde)) {
-            continue;
-        }
-        
-        // Get page table
-        uintptr_t table_phys = get_frame(pde);
-        page_table_t *table = (page_table_t*)PHYS_TO_VIRT(table_phys);
-        
-        // Check if all entries in the page table are empty
-        bool is_empty = true;
-        for (uint32_t pt = 0; pt < 1024; pt++) {
-            if (is_present(table->entries[pt])) {
-                is_empty = false;
-                break;
-            }
-        }
-        
-        // If page table is empty, free it and clear the PDE
-        if (is_empty) {
-            dir->entries[pd] = 0;
-            mm::Pmm::free_frame((paddr_t)table_phys);
-        }
-    }
-#endif
 }
