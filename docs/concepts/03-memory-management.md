@@ -2,427 +2,202 @@
 
 ## 概述
 
-CastorOS 内存管理分为三个层次：
-1. **PMM (Physical Memory Manager)**: 管理物理页帧
-2. **VMM (Virtual Memory Manager)**: 管理虚拟地址空间和页表
-3. **堆分配器 (Heap)**: 提供任意大小的内存分配
+内核里的内存管理分四层，每层只和下一层打交道：
 
 ```
-+------------------+
-|   kmalloc/kfree  |  ← 应用层接口
-+------------------+
-|      Heap        |  ← 堆分配器
-+------------------+
-|      VMM         |  ← 虚拟内存管理
-+------------------+
-|      PMM         |  ← 物理内存管理
-+------------------+
-|    Hardware      |  ← 物理内存
-+------------------+
+kmalloc / kfree                 内核自己用的小块内存        src/mm/heap.cpp
+地址空间 (mm::Vmm)              创建、克隆、销毁，写时复制    src/mm/vmm.cpp
+页表   (hal::Mmu)               查询、映射、撤销、改属性      src/mm/pagetable.cpp
+物理页 (mm::Pmm)                分配、释放、引用计数          src/mm/pmm.cpp
 ```
 
-## 物理内存管理 (PMM)
+用户进程的内存（`brk`、`mmap`、共享内存、设备内存）是系统调用层在这四层之上做的，
+见最后一节。
 
-### 设计
+## 物理页：PMM
 
-PMM 使用位图管理物理页帧，支持引用计数和帧保护。
+物理内存按 4KB 一页（"页帧"）管理。两张表：
 
-```c
-// 每个位代表一个 4KB 页帧
-// 0 = 空闲, 1 = 已使用
-static uint32_t *frame_bitmap;
-static uint32_t bitmap_size;
-static uint32_t total_frames;
+- **位图**：每个页帧一位，0 空闲、1 已用。分配就是找一个 0 改成 1。
+- **引用计数**：每个页帧一个 16 位计数，记着有多少个地方映射了它。
 
-// 引用计数（COW 支持）
-static uint32_t *frame_refcount;
+```cpp
+paddr_t frame = mm::Pmm::alloc_frame();     // 分配一页，内容已清零，引用计数为 1
+mm::Pmm::free_frame(frame);                 // 引用计数减一，减到 0 才真正释放
 ```
 
-### 核心操作
+引用计数是写时复制和共享内存的基础：一个物理页被两个进程映射时计数是 2，
+任何一方 `free_frame` 都只是减一，另一方手里的页不受影响。所以销毁一个地址空间时
+可以放心地对它映射的每一页调用 `free_frame`，不用关心这页是不是还有别人在用。
 
-```c
-// 分配一个物理页帧
-uint32_t pmm_alloc_frame(void) {
-    int idx = find_free_frame();
-    if (idx < 0) return 0;
-    
-    set_frame(idx);
-    frame_refcount[idx] = 1;
-    
-    // 清零页帧
-    memset(PHYS_TO_VIRT(idx * PAGE_SIZE), 0, PAGE_SIZE);
-    
-    return idx * PAGE_SIZE;
-}
+其余几个接口：
 
-// 释放一个物理页帧
-void pmm_free_frame(uint32_t frame) {
-    uint32_t idx = frame / PAGE_SIZE;
-    
-    // 减少引用计数
-    if (--frame_refcount[idx] == 0) {
-        clear_frame(idx);
-    }
-}
+| 接口 | 用途 |
+|------|------|
+| `frame_ref_share(frame)` | 又多了一处映射：计数加一（PMM 不管的设备内存直接忽略） |
+| `frame_get_refcount(frame)` | 写时复制据此判断这页是不是只剩自己在用 |
+| `alloc_contiguous(count)` | 一段物理上连续的页，给 DMA 用 |
+| `pin_device_frame(frame)` | 给设备内存所在的页加一个永久的引用，防止被当作普通内存释放 |
+| `get_info()` | 总页数、空闲页数；`mem_free_pages()` 系统调用读的就是它 |
 
-// 增加引用计数（COW）
-uint32_t pmm_frame_ref_inc(uint32_t frame) {
-    return ++frame_refcount[frame / PAGE_SIZE];
-}
+PMM 清零新分配的页时要能访问它，所以内核启动时把全部物理内存映射进了自己的地址空间
+（"直接映射区"，物理地址 `p` 在虚拟地址 `KERNEL_VIRTUAL_BASE + p`，即 `PHYS_TO_VIRT(p)`）。
+这件事由各架构的 `hal::Mmu::map_physical_memory()` 在启动时做。
+
+## 页表
+
+### 一棵树，三种架构
+
+虚拟地址到物理地址的映射存在页表里。页表是一棵固定深度的树：虚拟地址的最高几位
+选出顶层表里的一项，那一项指向下一级表，再用接下来的几位选……最后一级的表项指向
+物理页，同时带着这一页的属性（可写、用户可访问、可执行等）。
+
+| 架构 | 级数 | 每级位数 | 每张表的项数 |
+|------|------|----------|--------------|
+| i686 | 2 | 10 | 1024 |
+| x86_64 | 4 | 9 | 512 |
+| arm64 | 4 | 9 | 512 |
+
+三个架构只在级数、每级的位数和表项里各个位的含义上不同，遍历的逻辑完全一样。所以
+代码分成两部分：
+
+- **通用部分**（`src/mm/pagetable.cpp`）：沿着树走、建表、克隆、销毁。
+- **表项格式**（`src/include/hal/pt.h` 里声明，各架构在 `src/arch/<arch>/mm/` 里实现）：
+  十来个小函数，回答"这一项存在吗""它指向下一级表还是直接指向内存""这些属性怎么编码"。
+
+级别的编号是 0 为最后一级，`PT_TOP` 为顶层。取下标只用一个公式：
+
+```cpp
+index = (virt >> (PAGE_SHIFT + PT_INDEX_BITS * level)) & (PT_TABLE_SIZE - 1);
 ```
 
-### 位图操作
+### 基本操作
 
-```c
-static inline void set_frame(uint32_t idx) {
-    frame_bitmap[idx / 32] |= (1 << (idx % 32));
-}
+通用代码实现了 `hal::Mmu` 里和页表结构有关的操作。地址空间用它顶层表的物理地址表示
+（`hal_addr_space_t`）。
 
-static inline void clear_frame(uint32_t idx) {
-    frame_bitmap[idx / 32] &= ~(1 << (idx % 32));
-}
-
-static inline bool test_frame(uint32_t idx) {
-    return frame_bitmap[idx / 32] & (1 << (idx % 32));
-}
+```cpp
+bool    hal::Mmu::map(space, virt, phys, flags);      // 建立一个 4KB 映射，缺的中间表顺手建
+paddr_t hal::Mmu::unmap(space, virt);                 // 撤销，返回原来映射的物理页
+bool    hal::Mmu::query(space, virt, &phys, &flags);  // 查
+bool    hal::Mmu::protect(space, virt, set, clear);   // 只改属性
 ```
 
-### 帧保护
+`flags` 是与架构无关的 `HAL_PAGE_*`（`PRESENT`、`WRITE`、`USER`、`EXEC`、`NOCACHE`，
+以及两个只给软件看的标志 `COW` 和 `SHARED`），由各架构换算成自己的表项位。
 
-某些关键页帧（如页目录、页表）需要保护，防止被意外释放：
+这几个函数都不刷新 TLB：CPU 会缓存查过的映射，改了页表之后要让缓存里的旧结果作废
+（`hal::Mmu::flush_tlb(virt)`），什么时候刷由调用者决定。
 
-```c
-void pmm_protect_frame(uint32_t frame);
-void pmm_unprotect_frame(uint32_t frame);
-bool pmm_is_frame_protected(uint32_t frame);
+### 内核那一半
+
+每个地址空间的上半部分都是内核，而且是同一个内核。三个架构做法不同：
+
+- **x86_64**：顶层表的后一半表项指向所有地址空间共享的下级表，新建地址空间时抄一份表项即可。
+- **arm64**：CPU 有两个页表基址寄存器，内核地址走 `TTBR1` 指向的另一棵树，进程的页表里根本没有内核。
+- **i686**：同样是抄顶层表项，但内核之后新建的页表只记在一张"主内核页目录"里。别的地址空间
+  第一次访问到时缺页，由 `hal::Mmu::sync_kernel_mapping()` 从主内核页目录补上。
+
+## 地址空间和写时复制
+
+```cpp
+uintptr_t space = mm::Vmm::create_page_directory();     // 新的、只有内核那一半的地址空间
+uintptr_t copy  = mm::Vmm::clone_page_directory(space); // fork 用：克隆
+mm::Vmm::free_page_directory(space);                    // 销毁，释放它映射的所有页和页表
 ```
 
-## 虚拟内存管理 (VMM)
+### 克隆
 
-### x86 分页机制
+`fork` 要让子进程得到和父进程一样的内存。把每一页都复制一遍太慢，而且多数页之后
+根本不会被写。所以克隆只复制页表，物理页先共用：
 
-x86 使用两级页表：
+1. 子进程得到一套自己的页表，表项指向和父进程相同的物理页，每页的引用计数加一。
+2. 原来可写的页，在父子两边都改成**只读**，并打上 `COW` 标记。
+3. 父进程的页表被改过了，刷新它的 TLB。
 
-```
-CR3 → Page Directory (1024 entries)
-           ↓
-      Page Table (1024 entries each)
-           ↓
-      Physical Page (4KB)
+共享映射（带 `SHARED` 标记的页，见下文）不做第 2 步：它们本来就是要两边看到同一份内容。
 
-虚拟地址解析：
-[PD Index: 10 bits][PT Index: 10 bits][Offset: 12 bits]
-```
+### 写入时的缺页
 
-### 页表项格式
+之后任何一方写这样的页，CPU 因为页是只读的而产生缺页异常。
+`mm::Vmm::handle_cow_page_fault()` 的处理：
 
 ```
-+------------------+----+---+---+---+---+---+---+---+---+
-|   Physical Addr  |AVL |G  |0  |D  |A  |PCD|PWT|U/S|R/W|P  |
-|     20 bits      |3bit|   |   |   |   |   |   |   |   |   |
-+------------------+----+---+---+---+---+---+---+---+---+---+
- 31              12  11   9   8   7   6   5   4   3   2   1  0
-
-P   = Present（存在位）
-R/W = Read/Write（读写位）
-U/S = User/Supervisor（用户/特权级）
-PWT = Page Write-Through
-PCD = Page Cache Disable
-A   = Accessed（已访问）
-D   = Dirty（已修改）
-G   = Global（全局页）
+这一页带 COW 标记吗？
+  否 → 是真正的非法写入，杀掉进程
+  是 → 看引用计数
+        1  → 只剩自己在用了：直接改回可写、去掉 COW 标记
+        >1 → 分配一页新的，把内容复制过去，让自己的表项指向新页（可写、无 COW），
+             旧页的引用计数减一
 ```
 
-### 核心操作
+另一方什么都不用做：轮到它写的时候，引用计数已经是 1，走的是"直接改回可写"那条路。
 
-```c
-// 映射虚拟页到物理页
-void vmm_map_page(uint32_t virt, uint32_t phys, uint32_t flags) {
-    uint32_t pd_idx = virt >> 22;
-    uint32_t pt_idx = (virt >> 12) & 0x3FF;
-    
-    // 确保页表存在
-    if (!(page_dir->entries[pd_idx] & PAGE_PRESENT)) {
-        uint32_t table_phys = pmm_alloc_frame();
-        page_dir->entries[pd_idx] = table_phys | PAGE_PRESENT | PAGE_WRITE;
-    }
-    
-    // 设置页表项
-    page_table_t *table = get_page_table(pd_idx);
-    table->entries[pt_idx] = (phys & PAGE_MASK) | flags;
-    
-    vmm_flush_tlb(virt);
-}
+### 销毁
 
-// 取消映射
-void vmm_unmap_page(uint32_t virt) {
-    uint32_t pd_idx = virt >> 22;
-    uint32_t pt_idx = (virt >> 12) & 0x3FF;
-    
-    page_table_t *table = get_page_table(pd_idx);
-    table->entries[pt_idx] = 0;
-    
-    vmm_flush_tlb(virt);
-}
+逐级遍历用户那一半的页表，对每个映射着的物理页调用 `free_frame`（共享的页只是减计数），
+再释放页表本身。内核那一半的页表是共享的，不动。
 
-// 查询物理地址
-uint32_t vmm_get_phys(uint32_t virt) {
-    uint32_t pd_idx = virt >> 22;
-    uint32_t pt_idx = (virt >> 12) & 0x3FF;
-    
-    if (!(page_dir->entries[pd_idx] & PAGE_PRESENT))
-        return 0;
-    
-    page_table_t *table = get_page_table(pd_idx);
-    if (!(table->entries[pt_idx] & PAGE_PRESENT))
-        return 0;
-    
-    return (table->entries[pt_idx] & PAGE_MASK) | (virt & 0xFFF);
-}
+自检里有一项专门检查这件事：反复创建、结束进程之后，空闲物理页数必须和之前完全相等。
+
+## 内核堆
+
+页是 4KB 一块，内核里大量的东西（任务结构、内核栈、IPC 用的缓冲）需要任意大小的内存，
+这是 `kmalloc` / `kfree` 的工作：
+
+```cpp
+void *p = kmalloc(size);
+kfree(p);
 ```
 
-### Copy-on-Write (COW)
+堆是内核地址空间里一段连续的区域，被分成一个接一个的块，每块前面有一个头：
 
-fork() 时使用 COW 避免立即复制所有页面：
-
-```c
-uint32_t vmm_clone_page_directory(uint32_t src_dir_phys) {
-    uint32_t new_dir_phys = pmm_alloc_frame();
-    // ...
-    
-    for (每个用户空间页表项) {
-        if (是可写页面) {
-            // 标记为只读 + COW
-            src_pte &= ~PAGE_WRITE;
-            src_pte |= PAGE_COW;
-            new_pte = src_pte;
-            
-            // 增加物理页引用计数
-            pmm_frame_ref_inc(get_frame(src_pte));
-        }
-    }
-    
-    return new_dir_phys;
-}
-```
-
-### COW 缺页处理
-
-```c
-bool vmm_handle_cow_fault(uint32_t fault_addr) {
-    uint32_t pte = get_page_table_entry(fault_addr);
-    
-    if (!(pte & PAGE_COW))
-        return false;  // 不是 COW 页
-    
-    uint32_t old_frame = get_frame(pte);
-    uint32_t refcount = pmm_frame_get_refcount(old_frame);
-    
-    if (refcount == 1) {
-        // 唯一引用，直接修改权限
-        set_page_writable(fault_addr);
-    } else {
-        // 复制页面
-        uint32_t new_frame = pmm_alloc_frame();
-        memcpy(PHYS_TO_VIRT(new_frame), PHYS_TO_VIRT(old_frame), PAGE_SIZE);
-        
-        // 更新页表
-        update_page_table(fault_addr, new_frame, PAGE_WRITE);
-        
-        // 减少旧页引用
-        pmm_frame_ref_dec(old_frame);
-    }
-    
-    return true;
-}
-```
-
-## 堆分配器
-
-### 设计
-
-堆分配器基于空闲链表，支持动态扩展：
-
-```c
+```cpp
 typedef struct heap_block {
-    uint32_t magic;           // 魔数，用于检测损坏
-    uint32_t size;            // 块大小（包含头部）
-    bool is_free;             // 是否空闲
-    struct heap_block *next;  // 下一个块
-    struct heap_block *prev;  // 上一个块
+    size_t size;                    // 块大小（不包括这个头）
+    bool is_free;
+    struct heap_block *next;
+    struct heap_block *prev;
+    uint32_t magic;                 // 用来发现越界写把头冲掉了
 } heap_block_t;
-
-#define HEAP_MAGIC 0xDEADBEEF
 ```
 
-### 分配算法（First-Fit）
+- **分配**：从头找第一个够大的空闲块（first-fit）；块比需要的大得多就切成两块。
+- **释放**：标记为空闲，再和前后相邻的空闲块合并，避免碎片越来越多。
+- **不够用**：向 PMM 要新的页，映射到堆的末尾，把堆扩大。堆只增不减。
 
-```c
-void *kmalloc(size_t size) {
-    size_t total = size + sizeof(heap_block_t);
-    total = ALIGN_UP(total, 16);  // 16 字节对齐
-    
-    // 查找足够大的空闲块
-    heap_block_t *block = heap_start;
-    while (block) {
-        if (block->is_free && block->size >= total) {
-            // 分割大块
-            if (block->size > total + MIN_BLOCK_SIZE) {
-                split_block(block, total);
-            }
-            
-            block->is_free = false;
-            return (void *)((uint32_t)block + sizeof(heap_block_t));
-        }
-        block = block->next;
-    }
-    
-    // 扩展堆
-    if (!expand_heap(total))
-        return NULL;
-    
-    return kmalloc(size);  // 重试
-}
-```
+## 用户进程的内存
 
-### 释放与合并
-
-```c
-void kfree(void *ptr) {
-    if (!ptr) return;
-    
-    heap_block_t *block = (heap_block_t *)((uint32_t)ptr - sizeof(heap_block_t));
-    
-    // 验证魔数
-    if (block->magic != HEAP_MAGIC) {
-        panic("Heap corruption detected!");
-    }
-    
-    block->is_free = true;
-    
-    // 与前一个块合并
-    if (block->prev && block->prev->is_free) {
-        block = merge_blocks(block->prev, block);
-    }
-    
-    // 与后一个块合并
-    if (block->next && block->next->is_free) {
-        merge_blocks(block, block->next);
-    }
-}
-```
-
-### 堆扩展
-
-```c
-static bool expand_heap(size_t needed) {
-    // 按页分配
-    size_t pages = (needed + PAGE_SIZE - 1) / PAGE_SIZE;
-    
-    for (size_t i = 0; i < pages; i++) {
-        uint32_t phys = pmm_alloc_frame();
-        if (!phys) return false;
-        
-        vmm_map_page(heap_end, phys, PAGE_PRESENT | PAGE_WRITE);
-        heap_end += PAGE_SIZE;
-    }
-    
-    // 创建新的空闲块
-    heap_block_t *new_block = (heap_block_t *)(heap_end - pages * PAGE_SIZE);
-    new_block->magic = HEAP_MAGIC;
-    new_block->size = pages * PAGE_SIZE;
-    new_block->is_free = true;
-    
-    // 链接到链表
-    // ...
-    
-    return true;
-}
-```
-
-## 用户空间内存管理
-
-### brk/sbrk 系统调用
-
-```c
-// 扩展数据段
-void *sys_sbrk(int32_t increment) {
-    task_t *task = current_task;
-    uint32_t old_brk = task->brk;
-    uint32_t new_brk = old_brk + increment;
-    
-    if (increment > 0) {
-        // 分配新页面
-        for (uint32_t addr = PAGE_ALIGN_UP(old_brk); 
-             addr < new_brk; 
-             addr += PAGE_SIZE) {
-            uint32_t phys = pmm_alloc_frame();
-            vmm_map_page_user(task->page_dir, addr, phys);
-        }
-    } else if (increment < 0) {
-        // 释放页面
-        for (uint32_t addr = PAGE_ALIGN_DOWN(new_brk); 
-             addr < old_brk; 
-             addr += PAGE_SIZE) {
-            vmm_unmap_page(addr);
-        }
-    }
-    
-    task->brk = new_brk;
-    return (void *)old_brk;
-}
-```
-
-### mmap 系统调用
-
-```c
-void *sys_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset) {
-    task_t *task = current_task;
-    
-    // 查找空闲虚拟地址区域
-    uint32_t virt = find_free_region(task, length);
-    if (!virt) return MAP_FAILED;
-    
-    // 建立映射
-    for (size_t i = 0; i < length; i += PAGE_SIZE) {
-        uint32_t phys = pmm_alloc_frame();
-        uint32_t page_flags = PAGE_PRESENT | PAGE_USER;
-        if (prot & PROT_WRITE) page_flags |= PAGE_WRITE;
-        
-        vmm_map_page(virt + i, phys, page_flags);
-    }
-    
-    return (void *)virt;
-}
-```
-
-## 内存布局总结
+一个用户进程的地址空间（i686 的数字）：
 
 ```
-内核虚拟地址空间：
-0xFFFFFFFF ┌─────────────────────┐
-           │     保留区域         │
-           ├─────────────────────┤
-           │     内核堆          │ 动态增长
-           ├─────────────────────┤
-           │     物理内存映射     │ 恒等映射
-0x80000000 └─────────────────────┘
-
-用户虚拟地址空间：
-0x80000000 ┌─────────────────────┐
-           │     用户栈          │ 向下增长
-0x70000000 ├─────────────────────┤
-           │     共享内存/mmap   │
-           ├─────────────────────┤
-           │     用户堆          │ 向上增长
-           ├─────────────────────┤
-           │     BSS             │
-           ├─────────────────────┤
-           │     数据段          │
-           ├─────────────────────┤
-           │     代码段          │
-0x10000000 ├─────────────────────┤
-           │     保留 (NULL)     │
-0x00000000 └─────────────────────┘
+0x80000000 ┌──────────────────┐
+           │ 参数页            │  exec 把参数块写在这里
+           │ 用户栈（1MB）     │  向下增长
+           ├──────────────────┤
+           │                  │
+0x70000000 ├──────────────────┤
+           │ mmap 区域         │  0x40000000 - 0x70000000
+0x40000000 ├──────────────────┤
+           │                  │
+           │ 堆                │  brk 向上增长，从程序结束处的下一页开始
+           │ 程序的代码和数据   │  ELF 加载器按程序头映射
+0x00000000 └──────────────────┘
 ```
 
+进程通过系统调用改变自己的内存，实现在 `src/kernel/syscalls/mm.cpp`：
+
+| 系统调用 | 做什么 |
+|----------|--------|
+| `brk(addr)` | 移动堆顶。增长时分配并映射新页，缩小时撤销映射并释放 |
+| `mmap` / `munmap` | 映射、撤销一段匿名内存（不支持映射文件） |
+| `mem_grant(pid, addr, len)` | 把自己的一段内存共享给另一个进程 |
+| `map_device(phys, len)` | 特权进程把设备的寄存器映射进来 |
+| `dma_alloc(len, &phys)` | 特权进程分配一段物理上连续的内存，并得知它的物理地址 |
+
+后三个建立的都是**共享映射**（`SHARED` 标记）：`fork` 时不做写时复制，父子进程、
+授予方和被授予方看到的是同一份内存。文件服务、块设备驱动和它们的客户之间传数据用的
+就是 `mem_grant` 共享的缓冲区。
+
+用户进程访问了没有映射的地址，或者写了真正只读的页，内核杀掉它，父进程从 `waitpid`
+看到它是被信号终止的。

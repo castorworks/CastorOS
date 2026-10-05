@@ -128,7 +128,7 @@ CastorOS/
 │   │   ├── x86/            # COM1, PIT
 │   │   └── arm/            # PL011, ARM Generic Timer
 │   ├── kernel/             # task.cpp (scheduler), syscall.cpp, ipc.cpp, user_irq.cpp, elf.cpp, ...
-│   │   ├── sync/           # Synchronization primitives
+│   │   ├── sync/           # The spinlock
 │   │   └── syscalls/       # process.cpp, mm.cpp
 │   ├── lib/                # Kernel library (kprintf, klog, string, cxxrt)
 │   ├── mm/                 # Memory management (PMM, VMM, heap)

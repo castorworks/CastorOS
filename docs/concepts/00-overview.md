@@ -12,7 +12,7 @@
 | [03-memory-management](03-memory-management.md) | 内存管理 | PMM、VMM、堆分配器 |
 | [04-interrupts](04-interrupts.md) | 中断处理 | 异常、中断、中断控制器 |
 | [05-process-management](05-process-management.md) | 进程管理 | 任务、调度、fork/exec/exit/wait |
-| [06-synchronization](06-synchronization.md) | 同步机制 | 自旋锁、互斥锁、信号量 |
+| [06-synchronization](06-synchronization.md) | 同步机制 | 关中断、自旋锁、阻塞与唤醒 |
 | [07-system-calls](07-system-calls.md) | 系统调用 | 入口机制、分发、参数校验 |
 
 示例代码以 i686 为主；x86_64 和 arm64 的对应实现在 `src/arch/` 下，结构相同。

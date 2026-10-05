@@ -1,435 +1,108 @@
-# 同步原语
+# 同步
 
-## 概述
+## 问题
 
-多任务系统中，多个任务可能同时访问共享资源，需要同步原语来保证数据一致性。常见的同步机制有三种：
+内核里的数据（就绪队列、物理页位图、任务表）会被多段代码访问。如果一段代码改到一半
+被打断，另一段代码看到的就是不一致的数据。
 
-> 现在的 CastorOS 内核里只有自旋锁（`src/kernel/sync/spinlock.cpp`）。互斥锁和信号量曾经实现过，
-> 但微内核化之后内核里没有任何代码用到它们，已经删除；下面关于它们的内容作为概念说明保留。
+在单处理器上，"被打断"只有一种来源：**中断**。定时器中断可能触发调度，换上另一个任务；
+设备中断的处理程序本身也可能访问同样的数据。所以保护一段代码最直接的办法，是在它执行
+期间不让中断发生。
 
-1. **自旋锁 (Spinlock)**: 忙等待，适用于短临界区
-2. **互斥锁 (Mutex)**: 阻塞等待，适用于长临界区
-3. **信号量 (Semaphore)**: 计数资源控制
+CastorOS 的内核只在一个处理器上运行，同步手段因此很少：关中断，加上一种锁。
+
+## 关中断
+
+```cpp
+{
+    kernel::InterruptGuard guard;       // 构造时关中断，记下原来的状态
+    // ... 这里不会被打断 ...
+}                                       // 析构时恢复原来的状态
+```
+
+恢复"原来的状态"而不是无条件开中断，是因为这样的代码可以嵌套：外层已经关了中断时，
+内层退出不应该把它打开。
+
+关中断的时间必须短。中断关着的时候定时器不走，设备得不到响应。
 
 ## 自旋锁
 
-### 原理
+`sync::Spinlock` 是内核里唯一的锁。"自旋"指的是拿不到锁时原地循环等待：
 
-自旋锁通过原子操作保护临界区，等待时 CPU 空转（忙等待）。
-
-### 实现
-
-```c
-typedef struct {
-    volatile uint32_t locked;
-} spinlock_t;
-
-#define SPINLOCK_INIT { .locked = 0 }
-
-void spinlock_init(spinlock_t *lock) {
-    lock->locked = 0;
+```cpp
+bool Spinlock::try_lock() {
+    return atomic_xchg(&value_, SPINLOCK_LOCKED) == SPINLOCK_UNLOCKED;
 }
 
-void spinlock_lock(spinlock_t *lock) {
-    while (__sync_lock_test_and_set(&lock->locked, 1)) {
-        // 忙等待
-        __asm__ volatile ("pause");  // 降低功耗
+void Spinlock::lock() {
+    while (!try_lock()) {
+        cpu_relax();        // 忙等
     }
-}
-
-void spinlock_unlock(spinlock_t *lock) {
-    __sync_lock_release(&lock->locked);
 }
 ```
 
-### 汇编实现（使用 xchg）
+`atomic_xchg` 把变量设成"已锁"并返回原来的值，整个动作是原子的（x86 上是一条 `xchg`
+指令，arm64 上是一对独占的读写指令）。原来是"未锁"说明现在归我；原来就是"已锁"说明
+别人拿着，继续等。
 
-```asm
-; bool spinlock_try_lock(spinlock_t *lock)
-spinlock_try_lock:
-    mov eax, 1
-    xchg eax, [edi]      ; 原子交换
-    test eax, eax        ; 检查旧值
-    setz al              ; 如果旧值为 0，返回 true
-    ret
+在单处理器上，单独的自旋锁没有意义：如果锁被别的任务拿着，等待的一方占着 CPU 空转，
+拿锁的一方反而得不到运行。所以内核里用的总是"关中断 + 自旋锁"的组合：
 
-; void spinlock_lock(spinlock_t *lock)
-spinlock_lock:
-.retry:
-    mov eax, 1
-    xchg eax, [edi]
-    test eax, eax
-    jnz .spin
-    ret
-.spin:
-    pause                ; 减少总线流量
-    cmp dword [edi], 0   ; 先读取检查
-    jne .spin
-    jmp .retry
-```
+```cpp
+static sync::Spinlock pmm_lock;
 
-### 中断安全自旋锁
-
-在持有自旋锁时，需要禁用中断以防止死锁：
-
-```c
-void spinlock_lock_irqsave(spinlock_t *lock, bool *irq_state) {
-    // 保存并禁用中断
-    *irq_state = irq_enabled();
-    cli();
-    
-    // 获取锁
-    spinlock_lock(lock);
-}
-
-void spinlock_unlock_irqrestore(spinlock_t *lock, bool irq_state) {
-    // 释放锁
-    spinlock_unlock(lock);
-    
-    // 恢复中断状态
-    if (irq_state) sti();
+paddr_t mm::Pmm::alloc_frame() {
+    sync::SpinlockIrqGuard guard(pmm_lock);     // 关中断并加锁；离开作用域时解锁并恢复
+    // ... 改位图 ...
 }
 ```
 
-### 使用场景
+关了中断，就不会在持锁期间被换下去，也就不会有人在锁被拿着的时候来等它。锁本身在这里
+起的作用是标明"这段代码保护的是哪份数据"，并且为以后支持多处理器留好位置——到那时，
+另一个处理器上的代码真的会来争这把锁，关中断管不了别的处理器。
 
-```c
-// 保护内核数据结构
-static spinlock_t task_list_lock;
+用 `SpinlockIrqGuard` 而不是手工配对的加锁、解锁，是为了保证每条返回路径都会解锁。
 
-void add_task(task_t *task) {
-    bool irq;
-    spinlock_lock_irqsave(&task_list_lock, &irq);
-    
-    // 临界区：修改任务链表
-    task->next = task_list;
-    task_list = task;
-    
-    spinlock_unlock_irqrestore(&task_list_lock, irq);
-}
+### 规则
+
+- 持锁期间不能做会让出 CPU 的事（等 IPC、睡眠）。
+- 持锁的时间要短：只做改数据这件事，不做打印、不做循环等待。
+- 需要同时拿两把锁时，所有代码按同一个顺序拿，否则两段代码各拿一把、互相等对方，
+  就是死锁。
+
+## 需要等待的时候
+
+锁只适合保护很短的操作。一个任务要等一件可能很久才发生的事（别的进程发来消息、
+子进程退出、睡眠时间到），不能拿着锁干等，而是**阻塞**：把自己标记为不可运行，让出 CPU，
+等那件事发生时被唤醒。
+
+```cpp
+kernel::Scheduler::block(wait_object);      // 睡下去，直到有人唤醒
+kernel::Scheduler::wakeup(wait_object);     // 唤醒等在这个对象上的任务
 ```
 
-## 互斥锁
+内核里所有的等待都建立在这上面：
 
-### 原理
+| 等什么 | 在哪里 |
+|--------|--------|
+| 对方来收消息、来发消息、来应答 | IPC（`src/kernel/ipc.cpp`） |
+| 子进程退出 | `waitpid` |
+| 过一段时间 | `nanosleep`、`timer_set` |
+| 设备中断 | 驱动在 `ipc_recv` 上等内核转发的中断消息 |
 
-互斥锁在无法获取时让任务睡眠，释放 CPU 给其他任务。
+"检查条件"和"睡下去"必须是一个不可分的动作，否则会丢唤醒：刚检查完发现条件不满足，
+还没来得及睡，对方就把条件改了并发出唤醒——这时还没人在睡，唤醒落空，然后自己睡下去，
+再也没人来叫。所以这两步总是在关中断的情况下一起做。idle 任务的"检查有没有可运行的任务，
+没有就停机等中断"也是同样的道理。
 
-### 实现
+## 没有互斥锁和信号量
 
-```c
-typedef struct {
-    volatile uint32_t locked;
-    volatile task_t *owner;      // 持有者（支持递归）
-    volatile uint32_t recursion; // 递归计数
-    task_t *wait_queue;          // 等待队列
-    spinlock_t wait_lock;        // 保护等待队列
-} mutex_t;
+教科书里常见的另外两种同步原语，这个内核里没有：
 
-void mutex_init(mutex_t *mutex) {
-    mutex->locked = 0;
-    mutex->owner = NULL;
-    mutex->recursion = 0;
-    mutex->wait_queue = NULL;
-    spinlock_init(&mutex->wait_lock);
-}
+- **互斥锁**：拿不到时睡眠而不是空转，适合保护耗时较长的操作。
+- **信号量**：一个计数器，用来限制同时使用某种资源的数量，或者让一方等另一方"生产"出东西。
 
-void mutex_lock(mutex_t *mutex) {
-    task_t *current = get_current_task();
-    
-    // 检查递归获取
-    if (mutex->owner == current) {
-        mutex->recursion++;
-        return;
-    }
-    
-    // 尝试获取锁
-    while (__sync_lock_test_and_set(&mutex->locked, 1)) {
-        // 加入等待队列
-        bool irq;
-        spinlock_lock_irqsave(&mutex->wait_lock, &irq);
-        
-        current->next_waiting = mutex->wait_queue;
-        mutex->wait_queue = current;
-        current->state = TASK_BLOCKED;
-        
-        spinlock_unlock_irqrestore(&mutex->wait_lock, irq);
-        
-        // 让出 CPU
-        schedule();
-    }
-    
-    mutex->owner = current;
-    mutex->recursion = 1;
-}
-
-void mutex_unlock(mutex_t *mutex) {
-    task_t *current = get_current_task();
-    
-    if (mutex->owner != current) {
-        panic("mutex_unlock: not owner");
-    }
-    
-    // 处理递归
-    if (--mutex->recursion > 0) {
-        return;
-    }
-    
-    mutex->owner = NULL;
-    __sync_lock_release(&mutex->locked);
-    
-    // 唤醒等待者
-    bool irq;
-    spinlock_lock_irqsave(&mutex->wait_lock, &irq);
-    
-    task_t *waiter = mutex->wait_queue;
-    if (waiter) {
-        mutex->wait_queue = waiter->next_waiting;
-        waiter->state = TASK_READY;
-        enqueue_ready(waiter);
-    }
-    
-    spinlock_unlock_irqrestore(&mutex->wait_lock, irq);
-}
-```
-
-### 非阻塞尝试
-
-```c
-bool mutex_trylock(mutex_t *mutex) {
-    task_t *current = get_current_task();
-    
-    if (mutex->owner == current) {
-        mutex->recursion++;
-        return true;
-    }
-    
-    if (__sync_lock_test_and_set(&mutex->locked, 1) == 0) {
-        mutex->owner = current;
-        mutex->recursion = 1;
-        return true;
-    }
-    
-    return false;
-}
-```
-
-## 信号量
-
-### 原理
-
-信号量维护一个计数器，表示可用资源数量。
-
-```c
-typedef struct {
-    volatile int count;
-    task_t *wait_queue;
-    spinlock_t lock;
-} semaphore_t;
-
-void semaphore_init(semaphore_t *sem, int initial) {
-    sem->count = initial;
-    sem->wait_queue = NULL;
-    spinlock_init(&sem->lock);
-}
-```
-
-### P 操作（等待/减少）
-
-```c
-void semaphore_wait(semaphore_t *sem) {
-    bool irq;
-    spinlock_lock_irqsave(&sem->lock, &irq);
-    
-    while (sem->count <= 0) {
-        // 加入等待队列
-        task_t *current = get_current_task();
-        current->next_waiting = sem->wait_queue;
-        sem->wait_queue = current;
-        current->state = TASK_BLOCKED;
-        
-        spinlock_unlock_irqrestore(&sem->lock, irq);
-        schedule();
-        spinlock_lock_irqsave(&sem->lock, &irq);
-    }
-    
-    sem->count--;
-    spinlock_unlock_irqrestore(&sem->lock, irq);
-}
-```
-
-### V 操作（信号/增加）
-
-```c
-void semaphore_signal(semaphore_t *sem) {
-    bool irq;
-    spinlock_lock_irqsave(&sem->lock, &irq);
-    
-    sem->count++;
-    
-    // 唤醒一个等待者
-    task_t *waiter = sem->wait_queue;
-    if (waiter) {
-        sem->wait_queue = waiter->next_waiting;
-        waiter->state = TASK_READY;
-        enqueue_ready(waiter);
-    }
-    
-    spinlock_unlock_irqrestore(&sem->lock, irq);
-}
-```
-
-### 常见用途
-
-```c
-// 二值信号量（互斥）
-semaphore_t mutex;
-semaphore_init(&mutex, 1);
-
-// 计数信号量（资源池）
-#define BUFFER_SIZE 10
-semaphore_t empty_slots;
-semaphore_t full_slots;
-semaphore_init(&empty_slots, BUFFER_SIZE);
-semaphore_init(&full_slots, 0);
-
-// 生产者
-void producer(void) {
-    semaphore_wait(&empty_slots);  // 等待空槽
-    // ... 放入数据 ...
-    semaphore_signal(&full_slots); // 增加满槽
-}
-
-// 消费者
-void consumer(void) {
-    semaphore_wait(&full_slots);   // 等待满槽
-    // ... 取出数据 ...
-    semaphore_signal(&empty_slots); // 增加空槽
-}
-```
-
-## 读写锁
-
-### 实现
-
-```c
-typedef struct {
-    volatile int readers;        // 当前读者数
-    volatile bool writer;        // 是否有写者
-    spinlock_t lock;
-    task_t *reader_queue;
-    task_t *writer_queue;
-} rwlock_t;
-
-void rwlock_read_lock(rwlock_t *rw) {
-    bool irq;
-    spinlock_lock_irqsave(&rw->lock, &irq);
-    
-    while (rw->writer || rw->writer_queue) {
-        // 等待写者
-        block_on_queue(&rw->reader_queue);
-        spinlock_lock_irqsave(&rw->lock, &irq);
-    }
-    
-    rw->readers++;
-    spinlock_unlock_irqrestore(&rw->lock, irq);
-}
-
-void rwlock_read_unlock(rwlock_t *rw) {
-    bool irq;
-    spinlock_lock_irqsave(&rw->lock, &irq);
-    
-    if (--rw->readers == 0 && rw->writer_queue) {
-        wake_one(&rw->writer_queue);
-    }
-    
-    spinlock_unlock_irqrestore(&rw->lock, irq);
-}
-
-void rwlock_write_lock(rwlock_t *rw) {
-    bool irq;
-    spinlock_lock_irqsave(&rw->lock, &irq);
-    
-    while (rw->writer || rw->readers > 0) {
-        block_on_queue(&rw->writer_queue);
-        spinlock_lock_irqsave(&rw->lock, &irq);
-    }
-    
-    rw->writer = true;
-    spinlock_unlock_irqrestore(&rw->lock, irq);
-}
-
-void rwlock_write_unlock(rwlock_t *rw) {
-    bool irq;
-    spinlock_lock_irqsave(&rw->lock, &irq);
-    
-    rw->writer = false;
-    
-    // 优先唤醒写者
-    if (rw->writer_queue) {
-        wake_one(&rw->writer_queue);
-    } else {
-        wake_all(&rw->reader_queue);
-    }
-    
-    spinlock_unlock_irqrestore(&rw->lock, irq);
-}
-```
-
-## 死锁预防
-
-### 常见死锁原因
-
-1. **循环等待**: A 等待 B，B 等待 A
-2. **持有并等待**: 持有锁 A 时请求锁 B
-3. **不可抢占**: 无法强制释放锁
-4. **互斥**: 资源只能由一个任务使用
-
-### 预防策略
-
-```c
-// 1. 锁排序：总是按照固定顺序获取锁
-#define LOCK_ORDER_A  1
-#define LOCK_ORDER_B  2
-
-void safe_lock_both(mutex_t *a, mutex_t *b) {
-    if (LOCK_ORDER_A < LOCK_ORDER_B) {
-        mutex_lock(a);
-        mutex_lock(b);
-    } else {
-        mutex_lock(b);
-        mutex_lock(a);
-    }
-}
-
-// 2. 尝试锁定：失败时释放已持有的锁
-bool try_lock_both(mutex_t *a, mutex_t *b) {
-    mutex_lock(a);
-    if (!mutex_trylock(b)) {
-        mutex_unlock(a);
-        return false;
-    }
-    return true;
-}
-
-// 3. 超时锁定
-bool mutex_lock_timeout(mutex_t *m, uint32_t timeout_ms);
-```
-
-## 选择指南
-
-| 同步原语 | 等待方式 | 适用场景 | 开销 |
-|---------|---------|---------|------|
-| 自旋锁 | 忙等待 | 短临界区、中断上下文 | 低（无上下文切换）|
-| 互斥锁 | 阻塞 | 长临界区、可能睡眠 | 中（可能切换）|
-| 信号量 | 阻塞 | 资源计数、生产者消费者 | 中 |
-| 读写锁 | 阻塞 | 读多写少的场景 | 较高 |
-
-## 最佳实践
-
-1. **最小化临界区**: 只保护必要的代码
-2. **避免嵌套锁**: 如必须嵌套，确保顺序一致
-3. **中断安全**: 在中断上下文只能用自旋锁
-4. **不要在持锁时睡眠**: 除非使用互斥锁
-5. **使用正确的同步原语**: 根据场景选择
-
+它们曾经实现过，后来删掉了，因为微内核化之后内核里没有任何代码用到它们：内核不再有
+文件系统、网络协议栈这类需要长时间持锁的东西，每次进入内核做的事都很短，关中断加自旋锁
+就够。进程之间的协作全部走 IPC——同步的消息传递本身就能完成"等对方""一次只让一个进来"
+这些事，服务进程一次处理一个请求，天然就是互斥的。

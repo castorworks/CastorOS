@@ -68,10 +68,8 @@ typedef struct {
     uint32_t base;     // IDT 基地址
 } __attribute__((packed)) idt_ptr_t;
 
-// 加载 IDT
-void idt_load(idt_ptr_t *ptr) {
-    __asm__ volatile ("lidt %0" : : "m"(*ptr));
-}
+// 告诉 CPU 这张表在哪里：lidt 指令（idt_init() 的最后一步）
+__asm__ volatile ("lidt %0" : : "m"(idt_ptr));
 ```
 
 ## 中断处理流程
@@ -152,25 +150,19 @@ typedef struct {
 
 ### 4. C 处理程序
 
-```c
+每个异常号可以登记一个处理函数（`isr_register_handler`）。汇编入口最后都调到同一个
+`isr_handler`，由它按异常号分发：
+
+```cpp
+isr_register_handler(13, general_protection_fault_handler);
+isr_register_handler(14, page_fault_handler);
+
 void isr_handler(registers_t *regs) {
-    switch (regs->int_no) {
-        case 0:   // 除零
-            panic("Division by zero");
-            break;
-            
-        case 13:  // GPF
-            handle_gpf(regs);
-            break;
-            
-        case 14:  // 页故障
-            handle_page_fault(regs);
-            break;
-            
-        default:
-            kprintf("Unhandled exception: %d\n", regs->int_no);
-            panic("Unhandled exception");
+    if (interrupt_handlers[regs->int_no]) {
+        interrupt_handlers[regs->int_no](regs);     // 有登记的处理函数
+        return;
     }
+    // 没有：用户程序引起的就杀掉它；内核自己引起的是内核的 bug，打印现场后停机
 }
 ```
 
@@ -197,25 +189,30 @@ I = Instruction (1=指令获取时发生)
 
 发生页故障时，CR2 寄存器包含导致故障的线性地址：
 
-```c
-void handle_page_fault(registers_t *regs) {
-    uint32_t fault_addr;
-    __asm__ volatile ("mov %%cr2, %0" : "=r"(fault_addr));
-    
-    bool present = regs->err_code & 0x1;
-    bool write = regs->err_code & 0x2;
-    bool user = regs->err_code & 0x4;
-    
-    // 尝试处理 COW
-    if (write && present && vmm_handle_cow_fault(fault_addr)) {
-        return;  // COW 处理成功
+```cpp
+static void page_fault_handler(registers_t *regs) {
+    uint32_t faulting_address = get_cr2();
+
+    // 1. 内核态访问、页不存在：可能只是这个地址空间的内核页目录项还没同步
+    if ((regs->err_code & 0x5) == 0 &&
+        mm::Vmm::handle_kernel_page_fault(faulting_address)) {
+        return;
     }
-    
-    // 无法处理的页故障
-    kprintf("Page fault at 0x%x (err=%x)\n", fault_addr, regs->err_code);
-    panic("Unhandled page fault");
+
+    // 2. 写一个只读的页：可能是写时复制
+    if (mm::Vmm::handle_cow_page_fault(faulting_address, regs->err_code)) {
+        return;
+    }
+
+    // 3. 真正的非法访问。用户程序干的就杀掉它；内核自己干的是内核的 bug，停机
+    if ((regs->cs & 0x3) == 3) {
+        kill_faulting_user_task(regs, "Page fault");
+    }
+    // ... 打印现场，panic ...
 }
 ```
+
+前两种情况处理完直接返回，CPU 重新执行出错的那条指令，这次能成功。
 
 ## 硬件中断 (IRQ)
 
@@ -235,10 +232,10 @@ Master PIC (0x20-0x21)    Slave PIC (0xA0-0xA1)
   IRQ 7 - LPT1              IRQ 15 - Secondary ATA
 ```
 
-### PIC 初始化
+### PIC 初始化（重映射）
 
 ```c
-void pic_init(void) {
+static void pic_remap(void) {
     // ICW1: 开始初始化
     outb(0x20, 0x11);
     outb(0xA0, 0x11);
@@ -307,89 +304,48 @@ void irq_disable_line(int irq) {
 
 ## 中断状态管理
 
-### CLI/STI
+内核里有些代码不能被打断（见 [同步](06-synchronization.md)）。x86 上关、开中断是 `cli` 和
+`sti` 两条指令，但直接用它们有个问题：一段关了中断的代码调用另一段也要关中断的代码，
+内层结束时如果无条件 `sti`，外层就在不知情的情况下被打开了中断。
 
-```c
-// 禁用中断
-static inline void cli(void) {
-    __asm__ volatile ("cli");
-}
+所以内核里总是"保存原来的状态并关中断"，结束时"恢复原来的状态"：
 
-// 启用中断
-static inline void sti(void) {
-    __asm__ volatile ("sti");
-}
-
-// 保存并禁用中断
-static inline bool irq_save(void) {
-    uint32_t flags;
-    __asm__ volatile (
-        "pushf\n"
-        "pop %0\n"
-        "cli"
-        : "=r"(flags)
-    );
-    return flags & 0x200;  // IF 标志
-}
-
-// 恢复中断状态
-static inline void irq_restore(bool state) {
-    if (state) sti();
-}
-```
-
-### 临界区保护
-
-```c
-void spinlock_lock_irqsave(spinlock_t *lock, bool *irq_state) {
-    *irq_state = irq_save();
-    spinlock_lock(lock);
-}
-
-void spinlock_unlock_irqrestore(spinlock_t *lock, bool irq_state) {
-    spinlock_unlock(lock);
-    irq_restore(irq_state);
-}
+```cpp
+{
+    kernel::InterruptGuard guard;       // 记下中断原来开没开，然后关掉
+    // ...
+}                                       // 恢复成原来的样子
 ```
 
 ## 定时器中断
 
-PIT (Programmable Interval Timer) 用于产生周期性中断：
+定时器每 10ms 产生一次中断（x86 上是 PIT，把 1193182Hz 的基础频率分频到 100Hz；arm64 上是
+Generic Timer）。它是内核里仅有的两个驱动之一（另一个是只做输出的串口），做三件事：
 
-```c
-#define PIT_FREQ 1193182  // 基础频率
-#define TARGET_HZ 100     // 目标频率
+1. 累加开机以来的时间（`uptime_ms`、`nanosleep`、`timer_set` 都靠它）。
+2. 唤醒睡眠时间到了的任务，给定时器到期的进程发 `IPC_LABEL_TIMER` 消息。
+3. 当前任务的时间片用完了就调度（`Scheduler::timer_tick()`）——这就是抢占。
 
-void pit_init(void) {
-    uint16_t divisor = PIT_FREQ / TARGET_HZ;
-    
-    // 命令字: 通道0, 方式3, 16位计数
-    outb(0x43, 0x36);
-    
-    // 设置分频值
-    outb(0x40, divisor & 0xFF);
-    outb(0x40, (divisor >> 8) & 0xFF);
-    
-    // 注册中断处理程序
-    irq_register_handler(0, timer_handler);
-    irq_enable_line(0);
-}
+## 设备中断交给用户态驱动
 
-static void timer_handler(registers_t *regs) {
-    (void)regs;
-    ticks++;
-    
-    // 触发调度
-    if (should_schedule()) {
-        schedule();
-    }
-}
-```
+除了定时器，内核不处理任何设备的中断：驱动是用户态进程。内核做的只是把"中断发生了"
+这件事转成一条消息（`src/kernel/user_irq.cpp`）：
+
+1. 驱动用 `irq_claim(irq)` 认领一条中断线（需要特权）。同一条线可以被几个驱动认领
+   （x86 上磁盘和网卡共用 11 号线）。
+2. 中断发生时，内核先**屏蔽这条线**，再给每个认领者记一条待收的中断消息。
+3. 驱动在 `ipc_recv` 上收到这条消息（发送者是内核，标签是 `IPC_LABEL_IRQ`），去读设备、
+   让设备撤销中断请求，然后调用 `irq_ack(irq)`。
+4. 所有认领者都 `irq_ack` 之后，内核重新打开这条线。
+
+第 2 步的屏蔽是必须的。中断处理程序返回后中断就重新打开了，而设备的中断请求要等驱动
+处理过才会撤销——驱动是个普通进程，这时还没轮到它运行。不屏蔽的话，同一个中断会立刻
+再次触发，内核永远在处理中断，驱动永远得不到 CPU。
 
 ## 最佳实践
 
 1. **保持中断处理程序简短**：只做必要的工作，复杂处理推迟到后台
-2. **正确管理中断状态**：使用 irqsave/irqrestore 而不是 cli/sti
+2. **正确管理中断状态**：保存并恢复原来的状态，而不是无条件地 cli/sti
 3. **避免在中断中睡眠**：中断上下文不能调用可能阻塞的函数
 4. **EOI 时机**：在处理完成后再发送 EOI，避免中断嵌套问题
 5. **栈溢出防护**：确保中断栈足够大

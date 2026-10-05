@@ -47,12 +47,10 @@ CastorOS 采用高半核（Higher Half Kernel）设计，将内核映射到虚�
 ## 关键宏定义
 
 ```c
-// mm/vmm.h
-#define KERNEL_VIRTUAL_BASE  0x80000000  // 内核虚拟地址基址
-#define PAGE_SIZE            0x1000      // 4KB
-#define PAGE_MASK            0xFFFFF000
+#define KERNEL_VIRTUAL_BASE  0x80000000  // 内核虚拟地址基址（i686）
+#define PAGE_SIZE            4096
 
-// 地址转换
+// 物理地址和直接映射区里的虚拟地址互相换算
 #define VIRT_TO_PHYS(addr)   ((uint32_t)(addr) - KERNEL_VIRTUAL_BASE)
 #define PHYS_TO_VIRT(addr)   ((uint32_t)(addr) + KERNEL_VIRTUAL_BASE)
 
@@ -110,42 +108,33 @@ x86 使用两级页表：
 
 ### 高半核映射
 
-```c
-// 页目录索引计算
-#define pde_idx(virt)  ((virt) >> 22)          // 高 10 位
-#define pte_idx(virt)  (((virt) >> 12) & 0x3FF) // 中间 10 位
-
-// 高半核从 PDE 512 开始
-// 0x80000000 >> 22 = 512
-#define KERNEL_PDE_START  512
-#define KERNEL_PDE_END    1024
-```
+内核从 `0x80000000` 开始，对应页目录的后一半：`0x80000000 >> 22 = 512`，
+所以页目录项 0-511 属于用户空间，512-1023 属于内核。
 
 ### 内核页表共享
 
-所有进程的页目录中，PDE 512-1023 指向相同的页表：
+所有地址空间的页目录里，512-1023 这一半指向相同的页表——每个进程看到的都是同一个内核。
+新建地址空间时把这一半从"主内核页目录"（引导时的那张页目录）抄过来：
 
-```c
-uint32_t vmm_create_page_directory(void) {
-    uint32_t dir_phys = pmm_alloc_frame();
-    page_directory_t *new_dir = PHYS_TO_VIRT(dir_phys);
-    
-    // 清空用户空间部分
-    memset(new_dir, 0, 512 * sizeof(uint32_t));
-    
-    // 复制内核空间映射（共享）
-    page_directory_t *kernel_dir = boot_page_directory;
-    for (int i = 512; i < 1024; i++) {
-        new_dir->entries[i] = kernel_dir->entries[i];
+```cpp
+void pt::init_root(pte_t *new_root) {
+    for (uint32_t i = PT_USER_ROOT_ENTRIES; i < PT_TABLE_SIZE; i++) {
+        new_root[i] = boot_page_directory[i];
     }
-    
-    return dir_phys;
 }
 ```
 
-## 物理内存映射
+抄的是页目录项，页表本身只有一份。但内核之后如果新建了一张内核页表，已经存在的
+地址空间的页目录里没有这一项。做法是：新建的内核页表总是记进主内核页目录；别的地址空间
+第一次访问到那里时缺页，缺页处理从主内核页目录把这一项补上（`hal::Mmu::sync_kernel_mapping`），
+然后重试。
 
-高半核设计中，物理内存被直接映射到虚拟地址空间：
+x86_64 和 arm64 不需要这个同步：前者内核那一半的顶层表项指向共享的下级表，下级表的变化
+所有地址空间都看得到；后者内核地址走单独的一棵页表。
+
+## 物理内存的直接映射
+
+内核把全部物理内存映射在自己的地址空间里，物理地址和虚拟地址只差一个固定的偏移：
 
 ```
 物理地址          虚拟地址
@@ -155,26 +144,17 @@ uint32_t vmm_create_page_directory(void) {
 0x7FFFFFFF  →   0xFFFFFFFF (最大 2GB)
 ```
 
-这使得内核可以通过简单的偏移访问任何物理地址：
+所以内核拿到一个物理地址（比如刚分配的页帧、一张页表）就能直接访问它：
+`PHYS_TO_VIRT(phys)`。页表代码、写时复制时的页面复制、PMM 清零新页，靠的都是这个。
 
-```c
-void *phys_to_virt(uint32_t phys) {
-    return (void *)(phys + KERNEL_VIRTUAL_BASE);
-}
-
-uint32_t virt_to_phys(void *virt) {
-    return (uint32_t)virt - KERNEL_VIRTUAL_BASE;
-}
-```
-
-## VMM 初始化
+## 映射是怎么建立起来的
 
 ### 引导阶段（boot.asm）
 
-引导时映射前 16MB 物理内存：
+内核被加载到物理地址 1MB 处，但它是按 `0x80100000` 链接的。在打开分页之前，引导代码
+先准备一张页目录，把前 16MB 物理内存映射两次：
 
 ```asm
-; PDE 512-515 映射前 16MB
 boot_page_directory:
     dd (boot_page_table1 - KERNEL_VIRTUAL_BASE) + 0x003  ; PDE 0 (恒等)
     times 511 dd 0
@@ -184,95 +164,34 @@ boot_page_directory:
     dd (boot_page_table4 - KERNEL_VIRTUAL_BASE) + 0x003  ; PDE 515
 ```
 
-### VMM 扩展（vmm_init）
+低地址的那份恒等映射（虚拟地址等于物理地址）只是为了打开分页的那一瞬间：下一条指令的
+地址还是低地址，必须仍然有效。跳到高地址之后就不再需要它。
 
-内核启动后扩展映射以覆盖所有物理内存：
+### 扩展到全部物理内存
 
-```c
-void vmm_init(void) {
-    pmm_info_t info = pmm_get_info();
-    uint32_t max_phys = info.total_frames * PAGE_SIZE;
-    
-    // 从 PDE 516 开始扩展（引导已映射 512-515）
-    uint32_t start_pde = 516;
-    uint32_t end_pde = 512 + (max_phys >> 22);
-    
-    for (uint32_t pde = start_pde; pde < end_pde; pde++) {
-        uint32_t table_phys = pmm_alloc_frame();
-        page_table_t *table = PHYS_TO_VIRT(table_phys);
-        
-        // 填充页表，映射整个 4MB 区域
-        uint32_t phys_base = (pde - 512) << 22;
-        for (uint32_t pte = 0; pte < 1024; pte++) {
-            table->entries[pte] = (phys_base + (pte << 12)) 
-                                | PAGE_PRESENT | PAGE_WRITE;
-        }
-        
-        current_dir->entries[pde] = table_phys 
-                                  | PAGE_PRESENT | PAGE_WRITE;
-    }
+引导页表只覆盖 16MB。内核启动后，`mm::Vmm::init()` 调用各架构的
+`hal::Mmu::map_physical_memory()`，把直接映射扩展到全部物理内存。i686 上是从页目录项 516
+开始，每 4MB 分配一张页表并填满：
+
+```cpp
+for (uint32_t pte = 0; pte < 1024; pte++) {
+    table->entries[pte] = (phys_base + (pte << 12)) | PAGE_PRESENT | PAGE_WRITE;
 }
+current_dir->entries[pde] = (uint32_t)table_phys | PAGE_PRESENT | PAGE_WRITE;
 ```
 
-## 特殊内存区域
-
-### 1. MMIO 区域
-
-设备 MMIO 空间映射到 0xF0000000 以上：
-
-```c
-#define MMIO_VIRT_BASE  0xF0000000
-
-uint32_t vmm_map_mmio(uint32_t phys, uint32_t size) {
-    // 分配虚拟地址空间
-    uint32_t virt = allocate_mmio_region(size);
-    
-    // 建立映射，使用不可缓存属性
-    for (uint32_t offset = 0; offset < size; offset += PAGE_SIZE) {
-        vmm_map_page(virt + offset, phys + offset, 
-                     PAGE_PRESENT | PAGE_WRITE | PAGE_PCD);
-    }
-    
-    return virt;
-}
-```
-
-### 2. 帧缓冲
-
-图形帧缓冲使用 Write-Combining 模式：
-
-```c
-uint32_t vmm_map_framebuffer(uint32_t phys, uint32_t size) {
-    uint32_t virt = allocate_mmio_region(size);
-    
-    // 使用 PAT 设置 Write-Combining
-    for (uint32_t offset = 0; offset < size; offset += PAGE_SIZE) {
-        vmm_map_page_wc(virt + offset, phys + offset);
-    }
-    
-    return virt;
-}
-```
+每映射完一张就刷新 TLB：下一张页表所在的页帧可能就落在刚映射出来的区域里。
 
 ## 注意事项
 
-### 1. 保留内存必须映射
+### 1. 2GB 物理内存限制
 
-ACPI 表等保留内存也需要映射，不能只映射"可用"内存：
+内核的地址空间只有 2GB，直接映射区最多容纳 2GB 物理内存，多出来的内存 PMM 不使用。
 
-```c
-// 错误：只映射可用内存
-if (phys_addr < max_available_phys) {
-    map_page(virt, phys);
-}
+### 2. 设备内存不在直接映射区里
 
-// 正确：映射所有物理地址
-map_page(virt, phys);
-```
-
-### 2. 2GB 物理内存限制
-
-高半核只能直接映射 2GB 物理内存。超过 2GB 的内存需要使用 highmem 技术。
+设备的寄存器（MMIO）在物理地址空间的高处，不属于物理内存，内核不映射它们。
+驱动是用户态进程，需要访问设备时用 `map_device` 系统调用把寄存器映射进自己的地址空间。
 
 ### 3. 内核栈和用户栈分离
 
@@ -282,20 +201,6 @@ map_page(virt, phys);
 
 ### 4. TLB 管理
 
-修改页表后需要刷新 TLB：
-
-```c
-static inline void vmm_flush_tlb(uint32_t addr) {
-    __asm__ volatile ("invlpg (%0)" : : "r"(addr) : "memory");
-}
-
-// 刷新整个 TLB
-static inline void vmm_flush_all(void) {
-    __asm__ volatile (
-        "mov %%cr3, %%eax\n"
-        "mov %%eax, %%cr3\n"
-        ::: "eax", "memory"
-    );
-}
-```
-
+CPU 会缓存查过的页表结果。修改页表后要让缓存的旧结果作废：
+`hal::Mmu::flush_tlb(virt)` 作废一个地址（x86 的 `invlpg`），`hal::Mmu::flush_tlb_all()`
+作废全部（x86 上重新装载一次 `cr3`）。

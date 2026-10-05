@@ -79,84 +79,50 @@ PCB 里没有文件描述符表和工作目录：内核不认识文件，这些�
 
 ## CPU 上下文
 
-```c
-typedef struct {
-    uint32_t eax, ebx, ecx, edx;
-    uint32_t esi, edi, ebp;
-    uint32_t eip;              // 指令指针
-    uint32_t esp;              // 栈指针
-    uint32_t eflags;           // 标志寄存器
-    uint32_t cr3;              // 页目录基址
-} cpu_context_t;
-```
+任务不在 CPU 上运行的时候，它的寄存器内容存在 PCB 里的 `cpu_context_t` 中。这个结构
+每个架构都不一样（寄存器不同），在 i686 上是通用寄存器、段寄存器、指令指针、标志寄存器、
+栈指针，再加上 `cr3`——这个任务的地址空间。
+
+通用的调度和进程代码不直接读写里面的字段。需要构造或改写现场的地方只有几处，
+都通过 `hal::UserContext`（`src/arch/<arch>/task/user_context.cpp`）：
+
+| 函数 | 什么时候用 |
+|------|------------|
+| `init(ctx, entry, user_sp, space, kernel_sp)` | 新进程、`exec` 之后：从入口开始在用户态运行 |
+| `init_kernel(ctx, entry, kernel_sp, space)` | idle 任务：在内核态运行一个函数 |
+| `fork(child, frame, space, kernel_sp)` | 子进程：和父进程进入系统调用时一样，只是返回值是 0 |
+| `exec_return(frame, entry, user_sp)` | 改写系统调用的返回帧，让它"返回"到新程序 |
+| `set_kernel_stack(kernel_sp)` | 告诉 CPU 这个任务从用户态陷入内核时用哪个内核栈 |
+
+其中 `frame` 是系统调用入口保存在内核栈上的用户寄存器，它的布局由各架构的汇编入口决定。
 
 ## 调度器
 
 ### 调度算法
 
-CastorOS 使用简单的时间片轮转调度：
+时间片轮转：就绪的任务排成一个队列，每个任务运行一个时间片，用完了排到队尾。
 
-```c
-static task_t *ready_queue_head = NULL;
-static task_t *current_task = NULL;
+`Scheduler::schedule()` 做的事：
 
-void schedule(void) {
-    if (!current_task) return;
-    
-    // 保存当前任务状态
-    if (current_task->state == TASK_RUNNING) {
-        current_task->state = TASK_READY;
-        enqueue_ready(current_task);
-    }
-    
-    // 选择下一个任务
-    task_t *next = dequeue_ready();
-    if (!next) {
-        next = idle_task;  // 无就绪任务时运行空闲任务
-    }
-    
-    // 切换任务
-    if (next != current_task) {
-        task_t *prev = current_task;
-        current_task = next;
-        current_task->state = TASK_RUNNING;
-        
-        context_switch(prev, next);
-    }
-}
-```
+1. 当前任务如果还能运行，放回就绪队列的队尾。
+2. 从队首取下一个任务；队列空了就运行 idle 任务。
+3. 如果下一个是用户任务，`hal::UserContext::set_kernel_stack()` 换好它的内核栈。
+4. `task_switch_context(&prev->context, &next->context)` 切换。
+
+idle 任务只做一件事：关着中断检查有没有任务可运行，没有就开中断并停机，等下一次中断。
+检查和停机必须是一个不可分的动作，否则可能在两者之间错过一次唤醒。
+
+调度发生在三种时候：定时器中断发现时间片用完（抢占）、任务自己 `yield`、任务阻塞。
 
 ### 上下文切换
 
-```asm
-; void context_switch(task_t *prev, task_t *next)
-context_switch:
-    ; 保存调用者保存的寄存器
-    push ebp
-    push ebx
-    push esi
-    push edi
-    
-    ; 保存当前栈指针到 prev->context.esp
-    mov eax, [esp + 20]     ; prev
-    mov [eax + CONTEXT_ESP], esp
-    
-    ; 切换到 next 的栈
-    mov eax, [esp + 24]     ; next
-    mov esp, [eax + CONTEXT_ESP]
-    
-    ; 切换页目录
-    mov ebx, [eax + CONTEXT_CR3]
-    mov cr3, ebx
-    
-    ; 恢复寄存器
-    pop edi
-    pop esi
-    pop ebx
-    pop ebp
-    
-    ret
-```
+`task_switch_context` 是汇编写的（`src/arch/<arch>/task/`）。它把当前的寄存器存进旧任务
+的 `cpu_context_t`，从新任务的 `cpu_context_t` 里恢复寄存器和地址空间，然后跳到新任务
+上次停下的地方。
+
+对一个从没运行过的任务，"上次停下的地方"就是 `hal::UserContext::init` 填好的初始现场：
+切换代码照常恢复它，其中的特权级是用户态，于是用"从中断返回"的指令（x86 的 `iret`，
+arm64 的 `eret`）落到用户程序的入口。进入用户态没有单独的代码路径，它就是一次上下文切换。
 
 ## 进程创建
 
@@ -175,11 +141,9 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
     // 3. 分配内核栈
     child->kernel_stack_base = (uintptr_t)kmalloc(KERNEL_STACK_SIZE);
 
-    // 4. 用系统调用入口保存的用户寄存器（frame）构造子进程的上下文
+    // 4. 用系统调用入口保存的用户寄存器（frame）构造子进程的现场：
     //    子进程从 fork() 返回处继续执行，返回值是 0
-    child->context.eax = 0;
-    child->context.eip = frame[8];
-    ...
+    hal::UserContext::fork(&child->context, frame, child->page_dir_phys, child->kernel_stack);
 
     // 5. 继承父子关系和特权
     child->parent = parent;
@@ -217,9 +181,10 @@ uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size
     // 4. 把参数写进参数页（用户栈区域最顶上的一页，地址固定）
     memcpy(((user_args_t *)USER_ARGS_ADDR)->data, kargs, args_size);
 
-    // 5. 改写系统调用的返回帧：这次系统调用“返回”到新程序的入口
-    frame[8] = entry_point;           // EIP
-    frame[11] = current->user_stack;  // ESP
+    // 5. 这次系统调用不回到原来的程序，而是“返回”到新程序的入口
+    hal::UserContext::init(&current->context, entry_point, current->user_stack,
+                           current->page_dir_phys, current->kernel_stack);
+    hal::UserContext::exec_return(frame, entry_point, current->user_stack);
     return 0;
 }
 ```
@@ -258,10 +223,10 @@ void Scheduler::exit_current(uint32_t exit_code, bool signaled, uint32_t signal)
 ```cpp
 uint32_t syscall::Process::waitpid(int32_t pid, uint32_t *wstatus, uint32_t options) {
     while (true) {
-        // 找一个已经退出（僵尸）的匹配子进程
+        // 找一个已经退出（僵尸）的匹配子进程（这里写成一个函数，实际是对任务表的一次扫描）
         task_t *child = find_zombie_child(current, pid);
         if (child) {
-            *wstatus = encode_status(child);
+            *wstatus = encode_status(child);    // 正常退出的退出码，或者终止它的信号
             Scheduler::free(child);         // 回收它的地址空间、内核栈和 PCB
             return child_pid;
         }
@@ -278,60 +243,17 @@ uint32_t syscall::Process::waitpid(int32_t pid, uint32_t *wstatus, uint32_t opti
 等待必须是真正的阻塞。如果父进程在内核里轮询（让出 CPU 再停机等下一次中断），它停机的
 那段时间里别的任务都得不到运行，系统里每一次唤醒都可能被拖到下一个时钟滴答。
 
-## 用户态切换
+## 内核栈
 
-### 从内核态进入用户态
+每个任务有两个栈：用户栈在它自己的地址空间里，内核栈在内核里（`kmalloc` 分配）。
+任务在用户态运行时用用户栈；一旦因为系统调用、中断或异常进入内核，CPU 换到它的内核栈上
+——内核不能信任用户栈指针指向的是有效内存。
 
-```c
-void switch_to_user_mode(uint32_t entry, uint32_t user_stack) {
-    // 设置用户态段选择子
-    uint32_t user_cs = 0x1B;  // 用户代码段 | RPL=3
-    uint32_t user_ds = 0x23;  // 用户数据段 | RPL=3
-    
-    __asm__ volatile (
-        // 设置数据段
-        "mov %0, %%ax\n"
-        "mov %%ax, %%ds\n"
-        "mov %%ax, %%es\n"
-        "mov %%ax, %%fs\n"
-        "mov %%ax, %%gs\n"
-        
-        // 构造 iret 帧
-        "push %0\n"     // SS
-        "push %1\n"     // ESP
-        "pushf\n"       // EFLAGS
-        "orl $0x200, (%%esp)\n"  // 启用中断
-        "push %2\n"     // CS
-        "push %3\n"     // EIP
-        "iret\n"
-        :
-        : "r"(user_ds), "r"(user_stack), "r"(user_cs), "r"(entry)
-    );
-}
-```
+CPU 怎么知道该换到哪个栈，各架构不同，所以由 `hal::UserContext::set_kernel_stack()` 负责：
 
-### TSS (Task State Segment)
-
-TSS 用于在特权级切换时提供内核栈：
-
-```c
-typedef struct {
-    uint32_t prev_tss;
-    uint32_t esp0;      // 内核栈指针
-    uint32_t ss0;       // 内核栈段
-    // ... 其他字段
-} tss_t;
-
-void tss_set_kernel_stack(uint32_t stack) {
-    tss.esp0 = stack;
-}
-
-// 每次切换任务时更新 TSS
-void context_switch(task_t *prev, task_t *next) {
-    tss_set_kernel_stack(next->kernel_stack + KERNEL_STACK_SIZE);
-    // ...
-}
-```
+- **i686**：写进 TSS（任务状态段）的 `esp0` 字段，CPU 在特权级切换时从那里取。
+- **x86_64**：除了 TSS，`SYSCALL` 指令不经过 TSS，系统调用入口自己从一个变量里取，也要更新。
+- **arm64**：内核栈指针随现场一起保存和恢复，这里什么都不用做。
 
 ## 终止别的进程：kill
 

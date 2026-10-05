@@ -9,7 +9,7 @@ CastorOS 的内核只保留五件事：CPU/中断、内存管理、任务调度�
 |------|------|
 | `src/arch/<arch>/` | 启动、GDT/IDT 或异常向量、中断控制器、页表项的格式、上下文切换、系统调用入口、HAL 实现 |
 | `src/mm/` | 物理页帧分配（PMM）、多级页表的通用操作（`pagetable.cpp`：映射、克隆、销毁，三个架构共用一份，表项格式由各架构通过 `hal/pt.h` 提供）、地址空间与写时复制（VMM）、内核堆 |
-| `src/kernel/` | 调度器与任务（`task.cpp`）、系统调用分发（`syscall.cpp`、`syscalls/`）、IPC（`ipc.cpp`）、中断转发（`user_irq.cpp`）、ELF 加载、同步原语、用户指针校验 |
+| `src/kernel/` | 调度器与任务（`task.cpp`）、系统调用分发（`syscall.cpp`、`syscalls/`）、IPC（`ipc.cpp`）、中断转发（`user_irq.cpp`）、ELF 加载、自旋锁、用户指针校验 |
 | `src/drivers/<x86\|arm>/` | 只有两个：串口（只做调试输出）和时钟（调度 tick） |
 | `src/lib/` | `kprintf`/`klog`、字符串库、最小 C++ 运行时 |
 | `src/tests/` | 内核测试，只在 `KTEST=1`（`make test`）时编入 |

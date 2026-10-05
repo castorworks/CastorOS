@@ -75,8 +75,8 @@ HTTP/1.1 200 OK
 
 ```
 src/arch/      架构相关代码 (i686, x86_64, arm64)
-src/mm/        PMM / VMM / 内核堆
-src/kernel/    调度、系统调用、ELF 加载、同步原语
+src/mm/        物理页 (PMM)、通用页表、地址空间与写时复制 (VMM)、内核堆
+src/kernel/    调度、系统调用、IPC、中断转发、ELF 加载、自旋锁
 src/drivers/   串口和时钟
 src/lib/       kprintf / klog / 字符串 / C++ 运行时
 src/tests/     内核测试 (KTEST=1)
