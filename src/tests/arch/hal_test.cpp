@@ -19,10 +19,8 @@
 //   - x86_64: 64位 x86
 //   - ARM64: 64位 ARM
 //
-// **Feature: multi-arch-support, test-refactor**
 // **Property 1: HAL Initialization Dispatch**
 // **Property 14: MMIO Memory Barrier Correctness**
-// **Validates: Requirements 1.1, 7.1, 7.3, 9.1**
 // ============================================================================
 
 #include <tests/ktest.h>
@@ -39,7 +37,6 @@
  * interface SHALL dispatch to the correct architecture-specific initialization 
  * routine, and the initialization SHALL complete successfully.
  * 
- * **Validates: Requirements 1.1**
  * 
  * Test Strategy:
  * Since we're running in a kernel context where initialization has already
@@ -51,9 +48,6 @@
 
 /**
  * @brief Test that architecture name is correct for the build target
- * 
- * **Feature: multi-arch-support, Property 1: HAL Initialization Dispatch**
- * **Validates: Requirements 1.1**
  */
 TEST_CASE(hal_arch_name_correct) {
     const char *arch_name = hal_arch_name();
@@ -74,9 +68,6 @@ TEST_CASE(hal_arch_name_correct) {
 
 /**
  * @brief Test that pointer size matches architecture
- * 
- * **Feature: multi-arch-support, Property 1: HAL Initialization Dispatch**
- * **Validates: Requirements 1.1**
  */
 TEST_CASE(hal_pointer_size_correct) {
     size_t ptr_size = hal_pointer_size();
@@ -92,9 +83,6 @@ TEST_CASE(hal_pointer_size_correct) {
 
 /**
  * @brief Test that 64-bit flag is correct for architecture
- * 
- * **Feature: multi-arch-support, Property 1: HAL Initialization Dispatch**
- * **Validates: Requirements 1.1**
  */
 TEST_CASE(hal_is_64bit_correct) {
 #if defined(ARCH_I686)
@@ -112,7 +100,6 @@ TEST_CASE(hal_is_64bit_correct) {
  * SHALL be issued to ensure correct ordering with respect to other memory 
  * operations, preventing reordering by the CPU or compiler.
  * 
- * **Validates: Requirements 9.1**
  * 
  * Test Strategy:
  * Since memory barriers are primarily about preventing reordering (which is
@@ -124,9 +111,6 @@ TEST_CASE(hal_is_64bit_correct) {
 
 /**
  * @brief Test MMIO read/write with memory barriers
- * 
- * **Feature: multi-arch-support, Property 14: MMIO Memory Barrier Correctness**
- * **Validates: Requirements 9.1**
  */
 TEST_CASE(hal_mmio_read_write_8bit) {
     volatile uint8_t test_var = 0;
@@ -142,9 +126,6 @@ TEST_CASE(hal_mmio_read_write_8bit) {
 
 /**
  * @brief Test MMIO 16-bit read/write
- * 
- * **Feature: multi-arch-support, Property 14: MMIO Memory Barrier Correctness**
- * **Validates: Requirements 9.1**
  */
 TEST_CASE(hal_mmio_read_write_16bit) {
     volatile uint16_t test_var = 0;
@@ -157,9 +138,6 @@ TEST_CASE(hal_mmio_read_write_16bit) {
 
 /**
  * @brief Test MMIO 32-bit read/write
- * 
- * **Feature: multi-arch-support, Property 14: MMIO Memory Barrier Correctness**
- * **Validates: Requirements 9.1**
  */
 TEST_CASE(hal_mmio_read_write_32bit) {
     volatile uint32_t test_var = 0;
@@ -172,9 +150,6 @@ TEST_CASE(hal_mmio_read_write_32bit) {
 
 /**
  * @brief Test MMIO 64-bit read/write
- * 
- * **Feature: multi-arch-support, Property 14: MMIO Memory Barrier Correctness**
- * **Validates: Requirements 9.1**
  */
 TEST_CASE(hal_mmio_read_write_64bit) {
     volatile uint64_t test_var = 0;
@@ -187,9 +162,6 @@ TEST_CASE(hal_mmio_read_write_64bit) {
 
 /**
  * @brief Test memory barrier functions don't crash
- * 
- * **Feature: multi-arch-support, Property 14: MMIO Memory Barrier Correctness**
- * **Validates: Requirements 9.1**
  */
 TEST_CASE(hal_memory_barriers_callable) {
     /* These should not crash */
@@ -207,9 +179,6 @@ TEST_CASE(hal_memory_barriers_callable) {
  * 
  * This test verifies that writes followed by reads return the correct
  * values, which is a basic ordering guarantee.
- * 
- * **Feature: multi-arch-support, Property 14: MMIO Memory Barrier Correctness**
- * **Validates: Requirements 9.1**
  */
 TEST_CASE(hal_mmio_write_ordering) {
     volatile uint32_t test_vars[4] = {0, 0, 0, 0};
@@ -239,8 +208,6 @@ TEST_CASE(hal_mmio_write_ordering) {
  * `hal::Mmu::query(space, virt, &out_phys, &out_flags)` SHALL return `true` 
  * with `out_phys == phys`.
  * 
- * **Feature: mm-refactor, Property 8: HAL MMU Map-Query Round-Trip**
- * **Validates: Requirements 4.1**
  * 
  * Test Strategy:
  * 1. Allocate physical frames
@@ -258,9 +225,6 @@ TEST_CASE(hal_mmio_write_ordering) {
 
 /**
  * @brief Property test: Map-Query round-trip for single page
- * 
- * **Feature: mm-refactor, Property 8: HAL MMU Map-Query Round-Trip**
- * **Validates: Requirements 4.1**
  */
 TEST_CASE(hal_mmu_map_query_roundtrip_single) {
 #if defined(ARCH_I686)
@@ -306,9 +270,6 @@ TEST_CASE(hal_mmu_map_query_roundtrip_single) {
  * @brief Property test: Map-Query round-trip for multiple pages
  * 
  * Tests the property across multiple random-ish virtual addresses.
- * 
- * **Feature: mm-refactor, Property 8: HAL MMU Map-Query Round-Trip**
- * **Validates: Requirements 4.1**
  */
 TEST_CASE(hal_mmu_map_query_roundtrip_multiple) {
 #if defined(ARCH_I686)
@@ -373,9 +334,6 @@ TEST_CASE(hal_mmu_map_query_roundtrip_multiple) {
 
 /**
  * @brief Property test: Query returns false for unmapped addresses
- * 
- * **Feature: mm-refactor, Property 8: HAL MMU Map-Query Round-Trip**
- * **Validates: Requirements 4.1**
  */
 TEST_CASE(hal_mmu_query_unmapped_returns_false) {
 #if defined(ARCH_I686)
@@ -401,8 +359,6 @@ TEST_CASE(hal_mmu_query_unmapped_returns_false) {
  * *For any* valid address space `space`, after `hal::Mmu::switch_space(space)`, 
  * `hal::Mmu::current_space()` SHALL return `space`.
  * 
- * **Feature: mm-refactor, Property 9: Address Space Switch Consistency**
- * **Validates: Requirements 4.5**
  * 
  * Test Strategy:
  * 1. Save the current address space
@@ -416,9 +372,6 @@ TEST_CASE(hal_mmu_query_unmapped_returns_false) {
 
 /**
  * @brief Property test: Address space switch consistency
- * 
- * **Feature: mm-refactor, Property 9: Address Space Switch Consistency**
- * **Validates: Requirements 4.5**
  */
 TEST_CASE(hal_mmu_switch_space_consistency) {
 #if defined(ARCH_I686)
@@ -454,9 +407,6 @@ TEST_CASE(hal_mmu_switch_space_consistency) {
 
 /**
  * @brief Property test: Multiple address space switches
- * 
- * **Feature: mm-refactor, Property 9: Address Space Switch Consistency**
- * **Validates: Requirements 4.5**
  */
 TEST_CASE(hal_mmu_switch_space_multiple) {
 #if defined(ARCH_I686)
@@ -498,7 +448,6 @@ TEST_CASE(hal_mmu_switch_space_multiple) {
  * @brief HAL 初始化测试套件
  * 
  * Property 1: HAL Initialization Dispatch
- * **Validates: Requirements 1.1, 7.1**
  */
 TEST_SUITE(hal_init_tests) {
     RUN_TEST(hal_arch_name_correct);
@@ -510,7 +459,6 @@ TEST_SUITE(hal_init_tests) {
  * @brief MMIO 和内存屏障测试套件
  * 
  * Property 14: MMIO Memory Barrier Correctness
- * **Validates: Requirements 9.1**
  */
 TEST_SUITE(hal_mmio_tests) {
     RUN_TEST(hal_mmio_read_write_8bit);
@@ -525,7 +473,6 @@ TEST_SUITE(hal_mmio_tests) {
  * @brief MMU 映射测试套件
  * 
  * Property 8: HAL MMU Map-Query Round-Trip
- * **Validates: Requirements 4.1**
  */
 TEST_SUITE(hal_mmu_map_tests) {
     RUN_TEST(hal_mmu_map_query_roundtrip_single);
@@ -537,7 +484,6 @@ TEST_SUITE(hal_mmu_map_tests) {
  * @brief 地址空间切换测试套件
  * 
  * Property 9: Address Space Switch Consistency
- * **Validates: Requirements 4.5**
  */
 TEST_SUITE(hal_addr_space_tests) {
     RUN_TEST(hal_mmu_switch_space_consistency);
@@ -568,23 +514,15 @@ void run_hal_tests(void) {
     // 打印架构诊断信息
     
     // Property 1: HAL Initialization Dispatch
-    // **Feature: multi-arch-support, Property 1: HAL Initialization Dispatch**
-    // **Validates: Requirements 1.1, 7.1**
     RUN_SUITE(hal_init_tests);
     
     // Property 14: MMIO Memory Barrier Correctness
-    // **Feature: multi-arch-support, Property 14: MMIO Memory Barrier Correctness**
-    // **Validates: Requirements 9.1**
     RUN_SUITE(hal_mmio_tests);
     
     // Property 8: HAL MMU Map-Query Round-Trip
-    // **Feature: mm-refactor, Property 8: HAL MMU Map-Query Round-Trip**
-    // **Validates: Requirements 4.1**
     RUN_SUITE(hal_mmu_map_tests);
     
     // Property 9: Address Space Switch Consistency
-    // **Feature: mm-refactor, Property 9: Address Space Switch Consistency**
-    // **Validates: Requirements 4.5**
     RUN_SUITE(hal_addr_space_tests);
     
     // 打印测试摘要
@@ -603,9 +541,6 @@ void run_hal_tests(void) {
  * 
  * 使用 TEST_MODULE_ARCH 宏注册为架构相关测试模块
  * 支持所有架构 (i686, x86_64, ARM64)
- * 
- * **Feature: test-refactor**
- * **Validates: Requirements 10.1, 10.2, 11.1**
  */
 TEST_MODULE_FULL(hal, ARCH, run_hal_tests,
     "HAL (Hardware Abstraction Layer) tests - initialization, MMIO, MMU",

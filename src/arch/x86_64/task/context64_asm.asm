@@ -6,7 +6,6 @@
 ; x86_64 (64-bit) architecture. It provides the HAL context switch
 ; interface implementation.
 ;
-; Requirements: 7.1, 7.3, 12.1
 ;
 ; Context Structure Offsets (must match x86_64_context_t in context64.h):
 ;   r15:      0

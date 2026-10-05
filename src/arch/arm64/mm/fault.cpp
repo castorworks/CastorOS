@@ -7,9 +7,6 @@
  * to fill hal_page_fault_info_t structure.
  * 
  * Requirements: 5.4, mm-refactor 6.4
- * 
- * **Feature: multi-arch-support, Property 5: VMM Page Fault Interpretation (ARM64)**
- * **Validates: Requirements 5.4**
  */
 
 #include <types.h>

@@ -9,9 +9,6 @@
  *   - i686: Arguments passed on stack and in registers (EBX, ECX, EDX, ESI, EDI, EBP)
  *   - x86_64: Arguments in RDI, RSI, RDX, R10, R8, R9
  *   - ARM64: Arguments in X0-X5, syscall number in X8
- * 
- * **Feature: multi-arch-optimization**
- * **Validates: Requirements 7.1, 7.2**
  */
 
 #ifndef _HAL_HAL_SYSCALL_H_
@@ -38,8 +35,6 @@
  * This structure provides an architecture-independent representation of
  * system call arguments. The HAL extracts arguments from architecture-specific
  * locations (registers, stack) and populates this structure.
- * 
- * @see Requirements 7.1
  */
 typedef struct hal_syscall_args {
     uint64_t syscall_nr;                    /**< System call number */

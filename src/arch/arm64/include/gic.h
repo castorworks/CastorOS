@@ -3,11 +3,6 @@
  * @brief ARM Generic Interrupt Controller (GIC) Definitions
  * 
  * Supports GICv2 and GICv3 interrupt controllers.
- * 
- * Requirements: 4.4, 6.3
- * 
- * **Feature: multi-arch-support, Property 8: Interrupt Handler Registration API Consistency**
- * **Validates: Requirements 6.4**
  */
 
 #ifndef _ARCH_ARM64_GIC_H_

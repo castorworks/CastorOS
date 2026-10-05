@@ -2,8 +2,6 @@
  * @file arm64_exception_test.c
  * @brief Property tests for ARM64 interrupt register preservation
  * 
- * **Feature: multi-arch-support, Property 7: Interrupt Register State Preservation (ARM64)**
- * **Validates: Requirements 6.2**
  * 
  * This test verifies that the arm64_regs_t structure layout matches
  * the assembly stub's register save/restore order, ensuring that
@@ -52,9 +50,6 @@
  * 
  * The structure must be exactly 272 bytes to match the assembly stub's
  * stack frame layout (FRAME_SIZE in vectors.S).
- * 
- * **Feature: multi-arch-support, Property 7: Interrupt Register State Preservation (ARM64)**
- * **Validates: Requirements 6.2**
  */
 TEST_CASE(arm64_register_struct_size) {
     ASSERT_EQ_UINT(EXPECTED_REGS_SIZE, (uint32_t)sizeof(arm64_regs_t));
@@ -68,9 +63,6 @@ TEST_CASE(arm64_register_struct_size) {
  *   1. X0-X29 (stp pairs)
  *   2. X30 and SP_EL0
  *   3. ELR_EL1 and SPSR_EL1
- * 
- * **Feature: multi-arch-support, Property 7: Interrupt Register State Preservation (ARM64)**
- * **Validates: Requirements 6.2**
  */
 TEST_CASE(arm64_register_struct_offsets) {
     /* General purpose registers X0-X30 */
@@ -94,9 +86,6 @@ TEST_CASE(arm64_register_struct_offsets) {
  * 
  * In ARM64, all general-purpose registers are 64-bit (8 bytes).
  * This test ensures the structure uses correct types.
- * 
- * **Feature: multi-arch-support, Property 7: Interrupt Register State Preservation (ARM64)**
- * **Validates: Requirements 6.2**
  */
 TEST_CASE(arm64_register_field_sizes) {
     arm64_regs_t regs;
@@ -115,9 +104,6 @@ TEST_CASE(arm64_register_field_sizes) {
  * 
  * ARM64 has 31 general-purpose registers (X0-X30).
  * Plus SP_EL0, ELR_EL1, and SPSR_EL1 = 34 total fields.
- * 
- * **Feature: multi-arch-support, Property 7: Interrupt Register State Preservation (ARM64)**
- * **Validates: Requirements 6.2**
  */
 TEST_CASE(arm64_register_count) {
     /* 31 GPRs + SP_EL0 + ELR + SPSR = 34 fields */
@@ -130,9 +116,6 @@ TEST_CASE(arm64_register_count) {
  * Test: Verify X register array size
  * 
  * The X register array should have exactly 31 elements (X0-X30).
- * 
- * **Feature: multi-arch-support, Property 7: Interrupt Register State Preservation (ARM64)**
- * **Validates: Requirements 6.2**
  */
 TEST_CASE(arm64_x_register_array_size) {
     arm64_regs_t regs;
@@ -145,9 +128,6 @@ TEST_CASE(arm64_x_register_array_size) {
  * Test: Verify ESR exception class extraction
  * 
  * Tests that exception class values can be correctly extracted from ESR.
- * 
- * **Feature: multi-arch-support, Property 7: Interrupt Register State Preservation (ARM64)**
- * **Validates: Requirements 6.2**
  */
 TEST_CASE(arm64_esr_exception_class_extraction) {
     /* Test ESR_EC extraction */
@@ -174,9 +154,6 @@ TEST_CASE(arm64_esr_exception_class_extraction) {
  * Test: Verify fault status code extraction
  * 
  * Tests that fault status codes can be correctly extracted from ESR ISS field.
- * 
- * **Feature: multi-arch-support, Property 7: Interrupt Register State Preservation (ARM64)**
- * **Validates: Requirements 6.2**
  */
 TEST_CASE(arm64_fault_status_extraction) {
     uint32_t iss;
@@ -202,9 +179,6 @@ TEST_CASE(arm64_fault_status_extraction) {
  * Test: Verify write/read bit extraction from data abort ISS
  * 
  * Tests that the WnR (Write not Read) bit can be correctly extracted.
- * 
- * **Feature: multi-arch-support, Property 7: Interrupt Register State Preservation (ARM64)**
- * **Validates: Requirements 6.2**
  */
 TEST_CASE(arm64_data_abort_wnr_extraction) {
     uint32_t iss;
@@ -223,9 +197,6 @@ TEST_CASE(arm64_data_abort_wnr_extraction) {
 
 /**
  * Test: Verify exception type constants match vectors.S
- * 
- * **Feature: multi-arch-support, Property 7: Interrupt Register State Preservation (ARM64)**
- * **Validates: Requirements 6.2**
  */
 TEST_CASE(arm64_exception_type_constants) {
     /* These must match the values in vectors.S */
@@ -237,9 +208,6 @@ TEST_CASE(arm64_exception_type_constants) {
 
 /**
  * Test: Verify exception source constants match vectors.S
- * 
- * **Feature: multi-arch-support, Property 7: Interrupt Register State Preservation (ARM64)**
- * **Validates: Requirements 6.2**
  */
 TEST_CASE(arm64_exception_source_constants) {
     /* These must match the values in vectors.S */

@@ -249,9 +249,6 @@ task_t* kernel::Scheduler::get_current() {
  * 
  * ARM64: Uses HAL MMU interface for page mapping
  * i686/x86_64: Uses VMM page directory interface
- * 
- * **Feature: arm64-kernel-integration**
- * **Validates: Requirements 6.1**
  */
 bool kernel::Scheduler::setup_user_stack(task_t *task) {
     if (!task || !task->is_user_process) {
@@ -479,9 +476,6 @@ bool kernel::Scheduler::should_fail_stack_page(uint32_t page_index) {
 
 /**
  * @brief 创建用户进程
- * 
- * **Feature: arm64-kernel-integration**
- * **Validates: Requirements 6.1, 6.2**
  */
 uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entry_point,
                                    page_directory_t *page_dir, uintptr_t program_end) {
@@ -638,8 +632,6 @@ uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entr
  * This is a convenience function that creates a new address space using
  * hal::Mmu::create_space() and then creates a user process in that space.
  * 
- * **Feature: arm64-kernel-integration**
- * **Validates: Requirements 6.1**
  * 
  * @param name Process name
  * @param entry_point User program entry point

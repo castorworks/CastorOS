@@ -5,7 +5,6 @@
  * 验证 Exception Level (EL1)
  * 设置初始栈
  *
- * Requirements: 4.1
  *
  * ARM64 引导流程:
  *   1. 从 UEFI/U-Boot 进入 _start (应在 EL1)

@@ -4,8 +4,6 @@
  * 
  * 使用位图管理物理页帧的分配和释放。
  * 支持 64-bit 物理地址，兼容 i686、x86_64 和 ARM64 架构。
- * 
- * @see Requirements 2.1, 2.2, 2.3
  */
 
 #ifndef _MM_PMM_H_
@@ -48,8 +46,6 @@ namespace mm {
  * @brief 物理内存信息结构
  * 
  * 使用 pfn_t 类型支持大于 4GB 的物理内存
- * 
- * @see Requirements 2.2
  */
 struct PmmInfo {
     pfn_t total_frames;     ///< 总页帧数
@@ -83,8 +79,6 @@ public:
      * 
      * 使用架构无关的 boot_info_t 结构初始化 PMM。
      * 适用于 ARM64 (DTB) 和其他非 Multiboot 引导方式。
-     * 
-     * @see Requirements 1.1, 1.4
      */
     static void init_boot_info(struct boot_info *boot_info);
 
@@ -93,8 +87,6 @@ public:
      * @return 成功返回页帧的物理地址，失败返回 PADDR_INVALID
      * 
      * 分配后会清零页帧内容。返回的地址保证是页对齐的。
-     * 
-     * @see Requirements 2.1
      */
     static paddr_t alloc_frame();
 
@@ -104,14 +96,11 @@ public:
      * 
      * 地址必须是页对齐的。
      * COW 支持：如果帧的引用计数 > 1，只递减计数，不实际释放。
-     * 
-     * @see Requirements 2.1
      */
     static void free_frame(paddr_t frame);
 
     /*============================================================================
      * 大页分配接口（2MB 对齐）
-     * @see Requirements 8.1
      *============================================================================*/
 
     /**
@@ -137,7 +126,6 @@ public:
 
     /*============================================================================
      * 引用计数接口（COW 支持）
-     * @see Requirements 2.3
      *============================================================================*/
 
     /**

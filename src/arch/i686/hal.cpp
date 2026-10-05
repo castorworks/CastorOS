@@ -5,9 +5,6 @@
  * This file implements the HAL interface for i686 (x86 32-bit) architecture.
  * It provides unified initialization routines that dispatch to architecture-
  * specific subsystems (GDT, IDT, ISR, IRQ, VMM).
- * 
- * **Feature: multi-arch-support, Property 1: HAL Initialization Dispatch**
- * **Validates: Requirements 1.1**
  */
 
 #include <hal/hal.h>
@@ -120,7 +117,6 @@ void hal::Interrupt::unmask_irq(uint32_t irq) {
  * On x86, caches are DMA-coherent (snooped), so explicit cache maintenance
  * is not required for DMA operations. These functions are no-ops.
  * 
- * @see Requirements 10.2
  * ========================================================================== */
 
 /**

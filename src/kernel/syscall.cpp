@@ -6,8 +6,6 @@
 // The actual system call entry mechanism is implemented in architecture-specific
 // code under src/arch/{arch}/syscall/.
 //
-// **Feature: multi-arch-support**
-// **Validates: Requirements 8.1**
 // ============================================================================
 
 #include <kernel/syscall.h>

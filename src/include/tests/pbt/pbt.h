@@ -4,8 +4,6 @@
 //
 // A lightweight property-based testing framework for CastorOS kernel.
 //
-// **Feature: multi-arch-support**
-// **Validates: Requirements 11.3**
 // ============================================================================
 
 #ifndef _TESTS_PBT_PBT_H_

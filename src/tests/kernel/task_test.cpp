@@ -119,8 +119,6 @@ TEST_CASE(test_create_user_process_failure_keeps_address_space) {
 
 // ============================================================================
 // Property-Based Tests: Context Switch Register Preservation
-// **Feature: multi-arch-support, Property 9: Context Switch Register Preservation**
-// **Validates: Requirements 7.1**
 // ============================================================================
 
 /**
@@ -229,8 +227,6 @@ TEST_CASE(test_pbt_pointer_size) {
 
 // ============================================================================
 // Property-Based Tests: Address Space Switch Correctness (x86_64)
-// **Feature: multi-arch-support, Property 10: Address Space Switch Correctness (x86_64)**
-// **Validates: Requirements 7.3**
 // ============================================================================
 
 #if defined(ARCH_X86_64)
@@ -260,15 +256,11 @@ TEST_CASE(test_pbt_x86_64_address_space_switch_cr3_offset) {
 
 // ============================================================================
 // Property-Based Tests: Context Switch Register Preservation (ARM64)
-// **Feature: multi-arch-support, Property 9: Context Switch Register Preservation (ARM64)**
-// **Validates: Requirements 7.2**
 // ============================================================================
 
 #if defined(ARCH_ARM64)
 // ============================================================================
 // Property-Based Tests: Address Space Switch Correctness (ARM64)
-// **Feature: multi-arch-support, Property 10: Address Space Switch Correctness (ARM64)**
-// **Validates: Requirements 7.3**
 // ============================================================================
 
 /**
@@ -296,14 +288,8 @@ TEST_SUITE(task_context_property_tests) {
     RUN_TEST(test_pbt_arch_name);
     RUN_TEST(test_pbt_pointer_size);
 #if defined(ARCH_X86_64)
-    // **Feature: multi-arch-support, Property 10: Address Space Switch Correctness (x86_64)**
-    // **Validates: Requirements 7.3**
     RUN_TEST(test_pbt_x86_64_address_space_switch_cr3_offset);
 #elif defined(ARCH_ARM64)
-    // **Feature: multi-arch-support, Property 9: Context Switch Register Preservation (ARM64)**
-    // **Validates: Requirements 7.2**
-    // **Feature: multi-arch-support, Property 10: Address Space Switch Correctness (ARM64)**
-    // **Validates: Requirements 7.3**
     RUN_TEST(test_pbt_arm64_address_space_switch_ttbr0_offset);
 #endif
 }
@@ -320,8 +306,6 @@ void run_task_tests(void) {
     unittest_end_suite();
     
     // Property-based tests
-    // **Feature: multi-arch-support, Property 9: Context Switch Register Preservation**
-    // **Validates: Requirements 7.1**
     RUN_SUITE(task_context_property_tests);
 }
 

@@ -5,13 +5,8 @@
  * ARM64 (AArch64) architecture. It provides the HAL context switch
  * interface implementation.
  *
- * Requirements: 7.2, 7.3, 12.1
  *
- * **Feature: multi-arch-support, Property 9: Context Switch Register Preservation (ARM64)**
- * **Validates: Requirements 7.2**
  *
- * **Feature: multi-arch-support, Property 10: Address Space Switch Correctness (ARM64)**
- * **Validates: Requirements 7.3**
  *
  * Context Structure Offsets (must match arm64_context_t in context.h):
  *   x0-x30:   0-240   (31 registers × 8 bytes)

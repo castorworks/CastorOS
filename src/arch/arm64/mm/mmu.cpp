@@ -18,8 +18,6 @@
  *   [29:21] - Level 2 索引 (9 bits, 512 entries)
  *   [20:12] - Level 3 索引 (9 bits, 512 entries)
  *   [11:0]  - 页内偏移 (12 bits, 4KB page)
- * 
- * Requirements: 6.1, 6.2, 6.4, 6.5
  */
 
 #include <types.h>
@@ -212,14 +210,11 @@ static inline void tlbi_vmalle1is(void) {
 /* ============================================================================
  * HAL MMU 接口实现 - ARM64
  * 
- * Requirements: 6.1, 6.5
  * ========================================================================== */
 
 /**
  * @brief 刷新单个 TLB 条目 (ARM64)
  * @param virt 虚拟地址
- * 
- * @see Requirements 6.5
  */
 void hal::Mmu::flush_tlb(vaddr_t virt) {
     dsb_ish();
@@ -230,8 +225,6 @@ void hal::Mmu::flush_tlb(vaddr_t virt) {
 
 /**
  * @brief 刷新整个 TLB (ARM64)
- * 
- * @see Requirements 6.5
  */
 void hal::Mmu::flush_tlb_all() {
     dsb_ish();
@@ -245,8 +238,6 @@ void hal::Mmu::flush_tlb_all() {
  * @param space 新地址空间的物理地址 (Level 0 表)
  * 
  * 更新 TTBR0_EL1 并执行必要的屏障操作。
- * 
- * @see Requirements 6.5
  */
 void hal::Mmu::switch_space(paddr_t space) {
     dsb_ish();
@@ -490,7 +481,6 @@ static uint32_t arm64_flags_to_hal(uint64_t arm64_flags) {
 /* ============================================================================
  * HAL MMU 页表操作实现 - ARM64
  * 
- * Requirements: 6.2
  * ========================================================================== */
 
 /**
@@ -503,8 +493,6 @@ static uint32_t arm64_flags_to_hal(uint64_t arm64_flags) {
  * @param[out] phys 物理地址 (可为 NULL)
  * @param[out] flags HAL 页标志 (可为 NULL)
  * @return true 如果映射存在，false 如果未映射
- * 
- * @see Requirements 6.2
  */
 bool hal::Mmu::query(hal_addr_space_t space, vaddr_t virt, paddr_t *phys, uint32_t *flags) {
     uint64_t *l0 = get_l0_table(space, virt);
@@ -598,8 +586,6 @@ bool hal::Mmu::query(hal_addr_space_t space, vaddr_t virt, paddr_t *phys, uint32
  * @return true 成功，false 失败
  * 
  * @note 调用者需要在映射后调用 hal::Mmu::flush_tlb()
- * 
- * @see Requirements 6.2
  */
 bool hal::Mmu::map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags) {
     /* Validate addresses */
@@ -679,8 +665,6 @@ bool hal::Mmu::map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t 
  * 
  * @note 调用者需要在取消映射后调用 hal::Mmu::flush_tlb()
  * @note 此函数不释放中间页表级别
- * 
- * @see Requirements 6.2
  */
 paddr_t hal::Mmu::unmap(hal_addr_space_t space, vaddr_t virt) {
     uint64_t *l0 = get_l0_table(space, virt);
@@ -760,8 +744,6 @@ paddr_t hal::Mmu::unmap(hal_addr_space_t space, vaddr_t virt) {
  * @return true 成功，false 如果映射不存在
  * 
  * @note 调用者需要在修改后调用 hal::Mmu::flush_tlb()
- * 
- * @see Requirements 6.2
  */
 bool hal::Mmu::protect(hal_addr_space_t space, vaddr_t virt, 
                      uint32_t set_flags, uint32_t clear_flags) {
@@ -829,7 +811,6 @@ bool hal::Mmu::protect(hal_addr_space_t space, vaddr_t virt,
 /* ============================================================================
  * ARM64 地址空间管理实现
  * 
- * Requirements: 6.2
  * ========================================================================== */
 
 /** @brief 内核空间 L0 索引起始 (256 = 0xFFFF000000000000) */
@@ -859,8 +840,6 @@ bool hal::Mmu::protect(hal_addr_space_t space, vaddr_t virt,
  * switching TTBR0.
  * 
  * @return 新地址空间句柄 (L0 表物理地址)，失败返回 HAL_ADDR_SPACE_INVALID
- * 
- * @see Requirements 6.2
  */
 hal_addr_space_t hal::Mmu::create_space() {
     /* Allocate a new Level 0 table */
@@ -946,8 +925,6 @@ static void free_page_table_recursive(paddr_t table_phys, int level) {
  * @param space 要销毁的地址空间句柄
  * 
  * @warning 不能销毁当前活动的地址空间
- * 
- * @see Requirements 6.2
  */
 void hal::Mmu::destroy_space(hal_addr_space_t space) {
     if (space == HAL_ADDR_SPACE_INVALID || space == 0) {
@@ -1108,8 +1085,6 @@ static bool clone_page_table_recursive(paddr_t src_table_phys, int level,
  * 
  * @param src 源地址空间句柄
  * @return 新地址空间句柄，失败返回 HAL_ADDR_SPACE_INVALID
- * 
- * @see Requirements 6.2
  */
 hal_addr_space_t hal::Mmu::clone_space(hal_addr_space_t src) {
     /* Validate source address space */
@@ -1191,7 +1166,6 @@ hal_addr_space_t hal::Mmu::clone_space(hal_addr_space_t src) {
 /* ============================================================================
  * ARM64 页错误处理
  * 
- * Requirements: 6.4
  * ========================================================================== */
 
 /**
@@ -1292,7 +1266,6 @@ bool arm64_is_cow_fault(uint64_t esr) {
  * 用于 DMA 操作的缓存一致性维护。
  * ARM64 使用非一致性缓存，需要显式维护操作。
  * 
- * Requirements: 10.2
  * ========================================================================== */
 
 /** @brief 缓存行大小 (ARM64 通常为 64 字节) */
@@ -1305,7 +1278,6 @@ bool arm64_is_cow_fault(uint64_t esr) {
  * ARM64 支持 2MB 块（通过 Level 2 块描述符）和 1GB 块（通过 Level 1 块描述符）
  * 此实现支持 2MB 块
  * 
- * @see Requirements 8.1, 8.2
  * ========================================================================== */
 
 /** @brief 2MB 块大小 */
@@ -1331,8 +1303,6 @@ static inline bool is_huge_page_aligned(uint64_t addr) {
  * @param phys 物理地址（必须 2MB 对齐）
  * @param flags HAL 页标志
  * @return true 成功，false 失败
- * 
- * @see Requirements 8.2
  */
 bool hal::Mmu::map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags) {
     /* Validate 2MB alignment */

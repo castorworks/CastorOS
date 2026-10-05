@@ -242,9 +242,6 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
 #if defined(ARCH_ARM64)
     // ARM64: 复制父进程的用户态寄存器
     // 子进程 fork 返回 0（X0 = 0）
-    // 
-    // **Feature: arm64-kernel-integration**
-    // **Validates: Requirements 7.1**
     child->context.x[0] = 0;  // 子进程 fork 返回 0
     // 复制其他寄存器（X1-X30）从保存的帧中
     for (int i = 1; i < 31; i++) {
@@ -570,9 +567,6 @@ uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size
         //   frame[31]    = SP_EL0 (user stack pointer)
         //   frame[32]    = ELR_EL1 (user PC / return address)
         //   frame[33]    = SPSR_EL1 (user PSTATE)
-        //
-        // **Feature: arm64-kernel-integration**
-        // **Validates: Requirements 7.2**
         
         // Clear all general-purpose registers for security (prevent kernel data leak)
         for (int i = 0; i < 31; i++) {

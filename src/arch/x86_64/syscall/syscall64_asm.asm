@@ -6,8 +6,6 @@
 ; the SYSCALL/SYSRET instructions. It is part of the HAL (Hardware Abstraction
 ; Layer) for system calls.
 ;
-; **Feature: multi-arch-support**
-; **Validates: Requirements 7.5, 8.1**
 ;
 ; On x86_64, system calls are invoked using the SYSCALL instruction:
 ;   - RAX = system call number

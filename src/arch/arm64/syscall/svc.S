@@ -12,9 +12,6 @@
  *   - X5  = arg6
  *
  * Return value is placed in X0.
- *
- * **Feature: arm64-kernel-integration**
- * **Validates: Requirements 5.1, 5.2, 5.3**
  */
 
 .section .text
@@ -77,8 +74,6 @@
  *
  * Return value is stored back to X0 in the frame.
  *
- * **Feature: arm64-kernel-integration**
- * **Validates: Requirements 5.1, 5.2**
  * ============================================================================
  */
 .global arm64_syscall_handler
@@ -115,17 +110,11 @@ arm64_syscall_handler:
     mov     x6, x19                     /* x6 = frame pointer */
     
     /* Call the C syscall dispatcher
-     * 
-     * **Feature: arm64-kernel-integration**
-     * **Validates: Requirements 5.1**
      */
     bl      syscall_dispatcher
     
     /* Store return value back to X0 in the frame
      * This ensures the return value is correctly passed back to user space
-     * 
-     * **Feature: arm64-kernel-integration**
-     * **Validates: Requirements 5.3**
      */
     str     x0, [x19, #FRAME_X0]
     
@@ -157,8 +146,6 @@ arm64_syscall_handler:
  *   - DAIF = 0 (interrupts enabled)
  *   - Other flags cleared
  *
- * **Feature: multi-arch-support, Property 11: User Mode Transition Correctness (ARM64)**
- * **Validates: Requirements 7.4**
  * ============================================================================
  */
 .global enter_usermode_arm64

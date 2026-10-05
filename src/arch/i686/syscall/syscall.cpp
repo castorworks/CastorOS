@@ -5,8 +5,6 @@
 // This file implements the i686-specific system call initialization as part
 // of the HAL (Hardware Abstraction Layer).
 //
-// **Feature: multi-arch-support**
-// **Validates: Requirements 8.1, 12.1**
 //
 // On i686, system calls are invoked using INT 0x80. This file sets up the
 // IDT entry for interrupt 0x80 to point to the syscall_handler assembly

@@ -4,8 +4,6 @@
  * 
  * Defines the CPU context structure for x86_64 architecture, used for
  * task switching and interrupt handling.
- * 
- * Requirements: 7.1, 12.2
  */
 
 #ifndef _ARCH_X86_64_CONTEXT64_H_

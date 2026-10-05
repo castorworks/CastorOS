@@ -15,8 +15,6 @@
 //   - 内存合并 (coalescing)
 //   - 压力测试
 //
-// **Feature: test-refactor**
-// **Validates: Requirements 3.3, 10.1, 11.1**
 // ============================================================================
 
 #include <tests/ktest.h>
@@ -40,7 +38,6 @@
  * @brief 测试基本内存分配
  *
  * 验证 kmalloc() 返回有效的可写内存
- * _Requirements: 3.3_
  */
 TEST_CASE(test_kmalloc_basic) {
     // 分配小块内存
@@ -65,7 +62,6 @@ TEST_CASE(test_kmalloc_basic) {
  * @brief 测试零字节分配
  *
  * 验证 kmalloc(0) 返回 NULL
- * _Requirements: 3.3_
  */
 TEST_CASE(test_kmalloc_zero) {
     // 分配0字节应该返回NULL
@@ -77,7 +73,6 @@ TEST_CASE(test_kmalloc_zero) {
  * @brief 测试大块内存分配
  *
  * 验证 kmalloc() 能分配较大的内存块
- * _Requirements: 3.3_
  */
 TEST_CASE(test_kmalloc_large) {
     // 分配较大的内存块
@@ -99,7 +94,6 @@ TEST_CASE(test_kmalloc_large) {
  * @brief 测试多块内存分配的唯一性
  *
  * 验证连续分配的内存块地址互不相同
- * _Requirements: 3.3_
  */
 TEST_CASE(test_kmalloc_multiple) {
     // 分配多个不同大小的块
@@ -135,8 +129,6 @@ TEST_CASE(test_kmalloc_multiple) {
  * @brief 测试内存分配的对齐性
  *
  * 验证所有分配的内存都是4字节对齐的
- * **Feature: test-refactor, Property 6: Heap Allocation Alignment**
- * **Validates: Requirements 3.3**
  */
 TEST_CASE(test_kmalloc_alignment) {
     // kmalloc 应该返回4字节对齐的地址
@@ -160,7 +152,6 @@ TEST_CASE(test_kmalloc_alignment) {
  * @brief 测试基本内存释放
  *
  * 验证释放内存不会崩溃
- * _Requirements: 3.3_
  */
 TEST_CASE(test_kfree_basic) {
     void *ptr = kmalloc(64);
@@ -174,7 +165,6 @@ TEST_CASE(test_kfree_basic) {
  * @brief 测试释放 NULL 指针
  *
  * 验证 kfree(NULL) 是安全的
- * _Requirements: 3.3_
  */
 TEST_CASE(test_kfree_null) {
     // 释放NULL指针（应该无害）
@@ -185,7 +175,6 @@ TEST_CASE(test_kfree_null) {
  * @brief 测试内存复用
  *
  * 验证释放的内存可以被重新分配
- * _Requirements: 3.3_
  */
 TEST_CASE(test_kfree_reuse) {
     // 分配并释放
@@ -203,7 +192,6 @@ TEST_CASE(test_kfree_reuse) {
  * @brief 测试多块内存顺序释放
  *
  * 验证多块内存按顺序释放的正确性
- * _Requirements: 3.3_
  */
 TEST_CASE(test_kfree_multiple) {
     // 分配多个块
@@ -223,7 +211,6 @@ TEST_CASE(test_kfree_multiple) {
  * @brief 测试多块内存逆序释放
  *
  * 验证多块内存按逆序释放的正确性
- * _Requirements: 3.3_
  */
 TEST_CASE(test_kfree_reverse_order) {
     // 分配多个块
@@ -267,7 +254,6 @@ TEST_CASE(test_kfree_reverse_order) {
  * @brief 测试魔数损坏检测
  *
  * 验证堆管理器能检测块头魔数损坏
- * _Requirements: 3.3_
  */
 TEST_CASE(test_heap_magic_corruption) {
     // 分配内存
@@ -304,8 +290,6 @@ TEST_CASE(test_heap_magic_corruption) {
  * @brief 测试各种大小的对齐性
  *
  * 验证各种大小的分配都是4字节对齐的
- * **Feature: test-refactor, Property 6: Heap Allocation Alignment**
- * **Validates: Requirements 3.3**
  */
 TEST_CASE(test_heap_alignment_various_sizes) {
     // 测试各种大小的分配都是4字节对齐的
@@ -323,7 +307,6 @@ TEST_CASE(test_heap_alignment_various_sizes) {
  * @brief 测试双重释放保护
  *
  * 验证双重释放不会导致崩溃
- * _Requirements: 3.3_
  */
 TEST_CASE(test_heap_double_free_protection) {
     void *ptr = kmalloc(64);
@@ -342,7 +325,6 @@ TEST_CASE(test_heap_double_free_protection) {
  * @brief 测试大块分配
  *
  * 验证大块分配（跨越多个页）的正确性
- * _Requirements: 3.3_
  */
 TEST_CASE(test_heap_large_allocation) {
     // 测试大块分配（跨越多个页）
@@ -372,7 +354,6 @@ TEST_CASE(test_heap_large_allocation) {
  * @brief 测试向前合并空闲块
  *
  * 验证释放相邻块时能正确合并
- * _Requirements: 3.3_
  */
 TEST_CASE(test_heap_coalesce_forward) {
     // 测试向前合并空闲块
@@ -400,7 +381,6 @@ TEST_CASE(test_heap_coalesce_forward) {
  * @brief 测试向后合并空闲块
  *
  * 验证逆序释放相邻块时能正确合并
- * _Requirements: 3.3_
  */
 TEST_CASE(test_heap_coalesce_backward) {
     // 测试向后合并空闲块
@@ -428,7 +408,6 @@ TEST_CASE(test_heap_coalesce_backward) {
  * @brief 测试块分裂
  *
  * 验证大块被分裂为小块的正确性
- * _Requirements: 3.3_
  */
 TEST_CASE(test_heap_split_blocks) {
     // 测试块分裂
@@ -467,7 +446,6 @@ TEST_CASE(test_heap_split_blocks) {
  * @brief 测试内存碎片整理
  *
  * 验证碎片化场景下的分配正确性
- * _Requirements: 3.3_
  */
 TEST_CASE(test_heap_fragmentation) {
     // 测试内存碎片整理
@@ -499,7 +477,6 @@ TEST_CASE(test_heap_fragmentation) {
  * @brief 压力测试
  *
  * 验证大量分配和释放的稳定性
- * _Requirements: 3.3_
  */
 TEST_CASE(test_heap_stress) {
     // 压力测试：大量分配和释放
@@ -522,7 +499,6 @@ TEST_CASE(test_heap_stress) {
  * @brief 测试交替分配和释放
  *
  * 验证交替操作的正确性
- * _Requirements: 3.3_
  */
 TEST_CASE(test_heap_interleaved) {
     // 交替分配和释放
@@ -545,7 +521,6 @@ TEST_CASE(test_heap_interleaved) {
  * @brief 测试数据完整性
  *
  * 验证多块分配时数据不会相互干扰
- * _Requirements: 3.3_
  */
 TEST_CASE(test_heap_data_integrity) {
     // 测试数据完整性
@@ -574,7 +549,6 @@ TEST_CASE(test_heap_data_integrity) {
  * @brief 测试混合操作
  *
  * 验证混合分配、释放、重分配操作的正确性
- * _Requirements: 3.3_
  */
 TEST_CASE(test_heap_mixed_operations) {
     // 混合操作测试
@@ -629,8 +603,6 @@ TEST_CASE(test_heap_alloc_huge_size) {
 
 /**
  * @brief 内存分配测试套件
- *
- * **Validates: Requirements 3.3**
  */
 TEST_SUITE(heap_alloc_tests) {
     RUN_TEST(test_kmalloc_basic);
@@ -642,8 +614,6 @@ TEST_SUITE(heap_alloc_tests) {
 
 /**
  * @brief 内存释放测试套件
- *
- * **Validates: Requirements 3.3**
  */
 TEST_SUITE(heap_free_tests) {
     RUN_TEST(test_kfree_basic);
@@ -655,24 +625,18 @@ TEST_SUITE(heap_free_tests) {
 
 /**
  * @brief 重新分配测试套件
- *
- * **Validates: Requirements 3.3**
  */
 TEST_SUITE(heap_realloc_tests) {
 }
 
 /**
  * @brief 分配并清零测试套件
- *
- * **Validates: Requirements 3.3**
  */
 TEST_SUITE(heap_calloc_tests) {
 }
 
 /**
  * @brief 边界条件测试套件
- *
- * **Validates: Requirements 3.3**
  */
 TEST_SUITE(heap_boundary_tests) {
     RUN_TEST(test_heap_magic_corruption);
@@ -683,8 +647,6 @@ TEST_SUITE(heap_boundary_tests) {
 
 /**
  * @brief 内存合并测试套件
- *
- * **Validates: Requirements 3.3**
  */
 TEST_SUITE(heap_coalesce_tests) {
     RUN_TEST(test_heap_coalesce_forward);
@@ -694,8 +656,6 @@ TEST_SUITE(heap_coalesce_tests) {
 
 /**
  * @brief 综合测试套件
- *
- * **Validates: Requirements 3.3**
  */
 TEST_SUITE(heap_comprehensive_tests) {
     RUN_TEST(test_heap_fragmentation);
@@ -723,9 +683,6 @@ TEST_SUITE(heap_comprehensive_tests) {
  *   5. heap_boundary_tests - 边界条件测试
  *   6. heap_coalesce_tests - 内存合并测试
  *   7. heap_comprehensive_tests - 综合测试
- *
- * **Feature: test-refactor**
- * **Validates: Requirements 10.1, 11.1**
  */
 void run_heap_tests(void) {
     // 初始化测试框架
@@ -736,31 +693,24 @@ void run_heap_tests(void) {
     // ========================================================================
 
     // 套件 1: 内存分配测试
-    // _Requirements: 3.3_
     RUN_SUITE(heap_alloc_tests);
 
     // 套件 2: 内存释放测试
-    // _Requirements: 3.3_
     RUN_SUITE(heap_free_tests);
 
     // 套件 3: 重新分配测试
-    // _Requirements: 3.3_
     RUN_SUITE(heap_realloc_tests);
 
     // 套件 4: 分配并清零测试
-    // _Requirements: 3.3_
     RUN_SUITE(heap_calloc_tests);
 
     // 套件 5: 边界条件测试
-    // _Requirements: 3.3_
     RUN_SUITE(heap_boundary_tests);
 
     // 套件 6: 内存合并测试
-    // _Requirements: 3.3_
     RUN_SUITE(heap_coalesce_tests);
 
     // 套件 7: 综合测试
-    // _Requirements: 3.3_
     RUN_SUITE(heap_comprehensive_tests);
 
     // 打印测试摘要
@@ -775,9 +725,6 @@ void run_heap_tests(void) {
  * @brief Heap 测试模块元数据
  *
  * 使用 TEST_MODULE_DESC 宏注册模块到测试框架
- *
- * **Feature: test-refactor**
- * **Validates: Requirements 10.1, 10.2, 11.1**
  */
 TEST_MODULE_DESC(heap, MM, run_heap_tests,
     "Heap Memory Allocator tests - kmalloc, kfree, krealloc, kcalloc, coalescing");

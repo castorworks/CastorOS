@@ -4,8 +4,6 @@
  * 
  * This header defines architecture-specific types and constants for the
  * x86_64 (AMD64/Intel 64-bit) architecture.
- * 
- * Requirements: 10.3
  */
 
 #ifndef _ARCH_X86_64_ARCH_TYPES_H_

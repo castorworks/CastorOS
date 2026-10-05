@@ -5,8 +5,6 @@
  * This file implements the x86_64-specific system call initialization as part
  * of the HAL (Hardware Abstraction Layer).
  *
- * **Feature: multi-arch-support**
- * **Validates: Requirements 7.5, 8.1**
  *
  * On x86_64, system calls are invoked using the SYSCALL instruction. This file
  * sets up the MSRs (Model Specific Registers) required for SYSCALL/SYSRET

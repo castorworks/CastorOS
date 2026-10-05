@@ -3,8 +3,6 @@
  * @brief HAL 统一错误码定义
  * 
  * 定义所有 HAL 函数使用的统一错误码，确保跨架构的错误处理一致性。
- * 
- * @see Requirements 12.1, 12.2, 12.3, 12.4
  */
 
 #ifndef _HAL_HAL_ERROR_H_

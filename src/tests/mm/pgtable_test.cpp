@@ -3,8 +3,6 @@
 // ============================================================================
 // 
 // Property-Based Tests for pgtable.h and hal/pgtable.h
-// **Feature: mm-refactor, multi-arch-optimization**
-// **Validates: Requirements 3.1, 3.2, 3.3, 3.4**
 // ============================================================================
 
 #include <tests/ktest.h>
@@ -15,8 +13,6 @@
 
 // ============================================================================
 // Property 7: PTE Construction Round-Trip
-// **Feature: mm-refactor, Property 7: PTE Construction Round-Trip**
-// **Validates: Requirements 3.3, 3.4**
 // ============================================================================
 
 /**
@@ -331,8 +327,6 @@ TEST_SUITE(pgtable_va_tests) {
 
 // ============================================================================
 // HAL pgtable 函数测试
-// **Feature: multi-arch-optimization, Property 1: 页表项往返一致性**
-// **Validates: Requirements 3.1, 3.2**
 // ============================================================================
 
 TEST_SUITE(hal_pgtable_tests) {
@@ -347,16 +341,12 @@ void run_pgtable_tests(void) {
     unittest_init();
     
     // Property 7: PTE Construction Round-Trip (mm/pgtable.h macros)
-    // **Feature: mm-refactor, Property 7: PTE Construction Round-Trip**
-    // **Validates: Requirements 3.3, 3.4**
     RUN_SUITE(pgtable_pte_tests);
     
     // Virtual address decomposition tests (mm/pgtable.h macros)
     RUN_SUITE(pgtable_va_tests);
     
     // HAL pgtable function tests
-    // **Feature: multi-arch-optimization, Property 1: 页表项往返一致性**
-    // **Validates: Requirements 3.1, 3.2**
     RUN_SUITE(hal_pgtable_tests);
     
     // 打印测试摘要

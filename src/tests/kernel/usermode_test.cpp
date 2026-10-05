@@ -4,8 +4,6 @@
 //
 // Property-based tests for verifying user mode transition correctness.
 //
-// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness**
-// **Validates: Requirements 7.4**
 //
 // This test verifies that:
 // - The IRETQ stack frame is correctly structured for x86_64
@@ -43,8 +41,6 @@
 // ============================================================================
 // Property Test: User Code Segment Has Correct RPL
 // ============================================================================
-// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness**
-// **Validates: Requirements 7.4**
 //
 // For any user mode transition on x86_64, the code segment selector SHALL
 // have RPL=3 (Ring 3, user privilege level).
@@ -65,8 +61,6 @@ TEST_CASE(test_user_cs_has_rpl3) {
 // ============================================================================
 // Property Test: User Data Segment Has Correct RPL
 // ============================================================================
-// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness**
-// **Validates: Requirements 7.4**
 //
 // For any user mode transition on x86_64, the data segment selector SHALL
 // have RPL=3 (Ring 3, user privilege level).
@@ -87,8 +81,6 @@ TEST_CASE(test_user_ds_has_rpl3) {
 // ============================================================================
 // Property Test: Kernel Segments Have RPL=0
 // ============================================================================
-// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness**
-// **Validates: Requirements 7.4**
 //
 // For any kernel mode operation, the segment selectors SHALL have RPL=0
 // (Ring 0, kernel privilege level).
@@ -109,8 +101,6 @@ TEST_CASE(test_kernel_segments_have_rpl0) {
 // ============================================================================
 // Property Test: Default RFLAGS Has Interrupts Enabled
 // ============================================================================
-// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness**
-// **Validates: Requirements 7.4**
 //
 // For any user mode transition, the RFLAGS register SHALL have the IF
 // (Interrupt Flag) bit set to enable interrupts in user mode.
@@ -129,8 +119,6 @@ TEST_CASE(test_default_rflags_has_if_set) {
 // ============================================================================
 // Property Test: IRETQ Stack Frame Structure
 // ============================================================================
-// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness**
-// **Validates: Requirements 7.4**
 //
 // For any user mode transition using IRETQ, the stack frame SHALL be
 // structured as: [SS, RSP, RFLAGS, CS, RIP] (from high to low address).
@@ -166,8 +154,6 @@ TEST_CASE(test_iretq_frame_structure) {
 // ============================================================================
 // Property Test: User and Kernel Segments Are Distinct
 // ============================================================================
-// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness**
-// **Validates: Requirements 7.4**
 //
 // User mode and kernel mode segment selectors SHALL be distinct to ensure
 // proper privilege separation.
@@ -190,8 +176,6 @@ TEST_CASE(test_user_kernel_segments_distinct) {
 // ============================================================================
 // Property Test: Segment Selector Index Ordering
 // ============================================================================
-// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness**
-// **Validates: Requirements 7.4**
 //
 // GDT segment selectors SHALL be ordered correctly:
 // - Null descriptor at index 0
@@ -279,8 +263,6 @@ TEST_CASE(test_segment_selector_ordering) {
 // ============================================================================
 // ARM64 User Mode Transition Property Tests
 // ============================================================================
-// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness (ARM64)**
-// **Validates: Requirements 7.4**
 //
 // ARM64 uses Exception Levels (EL) instead of privilege rings:
 // - EL0: User mode (unprivileged)
@@ -319,8 +301,6 @@ TEST_CASE(test_segment_selector_ordering) {
 // ============================================================================
 // Property Test: User Mode PSTATE Has EL0
 // ============================================================================
-// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness (ARM64)**
-// **Validates: Requirements 7.4**
 //
 // For any user mode transition on ARM64, the SPSR_EL1.M field SHALL be set
 // to EL0t (0x00) to indicate EL0 with SP_EL0.
@@ -338,8 +318,6 @@ TEST_CASE(test_user_cs_has_rpl3) {
 // ============================================================================
 // Property Test: User Mode Has Interrupts Enabled
 // ============================================================================
-// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness (ARM64)**
-// **Validates: Requirements 7.4**
 //
 // For any user mode transition on ARM64, the DAIF mask bits SHALL be cleared
 // to enable interrupts in user mode.
@@ -359,8 +337,6 @@ TEST_CASE(test_user_ds_has_rpl3) {
 // ============================================================================
 // Property Test: Kernel Mode PSTATE Has EL1
 // ============================================================================
-// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness (ARM64)**
-// **Validates: Requirements 7.4**
 //
 // For any kernel mode operation on ARM64, the PSTATE.M field SHALL indicate
 // EL1 (either EL1t or EL1h).
@@ -378,8 +354,6 @@ TEST_CASE(test_kernel_segments_have_rpl0) {
 // ============================================================================
 // Property Test: Default User PSTATE Has Interrupts Enabled
 // ============================================================================
-// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness (ARM64)**
-// **Validates: Requirements 7.4**
 //
 // For any user mode transition, the PSTATE register SHALL have all interrupt
 // mask bits (DAIF) cleared to enable interrupts in user mode.
@@ -397,8 +371,6 @@ TEST_CASE(test_default_rflags_has_if_set) {
 // ============================================================================
 // Property Test: ERET Return Structure
 // ============================================================================
-// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness (ARM64)**
-// **Validates: Requirements 7.4**
 //
 // For any user mode transition using ERET, the following registers SHALL be
 // properly configured:
@@ -437,8 +409,6 @@ TEST_CASE(test_iretq_frame_structure) {
 // ============================================================================
 // Property Test: User and Kernel Exception Levels Are Distinct
 // ============================================================================
-// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness (ARM64)**
-// **Validates: Requirements 7.4**
 //
 // User mode (EL0) and kernel mode (EL1) exception levels SHALL be distinct
 // to ensure proper privilege separation.
@@ -462,8 +432,6 @@ TEST_CASE(test_user_kernel_segments_distinct) {
 // ============================================================================
 // Property Test: Exception Level Ordering
 // ============================================================================
-// **Feature: multi-arch-support, Property 11: User Mode Transition Correctness (ARM64)**
-// **Validates: Requirements 7.4**
 //
 // ARM64 exception levels SHALL be ordered with higher privilege at higher
 // levels: EL0 (user) < EL1 (kernel) < EL2 (hypervisor) < EL3 (secure monitor).

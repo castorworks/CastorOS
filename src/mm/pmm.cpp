@@ -4,8 +4,6 @@
  * 
  * 使用位图跟踪物理页帧的分配状态。
  * 支持 64-bit 物理地址，兼容 i686、x86_64 和 ARM64 架构。
- * 
- * @see Requirements 2.2, 2.3, 2.4, 2.5
  */
 
 #include <mm/pmm.h>
@@ -416,9 +414,6 @@ void mm::Pmm::init(multiboot_info_t *mbi) {
  * 
  * 使用架构无关的 boot_info_t 结构初始化 PMM。
  * 适用于 ARM64 (DTB) 和其他非 Multiboot 引导方式。
- * 
- * **Feature: arm64-kernel-integration**
- * **Validates: Requirements 1.1, 1.4**
  */
 void mm::Pmm::init_boot_info(boot_info_t *boot_info) {
     if (!boot_info || !boot_info->valid) {
@@ -844,7 +839,6 @@ void mm::Pmm::set_heap_reserved_range(uintptr_t heap_virt_start, uintptr_t heap_
 
 /*============================================================================
  * 大页分配实现 (2MB 对齐)
- * @see Requirements 8.1
  *============================================================================*/
 
 /**

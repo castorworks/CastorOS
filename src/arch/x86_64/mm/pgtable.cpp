@@ -19,8 +19,6 @@
  *   [2]     - User/Supervisor (U/S)
  *   [1]     - Read/Write (R/W)
  *   [0]     - Present (P)
- * 
- * @see Requirements 3.1, 3.2, 3.3
  */
 
 #include <hal/pgtable.h>

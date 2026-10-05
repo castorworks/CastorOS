@@ -4,8 +4,6 @@
 //
 // Property-based tests for verifying architecture-specific data type sizes.
 //
-// **Feature: multi-arch-support, Property 17: User Library Data Type Size Correctness**
-// **Validates: Requirements 10.3**
 //
 // This test verifies that pointer and size_t types match the architecture's
 // native word size (32-bit on i686, 64-bit on x86_64 and ARM64).
@@ -27,8 +25,6 @@
 // ============================================================================
 // Property Test: Pointer Size Matches Architecture Word Size
 // ============================================================================
-// **Feature: multi-arch-support, Property 17: User Library Data Type Size Correctness**
-// **Validates: Requirements 10.3**
 //
 // For any pointer type in the user library, the size SHALL match the
 // architecture's native word size (32-bit on i686, 64-bit on x86_64 and ARM64).
@@ -61,8 +57,6 @@ TEST_CASE(test_pointer_size_matches_arch_word_size) {
 // ============================================================================
 // Property Test: uintptr_t Size Matches Pointer Size
 // ============================================================================
-// **Feature: multi-arch-support, Property 17: User Library Data Type Size Correctness**
-// **Validates: Requirements 10.3**
 //
 // For any uintptr_t type, the size SHALL match the pointer size, ensuring
 // that pointers can be safely cast to uintptr_t and back.
@@ -85,8 +79,6 @@ TEST_CASE(test_uintptr_size_matches_pointer_size) {
 // ============================================================================
 // Property Test: intptr_t Size Matches Pointer Size
 // ============================================================================
-// **Feature: multi-arch-support, Property 17: User Library Data Type Size Correctness**
-// **Validates: Requirements 10.3**
 //
 // For any intptr_t type, the size SHALL match the pointer size.
 // ============================================================================
@@ -108,8 +100,6 @@ TEST_CASE(test_intptr_size_matches_pointer_size) {
 // ============================================================================
 // Property Test: arch_size_t Size Matches Architecture Word Size
 // ============================================================================
-// **Feature: multi-arch-support, Property 17: User Library Data Type Size Correctness**
-// **Validates: Requirements 10.3**
 //
 // For any arch_size_t type, the size SHALL match the architecture's native
 // word size.
@@ -126,8 +116,6 @@ TEST_CASE(test_arch_size_t_matches_word_size) {
 // ============================================================================
 // Property Test: arch_ssize_t Size Matches Architecture Word Size
 // ============================================================================
-// **Feature: multi-arch-support, Property 17: User Library Data Type Size Correctness**
-// **Validates: Requirements 10.3**
 //
 // For any arch_ssize_t type, the size SHALL match the architecture's native
 // word size.
@@ -144,8 +132,6 @@ TEST_CASE(test_arch_ssize_t_matches_word_size) {
 // ============================================================================
 // Property Test: GPR_SIZE Matches Architecture Word Size
 // ============================================================================
-// **Feature: multi-arch-support, Property 17: User Library Data Type Size Correctness**
-// **Validates: Requirements 10.3**
 //
 // The general purpose register size constant SHALL match the architecture's
 // native word size.
@@ -162,8 +148,6 @@ TEST_CASE(test_gpr_size_matches_word_size) {
 // ============================================================================
 // Property Test: Fixed-Width Integer Types Have Correct Sizes
 // ============================================================================
-// **Feature: multi-arch-support, Property 17: User Library Data Type Size Correctness**
-// **Validates: Requirements 10.3**
 //
 // Fixed-width integer types SHALL have the correct sizes regardless of
 // architecture.
@@ -185,8 +169,6 @@ TEST_CASE(test_fixed_width_integer_sizes) {
 // ============================================================================
 // Property Test: PAGE_SIZE Constant Is Correct
 // ============================================================================
-// **Feature: multi-arch-support, Property 17: User Library Data Type Size Correctness**
-// **Validates: Requirements 10.3**
 //
 // PAGE_SIZE SHALL be 4096 bytes for all currently supported architectures.
 // ============================================================================
@@ -200,8 +182,6 @@ TEST_CASE(test_page_size_constant) {
 // ============================================================================
 // Property Test: PAGE_TABLE_LEVELS Is Architecture Appropriate
 // ============================================================================
-// **Feature: multi-arch-support, Property 17: User Library Data Type Size Correctness**
-// **Validates: Requirements 10.3**
 //
 // PAGE_TABLE_LEVELS SHALL be 2 for i686 and 4 for x86_64/ARM64.
 // ============================================================================
@@ -221,8 +201,6 @@ TEST_CASE(test_page_table_levels) {
 // ============================================================================
 // Property Test: hal_context Structure Size Is Reasonable
 // ============================================================================
-// **Feature: multi-arch-support, Property 17: User Library Data Type Size Correctness**
-// **Validates: Requirements 10.3**
 //
 // The hal_context structure SHALL have a size appropriate for the architecture.
 // ============================================================================
@@ -249,8 +227,6 @@ TEST_CASE(test_hal_context_size) {
 // ============================================================================
 // Property Test: Pointer Arithmetic Works Correctly
 // ============================================================================
-// **Feature: multi-arch-support, Property 17: User Library Data Type Size Correctness**
-// **Validates: Requirements 10.3**
 //
 // Pointer arithmetic SHALL work correctly with the architecture's word size.
 // ============================================================================

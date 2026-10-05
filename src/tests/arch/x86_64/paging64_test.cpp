@@ -4,10 +4,8 @@
  * 
  * 实现 x86_64 架构的分页相关属性测试
  * 
- * **Feature: multi-arch-support**
  * **Property 4: VMM Kernel Mapping Range Correctness (x86_64)**
  * **Property 5: VMM Page Fault Interpretation (x86_64)**
- * **Validates: Requirements 5.3, 5.4**
  */
 
 #include <tests/ktest.h>
@@ -31,7 +29,6 @@
  * the architecture-appropriate higher-half range 
  * (≥0xFFFF800000000000 for x86_64).
  * 
- * **Validates: Requirements 5.3**
  * ============================================================================ */
 
 /**
@@ -67,7 +64,6 @@ TEST_CASE(test_pbt_x86_64_noncanonical_addresses) {
  * the architecture-specific fault information (CR2 and error code on x86)
  * to determine the faulting address and fault type.
  * 
- * **Validates: Requirements 5.4**
  * ============================================================================ */
 
 /* ============================================================================
@@ -78,8 +74,6 @@ TEST_CASE(test_pbt_x86_64_noncanonical_addresses) {
  * `hal::Mmu::query(space, virt, &out_phys, &out_flags)` SHALL return `true` 
  * with `out_phys == phys`.
  * 
- * **Feature: mm-refactor, Property 8: HAL MMU Map-Query Round-Trip (x86_64)**
- * **Validates: Requirements 5.1**
  * ============================================================================ */
 
 #include <hal/hal.h>
@@ -115,8 +109,6 @@ static vaddr_t pbt_random_user_vaddr(void) {
 /**
  * @brief Test HAL MMU map-query round-trip property
  * 
- * **Feature: mm-refactor, Property 8: HAL MMU Map-Query Round-Trip (x86_64)**
- * **Validates: Requirements 5.1**
  * 
  * *For any* valid virtual address, physical address, and flags,
  * mapping and then querying should return the same physical address.
@@ -200,8 +192,6 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_map_query_roundtrip) {
 /**
  * @brief Test HAL MMU protect operation
  * 
- * **Feature: mm-refactor, Property 8: HAL MMU Map-Query Round-Trip (x86_64)**
- * **Validates: Requirements 5.1**
  * 
  * *For any* mapped page, modifying flags with hal::Mmu::protect should
  * be reflected in subsequent hal::Mmu::query calls.
@@ -335,8 +325,6 @@ TEST_CASE(test_x86_64_hal_mmu_protect_keeps_unrelated_flags) {
 /**
  * @brief Test HAL MMU unmap returns correct physical address
  * 
- * **Feature: mm-refactor, Property 8: HAL MMU Map-Query Round-Trip (x86_64)**
- * **Validates: Requirements 5.1**
  * 
  * *For any* mapped page, hal::Mmu::unmap should return the physical address
  * that was previously mapped.
@@ -389,15 +377,11 @@ TEST_CASE(test_pbt_x86_64_hal_mmu_unmap_returns_phys) {
  * Property 10: COW Clone Shares Physical Pages
  * Property 11: COW Write Triggers Copy
  * 
- * **Feature: mm-refactor**
- * **Validates: Requirements 5.3**
  * ============================================================================ */
 
 /**
  * @brief Test that hal::Mmu::create_space creates a valid address space
  * 
- * **Feature: mm-refactor, Property 10: COW Clone Shares Physical Pages**
- * **Validates: Requirements 5.2**
  * 
  * *For any* call to hal::Mmu::create_space, the returned address space
  * SHALL have kernel mappings shared with the current address space.
@@ -441,8 +425,6 @@ TEST_CASE(test_pbt_x86_64_create_space_kernel_shared) {
 /**
  * @brief Test that hal::Mmu::clone_space shares physical pages with COW
  * 
- * **Feature: mm-refactor, Property 10: COW Clone Shares Physical Pages**
- * **Validates: Requirements 5.3**
  * 
  * *For any* address space with mapped user pages, after hal::Mmu::clone_space(),
  * both parent and child SHALL map the same virtual addresses to the same 
@@ -537,8 +519,6 @@ TEST_CASE(test_pbt_x86_64_cow_clone_shares_physical_pages) {
 /**
  * @brief Test that COW pages have write permission removed
  * 
- * **Feature: mm-refactor, Property 11: COW Write Triggers Copy**
- * **Validates: Requirements 5.3**
  * 
  * *For any* COW-marked page, the page SHALL be marked read-only
  * (write permission removed) to trigger page fault on write.
@@ -609,15 +589,11 @@ TEST_CASE(test_pbt_x86_64_cow_removes_write_permission) {
 /* ============================================================================
  * Property 15: Address Space Destruction Frees Memory
  * 
- * **Feature: mm-refactor**
- * **Validates: Requirements 5.5**
  * ============================================================================ */
 
 /**
  * @brief Test that hal::Mmu::destroy_space frees page table memory
  * 
- * **Feature: mm-refactor, Property 15: Address Space Destruction Frees Memory**
- * **Validates: Requirements 5.5**
  * 
  * *For any* address space, after hal::Mmu::destroy_space(), the PMM free frame
  * count SHALL increase by the number of page table frames used.
@@ -692,8 +668,6 @@ TEST_CASE(test_pbt_x86_64_destroy_space_frees_memory) {
 /**
  * @brief Test that destroying cloned space decrements reference counts
  * 
- * **Feature: mm-refactor, Property 15: Address Space Destruction Frees Memory**
- * **Validates: Requirements 5.5**
  * 
  * *For any* cloned address space with COW pages, destroying the clone
  * SHALL decrement reference counts on shared physical pages.

@@ -9,8 +9,6 @@
  *   - i686 (x86 32-bit)
  *   - x86_64 (AMD64/Intel 64-bit)
  *   - arm64 (AArch64)
- * 
- * Requirements: 1.1, 1.3, 4.1, 4.2, 4.3, 4.4, 4.5
  */
 
 #ifndef _HAL_HAL_H_
@@ -60,8 +58,6 @@ typedef void (*hal_interrupt_handler_t)(void *data);
  *   - i686: Page Directory (CR3)
  *   - x86_64: PML4 (CR3)
  *   - ARM64: Level 0 table (TTBR0_EL1/TTBR1_EL1)
- * 
- * @see Requirements 4.2, 4.5
  */
 typedef paddr_t hal_addr_space_t;
 
@@ -76,8 +72,6 @@ typedef paddr_t hal_addr_space_t;
  * 
  * Architecture-independent representation of page fault details.
  * Filled by hal_mmu_parse_fault() from architecture-specific fault registers.
- * 
- * @see Requirements 4.3
  */
 typedef struct hal_page_fault_info {
     vaddr_t fault_addr;     /**< Virtual address that caused the fault */
@@ -240,7 +234,6 @@ public:
      * Extended HAL MMU interface providing architecture-independent page table
      * operations, address space management, and page fault handling.
      * 
-     * @see Requirements 4.1, 4.2, 4.3, 4.4, 4.5
      * ========================================================================== */
 
     /*----------------------------------------------------------------------------
@@ -257,12 +250,10 @@ public:
 
     /*----------------------------------------------------------------------------
      * Page Mapping Operations
-     * @see Requirements 4.1
      *----------------------------------------------------------------------------*/
 
     /*----------------------------------------------------------------------------
      * Huge Page Mapping Operations (2MB pages)
-     * @see Requirements 8.1, 8.2
      *----------------------------------------------------------------------------*/
 
     /*----------------------------------------------------------------------------
@@ -271,12 +262,10 @@ public:
 
     /*----------------------------------------------------------------------------
      * Address Space Management
-     * @see Requirements 4.2, 4.4, 4.5
      *----------------------------------------------------------------------------*/
 
     /*----------------------------------------------------------------------------
      * Page Fault Handling
-     * @see Requirements 4.3
      *----------------------------------------------------------------------------*/
 
     /*----------------------------------------------------------------------------
@@ -306,7 +295,6 @@ public:
      * non-coherent caches (primarily ARM64). On x86, caches are typically
      * coherent with DMA, so these are no-ops.
      * 
-     * @see Requirements 10.2
      * ========================================================================== */
 
     /* ============================================================================
@@ -388,8 +376,6 @@ public:
      * @param[out] phys Pointer to store physical address (can be NULL)
      * @param[out] flags Pointer to store page flags (can be NULL)
      * @return true if mapping exists, false if not mapped
-     * 
-     * @see Requirements 4.1
      */
     static bool query(hal_addr_space_t space, vaddr_t virt, paddr_t *phys, uint32_t *flags);
 
@@ -407,8 +393,6 @@ public:
      * 
      * @note This function does NOT flush the TLB. Caller must call
      *       hal_mmu_flush_tlb() after modifying mappings.
-     * 
-     * @see Requirements 4.1
      */
     static bool protect(hal_addr_space_t space, vaddr_t virt, 
                          uint32_t set_flags, uint32_t clear_flags);
@@ -428,8 +412,6 @@ public:
      * @note On architectures that don't support huge pages, this falls back
      *       to mapping 512 individual 4KB pages.
      * @note This function does NOT flush the TLB.
-     * 
-     * @see Requirements 8.2
      */
     static bool map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags);
 
@@ -451,8 +433,6 @@ public:
      * of the address space is shared with all other address spaces.
      * 
      * @return Address space handle, or HAL_ADDR_SPACE_INVALID on failure
-     * 
-     * @see Requirements 4.2
      */
     static hal_addr_space_t create_space();
 
@@ -467,8 +447,6 @@ public:
      * 
      * @param src Source address space to clone
      * @return New address space handle, or HAL_ADDR_SPACE_INVALID on failure
-     * 
-     * @see Requirements 4.4
      */
     static hal_addr_space_t clone_space(hal_addr_space_t src);
 
@@ -493,8 +471,6 @@ public:
      *   - ARM64: Updates TTBR0_EL1 and issues appropriate barriers
      * 
      * @param space Address space handle to switch to
-     * 
-     * @see Requirements 4.5
      */
     static void switch_space(hal_addr_space_t space);
 

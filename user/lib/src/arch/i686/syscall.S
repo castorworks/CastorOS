@@ -5,9 +5,6 @@
  * i686 使用 INT 0x80 进行系统调用
  * 参数传递: EAX=syscall号, EBX=arg0, ECX=arg1, EDX=arg2, ESI=arg3, EDI=arg4, EBP=arg5
  * 返回值: EAX
- * 
- * **Feature: multi-arch-support, Property 16: User Library System Call Instruction Correctness**
- * **Validates: Requirements 10.2**
  */
 
 .section .text

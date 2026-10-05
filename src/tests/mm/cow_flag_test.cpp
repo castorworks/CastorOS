@@ -6,8 +6,6 @@
 //   1. COW 标志设置和清除
 //   2. 引用计数管理
 // 
-// **Feature: test-refactor**
-// **Validates: Requirements 3.4**
 // 
 // COW 页表标志在各架构上的实现：
 //   - i686: 使用 Available bit 9 (PAGE_COW = 0x200)
@@ -28,8 +26,6 @@
 
 // ============================================================================
 // COW Flag Tests - 测试 COW 标志设置和清除
-// **Feature: test-refactor**
-// **Validates: Requirements 3.4**
 // ============================================================================
 
 /**
@@ -39,8 +35,6 @@
  * 1. HAL_PAGE_COW flag can be set on a page mapping
  * 2. HAL_PAGE_COW flag can be queried back correctly
  * 3. COW pages are marked read-only (HAL_PAGE_WRITE is cleared)
- * 
- * _Requirements: 3.4_
  */
 TEST_CASE(test_cow_flag_set_query) {
     // Allocate a physical frame for testing
@@ -89,8 +83,6 @@ TEST_CASE(test_cow_flag_set_query) {
  * 
  * Clearing the COW flag and setting write permission
  * SHALL result in a writable page without COW flag.
- * 
- * _Requirements: 3.4_
  */
 TEST_CASE(test_cow_flag_clear) {
     // Allocate a physical frame for testing
@@ -141,8 +133,6 @@ TEST_CASE(test_cow_flag_clear) {
  * 
  * If COW flag is set, the page SHALL be read-only.
  * This ensures COW semantics are correctly enforced.
- * 
- * _Requirements: 3.4_
  */
 TEST_CASE(test_cow_write_mutual_exclusion) {
     // Allocate a physical frame for testing
@@ -185,8 +175,6 @@ TEST_CASE(test_cow_write_mutual_exclusion) {
  * 
  * PTE_IS_COW macro SHALL return true for PTEs with COW flag,
  * and false for PTEs without COW flag.
- * 
- * _Requirements: 3.4_
  */
 TEST_CASE(test_cow_pte_macro_roundtrip) {
     paddr_t addr = 0x1000;  // Page-aligned address
@@ -216,8 +204,6 @@ TEST_CASE(test_cow_pte_macro_roundtrip) {
  *   - i686: bit 9 (0x200)
  *   - x86_64: bit 9 (0x200)
  *   - ARM64: bit 56 (software bit)
- * 
- * _Requirements: 3.4_
  */
 TEST_CASE(test_cow_hal_flag_value) {
     // Verify HAL_PAGE_COW is defined correctly
@@ -234,8 +220,6 @@ TEST_CASE(test_cow_hal_flag_value) {
  * Test: Multiple pages with COW flag
  * 
  * Each page SHALL independently maintain its COW flag state.
- * 
- * _Requirements: 3.4_
  */
 TEST_CASE(test_cow_multiple_pages) {
     #define NUM_TEST_PAGES 4
@@ -300,16 +284,12 @@ TEST_CASE(test_cow_multiple_pages) {
 
 // ============================================================================
 // Reference Count Tests - 测试引用计数管理
-// **Feature: test-refactor**
-// **Validates: Requirements 3.4**
 // ============================================================================
 
 /**
  * Test: Initial reference count is 1 after allocation
  * 
  * A newly allocated frame SHALL have reference count of 1.
- * 
- * _Requirements: 3.4_
  */
 TEST_CASE(test_cow_refcount_initial) {
     // Allocate a frame
@@ -328,8 +308,6 @@ TEST_CASE(test_cow_refcount_initial) {
  * Test: Reference count increment
  * 
  * mm::Pmm::frame_ref_inc() SHALL increase reference count by 1.
- * 
- * _Requirements: 3.4_
  */
 TEST_CASE(test_cow_refcount_increment) {
     // Allocate a frame
@@ -359,8 +337,6 @@ TEST_CASE(test_cow_refcount_increment) {
  * Test: Reference count decrement
  * 
  * mm::Pmm::frame_ref_dec() SHALL decrease reference count by 1.
- * 
- * _Requirements: 3.4_
  */
 TEST_CASE(test_cow_refcount_decrement) {
     // Allocate a frame
@@ -391,8 +367,6 @@ TEST_CASE(test_cow_refcount_decrement) {
  * 
  * After n increments and m decrements (n >= m), reference count
  * SHALL be 1 + n - m.
- * 
- * _Requirements: 3.4_
  */
 TEST_CASE(test_cow_refcount_consistency) {
     // Allocate a frame
@@ -432,8 +406,6 @@ TEST_CASE(test_cow_refcount_consistency) {
  * Test: Multiple frames have independent reference counts
  * 
  * Each frame SHALL maintain its own independent reference count.
- * 
- * _Requirements: 3.4_
  */
 TEST_CASE(test_cow_refcount_independence) {
     #define NUM_FRAMES 3
@@ -479,8 +451,6 @@ TEST_CASE(test_cow_refcount_independence) {
  * 
  * After freeing a frame with refcount=1, the reference count
  * SHALL be 0.
- * 
- * _Requirements: 3.4_
  */
 TEST_CASE(test_cow_refcount_after_free) {
     // Allocate a frame
@@ -502,8 +472,6 @@ TEST_CASE(test_cow_refcount_after_free) {
  * 
  * When freeing a frame with refcount > 1, the frame SHALL NOT
  * be actually freed, only the refcount decremented.
- * 
- * _Requirements: 3.4_
  */
 TEST_CASE(test_cow_refcount_shared_free) {
     // Allocate a frame

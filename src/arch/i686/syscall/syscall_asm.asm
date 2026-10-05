@@ -5,8 +5,6 @@
 ; This file implements the i686-specific system call entry mechanism using
 ; INT 0x80. It is part of the HAL (Hardware Abstraction Layer) for system calls.
 ;
-; **Feature: multi-arch-support**
-; **Validates: Requirements 8.1, 12.1**
 ;
 ; Stack frame layout after syscall_handler saves registers:
 ;   frame[0]  = DS

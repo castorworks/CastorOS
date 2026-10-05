@@ -3,9 +3,6 @@
  * @brief ARM64 System Call Definitions
  * 
  * Defines ARM64-specific system call constants and structures.
- * 
- * **Feature: multi-arch-support**
- * **Validates: Requirements 7.5, 8.1, 8.2**
  */
 
 #ifndef _ARCH_ARM64_SYSCALL_H_
@@ -35,9 +32,6 @@ extern "C" void arm64_syscall_handler(void *regs);
  * 
  * @param entry_point User code entry address
  * @param user_stack User stack pointer
- * 
- * **Feature: multi-arch-support, Property 11: User Mode Transition Correctness (ARM64)**
- * **Validates: Requirements 7.4**
  */
 extern "C" void enter_usermode_arm64(uint64_t entry_point, uint64_t user_stack);
 

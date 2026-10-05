@@ -2,8 +2,6 @@
  * @file isr64_test.c
  * @brief Property tests for x86_64 interrupt register preservation
  * 
- * **Feature: multi-arch-support, Property 7: Interrupt Register State Preservation (x86_64)**
- * **Validates: Requirements 6.1**
  * 
  * This test verifies that the registers64_t structure layout matches
  * the assembly stub's register save/restore order, ensuring that

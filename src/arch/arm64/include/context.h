@@ -4,8 +4,6 @@
  * 
  * Defines the CPU context structure for ARM64 architecture, used for
  * task switching and interrupt handling.
- * 
- * Requirements: 7.2, 12.2
  */
 
 #ifndef _ARCH_ARM64_CONTEXT_H_

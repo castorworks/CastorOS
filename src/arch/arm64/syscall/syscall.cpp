@@ -5,8 +5,6 @@
  * This file implements the ARM64-specific system call initialization as part
  * of the HAL (Hardware Abstraction Layer).
  *
- * **Feature: multi-arch-support**
- * **Validates: Requirements 7.5, 8.1, 8.2**
  *
  * On ARM64, system calls are invoked using the SVC (Supervisor Call) instruction.
  * The SVC instruction generates a synchronous exception that is handled by the

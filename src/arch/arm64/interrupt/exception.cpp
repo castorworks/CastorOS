@@ -4,12 +4,6 @@
  * 
  * Implements the C-level exception handling for ARM64.
  * Called from the assembly vectors after register state is saved.
- * 
- * Requirements: 4.5, 6.2, 6.3
- * 
- * **Feature: multi-arch-support, Property 7: Interrupt Register State Preservation (ARM64)**
- * **Feature: arm64-kernel-integration**
- * **Validates: Requirements 6.2, 2.3, 6.3**
  */
 
 #include <kernel/interrupt.h>
@@ -245,9 +239,6 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
                 
                 /* 
                  * Check for kernel page fault (might need page table sync)
-                 * 
-                 * **Feature: arm64-kernel-integration**
-                 * **Validates: Requirements 2.3**
                  */
                 if (!is_user && far >= KERNEL_VIRTUAL_BASE) {
                     if (mm::Vmm::handle_kernel_page_fault((uintptr_t)far)) {
@@ -258,9 +249,6 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
                 
                 /* 
                  * Unhandled instruction abort
-                 * 
-                 * **Feature: arm64-kernel-integration**
-                 * **Validates: Requirements 6.3**
                  */
                 print_sync_exception(regs, source, ec, esr, far);
                 serial_puts("Instruction abort\n");
@@ -273,9 +261,6 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
                 
                 /* 
                  * For user mode faults, terminate the process with SIGSEGV-like behavior
-                 * 
-                 * **Feature: arm64-kernel-integration**
-                 * **Validates: Requirements 6.3**
                  */
                 if (is_user) {
                     serial_puts("Terminating user process due to illegal instruction fetch\n");
@@ -295,9 +280,6 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
                 
                 /* 
                  * Try to handle page fault via VMM
-                 * 
-                 * **Feature: arm64-kernel-integration**
-                 * **Validates: Requirements 2.3**
                  */
                 
                 /* Check for COW fault first (permission fault + write) */
@@ -329,9 +311,6 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
                 
                 /* 
                  * Unhandled page fault
-                 * 
-                 * **Feature: arm64-kernel-integration**
-                 * **Validates: Requirements 6.3**
                  */
                 print_sync_exception(regs, source, ec, esr, far);
                 serial_puts("Data abort\n");
@@ -347,9 +326,6 @@ static void handle_sync_exception(arm64_regs_t *regs, uint32_t source) {
                 
                 /* 
                  * For user mode faults, terminate the process with SIGSEGV-like behavior
-                 * 
-                 * **Feature: arm64-kernel-integration**
-                 * **Validates: Requirements 6.3**
                  */
                 if (is_user) {
                     serial_puts("Terminating user process due to segmentation fault\n");
@@ -507,8 +483,6 @@ void arm64_exception_init(void) {
 /* ============================================================================
  * User Process Termination
  * 
- * **Feature: arm64-kernel-integration**
- * **Validates: Requirements 6.3**
  * ========================================================================== */
 
 /**
@@ -534,8 +508,6 @@ static const char *arm64_signal_name(uint32_t signal) {
  * (e.g., segmentation fault, illegal instruction). It terminates the process
  * and schedules another task.
  * 
- * **Feature: arm64-kernel-integration**
- * **Validates: Requirements 6.3**
  * 
  * @param regs Pointer to saved register frame
  * @param signal Signal number (ARM64_SIGNAL_*)

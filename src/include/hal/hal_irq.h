@@ -4,8 +4,6 @@
  * 
  * 提供架构无关的逻辑中断号接口，使驱动代码可以使用统一的中断类型
  * 而不需要知道底层中断控制器的具体实现（PIC、APIC、GIC 等）。
- * 
- * @see Requirements 5.1, 5.4
  */
 
 #ifndef _HAL_HAL_IRQ_H_
@@ -24,8 +22,6 @@
  * 
  * 定义架构无关的逻辑中断类型，驱动程序使用这些类型
  * 而不是直接使用架构特定的 IRQ 号。
- * 
- * @see Requirements 5.1
  */
 typedef enum hal_irq_type {
     HAL_IRQ_TIMER = 0,          /**< 系统定时器中断 */

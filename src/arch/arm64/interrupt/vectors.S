@@ -4,16 +4,12 @@
  * Implements the exception vector table (VBAR_EL1) for ARM64.
  * Handles synchronous exceptions, IRQs, FIQs, and SErrors.
  *
- * Requirements: 4.5
  *
  * ARM64 Exception Vector Table Layout:
  *   - 4 exception types: Synchronous, IRQ, FIQ, SError
  *   - 4 exception sources: Current EL with SP0, Current EL with SPx,
  *                          Lower EL using AArch64, Lower EL using AArch32
  *   - Total: 16 vectors, each 128 bytes (0x80)
- *
- * **Feature: multi-arch-support, Property 7: Interrupt Register State Preservation (ARM64)**
- * **Validates: Requirements 6.2**
  */
 
 .section .text
@@ -85,9 +81,6 @@
  * Saves all general-purpose registers (X0-X30), SP_EL0, ELR_EL1, and SPSR_EL1
  * to the kernel stack. This creates a complete snapshot of the CPU state
  * that can be restored on exception return.
- *
- * **Feature: multi-arch-support, Property 7: Interrupt Register State Preservation (ARM64)**
- * **Validates: Requirements 6.2**
  */
 .macro kernel_entry
     /* 
@@ -131,9 +124,6 @@
  *
  * Restores all registers from the stack frame and returns from exception
  * using ERET instruction.
- *
- * **Feature: multi-arch-support, Property 7: Interrupt Register State Preservation (ARM64)**
- * **Validates: Requirements 6.2**
  */
 .macro kernel_exit
     /* Restore ELR_EL1 and SPSR_EL1 */

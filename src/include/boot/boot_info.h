@@ -10,9 +10,6 @@
  * 
  * The architecture-specific boot code is responsible for populating
  * the boot_info_t structure from the native bootloader format.
- * 
- * **Feature: multi-arch-optimization**
- * **Validates: Requirements 8.1, 8.2, 8.3, 8.4**
  */
 
 #ifndef _BOOT_BOOT_INFO_H_

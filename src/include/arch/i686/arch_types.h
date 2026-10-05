@@ -4,8 +4,6 @@
  * 
  * This header defines architecture-specific types and constants for the
  * i686 (x86 32-bit) architecture.
- * 
- * Requirements: 10.3
  */
 
 #ifndef _ARCH_I686_ARCH_TYPES_H_

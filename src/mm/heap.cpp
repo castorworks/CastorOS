@@ -27,9 +27,6 @@ static sync::Spinlock heap_lock;       ///< 堆自旋锁，保护堆的内部状
  * @brief 扩展堆空间
  * @param size 需要扩展的字节数
  * @return 成功返回 true，失败返回 false
- * 
- * **Feature: arm64-kernel-integration**
- * **Validates: Requirements 3.1**
  */
 static bool expand(size_t size) {
     // 先和剩余空间比较，避免 size 取整或 heap_end 相加时回绕

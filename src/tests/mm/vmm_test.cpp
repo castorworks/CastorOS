@@ -22,8 +22,6 @@
 //   - x86_64: 4 级页表 (PML4 -> PDPT -> PD -> PT)
 //   - ARM64: 4 级页表
 //
-// **Feature: test-refactor**
-// **Validates: Requirements 3.2, 7.2, 10.1, 11.1**
 // ============================================================================
 
 #include <tests/ktest.h>
@@ -53,7 +51,6 @@
  * @brief 测试页面映射对齐检查
  * 
  * 验证非对齐地址的映射请求被正确拒绝
- * _Requirements: 3.2_
  */
 TEST_CASE(test_vmm_map_page_alignment) {
     paddr_t frame = mm::Pmm::alloc_frame();
@@ -80,7 +77,6 @@ TEST_CASE(test_vmm_map_page_alignment) {
  * @brief 测试在指定页目录中取消映射
  * 
  * 验证 mm::Vmm::unmap_page_in_directory() 能正确取消指定页目录中的映射
- * _Requirements: 3.2, 7.2_
  */
 TEST_CASE(test_vmm_unmap_page_in_directory_basic) {
     // 创建新页目录
@@ -108,7 +104,6 @@ TEST_CASE(test_vmm_unmap_page_in_directory_basic) {
  * @brief 测试取消映射不存在的页面
  * 
  * 验证取消映射未映射的页面时返回正确的结果
- * _Requirements: 3.2_
  */
 TEST_CASE(test_vmm_unmap_page_in_directory_nonexistent) {
     uintptr_t dir = mm::Vmm::create_page_directory();
@@ -126,7 +121,6 @@ TEST_CASE(test_vmm_unmap_page_in_directory_nonexistent) {
  * @brief 测试在页目录中取消映射非对齐地址
  * 
  * 验证在页目录中取消映射非对齐地址时返回正确的结果
- * _Requirements: 3.2_
  */
 TEST_CASE(test_vmm_unmap_page_in_directory_alignment) {
     uintptr_t dir = mm::Vmm::create_page_directory();
@@ -164,7 +158,6 @@ TEST_CASE(test_vmm_unmap_page_in_directory_alignment) {
  * @brief 测试基本页目录创建
  * 
  * 验证 mm::Vmm::create_page_directory() 返回有效的页对齐地址
- * _Requirements: 3.2_
  */
 TEST_CASE(test_vmm_create_page_directory_basic) {
     // 创建新页目录
@@ -182,7 +175,6 @@ TEST_CASE(test_vmm_create_page_directory_basic) {
  * @brief 测试创建多个页目录
  * 
  * 验证可以创建多个独立的页目录
- * _Requirements: 3.2_
  */
 TEST_CASE(test_vmm_create_multiple_page_directories) {
     // 创建多个页目录
@@ -209,7 +201,6 @@ TEST_CASE(test_vmm_create_multiple_page_directories) {
  * @brief 测试在指定页目录中映射
  * 
  * 验证 mm::Vmm::map_page_in_directory() 能在指定页目录中正确映射
- * _Requirements: 3.2, 7.2_
  */
 TEST_CASE(test_vmm_map_page_in_directory_basic) {
     // 创建新页目录
@@ -235,7 +226,6 @@ TEST_CASE(test_vmm_map_page_in_directory_basic) {
  * @brief 测试在页目录中映射多个页面
  * 
  * 验证可以在同一个页目录中映射多个页面
- * _Requirements: 3.2_
  */
 TEST_CASE(test_vmm_map_page_in_directory_multiple) {
     uintptr_t dir = mm::Vmm::create_page_directory();
@@ -263,7 +253,6 @@ TEST_CASE(test_vmm_map_page_in_directory_multiple) {
  * @brief 测试获取当前页目录
  * 
  * 验证 mm::Vmm::get_page_directory() 返回有效的页目录地址
- * _Requirements: 3.2_
  */
 TEST_CASE(test_vmm_get_page_directory) {
     uintptr_t current_dir = mm::Vmm::get_page_directory();
@@ -279,7 +268,6 @@ TEST_CASE(test_vmm_get_page_directory) {
  * @brief 测试切换页目录
  * 
  * 验证 mm::Vmm::switch_page_directory() 能正确切换页目录
- * _Requirements: 3.2, 7.2_
  */
 TEST_CASE(test_vmm_switch_page_directory) {
     uintptr_t original_dir = mm::Vmm::get_page_directory();
@@ -306,7 +294,6 @@ TEST_CASE(test_vmm_switch_page_directory) {
  * @brief 测试基本页目录克隆
  * 
  * 验证 mm::Vmm::clone_page_directory() 能正确克隆页目录
- * _Requirements: 3.2, 3.4_
  */
 TEST_CASE(test_vmm_clone_page_directory_basic) {
     // 创建源页目录
@@ -336,7 +323,6 @@ TEST_CASE(test_vmm_clone_page_directory_basic) {
  * @brief 测试克隆页目录的数据隔离
  * 
  * 验证克隆的页目录与源页目录数据独立（COW 机制）
- * _Requirements: 3.2, 3.4_
  */
 TEST_CASE(test_vmm_clone_page_directory_data_isolation) {
     uintptr_t original_dir = mm::Vmm::get_page_directory();
@@ -399,7 +385,6 @@ TEST_CASE(test_vmm_clone_page_directory_data_isolation) {
  * @brief 测试克隆空页目录
  * 
  * 验证可以克隆一个只有内核映射的空页目录
- * _Requirements: 3.2_
  */
 TEST_CASE(test_vmm_clone_page_directory_empty) {
     // 克隆一个空的页目录（只有内核映射）
@@ -427,7 +412,6 @@ TEST_CASE(test_vmm_clone_page_directory_empty) {
  * @brief 测试 COW 引用计数
  * 
  * 验证克隆页目录后引用计数正确增加和减少
- * _Requirements: 3.4_
  */
 TEST_CASE(test_vmm_cow_refcount) {
     // 测试 COW 克隆后的引用计数
@@ -480,7 +464,6 @@ TEST_CASE(test_vmm_cow_refcount) {
  * @brief 测试多页面 COW
  * 
  * 验证多个页面的 COW 引用计数独立管理
- * _Requirements: 3.4_
  */
 TEST_CASE(test_vmm_cow_multiple_pages) {
     // 测试多个页面的 COW
@@ -516,7 +499,6 @@ TEST_CASE(test_vmm_cow_multiple_pages) {
  * @brief 测试释放带映射的页目录
  * 
  * 验证释放页目录时所有映射的页面也被正确释放
- * _Requirements: 3.2, 3.5_
  */
 TEST_CASE(test_vmm_free_page_directory_with_mappings) {
     mm::PmmInfo info_before = mm::Pmm::get_info();
@@ -553,7 +535,6 @@ TEST_CASE(test_vmm_free_page_directory_with_mappings) {
  * @brief 测试释放 NULL 页目录
  * 
  * 验证释放 NULL 页目录时系统保持稳定
- * _Requirements: 3.2_
  */
 TEST_CASE(test_vmm_free_page_directory_null) {
     // 释放NULL页目录（应该无害）
@@ -564,7 +545,6 @@ TEST_CASE(test_vmm_free_page_directory_null) {
  * @brief 测试释放空页目录
  * 
  * 验证释放空页目录后内存正确恢复
- * _Requirements: 3.2, 3.5_
  */
 TEST_CASE(test_vmm_free_page_directory_empty) {
     mm::PmmInfo info_before = mm::Pmm::get_info();
@@ -594,7 +574,6 @@ TEST_CASE(test_vmm_free_page_directory_empty) {
  * @brief 综合测试：页目录创建、映射和释放
  * 
  * 验证页目录的完整生命周期
- * _Requirements: 3.2_
  */
 TEST_CASE(test_vmm_comprehensive) {
     // 1. 创建新页目录
@@ -618,7 +597,6 @@ TEST_CASE(test_vmm_comprehensive) {
  * @brief 测试多页表映射
  * 
  * 验证映射到不同的页目录项范围时能正确创建多个页表
- * _Requirements: 3.2, 7.2_
  */
 TEST_CASE(test_vmm_multiple_page_tables) {
     uintptr_t dir = mm::Vmm::create_page_directory();
@@ -658,8 +636,6 @@ TEST_CASE(test_vmm_multiple_page_tables) {
 
 /**
  * @brief 页面映射测试套件
- * 
- * **Validates: Requirements 3.2**
  */
 TEST_SUITE(vmm_map_tests) {
     RUN_TEST(test_vmm_map_page_alignment);
@@ -667,8 +643,6 @@ TEST_SUITE(vmm_map_tests) {
 
 /**
  * @brief 取消映射测试套件
- * 
- * **Validates: Requirements 3.2**
  */
 TEST_SUITE(vmm_unmap_tests) {
     RUN_TEST(test_vmm_unmap_page_in_directory_basic);
@@ -678,8 +652,6 @@ TEST_SUITE(vmm_unmap_tests) {
 
 /**
  * @brief 页目录操作测试套件
- * 
- * **Validates: Requirements 3.2, 7.2**
  */
 TEST_SUITE(vmm_directory_tests) {
     RUN_TEST(test_vmm_create_page_directory_basic);
@@ -698,8 +670,6 @@ TEST_SUITE(vmm_directory_tests) {
 
 /**
  * @brief COW 引用计数测试套件
- * 
- * **Validates: Requirements 3.4**
  */
 TEST_SUITE(vmm_cow_tests) {
     RUN_TEST(test_vmm_cow_refcount);
@@ -708,16 +678,12 @@ TEST_SUITE(vmm_cow_tests) {
 
 /**
  * @brief TLB 刷新测试套件
- * 
- * **Validates: Requirements 3.2**
  */
 TEST_SUITE(vmm_tlb_tests) {
 }
 
 /**
  * @brief 综合测试套件
- * 
- * **Validates: Requirements 3.2, 7.2**
  */
 TEST_SUITE(vmm_comprehensive_tests) {
     RUN_TEST(test_vmm_comprehensive);
@@ -726,8 +692,6 @@ TEST_SUITE(vmm_comprehensive_tests) {
 
 // ============================================================================
 // Property-Based Tests: VMM Page Table Format Correctness
-// **Feature: multi-arch-support, Property 3: VMM Page Table Format Correctness**
-// **Validates: Requirements 5.2**
 // ============================================================================
 
 /**
@@ -796,8 +760,6 @@ TEST_CASE(test_pbt_vmm_page_directory_isolation) {
 
 // ============================================================================
 // Property-Based Tests: Kernel Space Sharing
-// **Feature: mm-refactor, Property 12: Kernel Space Shared Across Address Spaces**
-// **Validates: Requirements 7.2**
 // ============================================================================
 
 /**
@@ -863,8 +825,6 @@ TEST_CASE(test_pbt_vmm_kernel_space_shared) {
 
 // ============================================================================
 // Property-Based Tests: User Mapping Flags
-// **Feature: mm-refactor, Property 13: User Mapping Has User Flag**
-// **Validates: Requirements 7.3**
 // ============================================================================
 
 /**
@@ -973,8 +933,6 @@ TEST_CASE(test_pbt_vmm_kernel_mapping_no_user_flag) {
 
 // ============================================================================
 // Property-Based Tests: MMIO Mapping Flags
-// **Feature: mm-refactor, Property 14: MMIO Mapping Has No-Cache Flag**
-// **Validates: Requirements 9.1**
 // ============================================================================
 
 TEST_SUITE(vmm_property_tests) {
@@ -1009,9 +967,6 @@ TEST_SUITE(vmm_property_tests) {
  *   5. vmm_cow_tests - COW 引用计数测试
  *   6. vmm_comprehensive_tests - 综合测试
  *   7. vmm_property_tests - 属性测试 (PBT)
- * 
- * **Feature: test-refactor**
- * **Validates: Requirements 10.1, 11.1**
  */
 void run_vmm_tests(void) {
     // 初始化测试框架
@@ -1022,27 +977,21 @@ void run_vmm_tests(void) {
     // ========================================================================
     
     // 套件 1: 页面映射测试
-    // _Requirements: 3.2_
     RUN_SUITE(vmm_map_tests);
     
     // 套件 2: 取消映射测试
-    // _Requirements: 3.2_
     RUN_SUITE(vmm_unmap_tests);
     
     // 套件 3: TLB 刷新测试
-    // _Requirements: 3.2_
     RUN_SUITE(vmm_tlb_tests);
     
     // 套件 4: 页目录操作测试
-    // _Requirements: 3.2, 7.2_
     RUN_SUITE(vmm_directory_tests);
     
     // 套件 5: COW 引用计数测试
-    // _Requirements: 3.4_
     RUN_SUITE(vmm_cow_tests);
     
     // 套件 6: 综合测试
-    // _Requirements: 3.2, 7.2_
     RUN_SUITE(vmm_comprehensive_tests);
     
     // ========================================================================
@@ -1050,8 +999,6 @@ void run_vmm_tests(void) {
     // ========================================================================
     
     // 套件 7: VMM 属性测试
-    // **Feature: multi-arch-support, Property 3: VMM Page Table Format Correctness**
-    // **Validates: Requirements 5.2, 7.2**
     RUN_SUITE(vmm_property_tests);
     
     // 打印测试摘要
@@ -1073,8 +1020,5 @@ static const char *vmm_test_deps[] = {"pmm"};
  * @brief VMM 测试模块元数据
  * 
  * 使用 TEST_MODULE_WITH_DEPS 宏注册模块到测试框架
- * 
- * **Feature: test-refactor**
- * **Validates: Requirements 10.1, 10.2, 10.4, 11.1**
  */
 TEST_MODULE_WITH_DEPS(vmm, MM, run_vmm_tests, vmm_test_deps, 1);

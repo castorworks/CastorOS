@@ -3,8 +3,6 @@
  * @brief i686 架构特定的分页定义
  * 
  * 定义 i686 (x86 32-bit) 的页表结构和操作
- * 
- * Requirements: 5.2, 12.1, 12.2
  */
 
 #ifndef _ARCH_I686_PAGING_H_

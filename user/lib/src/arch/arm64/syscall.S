@@ -5,9 +5,6 @@
  * ARM64 使用 SVC #0 指令进行系统调用
  * 参数传递: X8=syscall号, X0=arg0, X1=arg1, X2=arg2, X3=arg3, X4=arg4, X5=arg5
  * 返回值: X0
- * 
- * **Feature: multi-arch-support, Property 16: User Library System Call Instruction Correctness**
- * **Validates: Requirements 10.2**
  */
 
 .section .text

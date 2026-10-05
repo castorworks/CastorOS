@@ -5,9 +5,6 @@
  * Defines structures and functions for ARM64 page fault handling.
  * 
  * Requirements: 5.4, mm-refactor 6.4
- * 
- * **Feature: multi-arch-support, Property 5: VMM Page Fault Interpretation (ARM64)**
- * **Validates: Requirements 5.4**
  */
 
 #ifndef _ARCH_ARM64_FAULT_H_

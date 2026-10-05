@@ -18,8 +18,6 @@
  *   [29:21] - PD 索引 (9 bits, 512 entries)
  *   [20:12] - PT 索引 (9 bits, 512 entries)
  *   [11:0]  - 页内偏移 (12 bits, 4KB page)
- * 
- * Requirements: 5.2, 12.1
  */
 
 #include <types.h>
@@ -201,8 +199,6 @@ typedef struct {
 /**
  * @brief 获取当前地址空间 (x86_64)
  * @return 当前 PML4 的物理地址
- * 
- * @see Requirements 4.5
  */
 hal_addr_space_t hal::Mmu::current_space() {
     return (hal_addr_space_t)hal::Mmu::get_current_page_table();
@@ -323,8 +319,6 @@ static paddr_t alloc_page_table(void) {
  * @param[out] phys 物理地址 (可为 NULL)
  * @param[out] flags HAL 页标志 (可为 NULL)
  * @return true 如果映射存在，false 如果未映射
- * 
- * @see Requirements 4.1, 5.1
  */
 bool hal::Mmu::query(hal_addr_space_t space, vaddr_t virt, paddr_t *phys, uint32_t *flags) {
     /* Validate canonical address */
@@ -415,8 +409,6 @@ bool hal::Mmu::query(hal_addr_space_t space, vaddr_t virt, paddr_t *phys, uint32
  * @return true 成功，false 失败
  * 
  * @note 调用者需要在映射后调用 hal::Mmu::flush_tlb()
- * 
- * @see Requirements 4.1, 5.1
  */
 bool hal::Mmu::map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags) {
     /* Validate addresses */
@@ -512,8 +504,6 @@ bool hal::Mmu::map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t 
  * 
  * @note 调用者需要在取消映射后调用 hal::Mmu::flush_tlb()
  * @note 此函数不释放中间页表级别
- * 
- * @see Requirements 4.1, 5.1
  */
 paddr_t hal::Mmu::unmap(hal_addr_space_t space, vaddr_t virt) {
     /* Validate canonical address */
@@ -590,8 +580,6 @@ paddr_t hal::Mmu::unmap(hal_addr_space_t space, vaddr_t virt) {
  * @return true 成功，false 如果映射不存在
  * 
  * @note 调用者需要在修改后调用 hal::Mmu::flush_tlb()
- * 
- * @see Requirements 4.1, 5.1
  */
 bool hal::Mmu::protect(hal_addr_space_t space, vaddr_t virt, 
                      uint32_t set_flags, uint32_t clear_flags) {
@@ -659,7 +647,6 @@ bool hal::Mmu::protect(hal_addr_space_t space, vaddr_t virt,
  * x86_64 支持 2MB 大页（通过 PD 级别的 PS 位）和 1GB 大页（通过 PDPT 级别的 PS 位）
  * 此实现仅支持 2MB 大页
  * 
- * @see Requirements 8.1, 8.2
  * ========================================================================== */
 
 /** @brief 2MB 大页大小 */
@@ -697,8 +684,6 @@ bool hal::Mmu::protect(hal_addr_space_t space, vaddr_t virt,
  *   - PML4[256..511]: 内核空间 (0xFFFF800000000000 - 0xFFFFFFFFFFFFFFFF)
  * 
  * @return 新地址空间句柄 (PML4 物理地址)，失败返回 HAL_ADDR_SPACE_INVALID
- * 
- * @see Requirements 5.2
  */
 hal_addr_space_t hal::Mmu::create_space() {
     /* Allocate a new PML4 */
@@ -787,8 +772,6 @@ static void free_page_table_recursive(paddr_t table_phys, int level, bool is_use
  * @param space 要销毁的地址空间句柄
  * 
  * @warning 不能销毁当前活动的地址空间
- * 
- * @see Requirements 5.5
  */
 void hal::Mmu::destroy_space(hal_addr_space_t space) {
     if (space == HAL_ADDR_SPACE_INVALID || space == 0) {
@@ -935,8 +918,6 @@ static bool clone_page_table_recursive(paddr_t src_table_phys, int level,
  * 
  * @param src 源地址空间句柄
  * @return 新地址空间句柄，失败返回 HAL_ADDR_SPACE_INVALID
- * 
- * @see Requirements 5.3
  */
 hal_addr_space_t hal::Mmu::clone_space(hal_addr_space_t src) {
     /* Validate source address space */

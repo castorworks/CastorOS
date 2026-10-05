@@ -4,8 +4,6 @@
  * 
  * 实现 i686 (x86 32-bit) 的 2 级页表操作
  * 提供 HAL MMU 接口的 i686 实现
- * 
- * Requirements: 5.2, 12.1
  */
 
 #include <types.h>
@@ -112,8 +110,6 @@ paddr_t hal::Mmu::get_current_page_table() {
 /**
  * @brief 获取当前地址空间 (i686)
  * @return 当前页目录的物理地址
- * 
- * @see Requirements 4.5
  */
 hal_addr_space_t hal::Mmu::current_space() {
     return (hal_addr_space_t)hal::Mmu::get_current_page_table();
@@ -186,8 +182,6 @@ static page_directory_t* get_page_directory(hal_addr_space_t space) {
  * @param[out] phys 物理地址 (可为 NULL)
  * @param[out] flags HAL 页标志 (可为 NULL)
  * @return true 如果映射存在，false 如果未映射
- * 
- * @see Requirements 4.1
  */
 bool hal::Mmu::query(hal_addr_space_t space, vaddr_t virt, paddr_t *phys, uint32_t *flags) {
     page_directory_t *dir = get_page_directory(space);
@@ -236,8 +230,6 @@ bool hal::Mmu::query(hal_addr_space_t space, vaddr_t virt, paddr_t *phys, uint32
  * @return true 成功，false 如果映射不存在
  * 
  * @note 调用者需要在修改后调用 hal::Mmu::flush_tlb()
- * 
- * @see Requirements 4.1
  */
 bool hal::Mmu::protect(hal_addr_space_t space, vaddr_t virt, 
                      uint32_t set_flags, uint32_t clear_flags) {
@@ -288,8 +280,6 @@ bool hal::Mmu::protect(hal_addr_space_t space, vaddr_t virt,
  * 
  * @param src 源地址空间句柄
  * @return 新地址空间句柄，失败返回 HAL_ADDR_SPACE_INVALID
- * 
- * @see Requirements 4.4
  */
 hal_addr_space_t hal::Mmu::clone_space(hal_addr_space_t src) {
     /* Validate source address space */
@@ -318,8 +308,6 @@ hal_addr_space_t hal::Mmu::clone_space(hal_addr_space_t src) {
  * 分配并初始化新的页目录，内核空间映射从主内核页目录复制。
  * 
  * @return 新地址空间句柄，失败返回 HAL_ADDR_SPACE_INVALID
- * 
- * @see Requirements 4.2
  */
 hal_addr_space_t hal::Mmu::create_space() {
     /* Allocate a new page directory */
@@ -384,8 +372,6 @@ void hal::Mmu::destroy_space(hal_addr_space_t space) {
  * @return true 成功，false 失败
  * 
  * @note 调用者需要在映射后调用 hal::Mmu::flush_tlb()
- * 
- * @see Requirements 4.1
  */
 bool hal::Mmu::map(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags) {
     /* Check page alignment */
@@ -495,7 +481,6 @@ paddr_t hal::Mmu::unmap(hal_addr_space_t space, vaddr_t virt) {
  * i686 支持 4MB 大页（通过 PSE），但此实现使用回退方式：
  * 将 2MB 大页请求映射为 512 个 4KB 页。
  * 
- * @see Requirements 8.1, 8.2, 8.4
  * ========================================================================== */
 
 /** @brief 2MB 大页大小 */

@@ -4,8 +4,6 @@
  * 
  * 提供类型安全的物理/虚拟地址类型，防止地址空间混淆。
  * 所有架构统一使用 64-bit 物理地址类型，虚拟地址类型与架构指针大小匹配。
- * 
- * @see Requirements 1.1, 1.2, 1.4, 1.5
  */
 
 #ifndef _MM_MM_TYPES_H_
@@ -22,8 +20,6 @@
  * 
  * 使用 64-bit 类型确保在 x86_64 和 ARM64 上可以寻址完整的物理地址空间。
  * 在 i686 上，高 32 位始终为 0。
- * 
- * @see Requirements 1.1
  */
 typedef uint64_t paddr_t;
 
@@ -31,8 +27,6 @@ typedef uint64_t paddr_t;
  * @brief 页帧号类型 (physical page index)
  * 
  * 表示物理页帧的索引号，等于物理地址右移 PAGE_SHIFT 位。
- * 
- * @see Requirements 1.4
  */
 typedef uint64_t pfn_t;
 
@@ -52,8 +46,6 @@ typedef uint64_t pfn_t;
  * 使用 uintptr_t 确保与架构指针大小匹配：
  * - i686: 32-bit
  * - x86_64/ARM64: 64-bit
- * 
- * @see Requirements 1.2
  */
 typedef uintptr_t vaddr_t;
 
@@ -62,7 +54,6 @@ typedef uintptr_t vaddr_t;
 
 /*============================================================================
  * 地址转换宏
- * @see Requirements 1.5
  *============================================================================*/
 
 /** 

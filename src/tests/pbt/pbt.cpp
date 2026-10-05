@@ -5,8 +5,6 @@
 // A lightweight property-based testing framework for CastorOS kernel.
 // Uses xorshift64 PRNG for fast, high-quality random number generation.
 //
-// **Feature: multi-arch-support**
-// **Validates: Requirements 11.3**
 // ============================================================================
 
 #include <tests/pbt/pbt.h>

@@ -6,7 +6,6 @@
 ; i686 (x86 32-bit) architecture. It provides the HAL context switch
 ; interface implementation.
 ;
-; Requirements: 7.1, 12.1
 ;
 ; Context Structure Offsets (must match i686_context_t in context.h):
 ;   gs:       0

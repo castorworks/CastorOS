@@ -4,9 +4,6 @@
  * 
  * This file implements the conversion from Device Tree Blob (DTB)
  * information to the standardized boot_info_t structure for ARM64.
- * 
- * **Feature: arm64-kernel-integration**
- * **Validates: Requirements 1.1**
  */
 
 #include <boot/boot_info.h>
@@ -146,9 +143,6 @@ static void *find_dtb(void *hint) {
  * 
  * @param dtb Pointer to DTB (passed by bootloader in x0)
  * @return Pointer to populated boot_info_t, or NULL on failure
- * 
- * **Feature: arm64-kernel-integration**
- * **Validates: Requirements 1.1**
  */
 boot_info_t *boot_info_init_dtb(void *dtb) {
     /* Clear the structure */

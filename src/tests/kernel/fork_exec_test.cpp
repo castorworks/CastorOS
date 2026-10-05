@@ -6,7 +6,6 @@
 //   - Task 36.1: 测试 fork 系统调用 (hal::Mmu::clone_space COW)
 //   - Task 36.2: 测试 exec 系统调用 (程序加载)
 // 
-// **Feature: multi-arch-support**
 // **Validates: Requirements 5.5, 7.4, mm-refactor 4.4, 5.3**
 // ============================================================================
 
@@ -33,7 +32,6 @@
 
 // ============================================================================
 // Task 36.1: Fork System Call Tests (hal::Mmu::clone_space COW)
-// **Feature: multi-arch-support**
 // **Validates: Requirements 5.5, mm-refactor 4.4, 5.3**
 // ============================================================================
 
@@ -335,8 +333,6 @@ TEST_CASE(test_fork_vmm_clone_page_directory) {
 
 // ============================================================================
 // Task 36.2: Exec System Call Tests (Program Loading)
-// **Feature: multi-arch-support**
-// **Validates: Requirements 7.4**
 // ============================================================================
 
 /**

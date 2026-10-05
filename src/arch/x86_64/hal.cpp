@@ -5,9 +5,6 @@
  * This file implements the HAL interface for x86_64 (AMD64/Intel 64-bit) architecture.
  * It provides unified initialization routines that dispatch to architecture-
  * specific subsystems (GDT64, IDT64, ISR64, IRQ64, VMM).
- * 
- * **Feature: multi-arch-support, Property 1: HAL Initialization Dispatch**
- * **Validates: Requirements 1.1**
  */
 
 #include <hal/hal.h>

@@ -2,8 +2,6 @@
 // syscall_error_test.c - System Call Error Consistency Property Tests
 // ============================================================================
 //
-// **Feature: multi-arch-support, Property 13: System Call Error Consistency**
-// **Validates: Requirements 8.4**
 //
 // This file implements property-based tests to verify that system call errors
 // are returned consistently across all architectures. The property states:

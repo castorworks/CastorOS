@@ -4,8 +4,6 @@
  * 
  * 实现分页机制，管理虚拟地址到物理地址的映射
  * 核心逻辑保持架构无关，通过 HAL 接口和 pgtable 抽象层调用架构特定操作
- * 
- * Requirements: 3.4, 4.1, 4.2, 4.4, 5.1, 5.2, 12.1
  */
 
 #include <mm/vmm.h>
@@ -49,7 +47,6 @@ static uint32_t active_pd_count = 0;
  * 页表索引提取函数 - 使用 pgtable 抽象层
  * 
  * 这些函数封装了 pgtable 抽象层的索引提取功能，提供向后兼容的接口。
- * @see Requirements 3.3, 3.4
  * ========================================================================== */
 
 #if defined(ARCH_X86_64)
@@ -211,9 +208,6 @@ static void unregister_page_directory(uintptr_t dir_phys) {
  * 
  * 使用引导时创建的页目录，设置CR3寄存器
  * 扩展高半核映射以覆盖所有可用的物理内存
- * 
- * **Feature: arm64-kernel-integration**
- * **Validates: Requirements 2.1**
  */
 void mm::Vmm::init() {
     // 初始化 VMM 自旋锁
@@ -454,8 +448,6 @@ bool mm::Vmm::handle_kernel_page_fault(uintptr_t addr) {
  *   Bit 4 (I/D): 1 = 指令获取导致
  * 
  * COW 异常特征：页面存在(P=1) + 写操作(W=1) + 页面有 PAGE_COW 标志
- * 
- * @see Requirements 4.1
  */
 bool mm::Vmm::handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
     /* 统一的 COW 处理逻辑，使用 HAL 接口实现架构无关 */
@@ -599,7 +591,6 @@ static bool user_mapping_allowed(uintptr_t virt, uint32_t flags) {
  * 
  * 提供 HAL 错误码与 VMM 错误码之间的转换，确保错误处理一致性。
  * 
- * @see Requirements 4.4, 12.1
  * ========================================================================== */
 
 /**
@@ -713,9 +704,6 @@ uintptr_t mm::Vmm::create_page_directory() {
 uintptr_t mm::Vmm::clone_page_directory(uintptr_t src_dir_phys) {
 #if defined(ARCH_X86_64) || defined(ARCH_ARM64)
     // x86_64/ARM64: 使用 HAL 接口克隆地址空间
-    // 
-    // **Feature: arm64-kernel-integration**
-    // **Validates: Requirements 7.1**
     hal_addr_space_t new_space;
     {
         sync::SpinlockIrqGuard guard(vmm_lock);

@@ -3,11 +3,6 @@
  * @brief ARM64 Exception Handling Definitions
  * 
  * Defines structures and constants for ARM64 exception handling.
- * 
- * Requirements: 4.5, 6.2
- * 
- * **Feature: multi-arch-support, Property 7: Interrupt Register State Preservation (ARM64)**
- * **Validates: Requirements 6.2**
  */
 
 #ifndef _ARCH_ARM64_EXCEPTION_H_
@@ -143,9 +138,6 @@
  * 
  * This structure matches the stack frame created by the kernel_entry macro
  * in vectors.S. It contains all registers saved during exception entry.
- * 
- * **Feature: multi-arch-support, Property 7: Interrupt Register State Preservation (ARM64)**
- * **Validates: Requirements 6.2**
  */
 typedef struct arm64_regs {
     uint64_t x[31];     /**< General-purpose registers X0-X30 */
@@ -226,8 +218,6 @@ const char *arm64_fault_status_name(uint32_t fsc);
 /* ============================================================================
  * Signal Definitions (for user process termination)
  * 
- * **Feature: arm64-kernel-integration**
- * **Validates: Requirements 6.3**
  * ========================================================================== */
 
 /** Signal numbers (POSIX-like) */
@@ -244,8 +234,6 @@ const char *arm64_fault_status_name(uint32_t fsc);
  * (e.g., segmentation fault, illegal instruction). It terminates the process
  * and schedules another task.
  * 
- * **Feature: arm64-kernel-integration**
- * **Validates: Requirements 6.3**
  * 
  * @param regs Pointer to saved register frame
  * @param signal Signal number (ARM64_SIGNAL_*)

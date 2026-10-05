@@ -3,8 +3,6 @@
  * @brief x86_64 架构特定的分页定义
  * 
  * 定义 x86_64 (AMD64/Intel 64-bit) 的 4 级页表结构和相关常量
- * 
- * Requirements: 5.2, 12.1
  */
 
 #ifndef _ARCH_X86_64_PAGING64_H_

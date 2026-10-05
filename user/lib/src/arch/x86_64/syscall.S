@@ -7,9 +7,6 @@
  * 返回值: RAX
  * 
  * 注意: SYSCALL 会破坏 RCX 和 R11 寄存器
- * 
- * **Feature: multi-arch-support, Property 16: User Library System Call Instruction Correctness**
- * **Validates: Requirements 10.2**
  */
 
 .section .text

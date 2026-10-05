@@ -21,8 +21,6 @@
  *   [4:2]   - AttrIndx (MAIR index)
  *   [1]     - Table/Block (1=Table for L0-L2, 1=Page for L3)
  *   [0]     - Valid
- * 
- * @see Requirements 3.1, 3.2, 3.3
  */
 
 #include <hal/pgtable.h>

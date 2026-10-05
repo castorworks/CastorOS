@@ -4,9 +4,7 @@
  * 
  * 实现 ARM64 架构的 MMU 相关属性测试
  * 
- * **Feature: multi-arch-support**
  * **Property 4: VMM Kernel Mapping Range Correctness (ARM64)**
- * **Validates: Requirements 5.3**
  */
 
 #include <tests/ktest.h>
@@ -82,7 +80,6 @@ static inline uint32_t arm64_get_page_size(void) {
  * the architecture-appropriate higher-half range 
  * (≥0xFFFF000000000000 for ARM64).
  * 
- * **Validates: Requirements 5.3**
  * ============================================================================ */
 
 /**

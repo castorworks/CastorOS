@@ -13,8 +13,6 @@
 //   - 引用计数 (mm::Pmm::frame_ref_inc, mm::Pmm::frame_ref_dec)
 //   - 压力测试
 //
-// **Feature: test-refactor**
-// **Validates: Requirements 3.1, 10.1, 11.1**
 // ============================================================================
 
 #include <tests/ktest.h>
@@ -37,7 +35,6 @@
  * @brief 测试基本页帧分配
  * 
  * 验证 mm::Pmm::alloc_frame() 返回有效的页对齐地址
- * _Requirements: 3.1_
  */
 TEST_CASE(test_pmm_alloc_frame_basic) {
     // 分配一个页帧
@@ -58,7 +55,6 @@ TEST_CASE(test_pmm_alloc_frame_basic) {
  * @brief 测试多页帧分配的唯一性
  * 
  * 验证连续分配的页帧地址互不相同
- * _Requirements: 3.1_
  */
 TEST_CASE(test_pmm_alloc_multiple_frames) {
     // 分配多个页帧
@@ -86,7 +82,6 @@ TEST_CASE(test_pmm_alloc_multiple_frames) {
  * @brief 测试页帧分配的对齐性
  * 
  * 验证所有分配的页帧都是页对齐的 (4KB)
- * _Requirements: 3.1_
  */
 TEST_CASE(test_pmm_alloc_frame_alignment) {
     // 分配10个页帧，检查对齐
@@ -110,7 +105,6 @@ TEST_CASE(test_pmm_alloc_frame_alignment) {
  * @brief 测试基本页帧释放
  * 
  * 验证释放页帧后空闲计数恢复
- * _Requirements: 3.1, 3.5_
  */
 TEST_CASE(test_pmm_free_frame_basic) {
     mm::PmmInfo info_before = mm::Pmm::get_info();
@@ -135,7 +129,6 @@ TEST_CASE(test_pmm_free_frame_basic) {
  * @brief 测试页帧复用
  * 
  * 验证释放的页帧可以被重新分配
- * _Requirements: 3.1_
  */
 TEST_CASE(test_pmm_free_frame_reuse) {
     // 分配并释放一个页帧
@@ -156,7 +149,6 @@ TEST_CASE(test_pmm_free_frame_reuse) {
  * @brief 测试释放无效页帧
  * 
  * 验证释放非对齐地址时系统保持稳定
- * _Requirements: 3.1_
  */
 TEST_CASE(test_pmm_free_invalid_frame) {
     mm::PmmInfo info_before = mm::Pmm::get_info();
@@ -173,7 +165,6 @@ TEST_CASE(test_pmm_free_invalid_frame) {
  * @brief 测试双重释放保护
  * 
  * 验证双重释放不会导致内存状态异常
- * _Requirements: 3.1_
  */
 TEST_CASE(test_pmm_free_double_free) {    
     // 分配一个页帧
@@ -197,7 +188,6 @@ TEST_CASE(test_pmm_free_double_free) {
  * @brief 测试释放越界页帧
  * 
  * 验证释放超出范围的地址时系统保持稳定
- * _Requirements: 3.1_
  */
 TEST_CASE(test_pmm_free_out_of_bounds) {
     mm::PmmInfo info_before = mm::Pmm::get_info();
@@ -214,7 +204,6 @@ TEST_CASE(test_pmm_free_out_of_bounds) {
  * @brief 测试大量分配直到内存不足
  * 
  * 验证大量分配和释放后内存状态恢复
- * _Requirements: 3.1, 3.5_
  */
 TEST_CASE(test_pmm_alloc_until_low_memory) {
     // 测试分配大量内存（但不完全耗尽）
@@ -271,7 +260,6 @@ TEST_CASE(test_pmm_alloc_until_low_memory) {
  * @brief 测试基本信息查询
  * 
  * 验证 mm::Pmm::get_info() 返回一致的内存统计信息
- * _Requirements: 3.1_
  */
 TEST_CASE(test_pmm_get_info_basic) {
     mm::PmmInfo info = mm::Pmm::get_info();
@@ -287,7 +275,6 @@ TEST_CASE(test_pmm_get_info_basic) {
  * @brief 测试位图结束地址
  * 
  * 验证 mm::Pmm::get_bitmap_end() 返回有效的内核空间地址
- * _Requirements: 3.1_
  */
 TEST_CASE(test_pmm_get_bitmap_end) {
     // 获取位图结束地址
@@ -307,7 +294,6 @@ TEST_CASE(test_pmm_get_bitmap_end) {
  * @brief 测试操作后的信息一致性
  * 
  * 验证分配和释放操作后 mm::Pmm::get_info() 返回正确的统计
- * _Requirements: 3.1, 3.5_
  */
 TEST_CASE(test_pmm_get_info_after_operations) {
     mm::PmmInfo info_before = mm::Pmm::get_info();
@@ -348,7 +334,6 @@ TEST_CASE(test_pmm_get_info_after_operations) {
  * @brief 压力测试：大量分配和释放
  * 
  * 验证大量连续分配和释放后内存状态正确
- * _Requirements: 3.1, 3.5_
  */
 TEST_CASE(test_pmm_stress_alloc_free) {
     // 分配和释放大量页帧
@@ -380,7 +365,6 @@ TEST_CASE(test_pmm_stress_alloc_free) {
  * @brief 压力测试：交替分配和释放
  * 
  * 验证交替分配和释放操作的正确性
- * _Requirements: 3.1_
  */
 TEST_CASE(test_pmm_interleaved_alloc_free) {
     // 交替分配和释放
@@ -434,8 +418,6 @@ TEST_SUITE(pmm_stress_tests) {
 // ============================================================================
 // 
 // 使用属性测试验证 PMM 的核心正确性属性
-// **Feature: test-refactor, Property 4: PMM Allocation Alignment and Uniqueness**
-// **Validates: Requirements 3.1**
 // ============================================================================
 
 /**
@@ -443,9 +425,6 @@ TEST_SUITE(pmm_stress_tests) {
  * 
  * *For any* successful call to mm::Pmm::alloc_frame(), the returned address 
  * SHALL be page-aligned (divisible by PAGE_SIZE).
- * 
- * **Feature: test-refactor, Property 4: PMM Allocation Alignment and Uniqueness**
- * **Validates: Requirements 3.1**
  */
 TEST_CASE(test_pbt_pmm_page_alignment) {
     #define PBT_PMM_ITERATIONS 100
@@ -483,9 +462,6 @@ TEST_CASE(test_pbt_pmm_page_alignment) {
  * 
  * *For any* sequence of allocations without intervening frees,
  * all returned frame addresses SHALL be unique.
- * 
- * **Feature: test-refactor, Property 4: PMM Allocation Alignment and Uniqueness**
- * **Validates: Requirements 3.1**
  */
 TEST_CASE(test_pbt_pmm_frame_uniqueness) {
     #define PBT_UNIQUE_ITERATIONS 50
@@ -520,9 +496,6 @@ TEST_CASE(test_pbt_pmm_frame_uniqueness) {
  * 
  * *For any* sequence of N allocations followed by N frees,
  * the free frame count SHALL return to its original value.
- * 
- * **Feature: test-refactor, Property 8: Memory Leak Detection**
- * **Validates: Requirements 3.5**
  */
 TEST_CASE(test_pbt_pmm_alloc_free_roundtrip) {
     #define PBT_ROUNDTRIP_ITERATIONS 30
@@ -558,8 +531,6 @@ TEST_CASE(test_pbt_pmm_alloc_free_roundtrip) {
 // ============================================================================
 // 
 // 使用属性测试验证 PMM 引用计数的正确性
-// **Feature: test-refactor, Property 7: COW Reference Count Consistency**
-// **Validates: Requirements 3.4**
 // ============================================================================
 
 /**
@@ -568,9 +539,6 @@ TEST_CASE(test_pbt_pmm_alloc_free_roundtrip) {
  * *For any* allocated frame, after n calls to mm::Pmm::frame_ref_inc() and 
  * m calls to mm::Pmm::frame_ref_dec() where n >= m, mm::Pmm::frame_get_refcount() 
  * SHALL return 1 + n - m.
- * 
- * **Feature: test-refactor, Property 7: COW Reference Count Consistency**
- * **Validates: Requirements 3.4**
  */
 TEST_CASE(test_pbt_pmm_refcount_consistency) {
     #define PBT_REFCOUNT_ITERATIONS 20
@@ -612,9 +580,6 @@ TEST_CASE(test_pbt_pmm_refcount_consistency) {
  * 
  * *For any* frame with refcount > 1, calling mm::Pmm::free_frame() SHALL 
  * only decrement the refcount without actually freeing the frame.
- * 
- * **Feature: test-refactor, Property 7: COW Reference Count Consistency**
- * **Validates: Requirements 3.4**
  */
 TEST_CASE(test_pbt_pmm_refcount_prevents_free) {
     mm::PmmInfo info_before = mm::Pmm::get_info();
@@ -654,9 +619,6 @@ TEST_CASE(test_pbt_pmm_refcount_prevents_free) {
  * 
  * *For any* set of allocated frames, their reference counts SHALL be 
  * independent of each other.
- * 
- * **Feature: test-refactor, Property 7: COW Reference Count Consistency**
- * **Validates: Requirements 3.4**
  */
 TEST_CASE(test_pbt_pmm_independent_refcounts) {
     #define PBT_INDEPENDENT_FRAMES 5
@@ -698,9 +660,6 @@ TEST_CASE(test_pbt_pmm_independent_refcounts) {
 
 /**
  * @brief 属性测试套件：分配对齐和唯一性
- * 
- * **Feature: test-refactor, Property 4: PMM Allocation Alignment and Uniqueness**
- * **Validates: Requirements 3.1**
  */
 TEST_SUITE(pmm_property_tests) {
     RUN_TEST(test_pbt_pmm_page_alignment);
@@ -710,9 +669,6 @@ TEST_SUITE(pmm_property_tests) {
 
 /**
  * @brief 属性测试套件：引用计数一致性
- * 
- * **Feature: test-refactor, Property 7: COW Reference Count Consistency**
- * **Validates: Requirements 3.4**
  */
 TEST_SUITE(pmm_refcount_property_tests) {
     RUN_TEST(test_pbt_pmm_refcount_consistency);
@@ -734,9 +690,6 @@ TEST_SUITE(pmm_refcount_property_tests) {
  *   4. pmm_stress_tests - 压力测试
  *   5. pmm_property_tests - 分配属性测试 (PBT)
  *   6. pmm_refcount_property_tests - 引用计数属性测试 (PBT)
- * 
- * **Feature: test-refactor**
- * **Validates: Requirements 10.1, 11.1**
  */
 void run_pmm_tests(void) {
     // 初始化测试框架
@@ -747,19 +700,15 @@ void run_pmm_tests(void) {
     // ========================================================================
     
     // 套件 1: 页帧分配测试
-    // _Requirements: 3.1_
     RUN_SUITE(pmm_alloc_tests);
     
     // 套件 2: 页帧释放测试
-    // _Requirements: 3.1, 3.5_
     RUN_SUITE(pmm_free_tests);
     
     // 套件 3: 信息查询测试
-    // _Requirements: 3.1_
     RUN_SUITE(pmm_info_tests);
     
     // 套件 4: 压力测试
-    // _Requirements: 3.1, 3.5_
     RUN_SUITE(pmm_stress_tests);
     
     // ========================================================================
@@ -767,13 +716,9 @@ void run_pmm_tests(void) {
     // ========================================================================
     
     // 套件 5: 分配属性测试
-    // **Feature: test-refactor, Property 4: PMM Allocation Alignment and Uniqueness**
-    // **Validates: Requirements 3.1**
     RUN_SUITE(pmm_property_tests);
     
     // 套件 6: 引用计数属性测试
-    // **Feature: test-refactor, Property 7: COW Reference Count Consistency**
-    // **Validates: Requirements 3.4**
     RUN_SUITE(pmm_refcount_property_tests);
     
     // 打印测试摘要
@@ -788,9 +733,6 @@ void run_pmm_tests(void) {
  * @brief PMM 测试模块元数据
  * 
  * 使用 TEST_MODULE_DESC 宏注册模块到测试框架
- * 
- * **Feature: test-refactor**
- * **Validates: Requirements 10.1, 10.2, 11.1**
  */
 TEST_MODULE_DESC(pmm, MM, run_pmm_tests, 
     "Physical Memory Manager tests - allocation, free, info, refcount");

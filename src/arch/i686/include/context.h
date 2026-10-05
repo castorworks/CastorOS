@@ -4,8 +4,6 @@
  * 
  * Defines the CPU context structure for i686 architecture, used for
  * task switching and interrupt handling.
- * 
- * Requirements: 7.1, 12.2
  */
 
 #ifndef _ARCH_I686_CONTEXT_H_

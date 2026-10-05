@@ -3,11 +3,6 @@
  * @brief ARM Generic Interrupt Controller (GIC) Implementation
  * 
  * Implements GICv2 support for ARM64 interrupt handling.
- * 
- * Requirements: 4.4, 6.3
- * 
- * **Feature: multi-arch-support, Property 8: Interrupt Handler Registration API Consistency**
- * **Validates: Requirements 6.4**
  */
 
 #include "../include/gic.h"
@@ -257,9 +252,6 @@ void gic_end_irq(uint32_t irq) {
 
 /**
  * @brief Handle IRQ (called from exception handler)
- * 
- * **Feature: multi-arch-support, Property 8: Interrupt Handler Registration API Consistency**
- * **Validates: Requirements 6.4**
  */
 void gic_handle_irq(void) {
     uint32_t irq;
@@ -289,9 +281,6 @@ void gic_handle_irq(void) {
 
 /**
  * @brief Register an interrupt handler
- * 
- * **Feature: multi-arch-support, Property 8: Interrupt Handler Registration API Consistency**
- * **Validates: Requirements 6.4**
  */
 void gic_register_handler(uint32_t irq, hal_interrupt_handler_t handler, void *data) {
     if (irq >= GIC_MAX_INTERRUPTS) {

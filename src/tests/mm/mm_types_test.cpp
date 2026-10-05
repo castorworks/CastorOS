@@ -3,8 +3,6 @@
 // ============================================================================
 // 
 // Property-Based Tests for mm_types.h
-// **Feature: mm-refactor**
-// **Validates: Requirements 1.1, 1.2, 1.5**
 // ============================================================================
 
 #include <tests/ktest.h>
@@ -14,8 +12,6 @@
 
 // ============================================================================
 // Property 1: Physical Address Type Size
-// **Feature: mm-refactor, Property 1: Physical Address Type Size**
-// **Validates: Requirements 1.1**
 // ============================================================================
 
 /**
@@ -60,8 +56,6 @@ TEST_CASE(test_pbt_paddr_range) {
 
 // ============================================================================
 // Property 2: Virtual Address Type Size
-// **Feature: mm-refactor, Property 2: Virtual Address Type Size**
-// **Validates: Requirements 1.2**
 // ============================================================================
 
 /**
@@ -116,8 +110,6 @@ TEST_CASE(test_pbt_vaddr_kernel_base) {
 
 // ============================================================================
 // Property 3: PFN Conversion Round-Trip
-// **Feature: mm-refactor, Property 3: PFN Conversion Round-Trip**
-// **Validates: Requirements 1.5**
 // ============================================================================
 
 /**
@@ -305,18 +297,12 @@ void run_mm_types_tests(void) {
     unittest_init();
     
     // Property 1: Physical Address Type Size
-    // **Feature: mm-refactor, Property 1: Physical Address Type Size**
-    // **Validates: Requirements 1.1**
     RUN_SUITE(mm_types_paddr_tests);
     
     // Property 2: Virtual Address Type Size
-    // **Feature: mm-refactor, Property 2: Virtual Address Type Size**
-    // **Validates: Requirements 1.2**
     RUN_SUITE(mm_types_vaddr_tests);
     
     // Property 3: PFN Conversion Round-Trip
-    // **Feature: mm-refactor, Property 3: PFN Conversion Round-Trip**
-    // **Validates: Requirements 1.5**
     RUN_SUITE(mm_types_pfn_tests);
     
     // 打印测试摘要

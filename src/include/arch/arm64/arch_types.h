@@ -4,8 +4,6 @@
  * 
  * This header defines architecture-specific types and constants for the
  * ARM64 (AArch64) architecture.
- * 
- * Requirements: 10.3
  */
 
 #ifndef _ARCH_ARM64_ARCH_TYPES_H_
@@ -65,8 +63,6 @@ typedef long long           arch_ssize_t;
  * direct-mapped physical memory region, which typically covers the first
  * few GB of physical address space.
  * 
- * **Feature: arm64-kernel-integration**
- * **Validates: Requirements 3.1**
  * ========================================================================== */
 
 /** Kernel heap start address (4GB offset from KERNEL_VIRTUAL_BASE) */

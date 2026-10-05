@@ -5,9 +5,6 @@
  * This file implements the HAL interface for ARM64 (AArch64) architecture.
  * It provides unified initialization routines that dispatch to architecture-
  * specific subsystems.
- * 
- * **Feature: multi-arch-support, Property 1: HAL Initialization Dispatch**
- * **Validates: Requirements 1.1**
  */
 
 #include <hal/hal.h>
@@ -98,9 +95,6 @@ void hal::Interrupt::init() {
  * @param irq IRQ number
  * @param handler Handler function
  * @param data User data
- * 
- * **Feature: multi-arch-support, Property 8: Interrupt Handler Registration API Consistency**
- * **Validates: Requirements 6.4**
  */
 void hal::Interrupt::register_handler(uint32_t irq, hal_interrupt_handler_t handler, void *data) {
     gic_register_handler(irq, handler, data);

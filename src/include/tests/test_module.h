@@ -4,8 +4,6 @@
 //
 // 定义测试模块的元数据结构和注册宏，支持模块化测试组织
 //
-// **Feature: test-refactor**
-// **Validates: Requirements 10.1, 10.2, 11.1**
 //
 // 功能特性：
 //   - 测试模块元数据结构 (test_module_t)
