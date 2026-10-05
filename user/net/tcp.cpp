@@ -1,13 +1,14 @@
-// tcp.cpp - TCP（只有主动连接这一半：connect、收发、关闭）
+// tcp.cpp - TCP：主动连接（connect）、被动连接（listen / accept）、收发、关闭
 //
 // 一个刻意保持简单的实现：
 //   - 发送：每条连接一个环形缓冲区，放着“还没被确认的数据”。能发多少由对方的窗口决定；
 //     超时没被确认就从头重发（回退 N），超时时间每次翻倍，重试够次数就放弃连接
 //   - 接收：只接受按序到达的数据，放进环形缓冲区，通告窗口就是缓冲区的剩余空间；
 //     乱序的段直接丢掉并重复确认，靠对方重传
-//   - 没有拥塞控制、选择确认、窗口缩放、延迟确认，也没有监听（被动打开）
+//   - 监听：收到 SYN 就建一条半开的连接，三次握手完成后排队等 accept
+//   - 没有拥塞控制、选择确认、窗口缩放、延迟确认
 //
-// 阻塞的请求（connect、recv、缓冲区满时的 send）不立刻应答：相应的事件发生时、
+// 阻塞的请求（connect、accept、recv、缓冲区满时的 send）不立刻应答：相应的事件发生时、
 // 或者定时器发现它超时了，再用 reply_client 应答。
 
 #include <syscall.h>
@@ -32,6 +33,9 @@
 #define MAX_RETRIES     8
 
 #define EPHEMERAL_BASE  49152
+#define BACKLOG         4           // 每个监听最多有这么多条还没被 accept 的连接
+
+uint32_t tcp_retransmits = 0;
 
 struct tcp_header {
     uint16_t src_port;
@@ -47,7 +51,9 @@ struct tcp_header {
 
 enum tcp_state {
     TCP_FREE = 0,
+    TCP_LISTEN,                     // 不是连接，是一个监听：只用到 owner、local_port 和 accept_*
     TCP_SYN_SENT,
+    TCP_SYN_RCVD,                   // 被动打开：收到 SYN、回了 SYN+ACK，等对方的确认
     TCP_ESTABLISHED,
     TCP_FIN_WAIT_1,                 // 我们先关：FIN 已排队或已发，还没被确认
     TCP_FIN_WAIT_2,                 // 我们的 FIN 已被确认，等对方的 FIN
@@ -62,6 +68,8 @@ static struct tcp_conn {
     enum tcp_state state;
     int owner;                      // 拥有这条连接的客户
     bool app_closed;                // 应用已经 close：连接结束后直接释放
+    bool accepted;                  // 应用已经拿到这条连接（主动连接一开始就是）
+    int listener;                   // 被动打开的连接：它所属的监听在 conns[] 里的下标；否则 -1
 
     uint16_t local_port, remote_port;
     uint32_t remote_ip;
@@ -97,6 +105,8 @@ static struct tcp_conn {
     uint64_t recv_deadline;
     bool send_waiting;
     uint32_t send_len;
+    bool accept_waiting;            // 只用于监听
+    uint64_t accept_deadline;
 } conns[MAX_CONNS];
 
 // 序号比较要考虑回绕
@@ -222,6 +232,7 @@ static void wake_waiters(struct tcp_conn *c, int64_t result) {
 /** 双方都正常关完了 */
 static void finish(struct tcp_conn *c) {
     c->rto_armed = false;
+    // 还没被 accept 的连接留着：应用之后 accept 它，仍然能读到对方发过的数据
     if (c->app_closed) {
         c->state = TCP_FREE;
         return;
@@ -244,7 +255,8 @@ static void abort_conn(struct tcp_conn *c, bool send_rst) {
     }
     c->rto_armed = false;
     wake_waiters(c, -1);
-    c->state = c->app_closed ? TCP_FREE : TCP_DEAD;
+    // 应用还不知道有这条连接（没 accept 过）时没有人会来 close 它：直接释放
+    c->state = (c->app_closed || !c->accepted) ? TCP_FREE : TCP_DEAD;
 }
 
 // ============================================================================
@@ -300,12 +312,101 @@ static void accept_send(struct tcp_conn *c) {
 static struct tcp_conn *find_conn(uint32_t remote_ip, uint16_t remote_port, uint16_t local_port) {
     for (int i = 0; i < MAX_CONNS; i++) {
         struct tcp_conn *c = &conns[i];
-        if (c->state != TCP_FREE && c->local_port == local_port &&
+        if (c->state != TCP_FREE && c->state != TCP_LISTEN && c->local_port == local_port &&
             c->remote_port == remote_port && c->remote_ip == remote_ip) {
             return c;
         }
     }
     return NULL;
+}
+
+/** 初始序号：不要求不可预测，只要每条连接不一样 */
+static uint32_t new_iss(void) {
+    static uint32_t counter = 0;
+    return (uint32_t)uptime_ms() * 250000u + (counter += 64021);
+}
+
+/** 对方 SYN 的选项里可能带着它的 MSS */
+static void parse_mss(struct tcp_conn *c, const uint8_t *data, size_t hdr) {
+    for (size_t i = TCP_HDR; i + 1 < hdr; ) {
+        uint8_t kind = data[i];
+        if (kind == 0) {
+            break;
+        }
+        if (kind == 1) {
+            i++;
+            continue;
+        }
+        uint8_t olen = data[i + 1];
+        if (olen < 2 || i + olen > hdr) {
+            break;
+        }
+        if (kind == 2 && olen == 4) {
+            uint16_t mss = (uint16_t)((data[i + 2] << 8) | data[i + 3]);
+            if (mss >= 64 && mss < c->mss) {
+                c->mss = mss;
+            }
+        }
+        i += olen;
+    }
+}
+
+/** 监听 l 上有没有握手已经完成、还没交给应用的连接；有就交给正在等的 accept */
+static void try_accept(struct tcp_conn *l) {
+    if (!l->accept_waiting) {
+        return;
+    }
+    int li = (int)(l - conns);
+    for (int i = 0; i < MAX_CONNS; i++) {
+        struct tcp_conn *c = &conns[i];
+        if (c->state == TCP_FREE || c->state == TCP_LISTEN || c->state == TCP_SYN_RCVD ||
+            c->listener != li || c->accepted) {
+            continue;
+        }
+        c->accepted = true;
+        l->accept_waiting = false;
+        reply_client(l->owner, NET_TCP_ACCEPT, i, c->remote_ip, c->remote_port);
+        return;
+    }
+}
+
+/** 监听端口上来了一个 SYN：建一条半开的连接，回 SYN+ACK */
+static void passive_open(struct tcp_conn *l, uint32_t src, uint16_t src_port, uint32_t seq,
+                         uint16_t window, const uint8_t *data, size_t hdr) {
+    int li = (int)(l - conns);
+    int pending = 0;
+    struct tcp_conn *c = NULL;
+    for (int i = 0; i < MAX_CONNS; i++) {
+        if (conns[i].state == TCP_FREE) {
+            if (!c) {
+                c = &conns[i];
+            }
+        } else if (conns[i].state != TCP_LISTEN && conns[i].listener == li && !conns[i].accepted) {
+            pending++;
+        }
+    }
+    if (!c || pending >= BACKLOG) {
+        return;     // 不回应：对方会重发 SYN，到时候也许有位置了
+    }
+
+    memset(c, 0, sizeof(*c));
+    c->owner = l->owner;
+    c->listener = li;
+    c->remote_ip = src;
+    c->remote_port = src_port;
+    c->local_port = l->local_port;
+    c->mss = TCP_MSS;
+    parse_mss(c, data, hdr);
+    c->rcv_nxt = seq + 1;
+    c->snd_wnd = window;
+
+    uint32_t iss = new_iss();
+    c->snd_una = iss;
+    c->snd_nxt = c->snd_max = iss + 1;      // SYN 占一个序号
+    c->rto_ms = RTO_INITIAL_MS;
+    c->state = TCP_SYN_RCVD;
+    arm_rto(c);
+    send_segment(c, TCP_SYN | TCP_ACK, iss, NULL, 0);
 }
 
 void tcp_input(uint32_t src, uint32_t dst, const uint8_t *data, size_t len) {
@@ -326,6 +427,15 @@ void tcp_input(uint32_t src, uint32_t dst, const uint8_t *data, size_t len) {
     uint32_t payload_len = (uint32_t)(len - hdr);
 
     struct tcp_conn *c = find_conn(src, swap16(h.src_port), swap16(h.dst_port));
+    if (!c && (flags & (TCP_SYN | TCP_ACK | TCP_RST)) == TCP_SYN) {
+        // 新连接的请求：有人在这个端口上监听吗
+        for (int i = 0; i < MAX_CONNS; i++) {
+            if (conns[i].state == TCP_LISTEN && conns[i].local_port == swap16(h.dst_port)) {
+                passive_open(&conns[i], src, swap16(h.src_port), seq, swap16(h.window), data, hdr);
+                return;
+            }
+        }
+    }
     if (!c) {
         // 没有这条连接：用复位告诉对方（对复位本身不再回应）
         if (!(flags & TCP_RST)) {
@@ -354,28 +464,7 @@ void tcp_input(uint32_t src, uint32_t dst, const uint8_t *data, size_t len) {
         if ((flags & (TCP_SYN | TCP_ACK)) != (TCP_SYN | TCP_ACK)) {
             return;
         }
-        // 对方的选项里可能带着它的 MSS
-        for (size_t i = TCP_HDR; i + 1 < hdr; ) {
-            uint8_t kind = data[i];
-            if (kind == 0) {
-                break;
-            }
-            if (kind == 1) {
-                i++;
-                continue;
-            }
-            uint8_t olen = data[i + 1];
-            if (olen < 2 || i + olen > hdr) {
-                break;
-            }
-            if (kind == 2 && olen == 4) {
-                uint16_t mss = (uint16_t)((data[i + 2] << 8) | data[i + 3]);
-                if (mss >= 64 && mss < c->mss) {
-                    c->mss = mss;
-                }
-            }
-            i += olen;
-        }
+        parse_mss(c, data, hdr);
         c->rcv_nxt = seq + 1;
         c->snd_una = ack;
         c->snd_wnd = swap16(h.window);
@@ -394,6 +483,28 @@ void tcp_input(uint32_t src, uint32_t dst, const uint8_t *data, size_t len) {
 
     if (c->state == TCP_DONE || c->state == TCP_DEAD) {
         return;
+    }
+
+    // ---- 被动打开：等对方确认我们的 SYN+ACK ----
+    if (c->state == TCP_SYN_RCVD) {
+        if (flags & TCP_RST) {
+            c->state = TCP_FREE;
+            return;
+        }
+        if (flags & TCP_SYN) {
+            // 对方重发了 SYN：我们的 SYN+ACK 丢了，再发一次
+            send_segment(c, TCP_SYN | TCP_ACK, c->snd_una, NULL, 0);
+            return;
+        }
+        if (!(flags & TCP_ACK) || ack != c->snd_max) {
+            return;
+        }
+        // 握手完成。这个段里可能已经带着数据，接着按已建立的连接处理
+        c->state = TCP_ESTABLISHED;
+        if (c->listener >= 0 && conns[c->listener].state == TCP_LISTEN) {
+            // 下面的通用处理会确认 SYN、清掉重传定时器；先把它交给可能在等的 accept
+            try_accept(&conns[c->listener]);
+        }
     }
 
     // ---- 已建立的连接 ----
@@ -479,7 +590,6 @@ void tcp_input(uint32_t src, uint32_t dst, const uint8_t *data, size_t len) {
         }
     }
 
-    // 从这里往下会发送：发往本机的段会递归进入本函数，之后不能再读 data / payload
     if (need_ack) {
         send_ack(c);
     }
@@ -525,6 +635,17 @@ bool tcp_tick(uint64_t now) {
         if (c->state == TCP_FREE) {
             continue;
         }
+        if (c->state == TCP_LISTEN) {
+            if (c->accept_waiting) {
+                if (now >= c->accept_deadline) {
+                    c->accept_waiting = false;
+                    reply_client(c->owner, NET_TCP_ACCEPT, -1, 0, 0);
+                } else {
+                    active = true;
+                }
+            }
+            continue;
+        }
 
         if (c->connect_waiting && now >= c->connect_deadline) {
             abort_conn(c, false);
@@ -541,8 +662,12 @@ bool tcp_tick(uint64_t now) {
                 continue;
             }
             c->rto_ms = min_u32(c->rto_ms * 2, RTO_MAX_MS);
+            tcp_retransmits++;
             if (c->state == TCP_SYN_SENT) {
                 send_segment(c, TCP_SYN, c->snd_una, NULL, 0);
+                arm_rto(c);
+            } else if (c->state == TCP_SYN_RCVD) {
+                send_segment(c, TCP_SYN | TCP_ACK, c->snd_una, NULL, 0);
                 arm_rto(c);
             } else {
                 // 回退 N：从最早未确认的地方重新发
@@ -566,11 +691,39 @@ bool tcp_tick(uint64_t now) {
 // 客户请求
 // ============================================================================
 
+/** pid 可以收发的连接（不含监听和还没 accept 的） */
 static struct tcp_conn *conn_of(int pid, uint64_t id) {
-    if (id >= MAX_CONNS || conns[id].state == TCP_FREE || conns[id].owner != pid || conns[id].app_closed) {
+    if (id >= MAX_CONNS || conns[id].state == TCP_FREE || conns[id].state == TCP_LISTEN ||
+        conns[id].owner != pid || conns[id].app_closed || !conns[id].accepted) {
         return NULL;
     }
     return &conns[id];
+}
+
+static struct tcp_conn *listener_of(int pid, uint64_t id) {
+    if (id >= MAX_CONNS || conns[id].state != TCP_LISTEN || conns[id].owner != pid) {
+        return NULL;
+    }
+    return &conns[id];
+}
+
+/** 关掉一个监听：还没被 accept 的连接一并复位 */
+static void close_listener(struct tcp_conn *l) {
+    int li = (int)(l - conns);
+    for (int i = 0; i < MAX_CONNS; i++) {
+        struct tcp_conn *c = &conns[i];
+        if (c->state != TCP_FREE && c->state != TCP_LISTEN && c->listener == li && !c->accepted) {
+            if (c->state != TCP_DONE && c->state != TCP_DEAD) {
+                abort_conn(c, true);
+            }
+            c->state = TCP_FREE;
+        }
+    }
+    if (l->accept_waiting) {
+        l->accept_waiting = false;
+        reply_client(l->owner, NET_TCP_ACCEPT, -1, 0, 0);
+    }
+    l->state = TCP_FREE;
 }
 
 void tcp_drop_owner(int pid) {
@@ -578,9 +731,9 @@ void tcp_drop_owner(int pid) {
         struct tcp_conn *c = &conns[i];
         if (c->state != TCP_FREE && c->owner == pid) {
             // 没人会来读写了：直接复位，不走正常的关闭
-            c->connect_waiting = c->recv_waiting = c->send_waiting = false;
+            c->connect_waiting = c->recv_waiting = c->send_waiting = c->accept_waiting = false;
             c->app_closed = true;
-            bool live = c->state != TCP_DONE && c->state != TCP_DEAD;
+            bool live = c->state != TCP_DONE && c->state != TCP_DEAD && c->state != TCP_LISTEN;
             if (live) {
                 abort_conn(c, true);
             }
@@ -591,7 +744,6 @@ void tcp_drop_owner(int pid) {
 
 static void do_connect(int pid, uint32_t ip, uint16_t port, uint32_t timeout_ms) {
     static uint16_t next_port = EPHEMERAL_BASE;
-    static uint32_t iss_counter = 0;
 
     // 已经退出的进程留下的连接先收回来
     for (int i = 0; i < MAX_CONNS; i++) {
@@ -613,14 +765,15 @@ static void do_connect(int pid, uint32_t ip, uint16_t port, uint32_t timeout_ms)
 
     memset(c, 0, sizeof(*c));
     c->owner = pid;
+    c->accepted = true;
+    c->listener = -1;
     c->remote_ip = ip;
     c->remote_port = port;
     c->local_port = next_port;
     next_port = next_port == 65535 ? EPHEMERAL_BASE : (uint16_t)(next_port + 1);
     c->mss = TCP_MSS;
 
-    // 初始序号：不要求不可预测，只要每条连接不一样
-    uint32_t iss = (uint32_t)uptime_ms() * 250000u + (iss_counter += 64021);
+    uint32_t iss = new_iss();
     c->snd_una = iss;
     c->snd_nxt = c->snd_max = iss + 1;      // SYN 占一个序号
     c->rto_ms = RTO_INITIAL_MS;
@@ -629,7 +782,6 @@ static void do_connect(int pid, uint32_t ip, uint16_t port, uint32_t timeout_ms)
     c->connect_deadline = uptime_ms() + (timeout_ms ? timeout_ms : 1);
 
     arm_rto(c);
-    // 最后才发：发往本机的 SYN 会立刻得到一个复位，那时上面的状态必须已经就位
     send_segment(c, TCP_SYN, iss, NULL, 0);
 }
 
@@ -638,6 +790,51 @@ void tcp_request(const struct ipc_msg *m) {
 
     if (m->label == NET_TCP_CONNECT) {
         do_connect(pid, (uint32_t)m->data[0], (uint16_t)m->data[1], (uint32_t)m->data[2]);
+        return;
+    }
+
+    if (m->label == NET_TCP_LISTEN) {
+        uint16_t port = (uint16_t)m->data[0];
+        struct tcp_conn *l = NULL;
+        for (int i = 0; i < MAX_CONNS; i++) {
+            if (conns[i].state == TCP_LISTEN && conns[i].local_port == port) {
+                port = 0;       // 已经有人在听
+            } else if (conns[i].state == TCP_FREE && !l) {
+                l = &conns[i];
+            }
+        }
+        if (!l || port == 0 || m->data[0] > 0xFFFF) {
+            reply_client(pid, NET_TCP_LISTEN, -1, 0, 0);
+            return;
+        }
+        memset(l, 0, sizeof(*l));
+        l->state = TCP_LISTEN;
+        l->owner = pid;
+        l->local_port = port;
+        l->listener = -1;
+        reply_client(pid, NET_TCP_LISTEN, (int)(l - conns), 0, 0);
+        return;
+    }
+
+    if (m->label == NET_TCP_ACCEPT) {
+        struct tcp_conn *l = listener_of(pid, m->data[0]);
+        if (!l) {
+            reply_client(pid, NET_TCP_ACCEPT, -1, 0, 0);
+            return;
+        }
+        l->accept_waiting = true;
+        l->accept_deadline = uptime_ms() + m->data[1];
+        try_accept(l);
+        if (l->accept_waiting && m->data[1] == 0) {
+            l->accept_waiting = false;      // 不等待
+            reply_client(pid, NET_TCP_ACCEPT, -1, 0, 0);
+        }
+        return;
+    }
+
+    if (m->label == NET_TCP_CLOSE && listener_of(pid, m->data[0])) {
+        reply_client(pid, NET_TCP_CLOSE, 0, 0, 0);
+        close_listener(&conns[m->data[0]]);
         return;
     }
 

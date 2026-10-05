@@ -64,6 +64,13 @@ static int tx_free_count;
 
 static void eth_input(uint8_t *frame, size_t len);
 
+// 调试用：丢掉接下来发出/收到的若干个 TCP 帧（NET_DEBUG_DROP），用来验证重传
+static uint32_t drop_tx = 0, drop_rx = 0;
+
+static bool is_tcp_frame(const uint8_t *frame, size_t len) {
+    return len >= 34 && frame[12] == 0x08 && frame[13] == 0x00 && frame[23] == IP_PROTO_TCP;
+}
+
 static bool nic_init(void) {
     if (!virtio_find(&nic, VIRTIO_ID_NET)) {
         return false;
@@ -118,6 +125,10 @@ static void nic_send(const uint8_t *frame, size_t len) {
     if (tx_free_count == 0 || len > FRAME_MAX) {
         return;
     }
+    if (drop_tx > 0 && is_tcp_frame(frame, len)) {
+        drop_tx--;
+        return;
+    }
     uint16_t i = tx_free[--tx_free_count];
     char *buf = tx_mem + (size_t)i * NIC_BUF_SIZE;
     memset(buf, 0, sizeof(struct virtio_net_hdr));
@@ -137,8 +148,13 @@ static void nic_poll(void) {
     bool any = false;
     while (virtq_pop_used(&rxq, &i, &len)) {
         if (i < RX_BUFS && len > sizeof(struct virtio_net_hdr) && len <= NIC_BUF_SIZE) {
-            eth_input((uint8_t *)rx_mem + (size_t)i * NIC_BUF_SIZE + sizeof(struct virtio_net_hdr),
-                      len - sizeof(struct virtio_net_hdr));
+            uint8_t *frame = (uint8_t *)rx_mem + (size_t)i * NIC_BUF_SIZE + sizeof(struct virtio_net_hdr);
+            size_t frame_len = len - sizeof(struct virtio_net_hdr);
+            if (drop_rx > 0 && is_tcp_frame(frame, frame_len)) {
+                drop_rx--;
+            } else {
+                eth_input(frame, frame_len);
+            }
         }
         virtq_submit(&rxq, (uint16_t)i);
         any = true;
@@ -348,6 +364,35 @@ uint16_t checksum(const void *data, size_t len, uint32_t start) {
 
 static void ip_input(const uint8_t *packet, size_t len);
 
+// 回环队列：发给本机地址的 IP 包。满了就丢（和真实的链路一样，上层自己重传）
+#define LOOPBACK_SLOTS  16
+
+static struct {
+    size_t len;
+    uint8_t data[FRAME_MAX - ETH_HDR];
+} loopback[LOOPBACK_SLOTS];
+static int loopback_head = 0, loopback_count = 0;
+
+static void loopback_push(const uint8_t *packet, size_t len) {
+    if (loopback_count == LOOPBACK_SLOTS || len > sizeof(loopback[0].data)) {
+        return;
+    }
+    int slot = (loopback_head + loopback_count) % LOOPBACK_SLOTS;
+    memcpy(loopback[slot].data, packet, len);
+    loopback[slot].len = len;
+    loopback_count++;
+}
+
+/** 处理排队的回环包（处理过程中可能又排进新的） */
+static void loopback_drain(void) {
+    while (loopback_count > 0) {
+        int slot = loopback_head;
+        loopback_head = (loopback_head + 1) % LOOPBACK_SLOTS;
+        loopback_count--;
+        ip_input(loopback[slot].data, loopback[slot].len);
+    }
+}
+
 void ip_send(uint32_t dst, uint8_t protocol, const uint8_t *payload, size_t len) {
     static uint8_t packet[FRAME_MAX - ETH_HDR];
     static uint16_t next_id = 1;
@@ -375,10 +420,9 @@ void ip_send(uint32_t dst, uint8_t protocol, const uint8_t *payload, size_t len)
         return;     // 还没有地址：只能发广播
     }
     if (dst == my_ip) {
-        // 发给自己：不经过网卡，直接当作收到的包处理（先拷一份，packet 会被重用）
-        static uint8_t loop[FRAME_MAX - ETH_HDR];
-        memcpy(loop, packet, IP_HDR + len);
-        ip_input(loop, IP_HDR + len);
+        // 发给自己：不经过网卡。不在这里直接处理，而是排队等回到主循环再当作收到的包处理：
+        // 发送方往往正处在某个操作的中途，立刻递归进去会重入它还没更新完的状态
+        loopback_push(packet, IP_HDR + len);
         return;
     }
     // 同一个子网直接发，否则交给网关
@@ -930,8 +974,14 @@ static void handle_request(struct ipc_msg *m) {
     reply.label = m->label;
     int64_t result = -1;
 
-    if (m->label >= NET_TCP_CONNECT && m->label <= NET_TCP_CLOSE) {
+    if (m->label >= NET_TCP_CONNECT && m->label <= NET_TCP_ACCEPT) {
         tcp_request(m);
+        return;
+    }
+    if (m->label == NET_DEBUG_DROP) {
+        drop_tx = (uint32_t)m->data[0];
+        drop_rx = (uint32_t)m->data[1];
+        reply_client(pid, NET_DEBUG_DROP, 0, tcp_retransmits, 0);
         return;
     }
 
@@ -1036,9 +1086,12 @@ int main() {
         } else {
             handle_request(&m);
         }
+        loopback_drain();
 
         // 只要还有事在等（ping、recv、ARP、DHCP），就保持一个周期性的定时器来处理超时
-        if (expire_waiters()) {
+        bool waiting = expire_waiters();
+        loopback_drain();       // 超时处理里也可能发出回环包（重传）
+        if (waiting) {
             timer_set(TICK_MS);
         }
     }

@@ -435,6 +435,8 @@ static void test_disk_full(void) {
     report("disk full", ok, "ok");
 }
 
+static void test_tcp(const struct net_info *info);
+
 static void test_network(void) {
     // 网络服务与我们同时启动，给它一点时间登记；没有网卡时它会直接退出
     for (int i = 0; i < 25 && name_lookup(NET_SERVICE_NAME) == 0; i++) {
@@ -494,13 +496,100 @@ static void test_network(void) {
          net_udp_send(a, info.ip, 4000, out, 1) == -1;
     report("udp sockets", ok, "ok");
 
+    test_tcp(&info);
+}
+
+/** 通过连接 conn 发 len 字节的图案（由 seed 决定），再原样读回来 */
+static bool tcp_echo_round(int conn, size_t len, int seed, uint32_t recv_timeout_ms) {
+    static char tx[8000], rx[8000];
+    for (size_t i = 0; i < len; i++) {
+        tx[i] = (char)(seed * 31 + i * 7 + i / 255);
+    }
+    if (net_tcp_send(conn, tx, len) != (long)len) {
+        return false;
+    }
+    size_t got = 0;
+    while (got < len) {
+        long n = net_tcp_recv(conn, rx + got, len - got, recv_timeout_ms);
+        if (n <= 0) {
+            return false;
+        }
+        got += (size_t)n;
+    }
+    return memcmp(tx, rx, len) == 0;
+}
+
+static void test_tcp_listen(const struct net_info *info) {
+    // 监听：服务端和客户端都在本机，段在协议栈内部回环
+    int listener = net_tcp_listen(8080);
+    int ok = listener >= 0 && net_tcp_listen(8080) == -1 &&          // 端口已被占用
+             net_tcp_accept(listener, 0, NULL, NULL) == -1;          // 还没有人连进来
+
+    static char big[20000];
+    for (size_t i = 0; i < sizeof(big); i++) {
+        big[i] = (char)(i * 5 + i / 251);
+    }
+
+    int child = fork();
+    if (child == 0) {
+        // 客户端：问候，收应答，再发一大块数据，最后读到对方关闭
+        char reply[32];
+        int conn = net_tcp_connect(info->ip, 8080, 3000);
+        int good = conn >= 0 &&
+                   net_tcp_send(conn, "hello server", 12) == 12 &&
+                   net_tcp_recv(conn, reply, sizeof(reply), 3000) == 12 &&
+                   memcmp(reply, "hello client", 12) == 0 &&
+                   net_tcp_send(conn, big, sizeof(big)) == (long)sizeof(big) &&
+                   net_tcp_recv(conn, reply, sizeof(reply), 5000) == 0 &&   // 服务端关了
+                   net_tcp_close(conn) == 0;
+        exit(good ? 0 : 1);
+    }
+
+    uint32_t peer_ip = 0;
+    uint16_t peer_port = 0;
+    char greeting[32];
+    static char received[20000];
+    int conn = net_tcp_accept(listener, 3000, &peer_ip, &peer_port);
+    ok = ok && conn >= 0 && peer_ip == info->ip && peer_port >= 49152 &&
+         net_tcp_recv(conn, greeting, sizeof(greeting), 3000) == 12 &&
+         memcmp(greeting, "hello server", 12) == 0 &&
+         net_tcp_send(conn, "hello client", 12) == 12;
+    size_t got = 0;
+    while (ok && got < sizeof(received)) {
+        long n = net_tcp_recv(conn, received + got, sizeof(received) - got, 5000);
+        if (n <= 0) {
+            ok = 0;
+            break;
+        }
+        got += (size_t)n;
+    }
+    ok = ok && memcmp(big, received, sizeof(big)) == 0 && net_tcp_close(conn) == 0;
+
+    int status = 1;
+    waitpid(child, &status, 0);
+    ok = ok && WEXITSTATUS(status) == 0;
+
+    // 关掉监听之后，再连这个端口会被拒绝
+    uint64_t start = uptime_ms();
+    ok = ok && net_tcp_close(listener) == 0 &&
+         net_tcp_connect(info->ip, 8080, 2000) == -1 && uptime_ms() - start < 1500;
+    report("tcp listen and accept over loopback", ok, "ok");
+}
+
+static void test_tcp(const struct net_info *info) {
+    uint64_t start;
+    int ok;
+
+    test_tcp_listen(info);
+
     // TCP：连到一个没人监听的端口会被拒绝（网关把它转给宿主机的 127.0.0.1:1）
     start = uptime_ms();
-    ok = net_tcp_connect(info.gateway, 1, 3000) == -1 && uptime_ms() - start < 2500;
+    ok = net_tcp_connect(info->gateway, 1, 3000) == -1 && uptime_ms() - start < 2500;
     report("tcp connect to a closed port", ok, "refused");
 
     // 回显服务：make run / make test 用 QEMU 的 guestfwd 把 10.0.2.100:7 接到宿主机的 cat 上
-    int conn = net_tcp_connect(NET_IP(10, 0, 2, 100), 7, 1500);
+    const uint32_t echo_ip = NET_IP(10, 0, 2, 100);
+    int conn = net_tcp_connect(echo_ip, 7, 1500);
     if (conn < 0) {
         printf("selftest: tcp echo: skipped (no echo service at 10.0.2.100:7)\n");
         return;
@@ -546,6 +635,41 @@ static void test_network(void) {
     ok = ok && net_tcp_recv(conn, rx, 10, 200) == -1 && uptime_ms() - start >= 150 &&
          net_tcp_close(conn) == 0 && net_tcp_send(conn, tx, 1) == -1;
     report("tcp echo", ok, "ok");
+
+    // 重传：让网络服务丢掉指定个数的 TCP 帧，连接必须靠重传恢复
+    long before = net_debug_drop(1, 0);                 // 丢掉我们的 SYN
+    start = uptime_ms();
+    conn = net_tcp_connect(echo_ip, 7, 5000);
+    ok = before >= 0 && conn >= 0 && uptime_ms() - start >= 250;    // 等了一个重传超时
+    net_debug_drop(1, 0);                               // 丢一个数据段
+    ok = ok && tcp_echo_round(conn, 1000, 1, 8000);
+    net_debug_drop(3, 0);                               // 一次发的三个段全丢
+    ok = ok && tcp_echo_round(conn, 4000, 2, 8000);
+    net_debug_drop(0, 1);                               // 丢一个收到的帧：对方的数据或确认
+    ok = ok && tcp_echo_round(conn, 1000, 3, 8000);
+    long after = net_debug_drop(0, 0);
+    ok = ok && after - before >= 3;                     // 至少 SYN、一个段、一批段各重传一次
+    report("tcp retransmission after lost frames", ok, "ok");
+
+    // 接收窗口：先发 12000 字节而不去读，回显的数据填满我们 8KB 的接收缓冲区，
+    // 窗口关闭；然后开始读，窗口重新打开，剩下的数据要能接着到
+    static char wtx[12000], wrx[12000];
+    for (size_t i = 0; i < sizeof(wtx); i++) {
+        wtx[i] = (char)(i * 13 + i / 199);
+    }
+    ok = conn >= 0 && net_tcp_send(conn, wtx, sizeof(wtx)) == (long)sizeof(wtx);
+    usleep(300000);
+    got = 0;
+    while (ok && got < sizeof(wrx)) {
+        long n = net_tcp_recv(conn, wrx + got, sizeof(wrx) - got, 5000);
+        if (n <= 0) {
+            ok = 0;
+            break;
+        }
+        got += (size_t)n;
+    }
+    ok = ok && memcmp(wtx, wrx, sizeof(wtx)) == 0 && net_tcp_close(conn) == 0;
+    report("tcp receive window closes and reopens", ok, "ok");
 }
 
 int main(int argc, char **argv) {

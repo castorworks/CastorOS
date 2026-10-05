@@ -83,15 +83,14 @@ so there is no disk image. init starts the modules and is the name server (`name
 `user/lib`). Resident modules are embedded into init the same way (`user/init/modules.S`):
 `user/uart` (privileged serial input driver), `user/blk` (privileged virtio-blk driver,
 protocol and client in `blk.h`), `user/net` (privileged virtio-net driver plus a small
-ARP/IPv4/ICMP/UDP/TCP stack with a DHCP client; TCP is active-open only; protocol and client
-in `net.h`), `user/ramfs` (in-memory file
+ARP/IPv4/ICMP/UDP/TCP stack with a DHCP client; protocol and client in `net.h`), `user/ramfs` (in-memory file
 service), `user/diskfs`
 (persistent file service on top of blk; files are addressed with a `disk:` prefix) and
 `user/sh` (command line). Both file services share the protocol in `fs.h` and the server
 skeleton in `fs_server.h`; virtio drivers share `virtio.h`; servers that take a shared buffer
 from each client use `clients.h`. Other programs (`user/selftest`, `user/ls`, `user/cat`,
 `user/cp`, `user/rm`, `user/echo`, `user/disk`, `user/ping`, `user/ifconfig`, `user/dns`,
-`user/http`, `user/hello`) go into the boot image: a ustar archive of `user/bootfs/*` plus the programs
+`user/http`, `user/echod`, `user/hello`) go into the boot image: a ustar archive of `user/bootfs/*` plus the programs
 in `BOOT_PROGRAMS` (`user/ramfs/Makefile`), embedded in ramfs and unpacked at startup. sh
 runs them with fork + exec, and runs the `rc` file (which starts `selftest`) at boot.
 To add a program, create `user/<name>/` and add it to `BOOT_PROGRAMS`. Every user program's
@@ -139,7 +138,7 @@ CastorOS/
 │   ├── ramfs/              # In-memory file service (unprivileged module), holds the boot image
 │   ├── sh/                 # Command line (unprivileged module): runs programs with arguments
 │   ├── selftest/           # User-space self-checks, in the boot image, run from rc at boot
-│   ├── ls/ cat/ cp/ rm/ echo/ disk/ ping/ ifconfig/ dns/ http/ hello/   # Small programs in the boot image
+│   ├── ls/ cat/ cp/ rm/ echo/ disk/ ping/ ifconfig/ dns/ http/ echod/ hello/   # Programs in the boot image
 │   ├── bootfs/             # Static files for the boot image (rc, readme.txt)
 │   ├── program.mk          # Shared build rules for user programs
 │   └── linker/             # User linker scripts

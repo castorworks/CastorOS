@@ -208,6 +208,51 @@ int net_tcp_close(int conn) {
     return (int)net_request(&m);
 }
 
+int net_tcp_listen(uint16_t port) {
+    if (!net_connect()) {
+        return -1;
+    }
+    struct ipc_msg m = {};
+    m.label = NET_TCP_LISTEN;
+    m.data[0] = port;
+    return (int)net_request(&m);
+}
+
+int net_tcp_accept(int listener, uint32_t timeout_ms, uint32_t *peer_ip, uint16_t *peer_port) {
+    if (!net_connect()) {
+        return -1;
+    }
+    struct ipc_msg m = {};
+    m.label = NET_TCP_ACCEPT;
+    m.data[0] = (uint64_t)listener;
+    m.data[1] = timeout_ms;
+    long conn = net_request(&m);
+    if (conn < 0) {
+        return -1;
+    }
+    if (peer_ip) {
+        *peer_ip = (uint32_t)m.data[1];
+    }
+    if (peer_port) {
+        *peer_port = (uint16_t)m.data[2];
+    }
+    return (int)conn;
+}
+
+long net_debug_drop(uint32_t drop_tx, uint32_t drop_rx) {
+    if (!net_find()) {
+        return -1;
+    }
+    struct ipc_msg m = {};
+    m.label = NET_DEBUG_DROP;
+    m.data[0] = drop_tx;
+    m.data[1] = drop_rx;
+    if (net_request(&m) != 0) {
+        return -1;
+    }
+    return (long)m.data[1];
+}
+
 // ---------------------------------------------------------------------------
 // 名字解析：向配置的 DNS 服务器发一个 A 记录查询
 // ---------------------------------------------------------------------------

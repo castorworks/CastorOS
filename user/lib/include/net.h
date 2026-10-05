@@ -6,7 +6,7 @@
 // 网络服务：协议和客户端接口。
 //
 // 服务进程以 "net" 登记（user/net：virtio-net 驱动加一个很小的协议栈，
-// 支持 ARP、IPv4、ICMP 回显、UDP 和 TCP 的主动连接，启动时用 DHCP 获取地址）。IP 地址在这套接口里都是主机字节序的
+// 支持 ARP、IPv4、ICMP 回显、UDP 和 TCP，启动时用 DHCP 获取地址）。IP 地址在这套接口里都是主机字节序的
 // 32 位整数，a.b.c.d 写成 NET_IP(a, b, c, d)。UDP 的数据经共享缓冲区传递。
 
 #define NET_SERVICE_NAME    "net"
@@ -36,7 +36,13 @@ enum {
                             //   发送缓冲区满时阻塞。应答 data[0]: 接受了多少字节（可能少于请求的）
     NET_TCP_RECV    = 12,   // data[0]: 连接号, data[1]: 最多要多少字节, data[2]: 超时（毫秒，0 = 不等待）。
                             //   应答 data[0]: 字节数（0 = 对方已关闭，没有更多数据），数据在缓冲区
-    NET_TCP_CLOSE   = 13,   // data[0]: 连接号。已经交给 send 的数据仍会发完
+    NET_TCP_CLOSE   = 13,   // data[0]: 连接号（或监听号）。已经交给 send 的数据仍会发完
+    NET_TCP_LISTEN  = 14,   // data[0]: 本地端口。应答 data[0]: 监听号
+    NET_TCP_ACCEPT  = 15,   // data[0]: 监听号, data[1]: 超时（毫秒，0 = 不等待）。阻塞到有连接进来；
+                            //   应答 data[0]: 连接号, data[1]: 对方 IP, data[2]: 对方端口
+
+    NET_DEBUG_DROP  = 20,   // 调试：data[0] / data[1]: 丢掉接下来发出 / 收到的这么多个 TCP 帧。
+                            //   应答 data[1]: TCP 至今重传的次数
 };
 
 struct net_info {
@@ -83,8 +89,23 @@ long net_tcp_send(int conn, const void *data, size_t len);
  */
 long net_tcp_recv(int conn, void *buf, size_t len, uint32_t timeout_ms);
 
-/** 关闭连接。已经发送的数据仍会送达 */
+/** 关闭连接（或监听）。已经发送的数据仍会送达 */
 int net_tcp_close(int conn);
+
+/** 在本地端口 port 上监听。@return 监听号，端口已被占用或失败返回 -1 */
+int net_tcp_listen(uint16_t port);
+
+/**
+ * 接受一条进来的连接，最多等 timeout_ms 毫秒（0 = 不等待）。
+ * @return 连接号（之后用 send / recv / close），超时或失败返回 -1
+ */
+int net_tcp_accept(int listener, uint32_t timeout_ms, uint32_t *peer_ip, uint16_t *peer_port);
+
+/**
+ * 调试用：让网络服务丢掉接下来发出的 drop_tx 个、收到的 drop_rx 个 TCP 帧，用来验证重传。
+ * @return TCP 至今重传的次数，没有网络服务返回 -1
+ */
+long net_debug_drop(uint32_t drop_tx, uint32_t drop_rx);
 
 /**
  * 把主机名解析成 IPv4 地址（先当作 "a.b.c.d" 试，不是的话向配置的 DNS 服务器查询）。

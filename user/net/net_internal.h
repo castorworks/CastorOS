@@ -36,7 +36,7 @@ void reply_client(int pid, uint32_t label, int64_t result, uint64_t d1, uint64_t
 
 // ---- tcp.cpp 提供 ----
 
-/** 收到一个 TCP 段。注意：发往本机的段会递归进来，处理中不能在发送之后再读 data */
+/** 收到一个 TCP 段 */
 void tcp_input(uint32_t src, uint32_t dst, const uint8_t *data, size_t len);
 
 /** 处理一个 NET_TCP_* 请求（自己负责应答，可能是之后才应答） */
@@ -44,6 +44,9 @@ void tcp_request(const struct ipc_msg *m);
 
 /** 定时器：重传、各种超时。@return 是否还有连接需要定时器 */
 bool tcp_tick(uint64_t now);
+
+/** 重传过多少次（调试/测试用） */
+extern uint32_t tcp_retransmits;
 
 /** 客户退出了：丢掉它的连接 */
 void tcp_drop_owner(int pid);
