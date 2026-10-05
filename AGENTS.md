@@ -162,6 +162,10 @@ CastorOS/
 - `src/include/hal/hal.h` - Unified interface for all architectures
 - `src/arch/$(ARCH)/hal.cpp` - Architecture-specific implementation
 - Use `hal_*` functions for portable code
+- Page tables: the walk, map/unmap/protect, and creating, cloning (COW) and destroying address
+  spaces are written once in `src/mm/pagetable.cpp`. Each architecture only describes its entry
+  format through the functions in `src/include/hal/pt.h` (implemented at the end of
+  `src/arch/<arch>/mm/*.cpp`). Do not add a per-architecture table walk; extend `pt.h` instead.
 - `src/mm/vmm.cpp` has no `#if ARCH_*`: address-space creation, cloning (COW), teardown, extending
   the kernel's direct mapping and the i686 kernel-mapping sync are `hal::Mmu` functions implemented
   per architecture. New architecture-dependent memory code goes behind a `hal::Mmu` function, not
