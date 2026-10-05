@@ -144,8 +144,19 @@ int Ipc::recv(uint32_t from, ipc_msg *msg) {
     InterruptGuard guard;
 
     // 待处理的设备中断优先于普通消息
-    if (from == IPC_ANY && UserIrq::take_pending(current, msg)) {
+    if ((from == IPC_ANY || from == IPC_FROM_KERNEL) && UserIrq::take_pending(current, msg)) {
         return 0;
+    }
+
+    if (from == IPC_FROM_KERNEL) {
+        // 只等内核消息：不看排队的发送者，由 notify() 唤醒
+        current->ipc_peer = IPC_FROM_KERNEL;
+        current->ipc_state = IPC_RECEIVING;
+        int result = wait_for_peer(current);
+        if (result == 0) {
+            *msg = current->ipc_buf;
+        }
+        return result;
     }
 
     // 已经有发送者在等：取走它的消息
@@ -185,7 +196,8 @@ void Ipc::notify(task_t *task) {
     InterruptGuard guard;
 
     if (task->state == TASK_BLOCKED && task->ipc_state == IPC_RECEIVING &&
-        task->ipc_peer == IPC_ANY && UserIrq::take_pending(task, &task->ipc_buf)) {
+        (task->ipc_peer == IPC_ANY || task->ipc_peer == IPC_FROM_KERNEL) &&
+        UserIrq::take_pending(task, &task->ipc_buf)) {
         finish_wait(task, 0);
     }
 }

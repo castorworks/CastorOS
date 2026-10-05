@@ -449,6 +449,40 @@ uintptr_t syscall::Mm::map_device(uint64_t phys, size_t length) {
     return vaddr;
 }
 
+/** 单次 DMA 分配的大小上限 */
+#define DMA_MAX_SIZE    ((size_t)(1024 * 1024))
+
+uintptr_t syscall::Mm::dma_alloc(size_t length, uint64_t *phys) {
+    task_t *current = kernel::Scheduler::get_current();
+    if (!current || !current->is_user_process || !phys || length == 0 || length > DMA_MAX_SIZE) {
+        return (uintptr_t)-1;
+    }
+    length = PAGE_ALIGN_UP(length);
+    size_t pages = length / PAGE_SIZE;
+
+    uintptr_t vaddr = find_free_vaddr(HAL_ADDR_SPACE_CURRENT, 0, length);
+    paddr_t base = vaddr ? mm::Pmm::alloc_contiguous(pages) : PADDR_INVALID;
+    if (base == PADDR_INVALID) {
+        return (uintptr_t)-1;
+    }
+
+    // 共享映射：fork 不会把它变成写时复制（设备只认这一批物理页）
+    const uint32_t flags = PAGE_PRESENT | PAGE_USER | PAGE_WRITE | PAGE_SHARED;
+    for (size_t i = 0; i < pages; i++) {
+        if (!mm::Vmm::map_page_in_directory(current->page_dir_phys, vaddr + i * PAGE_SIZE,
+                                            (uintptr_t)base + i * PAGE_SIZE, flags)) {
+            rollback_mappings(current->page_dir_phys, vaddr, vaddr + i * PAGE_SIZE);
+            for (size_t j = i; j < pages; j++) {
+                mm::Pmm::free_frame(base + j * PAGE_SIZE);
+            }
+            return (uintptr_t)-1;
+        }
+    }
+
+    *phys = (uint64_t)base;
+    return vaddr;
+}
+
 int syscall::Mm::grant(uint32_t pid, uintptr_t addr, size_t length) {
     task_t *current = kernel::Scheduler::get_current();
     task_t *target = kernel::Scheduler::get_by_pid(pid);

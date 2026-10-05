@@ -9,6 +9,7 @@
 #include <string.h>
 #include <names.h>
 #include <fs.h>
+#include <blk.h>
 
 static int failures = 0;
 
@@ -215,6 +216,32 @@ static void test_fs(void) {
     report("file service", ok, "ok");
 }
 
+static void test_block_device(void) {
+    // 驱动与我们同时启动，给它一点时间登记；没有磁盘时它会直接退出
+    for (int i = 0; i < 25 && name_lookup(BLK_SERVICE_NAME) == 0; i++) {
+        usleep(20000);
+    }
+    uint64_t sectors = blk_capacity();
+    if (sectors == 0) {
+        printf("selftest: block device: skipped (no disk)\n");
+        return;
+    }
+
+    // 在最后 16 个扇区上写一个图案再读回来（跨多个请求），然后恢复原来的内容
+    static char saved[16 * BLK_SECTOR_SIZE], out[16 * BLK_SECTOR_SIZE], in[16 * BLK_SECTOR_SIZE];
+    uint64_t start = sectors - 16;
+    for (size_t i = 0; i < sizeof(out); i++) {
+        out[i] = (char)(i * 13 + i / 97);
+    }
+    int ok = sectors >= 32 &&
+             blk_read(start, saved, 16) == 0 &&
+             blk_write(start, out, 16) == 0 &&
+             blk_read(start, in, 16) == 0 && memcmp(out, in, sizeof(out)) == 0 &&
+             blk_write(start, saved, 16) == 0 &&
+             blk_read(sectors, in, 1) == -1;        // 越界
+    report("block device", ok, "ok");
+}
+
 int main(int argc, char **argv) {
     // 命令行（或 rc）是带着程序名启动我们的
     report("program arguments", argc >= 1 && strcmp(argv[0], "selftest") == 0 && argv[argc] == NULL, "ok");
@@ -225,6 +252,7 @@ int main(int argc, char **argv) {
     test_shared_memory();
     test_names();
     test_fs();
+    test_block_device();
 
     if (failures == 0) {
         printf("selftest: all passed\n");

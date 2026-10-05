@@ -168,6 +168,10 @@ void *map_device(uintptr_t phys, size_t length) {
     return (void *)(uintptr_t)syscall2(SYS_MAP_DEVICE, (syscall_arg_t)phys, (syscall_arg_t)length);
 }
 
+void *dma_alloc(size_t length, uint64_t *phys) {
+    return (void *)(uintptr_t)syscall2(SYS_DMA_ALLOC, (syscall_arg_t)length, PTR_TO_ARG(phys));
+}
+
 int irq_claim(int irq) {
     return (int)syscall1(SYS_IRQ_CLAIM, (syscall_arg_t)irq);
 }

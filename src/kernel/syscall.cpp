@@ -277,6 +277,14 @@ static syscall_arg_t sys_map_device_wrapper(syscall_arg_t *frame, syscall_arg_t 
     return syscall::Mm::map_device((uint64_t)phys, (size_t)length);
 }
 
+static syscall_arg_t sys_dma_alloc_wrapper(syscall_arg_t *frame, syscall_arg_t length, syscall_arg_t phys_ptr,
+                                           syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p3; (void)p4; (void)p5;
+    if (!kernel::Scheduler::current_is_privileged()) return SYSCALL_FAIL;
+    if (!user_wr(phys_ptr, sizeof(uint64_t))) return SYSCALL_FAIL;
+    return syscall::Mm::dma_alloc((size_t)length, (uint64_t *)(uintptr_t)phys_ptr);
+}
+
 static syscall_arg_t sys_mem_grant_wrapper(syscall_arg_t *frame, syscall_arg_t pid, syscall_arg_t addr,
                                            syscall_arg_t length, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
@@ -357,6 +365,7 @@ void syscall_init(void) {
     syscall_table[SYS_IO_WRITE]      = sys_io_write_wrapper;
     syscall_table[SYS_MAP_DEVICE]    = sys_map_device_wrapper;
     syscall_table[SYS_MEM_GRANT]     = sys_mem_grant_wrapper;
+    syscall_table[SYS_DMA_ALLOC]     = sys_dma_alloc_wrapper;
     syscall_table[SYS_IRQ_CLAIM]     = sys_irq_claim_wrapper;
     syscall_table[SYS_IRQ_ACK]       = sys_irq_ack_wrapper;
     syscall_table[SYS_DROP_PRIVILEGE] = sys_drop_privilege_wrapper;

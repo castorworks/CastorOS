@@ -32,6 +32,7 @@ enum {
     SYS_IRQ_CLAIM       = 21,
     SYS_IRQ_ACK         = 22,
     SYS_DROP_PRIVILEGE  = 23,
+    SYS_DMA_ALLOC       = 24,
 };
 
 typedef uintptr_t syscall_arg_t;
@@ -105,6 +106,7 @@ ssize_t console_write(const void *buf, size_t count);
 // ============================================================================
 
 #define IPC_ANY         0
+#define IPC_FROM_KERNEL 0xFFFFFFFFu     // ipc_recv 的 from：只收内核发来的消息（设备中断）
 #define IPC_KERNEL      0       // 内核发来的消息的 sender
 // 最高位为 1 的 label 保留给内核：用户进程发不出，收到就说明内容是内核担保的
 #define IPC_LABEL_RESERVED  0x80000000u
@@ -143,6 +145,13 @@ int io_write(uintptr_t port, int width, uint32_t value);
  * @return 映射的地址；失败返回 MAP_FAILED
  */
 void *map_device(uintptr_t phys, size_t length);
+
+/**
+ * 分配一段物理上连续、已清零的内存用于 DMA：*phys 得到物理地址（交给设备），
+ * 返回值是它在自己地址空间里的地址。用 munmap 释放。
+ * @return 失败返回 MAP_FAILED
+ */
+void *dma_alloc(size_t length, uint64_t *phys);
 
 /**
  * 认领一条设备中断线。之后每次中断，内核屏蔽这条线并发来一条

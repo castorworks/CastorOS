@@ -200,6 +200,9 @@ void hal::Interrupt::mask_irq(uint32_t irq) {
 }
 
 void hal::Interrupt::unmask_irq(uint32_t irq) {
+    if (irq >= 8) {
+        irq_enable_line(2);     /* slave PIC interrupts arrive through the cascade line */
+    }
     irq_enable_line((uint8_t)irq);
 }
 

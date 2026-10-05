@@ -202,13 +202,32 @@ check: $(BOOT_IMAGE)
 # 运行 / 调试 / 测试（控制台是串口，接到终端）
 # ============================================================================
 
-QEMU_RUN = $(QEMU) $(QEMU_MACHINE) -kernel $(BOOT_IMAGE) -serial stdio -display none
+QEMU_BASE = $(QEMU) $(QEMU_MACHINE) -kernel $(BOOT_IMAGE) -serial stdio -display none
 
-run: $(BOOT_IMAGE)
+# virtio-blk 磁盘：x86 挂在 PCI 上，arm64 挂在 virtio-mmio 上
+ifeq ($(ARCH),arm64)
+    VIRTIO_BLK = virtio-blk-device
+else
+    VIRTIO_BLK = virtio-blk-pci
+endif
+qemu_disk = -drive file=$(1),format=raw,if=none,id=disk0 -device $(VIRTIO_BLK),drive=disk0
+
+# make run 用的磁盘：内容跨重启保留，三个架构共用，make clean 不删它
+DISK ?= disk.img
+DISK_SIZE_MB ?= 16
+# make test 用的磁盘：每次重新创建
+TEST_DISK = $(BUILD_DIR)/test-disk.img
+
+QEMU_RUN = $(QEMU_BASE) $(call qemu_disk,$(DISK))
+
+$(DISK):
+	dd if=/dev/zero of=$@ bs=1048576 count=$(DISK_SIZE_MB) 2>/dev/null
+
+run: $(BOOT_IMAGE) $(DISK)
 	$(QEMU_RUN)
 
 # 等待 GDB 连接 (target remote :1234)
-debug: $(BOOT_IMAGE)
+debug: $(BOOT_IMAGE) $(DISK)
 	$(QEMU_RUN) -s -S
 
 # 构建带内核测试的版本并运行。内核不会自己关机：到超时为止，完整日志写入
@@ -218,7 +237,8 @@ test:
 
 run-test: $(BOOT_IMAGE)
 	@echo "━━━ $(ARCH): running kernel tests (timeout $(TEST_TIMEOUT)s) ━━━"
-	-@$(TIMEOUT_CMD) $(TEST_TIMEOUT) $(QEMU_RUN) < /dev/null > $(BUILD_DIR)/test.log 2>&1
+	@dd if=/dev/zero of=$(TEST_DISK) bs=1048576 count=4 2>/dev/null
+	-@$(TIMEOUT_CMD) $(TEST_TIMEOUT) $(QEMU_BASE) $(call qemu_disk,$(TEST_DISK)) < /dev/null > $(BUILD_DIR)/test.log 2>&1
 	@awk 'function num(key,  s) { if (!match($$0, key ": *[0-9]+")) return 0; \
 	         s = substr($$0, RSTART, RLENGTH); sub(/.*: */, "", s); return s + 0 } \
 	     { t += num("Total tests"); p += num("Passed tests"); f += num("Failed tests") } \

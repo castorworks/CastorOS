@@ -186,6 +186,14 @@ public:
     static uint32_t frame_ref_inc(paddr_t frame);
 
     /**
+     * @brief 分配 count 个物理上连续的页帧（清零，每帧引用计数为 1）
+     *
+     * 给需要把物理地址交给设备的驱动用（DMA）。逐帧用 free_frame 释放。
+     * @return 起始物理地址，失败返回 PADDR_INVALID
+     */
+    static paddr_t alloc_contiguous(size_t count);
+
+    /**
      * @brief 又多了一个映射指向 frame：是 PMM 管理的帧就增加引用计数
      *
      * 与 frame_ref_inc 的区别：frame 可以是物理内存范围之外的设备内存，

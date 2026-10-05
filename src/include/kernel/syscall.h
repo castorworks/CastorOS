@@ -47,6 +47,7 @@ enum {
     SYS_IRQ_CLAIM       = 21,  // irq_claim(irq)：中断以 IPC 消息的形式投递（见 kernel/user_irq.h）
     SYS_IRQ_ACK         = 22,  // irq_ack(irq)：处理完毕，重新打开中断线
     SYS_DROP_PRIVILEGE  = 23,  // drop_privilege()：放弃特权，不可恢复
+    SYS_DMA_ALLOC       = 24,  // dma_alloc(len, phys*)：物理连续的内存，返回虚拟地址并告知物理地址
 
     SYS_MAX
 };

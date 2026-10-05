@@ -1172,6 +1172,42 @@ uint32_t mm::Pmm::frame_ref_inc(paddr_t frame) {
     return new_count;
 }
 
+paddr_t mm::Pmm::alloc_contiguous(size_t count) {
+    if (count == 0) {
+        return PADDR_INVALID;
+    }
+
+    sync::SpinlockIrqGuard guard(pmm_lock);
+
+    // 找一段连续的空闲帧（跳过受保护的帧）
+    pfn_t run_start = 0;
+    size_t run = 0;
+    for (pfn_t i = 1; i < total_frames && run < count; i++) {
+        if (test_frame(i) || find_protected_frame_unsafe(PFN_TO_PADDR(i))) {
+            run = 0;
+            continue;
+        }
+        if (run == 0) {
+            run_start = i;
+        }
+        run++;
+    }
+    if (run < count) {
+        return PADDR_INVALID;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        set_frame(run_start + i);
+        frame_refcount[run_start + i] = 1;
+        pmm_info.free_frames--;
+        pmm_info.used_frames++;
+    }
+
+    paddr_t addr = PFN_TO_PADDR(run_start);
+    memset((void *)PHYS_TO_VIRT((uintptr_t)addr), 0, count * PAGE_SIZE);
+    return addr;
+}
+
 void mm::Pmm::frame_ref_share(paddr_t frame) {
     if (PADDR_TO_PFN(frame) < total_frames) {
         mm::Pmm::frame_ref_inc(frame);

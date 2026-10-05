@@ -24,3 +24,6 @@ Thumbs.db
 tmp/
 mnt/
 .cache/
+
+# make run 的磁盘镜像
+disk.img

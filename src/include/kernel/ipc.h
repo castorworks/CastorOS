@@ -17,6 +17,9 @@
 /** recv 的 from 参数：接收任何进程发来的消息 */
 #define IPC_ANY         0
 
+/** recv 的 from 参数：只接收内核发来的消息（设备中断），普通进程的消息留着不取 */
+#define IPC_FROM_KERNEL 0xFFFFFFFFu
+
 /** 内核发来的消息的 sender（PID 0 是 idle，不会是真正的发送者） */
 #define IPC_KERNEL      0
 

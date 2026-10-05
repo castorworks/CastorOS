@@ -67,6 +67,14 @@ public:
     static uintptr_t map_device(uint64_t phys, size_t length);
 
     /**
+     * 分配一段物理上连续的内存并映射进当前进程（调用者已确认是特权进程），
+     * 供驱动做 DMA：驱动把物理地址交给设备，自己通过返回的虚拟地址读写
+     * @param phys 返回起始物理地址
+     * @return 映射的虚拟地址，失败返回 (uintptr_t)-1
+     */
+    static uintptr_t dma_alloc(size_t length, uint64_t *phys);
+
+    /**
      * 把当前进程的 [addr, addr+length) 共享给进程 pid：同一批物理页同时映射在
      * 两个进程里，地址由内核在对方的 mmap 区域里选择，并以一条 IPC_LABEL_GRANT
      * 消息告诉对方（阻塞到对方收下这条消息为止）
