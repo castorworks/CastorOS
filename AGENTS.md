@@ -90,7 +90,7 @@ service), `user/diskfs`
 skeleton in `fs_server.h`; virtio drivers share `virtio.h`; servers that take a shared buffer
 from each client use `clients.h`. Other programs (`user/selftest`, `user/ls`, `user/cat`,
 `user/cp`, `user/rm`, `user/echo`, `user/disk`, `user/ping`, `user/ifconfig`, `user/dns`,
-`user/http`, `user/echod`, `user/hello`) go into the boot image: a ustar archive of `user/bootfs/*` plus the programs
+`user/http`, `user/echod`, `user/sleep`, `user/hello`) go into the boot image: a ustar archive of `user/bootfs/*` plus the programs
 in `BOOT_PROGRAMS` (`user/ramfs/Makefile`), embedded in ramfs and unpacked at startup. sh
 runs them with fork + exec, and runs the `rc` file (which starts `selftest`) at boot.
 To add a program, create `user/<name>/` and add it to `BOOT_PROGRAMS`. Every user program's
@@ -136,7 +136,7 @@ CastorOS/
 │   ├── net/                # Network service (privileged module): virtio-net + ARP/IPv4/ICMP/UDP/TCP
 │   ├── diskfs/             # Persistent file service on the block device (unprivileged module)
 │   ├── ramfs/              # In-memory file service (unprivileged module), holds the boot image
-│   ├── sh/                 # Command line (unprivileged module): runs programs with arguments
+│   ├── sh/                 # Command line (unprivileged module): runs programs, background jobs, Ctrl-C
 │   ├── selftest/           # User-space self-checks, in the boot image, run from rc at boot
 │   ├── ls/ cat/ cp/ rm/ echo/ disk/ ping/ ifconfig/ dns/ http/ echod/ hello/   # Programs in the boot image
 │   ├── bootfs/             # Static files for the boot image (rc, readme.txt)
@@ -214,7 +214,8 @@ make test TEST_TIMEOUT=300     # 机器很忙时放宽上限（默认 180 秒）
 #          -netdev user,id=net0,guestfwd=tcp:10.0.2.100:7-cmd:cat -device virtio-net-pci,netdev=net0
 #   arm64: 同上，设备名换成 virtio-blk-device / virtio-net-device
 # 控制台是串口；向 QEMU 的标准输入写入的内容经 uart 驱动送到 sh
-# （help、write <file> <text> 是内置命令；其余如 ls、cat <file>、echo <words> 是程序）
+# （help、jobs、kill <pid>、write <file> <text> 是内置命令；其余如 ls、cat <file> 是程序；
+#   行尾加 & 后台运行，Ctrl-C（0x03）终止前台程序）
 timeout 20 qemu-system-i386 -kernel build/i686/castor.bin -serial stdio -display none
 timeout 20 qemu-system-x86_64 -kernel build/x86_64/castor32.elf -serial stdio -display none
 timeout 20 qemu-system-aarch64 -M virt -cpu cortex-a72 -kernel build/arm64/castor.bin -serial stdio -display none

@@ -99,6 +99,7 @@ static uint32_t rx_head = 0;    // 下一个写入位置
 static uint32_t rx_tail = 0;    // 下一个读取位置
 
 static int waiting_reader = 0;  // 在等输入的读者 PID，0 表示没有
+static uint64_t waiting_deadline = 0;   // 它最晚等到什么时候（开机以来的毫秒数），0 表示一直等
 
 static void drain_hw(void) {
     hw_irq_clear();
@@ -157,13 +158,16 @@ int main() {
                 drain_hw();
                 irq_ack(UART_IRQ);
             }
+            // IPC_LABEL_TIMER：下面统一检查读者是否超时
         } else if (m.label == UART_READ) {
-            if (waiting_reader != 0) {
+            // 上一个读者如果已经不在了（被 kill 了），它的位置让出来
+            if (waiting_reader != 0 && waiting_reader != (int)m.sender && kill(waiting_reader, 0) == 0) {
                 struct ipc_msg busy = {};
                 busy.label = UART_READ;
                 ipc_reply(m.sender, &busy);
             } else {
                 waiting_reader = (int)m.sender;
+                waiting_deadline = m.data[0] ? uptime_ms() + m.data[0] : 0;
             }
         } else {
             continue;   // 不认识的请求：不应答
@@ -171,6 +175,19 @@ int main() {
 
         if (waiting_reader != 0 && reply_reader(waiting_reader)) {
             waiting_reader = 0;
+        }
+
+        // 读者带着超时在等：到时间了就告诉它没有输入，否则让定时器到时候叫醒我们
+        if (waiting_reader != 0 && waiting_deadline != 0) {
+            uint64_t now = uptime_ms();
+            if (now >= waiting_deadline) {
+                struct ipc_msg none = {};
+                none.label = UART_READ;
+                ipc_reply(waiting_reader, &none);
+                waiting_reader = 0;
+            } else {
+                timer_set((uint32_t)(waiting_deadline - now));
+            }
         }
     }
 }

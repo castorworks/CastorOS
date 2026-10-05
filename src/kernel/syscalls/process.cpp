@@ -759,7 +759,7 @@ uint32_t syscall::Process::kill(uint32_t pid, uint32_t signal) {
     // 非特权进程只能向自己和自己的子孙进程发信号
     if (!kernel::Scheduler::current_is_privileged() && target != current &&
         !kernel::Scheduler::is_descendant(target, current)) {
-        LOG_WARN_MSG("syscall::Process::kill: PID %u may not signal PID %u\n", current->pid, pid);
+        LOG_DEBUG_MSG("syscall::Process::kill: PID %u may not signal PID %u\n", current->pid, pid);
         return (uint32_t)-1;
     }
 

@@ -742,15 +742,19 @@ void tcp_drop_owner(int pid) {
     }
 }
 
-static void do_connect(int pid, uint32_t ip, uint16_t port, uint32_t timeout_ms) {
-    static uint16_t next_port = EPHEMERAL_BASE;
-
-    // 已经退出的进程留下的连接先收回来
+/** 已经退出的进程（比如被 Ctrl-C 杀掉的）留下的连接和监听收回来 */
+static void reclaim_dead_owners(void) {
     for (int i = 0; i < MAX_CONNS; i++) {
         if (conns[i].state != TCP_FREE && kill(conns[i].owner, 0) != 0) {
             tcp_drop_owner(conns[i].owner);
         }
     }
+}
+
+static void do_connect(int pid, uint32_t ip, uint16_t port, uint32_t timeout_ms) {
+    static uint16_t next_port = EPHEMERAL_BASE;
+
+    reclaim_dead_owners();
 
     struct tcp_conn *c = NULL;
     for (int i = 0; i < MAX_CONNS && !c; i++) {
@@ -794,6 +798,7 @@ void tcp_request(const struct ipc_msg *m) {
     }
 
     if (m->label == NET_TCP_LISTEN) {
+        reclaim_dead_owners();
         uint16_t port = (uint16_t)m->data[0];
         struct tcp_conn *l = NULL;
         for (int i = 0; i < MAX_CONNS; i++) {
