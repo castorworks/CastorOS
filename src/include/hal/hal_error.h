@@ -33,35 +33,11 @@ typedef enum hal_error {
  * @param err hal_error_t 返回值
  * @return 如果操作成功返回非零值
  */
-#define HAL_SUCCESS(err) ((err) == HAL_OK)
 
 /**
  * @brief 检查 HAL 操作是否失败
  * @param err hal_error_t 返回值
  * @return 如果操作失败返回非零值
  */
-#define HAL_FAILED(err) ((err) != HAL_OK)
-
-/**
- * @brief 获取错误码的字符串描述
- * @param err 错误码
- * @return 错误描述字符串
- */
-static inline const char *hal_error_string(hal_error_t err) {
-    switch (err) {
-        case HAL_OK:                return "Success";
-        case HAL_ERR_INVALID_PARAM: return "Invalid parameter";
-        case HAL_ERR_NO_MEMORY:     return "Out of memory";
-        case HAL_ERR_NOT_SUPPORTED: return "Operation not supported";
-        case HAL_ERR_NOT_FOUND:     return "Resource not found";
-        case HAL_ERR_BUSY:          return "Resource busy";
-        case HAL_ERR_TIMEOUT:       return "Operation timed out";
-        case HAL_ERR_IO:            return "I/O error";
-        case HAL_ERR_PERMISSION:    return "Permission denied";
-        case HAL_ERR_ALREADY_EXISTS:return "Resource already exists";
-        case HAL_ERR_NOT_INITIALIZED: return "Not initialized";
-        default:                    return "Unknown error";
-    }
-}
 
 #endif /* _HAL_HAL_ERROR_H_ */

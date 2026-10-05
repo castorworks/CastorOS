@@ -3,7 +3,6 @@
 
 #include <types.h>
 
-#define ARM_TIMER_PHYS_IRQ      30  /**< Physical timer IRQ (PPI 14) */
 
 namespace drivers {
 

@@ -13,18 +13,13 @@
 #include <hal/hal.h>
 #include <mm/vmm.h>
 #include <mm/pmm.h>
-#include <mm/pgtable.h>
+#include <mm/vmm.h>
 #include <kernel/task.h>
 #include <kernel/elf.h>
 #include <lib/kprintf.h>
 #include <lib/string.h>
 
 // Include architecture-specific context headers for additional types
-#if defined(ARCH_X86_64)
-#include <context64.h>
-#elif defined(ARCH_ARM64)
-#include "../arch/arm64/include/context.h"
-#endif
 
 // Test virtual addresses in user space
 #define FORK_TEST_VADDR_BASE  (KTEST_FREE_VADDR_BASE + 0x10000000)

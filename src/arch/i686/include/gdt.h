@@ -14,7 +14,6 @@
 #define GDT_KERNEL_DATA_SEGMENT  0x10
 #define GDT_USER_CODE_SEGMENT    0x18
 #define GDT_USER_DATA_SEGMENT    0x20
-#define GDT_TSS_SEGMENT          0x28
 
 // ---------------------------------------------------------------------------
 // GDT Entry (8 bytes, packed)
@@ -76,10 +75,7 @@ typedef struct tss_entry {
 #define GDT_ACCESS_PRIV_RING3    0x60
 #define GDT_ACCESS_CODE_DATA     0x10
 #define GDT_ACCESS_EXECUTABLE    0x08
-#define GDT_ACCESS_DIRECTION     0x04
 #define GDT_ACCESS_READABLE      0x02
-#define GDT_ACCESS_WRITABLE      0x02
-#define GDT_ACCESS_ACCESSED      0x01
 
 // TSS Access 字节（0x89 = 10001001b = Present + System + 32-bit TSS）
 #define GDT_ACCESS_TSS           0x89
@@ -97,9 +93,6 @@ typedef struct tss_entry {
 /* 一次性初始化 GDT 和 TSS */
 void gdt_init_all_with_tss(uint32_t kernel_stack, uint16_t kernel_ss);
 
-// 添加 TSS 描述符
-void gdt_add_tss_descriptor(uint32_t base, uint32_t limit);
-
 // TSS 相关
 void tss_init(uint32_t kernel_stack, uint32_t kernel_ss);
 
@@ -110,6 +103,4 @@ uint32_t tss_get_size(void);
 
 // 汇编接口
 extern "C" void gdt_flush(uint32_t gdt_ptr);
-extern void tss_flush(uint16_t selector);
-
 #endif // _ARCH_I686_GDT_H_

@@ -70,7 +70,6 @@ void irq64_enable_line(uint8_t irq);
 /* Compatibility wrappers */
 #define irq_init() irq64_init()
 #define irq_register_handler(irq, h) irq64_register_handler(irq, h)
-#define irq_add_shared_handler(irq, h) irq64_add_shared_handler(irq, h)
 #define irq_has_handler(irq) irq64_has_handler(irq)
 #define irq_disable_line(irq) irq64_disable_line(irq)
 #define irq_enable_line(irq) irq64_enable_line(irq)

@@ -81,11 +81,6 @@ typedef long long           arch_ssize_t;
 /** Maximum physical address (48-bit physical addressing) */
 #define PHYS_ADDR_MAX           0x0000FFFFFFFFFFFFULL
 
-/** Maximum canonical virtual address (high) */
-#define VIRT_ADDR_MAX_HIGH      0xFFFFFFFFFFFFFFFFULL
-
-/** Maximum canonical virtual address (low) */
-#define VIRT_ADDR_MAX_LOW       0x00007FFFFFFFFFFFULL
 
 /* ============================================================================
  * Register Sizes
@@ -103,13 +98,6 @@ typedef long long           arch_ssize_t;
 
 /** Required stack alignment (16 bytes for ABI compliance) */
 #define STACK_ALIGNMENT         16
-
-/* ============================================================================
- * x86_64 Specific Constants
- * ========================================================================== */
-
-/** No-Execute bit position in page table entry */
-#define PTE_NX_BIT              63
 
 /* ============================================================================
  * Context Structure

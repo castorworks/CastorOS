@@ -32,16 +32,12 @@
  *   SYSRET SS = 0x10 + 8 | 3 = 0x1B (User Data at 0x18)
  * ========================================================================== */
 
-#define GDT64_NULL_SEGMENT          0x00
 #define GDT64_KERNEL_CODE_SEGMENT   0x08    /* Index 1 */
 #define GDT64_KERNEL_DATA_SEGMENT   0x10    /* Index 2 */
 #define GDT64_USER_DATA_SEGMENT     0x18    /* Index 3, RPL=3 -> 0x1B (for SYSRET SS) */
 #define GDT64_USER_CODE_SEGMENT     0x20    /* Index 4, RPL=3 -> 0x23 (for SYSRET CS) */
 #define GDT64_TSS_SEGMENT           0x28    /* Index 5 (16 bytes, spans 5-6) */
 
-/* User mode selectors with RPL=3 */
-#define GDT64_USER_CODE_SELECTOR    (GDT64_USER_CODE_SEGMENT | 3)
-#define GDT64_USER_DATA_SELECTOR    (GDT64_USER_DATA_SEGMENT | 3)
 
 /* Compatibility macros for generic kernel code */
 #define GDT_KERNEL_CODE_SEGMENT     GDT64_KERNEL_CODE_SEGMENT
@@ -150,24 +146,18 @@ typedef struct gdt64_ptr {
 #define GDT64_ACCESS_PRIV_RING3     0x60    /* Ring 3 (user) */
 #define GDT64_ACCESS_CODE_DATA      0x10    /* Code/Data segment (not system) */
 #define GDT64_ACCESS_EXECUTABLE     0x08    /* Executable (code segment) */
-#define GDT64_ACCESS_DIRECTION      0x04    /* Direction/Conforming */
 #define GDT64_ACCESS_READABLE       0x02    /* Readable (code) / Writable (data) */
-#define GDT64_ACCESS_ACCESSED       0x01    /* Accessed */
 
 /* TSS Access byte: Present + 64-bit TSS Available (type = 0x9) */
 #define GDT64_ACCESS_TSS            0x89
 
-/* TSS Access byte when busy: Present + 64-bit TSS Busy (type = 0xB) */
-#define GDT64_ACCESS_TSS_BUSY       0x8B
 
 /* ============================================================================
  * Flags (upper 4 bits of flags_limit_high)
  * ========================================================================== */
 
 #define GDT64_FLAG_GRANULARITY      0x80    /* 4KB granularity (G bit) */
-#define GDT64_FLAG_SIZE_32          0x40    /* 32-bit segment (D bit) - must be 0 for 64-bit code */
 #define GDT64_FLAG_LONG_MODE        0x20    /* 64-bit code segment (L bit) */
-#define GDT64_FLAG_AVAILABLE        0x10    /* Available for system use (AVL bit) */
 
 /* ============================================================================
  * API Functions

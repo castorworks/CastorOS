@@ -39,14 +39,12 @@ typedef enum vmm_error {
  * @param err vmm_error_t 返回值
  * @return 如果操作成功返回非零值
  */
-#define VMM_SUCCESS(err) ((err) == VMM_OK)
 
 /**
  * @brief 检查 VMM 操作是否失败
  * @param err vmm_error_t 返回值
  * @return 如果操作失败返回非零值
  */
-#define VMM_FAILED(err) ((err) != VMM_OK)
 
 /** @brief 页存在标志 */
 #define PAGE_PRESENT    0x001
@@ -58,8 +56,6 @@ typedef enum vmm_error {
 #define PAGE_WRITE_THROUGH 0x008
 /** @brief 禁用缓存标志 */
 #define PAGE_CACHE_DISABLE 0x010
-/** @brief PAT 标志（用于页表项）*/
-#define PAGE_PAT        0x080
 /** @brief 页可执行标志 */
 #define PAGE_EXEC       0x100
 

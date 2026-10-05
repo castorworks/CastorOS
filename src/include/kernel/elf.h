@@ -10,8 +10,6 @@
  * 支持 32 位 i386 和 64 位 x86_64 ELF 格式
  */
 
-/* ELF 魔数 */
-#define ELF_MAGIC 0x464C457F  // "\x7FELF"
 
 /* ELF 类型 */
 #define ELF_CLASS_32    1  // 32-bit
@@ -19,14 +17,8 @@
 
 /* 数据编码 */
 #define ELF_DATA_LSB    1  // 小端
-#define ELF_DATA_MSB    2  // 大端
 
-/* 目标文件类型 */
-#define ET_NONE         0  // 未知类型
-#define ET_REL          1  // 可重定位文件
 #define ET_EXEC         2  // 可执行文件
-#define ET_DYN          3  // 共享目标文件
-#define ET_CORE         4  // Core 文件
 
 /* 机器类型 */
 #define EM_386          3   // Intel 80386
@@ -36,15 +28,7 @@
 /* 版本 */
 #define EV_CURRENT      1  // 当前版本
 
-/* 段类型 */
-#define PT_NULL         0  // 未使用
 #define PT_LOAD         1  // 可加载段
-#define PT_DYNAMIC      2  // 动态链接信息
-#define PT_INTERP       3  // 解释器路径
-#define PT_NOTE         4  // 辅助信息
-#define PT_SHLIB        5  // 保留
-#define PT_PHDR         6  // 程序头表
-#define PT_TLS          7  // 线程局部存储
 
 /* 段标志 */
 #define PF_X            0x1  // 可执行

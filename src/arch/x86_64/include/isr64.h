@@ -166,10 +166,5 @@ static inline gpf_info_t parse_gpf_error(uint64_t err_code) {
     return info;
 }
 
-/* Compatibility wrappers */
-#define isr_get_interrupt_count(n) isr64_get_interrupt_count(n)
-#define isr_get_total_interrupt_count() isr64_get_total_interrupt_count()
-#define isr_reset_interrupt_counts() isr64_reset_interrupt_counts()
-#define isr_print_statistics() isr64_print_statistics()
 
 #endif /* _ARCH_X86_64_ISR64_H_ */

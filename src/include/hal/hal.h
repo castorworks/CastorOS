@@ -46,8 +46,6 @@ typedef void (*hal_interrupt_handler_t)(void *data);
 #define HAL_PAGE_COW        (1 << 5)   /**< Copy-on-Write flag */
 #define HAL_PAGE_DIRTY      (1 << 6)   /**< Page has been modified */
 #define HAL_PAGE_ACCESSED   (1 << 7)   /**< Page has been accessed */
-#define HAL_PAGE_WRITECOMB  (1 << 8)   /**< Write-combining memory type */
-#define HAL_PAGE_HUGE       (1 << 9)   /**< Huge page (2MB on x86_64, 2MB block on ARM64) */
 #define HAL_PAGE_SHARED     (1 << 10)  /**< Shared mapping: fork shares the frame instead of making it COW */
 
 /**
@@ -83,11 +81,6 @@ typedef struct hal_page_fault_info {
     uint32_t raw_error;     /**< Architecture-specific raw error code */
 } hal_page_fault_info_t;
 
-/** @brief Huge page size (2MB) */
-#define HAL_HUGE_PAGE_SIZE      (2 * 1024 * 1024)
-
-/** @brief Huge page alignment mask */
-#define HAL_HUGE_PAGE_MASK      (~((vaddr_t)HAL_HUGE_PAGE_SIZE - 1))
 
 /**
  * @brief System call handler function type
@@ -157,9 +150,6 @@ static inline void hal_instruction_barrier(void) {
 #endif
 }
 
-#if defined(ARCH_I686) || defined(ARCH_X86_64)
-
-#endif /* ARCH_I686 || ARCH_X86_64 */
 
 /**
  * @brief Get architecture name string
@@ -515,14 +505,6 @@ public:
      * @deprecated Use hal_mmu_current_space() instead
      */
     static paddr_t get_current_page_table();
-
-    /**
-     * @brief Create a new page table
-     * 
-     * @return Physical address of the new page table, or PADDR_INVALID on failure
-     * @deprecated Use hal_mmu_create_space() instead
-     */
-    static paddr_t create_page_table();
 
 };
 

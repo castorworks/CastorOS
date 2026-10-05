@@ -18,7 +18,7 @@
 #include <tests/ktest.h>
 #include <tests/test_module.h>
 #include <hal/hal.h>
-#include <mm/pgtable.h>
+#include <mm/vmm.h>
 #include <mm/vmm.h>
 #include <mm/pmm.h>
 #include <lib/kprintf.h>
@@ -168,52 +168,6 @@ TEST_CASE(test_cow_write_mutual_exclusion) {
     hal::Mmu::unmap(HAL_ADDR_SPACE_CURRENT, test_vaddr);
     hal::Mmu::flush_tlb(test_vaddr);
     mm::Pmm::free_frame(frame);
-}
-
-/**
- * Test: COW flag roundtrip through PTE macros
- * 
- * PTE_IS_COW macro SHALL return true for PTEs with COW flag,
- * and false for PTEs without COW flag.
- */
-TEST_CASE(test_cow_pte_macro_roundtrip) {
-    paddr_t addr = 0x1000;  // Page-aligned address
-    
-    // Test PTE with COW flag
-    pte_t pte_with_cow = MAKE_PTE(addr, PTE_FLAG_PRESENT | PTE_FLAG_COW);
-    ASSERT_TRUE(PTE_IS_COW(pte_with_cow));
-    
-    // Test PTE without COW flag
-    pte_t pte_without_cow = MAKE_PTE(addr, PTE_FLAG_PRESENT | PTE_FLAG_WRITE);
-    ASSERT_FALSE(PTE_IS_COW(pte_without_cow));
-    
-    // Test PTE with multiple flags including COW
-    pte_t pte_multi_flags = MAKE_PTE(addr, PTE_FLAG_PRESENT | PTE_FLAG_USER | 
-                                           PTE_FLAG_COW | PTE_FLAG_ACCESSED);
-    ASSERT_TRUE(PTE_IS_COW(pte_multi_flags));
-    
-    // Test that COW flag is preserved through MAKE_PTE
-    uint32_t extracted_flags = PTE_FLAGS(pte_with_cow);
-    ASSERT_TRUE((extracted_flags & PTE_FLAG_COW) != 0);
-}
-
-/**
- * Test: HAL_PAGE_COW maps to correct architecture-specific flag
- * 
- * Verifies that the HAL_PAGE_COW flag is correctly defined:
- *   - i686: bit 9 (0x200)
- *   - x86_64: bit 9 (0x200)
- *   - ARM64: bit 56 (software bit)
- */
-TEST_CASE(test_cow_hal_flag_value) {
-    // Verify HAL_PAGE_COW is defined correctly
-    ASSERT_EQ_U(HAL_PAGE_COW, (1 << 5));
-    
-    // Verify PTE_FLAG_COW is defined correctly
-    ASSERT_EQ_U(PTE_FLAG_COW, (1 << 9));
-    
-    // The actual architecture-specific mapping is tested through
-    // the hal::Mmu::map/query roundtrip tests above
 }
 
 /**
@@ -503,8 +457,6 @@ TEST_SUITE(cow_flag_tests) {
     RUN_TEST(test_cow_flag_set_query);
     RUN_TEST(test_cow_flag_clear);
     RUN_TEST(test_cow_write_mutual_exclusion);
-    RUN_TEST(test_cow_pte_macro_roundtrip);
-    RUN_TEST(test_cow_hal_flag_value);
     RUN_TEST(test_cow_multiple_pages);
 }
 

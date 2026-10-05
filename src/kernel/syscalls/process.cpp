@@ -10,7 +10,6 @@
 #include <kernel/interrupt.h>
 #include <hal/hal.h>
 #include <hal/user_context.h>
-#include <hal/pgtable.h>
 #include <mm/vmm.h>
 #include <mm/pmm.h>
 #include <mm/heap.h>

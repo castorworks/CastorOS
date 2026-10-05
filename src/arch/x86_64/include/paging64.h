@@ -27,12 +27,10 @@ typedef uint64_t pml4e64_t;
 #define PTE64_PRESENT       (1ULL << 0)   /**< 页存在 */
 #define PTE64_WRITE         (1ULL << 1)   /**< 可写 */
 #define PTE64_USER          (1ULL << 2)   /**< 用户可访问 */
-#define PTE64_WRITE_THROUGH (1ULL << 3)   /**< 写穿透 */
 #define PTE64_CACHE_DISABLE (1ULL << 4)   /**< 禁用缓存 */
 #define PTE64_ACCESSED      (1ULL << 5)   /**< 已访问 */
 #define PTE64_DIRTY         (1ULL << 6)   /**< 已修改 */
 #define PTE64_HUGE          (1ULL << 7)   /**< 大页 (2MB/1GB) */
-#define PTE64_GLOBAL        (1ULL << 8)   /**< 全局页 */
 #define PTE64_COW           (1ULL << 9)   /**< COW 标志 (Available bit) */
 #define PTE64_NX            (1ULL << 63)  /**< 不可执行 */
 
@@ -81,47 +79,6 @@ typedef struct {
 typedef struct {
     pte64_t entries[PTE64_ENTRIES];
 } __attribute__((aligned(PAGE_SIZE))) pt64_t;
-
-/* ============================================================================
- * 地址分解宏
- * ========================================================================== */
-
-/** @brief 获取 PML4 索引 (bits 47:39) */
-#define PML4_INDEX(virt)    (((uint64_t)(virt) >> 39) & 0x1FF)
-
-/** @brief 获取 PDPT 索引 (bits 38:30) */
-#define PDPT_INDEX(virt)    (((uint64_t)(virt) >> 30) & 0x1FF)
-
-/** @brief 获取 PD 索引 (bits 29:21) */
-#define PD_INDEX(virt)      (((uint64_t)(virt) >> 21) & 0x1FF)
-
-/** @brief 获取 PT 索引 (bits 20:12) */
-#define PT_INDEX(virt)      (((uint64_t)(virt) >> 12) & 0x1FF)
-
-/** @brief 获取页内偏移 (bits 11:0) */
-#define PAGE_OFFSET(virt)   ((uint64_t)(virt) & 0xFFF)
-
-/* ============================================================================
- * 页表项操作宏
- * ========================================================================== */
-
-/** @brief 从页表项中提取物理地址 */
-#define PTE64_GET_FRAME(entry)      ((entry) & PTE64_ADDR_MASK)
-
-/** @brief 检查页表项是否存在 */
-#define PTE64_IS_PRESENT(entry)     (((entry) & PTE64_PRESENT) != 0)
-
-/** @brief 检查是否为大页 */
-#define PTE64_IS_HUGE(entry)        (((entry) & PTE64_HUGE) != 0)
-
-/** @brief 检查是否可写 */
-#define PTE64_IS_WRITABLE(entry)    (((entry) & PTE64_WRITE) != 0)
-
-/** @brief 检查是否为用户页 */
-#define PTE64_IS_USER(entry)        (((entry) & PTE64_USER) != 0)
-
-/** @brief 检查是否为 COW 页 */
-#define PTE64_IS_COW(entry)         (((entry) & PTE64_COW) != 0)
 
 /* ============================================================================
  * 页错误信息结构

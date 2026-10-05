@@ -76,9 +76,6 @@
 #define ESR_EC_BKPT32       0x38    /**< BKPT from AArch32 */
 #define ESR_EC_BRK64        0x3C    /**< BRK from AArch64 */
 
-/** ESR_EL1 Instruction Length (IL) field - bit 25 */
-#define ESR_IL_SHIFT        25
-#define ESR_IL_MASK         (1 << ESR_IL_SHIFT)
 
 /** ESR_EL1 Instruction Specific Syndrome (ISS) field - bits [24:0] */
 #define ESR_ISS_MASK        0x01FFFFFF
@@ -86,17 +83,6 @@
 /** Data Abort ISS fields */
 #define ESR_ISS_DFSC_MASK   0x3F    /**< Data Fault Status Code */
 #define ESR_ISS_WNR         (1 << 6)    /**< Write not Read */
-#define ESR_ISS_CM          (1 << 8)    /**< Cache maintenance */
-#define ESR_ISS_EA          (1 << 9)    /**< External abort */
-#define ESR_ISS_FNV         (1 << 10)   /**< FAR not valid */
-#define ESR_ISS_SET_MASK    (3 << 11)   /**< Synchronous Error Type */
-#define ESR_ISS_VNCR        (1 << 13)   /**< VNCR */
-#define ESR_ISS_AR          (1 << 14)   /**< Acquire/Release */
-#define ESR_ISS_SF          (1 << 15)   /**< Sixty-Four bit register */
-#define ESR_ISS_SRT_MASK    (0x1F << 16) /**< Syndrome Register Transfer */
-#define ESR_ISS_SSE         (1 << 21)   /**< Syndrome Sign Extend */
-#define ESR_ISS_SAS_MASK    (3 << 22)   /**< Syndrome Access Size */
-#define ESR_ISS_ISV         (1 << 24)   /**< Instruction Syndrome Valid */
 
 /** Fault Status Codes (DFSC/IFSC) */
 #define FSC_ADDR_L0         0x00    /**< Address size fault, level 0 */
@@ -115,19 +101,8 @@
 #define FSC_PERM_L3         0x0F    /**< Permission fault, level 3 */
 #define FSC_SYNC_EXT        0x10    /**< Synchronous external abort */
 #define FSC_SYNC_TAG        0x11    /**< Synchronous tag check fault */
-#define FSC_SYNC_EXT_L0     0x14    /**< Sync external abort, level 0 */
-#define FSC_SYNC_EXT_L1     0x15    /**< Sync external abort, level 1 */
-#define FSC_SYNC_EXT_L2     0x16    /**< Sync external abort, level 2 */
-#define FSC_SYNC_EXT_L3     0x17    /**< Sync external abort, level 3 */
-#define FSC_SYNC_PARITY     0x18    /**< Synchronous parity error */
-#define FSC_SYNC_PARITY_L0  0x1C    /**< Sync parity error, level 0 */
-#define FSC_SYNC_PARITY_L1  0x1D    /**< Sync parity error, level 1 */
-#define FSC_SYNC_PARITY_L2  0x1E    /**< Sync parity error, level 2 */
-#define FSC_SYNC_PARITY_L3  0x1F    /**< Sync parity error, level 3 */
 #define FSC_ALIGN           0x21    /**< Alignment fault */
 #define FSC_TLB_CONFLICT    0x30    /**< TLB conflict abort */
-#define FSC_ATOMIC          0x31    /**< Unsupported atomic hardware update */
-#define FSC_IMPL_DEF        0x34    /**< Implementation defined */
 
 /* ============================================================================
  * Register Frame Structure

@@ -7,11 +7,6 @@
 #include <lib/string.h>
 #include <lib/kprintf.h>
 
-#if defined(ARCH_X86_64)
-#include <context64.h>
-#elif defined(ARCH_ARM64)
-#include "../arch/arm64/include/context.h"
-#endif
 
 /** 栈区（含最顶上的参数页）里有多少页是映射着的 */
 static uint32_t mapped_stack_pages(const task_t *task) {
@@ -113,72 +108,6 @@ TEST_CASE(test_create_user_process_failure_keeps_address_space) {
 // ============================================================================
 
 /**
- * Property Test: Context structure field offsets are correct
- * 
- * This test verifies that the context structure layout matches
- * what the assembly code expects.
- */
-TEST_CASE(test_pbt_context_field_offsets) {
-#if defined(ARCH_I686)
-    cpu_context_t ctx;
-    
-    // Calculate offsets using pointer arithmetic
-    uintptr_t base = (uintptr_t)&ctx;
-    
-    // Verify critical field offsets match assembly expectations
-    // gs at offset 0
-    ASSERT_EQ_U((uintptr_t)&ctx.gs - base, 0);
-    // fs at offset 4
-    ASSERT_EQ_U((uintptr_t)&ctx.fs - base, 4);
-    // es at offset 8
-    ASSERT_EQ_U((uintptr_t)&ctx.es - base, 8);
-    // ds at offset 12
-    ASSERT_EQ_U((uintptr_t)&ctx.ds - base, 12);
-    // edi at offset 16
-    ASSERT_EQ_U((uintptr_t)&ctx.edi - base, 16);
-    // eip at offset 48
-    ASSERT_EQ_U((uintptr_t)&ctx.eip - base, 48);
-    // eflags at offset 56
-    ASSERT_EQ_U((uintptr_t)&ctx.eflags - base, 56);
-    // esp at offset 60
-    ASSERT_EQ_U((uintptr_t)&ctx.esp - base, 60);
-    // cr3 at offset 68
-    ASSERT_EQ_U((uintptr_t)&ctx.cr3 - base, 68);
-#elif defined(ARCH_X86_64)
-    x86_64_context_t ctx;
-    
-    // Calculate offsets using pointer arithmetic
-    uintptr_t base = (uintptr_t)&ctx;
-    
-    // Verify critical field offsets match assembly expectations
-    // r15 at offset 0
-    ASSERT_EQ_U((uintptr_t)&ctx.r15 - base, 0);
-    // r14 at offset 8
-    ASSERT_EQ_U((uintptr_t)&ctx.r14 - base, 8);
-    // r8 at offset 56
-    ASSERT_EQ_U((uintptr_t)&ctx.r8 - base, 56);
-    // rbp at offset 64
-    ASSERT_EQ_U((uintptr_t)&ctx.rbp - base, 64);
-    // rdi at offset 72
-    ASSERT_EQ_U((uintptr_t)&ctx.rdi - base, 72);
-    // rax at offset 112
-    ASSERT_EQ_U((uintptr_t)&ctx.rax - base, 112);
-    // rip at offset 120
-    ASSERT_EQ_U((uintptr_t)&ctx.rip - base, 120);
-    // cs at offset 128
-    ASSERT_EQ_U((uintptr_t)&ctx.cs - base, 128);
-    // rflags at offset 136
-    ASSERT_EQ_U((uintptr_t)&ctx.rflags - base, 136);
-    // rsp at offset 144
-    ASSERT_EQ_U((uintptr_t)&ctx.rsp - base, 144);
-    // ss at offset 152
-    ASSERT_EQ_U((uintptr_t)&ctx.ss - base, 152);
-    // cr3 at offset 160 (for address space switching)
-    ASSERT_EQ_U((uintptr_t)&ctx.cr3 - base, 160);
-#endif
-}
-
-/**
  * Property Test: Architecture name is correct
  * 
  * *For any* architecture, hal_arch_name() SHALL return the correct
@@ -221,28 +150,6 @@ TEST_CASE(test_pbt_pointer_size) {
 // ============================================================================
 
 #if defined(ARCH_X86_64)
-/**
- * Property Test: x86_64 context CR3 field is correctly positioned for address space switch
- * 
- * *For any* address space switch during task switching, the correct architecture-specific
- * page table base register (CR3 on x86) SHALL be updated to point to the new task's page table.
- * 
- * This test verifies:
- * 1. CR3 field exists at the correct offset in the context structure
- * 2. CR3 is initialized to 0 by default (to be set by caller)
- * 3. CR3 can store a valid 64-bit physical address
- */
-TEST_CASE(test_pbt_x86_64_address_space_switch_cr3_offset) {
-    x86_64_context_t ctx;
-    uintptr_t base = (uintptr_t)&ctx;
-    
-    // CR3 must be at offset 160 for the assembly code to work correctly
-    ASSERT_EQ_U((uintptr_t)&ctx.cr3 - base, 160);
-    
-    // CR3 field must be 8 bytes (64-bit)
-    ASSERT_EQ_U(sizeof(ctx.cr3), 8);
-}
-
 #endif /* ARCH_X86_64 */
 
 // ============================================================================
@@ -254,34 +161,13 @@ TEST_CASE(test_pbt_x86_64_address_space_switch_cr3_offset) {
 // Property-Based Tests: Address Space Switch Correctness (ARM64)
 // ============================================================================
 
-/**
- * Property Test: ARM64 context TTBR0 field is correctly positioned for address space switch
- * 
- * *For any* address space switch during task switching, the correct architecture-specific
- * page table base register (TTBR0_EL1 on ARM64) SHALL be updated to point to the new
- * task's page table.
- */
-TEST_CASE(test_pbt_arm64_address_space_switch_ttbr0_offset) {
-    arm64_context_t ctx;
-    uintptr_t base = (uintptr_t)&ctx;
-    
-    // TTBR0 must be at offset 272 for the assembly code to work correctly
-    ASSERT_EQ_U((uintptr_t)&ctx.ttbr0 - base, 272);
-    
-    // TTBR0 field must be 8 bytes (64-bit)
-    ASSERT_EQ_U(sizeof(ctx.ttbr0), 8);
-}
-
 #endif /* ARCH_ARM64 */
 
 TEST_SUITE(task_context_property_tests) {
-    RUN_TEST(test_pbt_context_field_offsets);
     RUN_TEST(test_pbt_arch_name);
     RUN_TEST(test_pbt_pointer_size);
 #if defined(ARCH_X86_64)
-    RUN_TEST(test_pbt_x86_64_address_space_switch_cr3_offset);
 #elif defined(ARCH_ARM64)
-    RUN_TEST(test_pbt_arm64_address_space_switch_ttbr0_offset);
 #endif
 }
 

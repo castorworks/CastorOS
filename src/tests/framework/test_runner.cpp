@@ -20,7 +20,6 @@
 #include <tests/mm/vmm_test.h>
 #include <tests/mm/heap_test.h>
 #include <tests/mm/mm_types_test.h>
-#include <tests/mm/pgtable_test.h>
 #include <tests/mm/cow_flag_test.h>
 #include <tests/kernel/task_test.h>
 #include <tests/kernel/sync_test.h>
@@ -264,7 +263,6 @@ static const test_entry_t test_suite[] = {
     TEST_ENTRY("Task Manager Tests", run_task_tests),
     TEST_ENTRY("Synchronization Primitive Tests", run_sync_tests),
     TEST_ENTRY("Memory Management Type Tests", run_mm_types_tests),
-    TEST_ENTRY("Page Table Abstraction Tests", run_pgtable_tests),
     TEST_ENTRY("COW Flag Correctness Tests", run_cow_flag_tests),
     
     // 架构测试 (arch/)

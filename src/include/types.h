@@ -30,7 +30,6 @@ typedef int32_t  off_t;    // POSIX: 文件偏移量类型（有符号）
 #endif
 
 #define UINT32_MAX ((uint32_t)0xFFFFFFFF)
-#define INT32_MAX ((int32_t)0x7FFFFFFF)
 
 #ifndef _TIME_T_DEFINED
 #define _TIME_T_DEFINED
@@ -78,14 +77,6 @@ struct timespec {
 #define PAGE_ALIGN_UP(addr)   (((addr) + PAGE_SIZE - 1) & PAGE_MASK)
 
 // 文件类型常量（用于 dirent.d_type）
-#define DT_UNKNOWN       0   // 未知类型
-#define DT_FIFO          1   // 命名管道
-#define DT_CHR           2   // 字符设备
-#define DT_DIR            4   // 目录
-#define DT_BLK            6   // 块设备
-#define DT_REG            8   // 常规文件
-#define DT_LNK           10   // 符号链接
-#define DT_SOCK          12   // 套接字
 
 // 目录项结构（POSIX 标准）
 // 参考：POSIX.1-2008 <dirent.h>
@@ -98,24 +89,12 @@ struct dirent {
 };
 
 // 进程状态（用于 proc_info，与内核 task_state_t 对应）
-#define PROC_STATE_UNUSED    0   // 未使用
-#define PROC_STATE_READY     1   // 就绪
-#define PROC_STATE_RUNNING   2   // 运行中
-#define PROC_STATE_BLOCKED   3   // 阻塞
-#define PROC_STATE_ZOMBIE    4   // 僵尸（已退出，等待回收）
-#define PROC_STATE_TERMINATED 5  // 已终止
 
 // waitpid() 选项
 #define WNOHANG    1  // 非阻塞等待：如果没有子进程退出，立即返回
-#define WUNTRACED  2  // 也报告已停止的子进程状态（暂未实现）
 
 // 进程退出状态宏
 // 这些宏用于解析 wait/waitpid 返回的 status 值
-#define WIFEXITED(status)    (((status) & 0xFF) == 0)                  // 进程正常退出
-#define WEXITSTATUS(status)  (((status) >> 8) & 0xFF)                  // 获取退出码
-#define WIFSIGNALED(status)  (((status) & 0xFF) != 0)                  // 进程被信号终止
-#define WTERMSIG(status)     ((status) & 0x7F)                         // 获取终止信号
-#define WCOREDUMP(status)    (((status) & 0x80) != 0)                  // 是否产生 core dump（暂未实现）
 
 // 进程信息结构（用于系统调用，用户态和内核态共享）
 struct proc_info {
@@ -151,52 +130,14 @@ struct stat {
 
 #endif // _STRUCT_STAT_DEFINED
 
-/* 文件类型掩码（st_mode 字段） */
-#define S_IFMT   0170000   // 文件类型掩码
-#define S_IFREG  0100000   // 普通文件
-#define S_IFDIR  0040000   // 目录
-#define S_IFCHR  0020000   // 字符设备
-#define S_IFBLK  0060000   // 块设备
-#define S_IFIFO  0010000   // FIFO（管道）
-#define S_IFLNK  0120000   // 符号链接
-
-/* 权限位 */
-#define S_IRUSR  0400      // 所有者读
-#define S_IWUSR  0200      // 所有者写
-#define S_IXUSR  0100      // 所有者执行
-#define S_IRGRP  0040      // 组读
-#define S_IWGRP  0020      // 组写
-#define S_IXGRP  0010      // 组执行
-#define S_IROTH  0004      // 其他用户读
-#define S_IWOTH  0002      // 其他用户写
-#define S_IXOTH  0001      // 其他用户执行
-
-/* 类型检查宏 */
-#define S_ISREG(m)  (((m) & S_IFMT) == S_IFREG)   // 是否为普通文件
-#define S_ISDIR(m)  (((m) & S_IFMT) == S_IFDIR)   // 是否为目录
-#define S_ISCHR(m)  (((m) & S_IFMT) == S_IFCHR)   // 是否为字符设备
-#define S_ISBLK(m)  (((m) & S_IFMT) == S_IFBLK)   // 是否为块设备
-#define S_ISFIFO(m) (((m) & S_IFMT) == S_IFIFO)   // 是否为 FIFO
-#define S_ISLNK(m)  (((m) & S_IFMT) == S_IFLNK)   // 是否为符号链接
 
 /* ============================================================================
  * mmap 相关常量定义
  * ============================================================================ */
 
-/* 内存保护标志（prot 参数） */
-#define PROT_NONE   0x0     // 不可访问
-#define PROT_READ   0x1     // 可读
 #define PROT_WRITE  0x2     // 可写
-#define PROT_EXEC   0x4     // 可执行
 
-/* 映射标志（flags 参数） */
-#define MAP_SHARED      0x01    // 共享映射（修改可见于其他进程）
-#define MAP_PRIVATE     0x02    // 私有映射（写时复制）
-#define MAP_FIXED       0x10    // 使用指定地址（不推荐）
 #define MAP_ANONYMOUS   0x20    // 匿名映射（不关联文件）
-#define MAP_ANON        MAP_ANONYMOUS  // 别名
 
-/* 映射失败返回值 */
-#define MAP_FAILED      ((void *)-1)
 
 #endif // _TYPES_H_

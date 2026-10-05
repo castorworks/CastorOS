@@ -15,7 +15,7 @@
 
 #include <types.h>
 #include <mm/mm_types.h>
-#include <mm/pgtable.h>
+#include <mm/vmm.h>
 #include <hal/hal.h>
 
 #if defined(ARCH_I686)

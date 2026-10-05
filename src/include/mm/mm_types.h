@@ -49,8 +49,6 @@ typedef uint64_t pfn_t;
  */
 typedef uintptr_t vaddr_t;
 
-/** @brief 无效虚拟地址标记 */
-#define VADDR_INVALID   ((vaddr_t)-1)
 
 /*============================================================================
  * 地址转换宏
@@ -107,14 +105,12 @@ typedef uintptr_t vaddr_t;
  * @param va 虚拟地址
  * @return 页对齐后的虚拟地址
  */
-#define VADDR_ALIGN_DOWN(va) ((va) & ~((vaddr_t)PAGE_SIZE - 1))
 
 /** 
  * @brief 虚拟地址页对齐（向上）
  * @param va 虚拟地址
  * @return 页对齐后的虚拟地址
  */
-#define VADDR_ALIGN_UP(va)   (((va) + PAGE_SIZE - 1) & ~((vaddr_t)PAGE_SIZE - 1))
 
 /** 
  * @brief 检查物理地址是否页对齐
@@ -163,7 +159,5 @@ typedef uintptr_t vaddr_t;
 /** @brief 最大虚拟地址 */
 #define VIRT_ADDR_MAX   (((vaddr_t)1 << VIRT_ADDR_BITS) - 1)
 
-/** @brief 最大页帧号 */
-#define PFN_MAX         (((pfn_t)1 << (PHYS_ADDR_BITS - PAGE_SHIFT)) - 1)
 
 #endif /* _MM_MM_TYPES_H_ */

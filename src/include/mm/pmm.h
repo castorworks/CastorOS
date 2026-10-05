@@ -34,11 +34,6 @@ struct boot_info;
 /** @brief 大页大小 (2MB) */
 #define HUGE_PAGE_SIZE          (2 * 1024 * 1024)
 
-/** @brief 大页包含的 4KB 页帧数 */
-#define HUGE_PAGE_FRAMES        (HUGE_PAGE_SIZE / PAGE_SIZE)
-
-/** @brief 大页对齐掩码 */
-#define HUGE_PAGE_MASK          (~((paddr_t)HUGE_PAGE_SIZE - 1))
 
 namespace mm {
 

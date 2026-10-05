@@ -6,20 +6,8 @@
 /* The magic number passed by the bootloader in %eax */
 #define MULTIBOOT_BOOTLOADER_MAGIC 0x2BADB002
 
-/* Flags for multiboot_info->flags */
-#define MULTIBOOT_INFO_MEM            0x001
-#define MULTIBOOT_INFO_BOOTDEV        0x002
-#define MULTIBOOT_INFO_CMDLINE        0x004
 #define MULTIBOOT_INFO_MODS           0x008
-#define MULTIBOOT_INFO_AOUT_SYMS      0x010
-#define MULTIBOOT_INFO_ELF_SHDR       0x020
 #define MULTIBOOT_INFO_MEM_MAP        0x040
-#define MULTIBOOT_INFO_DRIVE_INFO     0x080
-#define MULTIBOOT_INFO_CONFIG_TABLE   0x100
-#define MULTIBOOT_INFO_BOOT_LOADER_NAME 0x200
-#define MULTIBOOT_INFO_APM_TABLE      0x400
-#define MULTIBOOT_INFO_VBE_INFO       0x800
-#define MULTIBOOT_INFO_FRAMEBUFFER_INFO 0x1000
 
 /* Memory map entry */
 typedef struct multiboot_mmap_entry {
@@ -27,10 +15,6 @@ typedef struct multiboot_mmap_entry {
     uint64_t addr;      /* Base address */
     uint64_t len;       /* Length in bytes */
     #define MULTIBOOT_MEMORY_AVAILABLE              1
-    #define MULTIBOOT_MEMORY_RESERVED               2
-    #define MULTIBOOT_MEMORY_ACPI_RECLAIMABLE       3
-    #define MULTIBOOT_MEMORY_NVS                    4
-    #define MULTIBOOT_MEMORY_BADRAM                 5
     uint32_t type;      /* Type of memory region */
 } __attribute__((packed)) multiboot_memory_map_t;
 
@@ -112,9 +96,6 @@ typedef struct multiboot_info {
     uint32_t framebuffer_width;
     uint32_t framebuffer_height;
     uint8_t framebuffer_bpp;
-    #define MULTIBOOT_FRAMEBUFFER_TYPE_INDEXED 0
-    #define MULTIBOOT_FRAMEBUFFER_TYPE_RGB     1
-    #define MULTIBOOT_FRAMEBUFFER_TYPE_EGA_TEXT 2
     uint8_t framebuffer_type;
     union {
         struct {

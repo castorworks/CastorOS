@@ -65,11 +65,6 @@ typedef long long           arch_ssize_t;
  * 
  * ========================================================================== */
 
-/** Kernel heap start address (4GB offset from KERNEL_VIRTUAL_BASE) */
-#define ARM64_HEAP_START        0xFFFF000100000000ULL
-
-/** Kernel heap maximum size (1GB) */
-#define ARM64_HEAP_MAX_SIZE     (1024ULL * 1024ULL * 1024ULL)
 
 /** Kernel heap initial size (16MB) */
 #define ARM64_HEAP_INIT_SIZE    (16ULL * 1024ULL * 1024ULL)
@@ -126,20 +121,7 @@ typedef long long           arch_ssize_t;
 /** Exception Levels */
 #define EL0                     0   /* User mode */
 #define EL1                     1   /* Kernel mode */
-#define EL2                     2   /* Hypervisor */
-#define EL3                     3   /* Secure Monitor */
 
-/** PSTATE bits */
-#define PSTATE_N                (1ULL << 31)    /* Negative flag */
-#define PSTATE_Z                (1ULL << 30)    /* Zero flag */
-#define PSTATE_C                (1ULL << 29)    /* Carry flag */
-#define PSTATE_V                (1ULL << 28)    /* Overflow flag */
-#define PSTATE_D                (1ULL << 9)     /* Debug mask */
-#define PSTATE_A                (1ULL << 8)     /* SError mask */
-#define PSTATE_I                (1ULL << 7)     /* IRQ mask */
-#define PSTATE_F                (1ULL << 6)     /* FIQ mask */
-#define PSTATE_EL_MASK          (3ULL << 2)     /* Exception Level */
-#define PSTATE_SP               (1ULL << 0)     /* Stack pointer select */
 
 /* ============================================================================
  * Context Structure
