@@ -816,8 +816,8 @@ paddr_t mm::Pmm::alloc_frames_zone(size_t count, pmm_zone_t zone) {
     
     if (consecutive < count || found_start == PFN_INVALID) {
         pmm_lock.unlock_irqrestore(irq_state);
-        LOG_DEBUG_MSG("PMM: Failed to allocate %zu contiguous frames in zone %d\n", 
-                     count, zone);
+        LOG_DEBUG_MSG("PMM: Failed to allocate %llu contiguous frames in zone %d\n",
+                     (unsigned long long)count, zone);
         return PADDR_INVALID;
     }
     
@@ -837,8 +837,8 @@ paddr_t mm::Pmm::alloc_frames_zone(size_t count, pmm_zone_t zone) {
     
     pmm_lock.unlock_irqrestore(irq_state);
     
-    LOG_DEBUG_MSG("PMM: Allocated %zu contiguous frames at 0x%llx (zone %d)\n",
-                 count, (unsigned long long)addr, zone);
+    LOG_DEBUG_MSG("PMM: Allocated %llu contiguous frames at 0x%llx (zone %d)\n",
+                 (unsigned long long)count, (unsigned long long)addr, zone);
     
     return addr;
 }

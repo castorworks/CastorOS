@@ -13,6 +13,15 @@ PHYS_MEM_BASE = 0x40000000;
 /* 内核物理加载地址 (1MB offset from RAM start) */
 KERNEL_PHYS_BASE = 0x40100000;
 
+/* 每种权限一个加载段（不写的话 .text/.rodata/.data 会并成一个可读可写可执行的段） */
+PHDRS
+{
+    boot   PT_LOAD FLAGS(5);    /* R-X */
+    text   PT_LOAD FLAGS(5);    /* R-X */
+    rodata PT_LOAD FLAGS(4);    /* R-- */
+    data   PT_LOAD FLAGS(6);    /* RW- */
+}
+
 SECTIONS
 {
     /* 物理地址从 0x40100000 开始 (QEMU virt machine RAM + 1MB) */
@@ -27,7 +36,7 @@ SECTIONS
     .text.boot ALIGN(4K) :
     {
         *(.text.boot)
-    }
+    } :boot
 
     /* 之后的段运行在高半区：VMA = 物理地址 + KERNEL_VIRTUAL_BASE，LMA 保持物理地址 */
     . = ALIGN(4K);
@@ -38,7 +47,7 @@ SECTIONS
     {
         *(.text)
         *(.text.*)
-    }
+    } :text
 
     /* .rodata 段：只读数据 */
     .rodata ALIGN(4K) : AT(ADDR(.rodata) - KERNEL_VIRTUAL_BASE)
@@ -56,14 +65,14 @@ SECTIONS
         KEEP(*(SORT_BY_NAME(.ctors.*)))
         KEEP(*(.ctors))
         __ctors_end = .;
-    }
+    } :rodata
 
     /* .data 段：已初始化数据 */
     .data ALIGN(4K) : AT(ADDR(.data) - KERNEL_VIRTUAL_BASE)
     {
         *(.data)
         *(.data.*)
-    }
+    } :data
 
     /* .bss 段：未初始化数据 */
     .bss ALIGN(4K) : AT(ADDR(.bss) - KERNEL_VIRTUAL_BASE)
@@ -74,7 +83,7 @@ SECTIONS
         *(.bss.*)
         *(.bootstrap_stack)
         _bss_end = .;
-    }
+    } :data
 
     /* 保存内核结束地址 - 必须在 BSS 段之后 */
     . = ALIGN(4K);

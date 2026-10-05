@@ -103,18 +103,8 @@ typedef long long           arch_ssize_t;
 /** Large page size (2MB, Level 2 block) */
 #define LARGE_PAGE_SIZE         (2 * 1024 * 1024)
 
-/** Huge page size (1GB, Level 1 block) */
-#define HUGE_PAGE_SIZE          (1024 * 1024 * 1024)
-
-/* ============================================================================
- * Address Space Limits
- * ========================================================================== */
-
-/** Maximum physical address (48-bit physical addressing) */
-#define PHYS_ADDR_MAX           0x0000FFFFFFFFFFFFULL
-
-/** Maximum virtual address (TTBR1 region) */
-#define VIRT_ADDR_MAX           0xFFFFFFFFFFFFFFFFULL
+/* HUGE_PAGE_SIZE（PMM 的 2MB 大页）在 <mm/pmm.h>，PHYS_ADDR_MAX / VIRT_ADDR_MAX 在
+ * <mm/mm_types.h>：这里不再重复定义，以免两处的值不一样。 */
 
 /* ============================================================================
  * Register Sizes

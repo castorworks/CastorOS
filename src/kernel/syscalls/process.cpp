@@ -169,14 +169,17 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
         if (is_present(parent_dir->entries[i])) {
             uint32_t phys = get_frame(parent_dir->entries[i]);
             if (phys == 0 || phys >= 0x80000000) {
-                LOG_ERROR_MSG("syscall::Process::fork: Parent PDE[%u] corrupted: 0x%x (phys=0x%x)\n", 
-                             i, parent_dir->entries[i], phys);
-                LOG_ERROR_MSG("  Parent: PID=%u, name=%s, page_dir=%p, page_dir_phys=0x%x\n",
-                             parent->pid, parent->name, parent_dir, parent->page_dir_phys);
+                LOG_ERROR_MSG("syscall::Process::fork: Parent PDE[%u] corrupted: 0x%llx (phys=0x%x)\n",
+                             i, (unsigned long long)parent_dir->entries[i], phys);
+                LOG_ERROR_MSG("  Parent: PID=%u, name=%s, page_dir=%p, page_dir_phys=0x%llx\n",
+                             parent->pid, parent->name, parent_dir,
+                             (unsigned long long)parent->page_dir_phys);
                 // 打印更多 PDE 以帮助诊断
-                LOG_ERROR_MSG("  PDE[0]=0x%x, PDE[1]=0x%x, PDE[2]=0x%x, PDE[3]=0x%x\n",
-                             parent_dir->entries[0], parent_dir->entries[1],
-                             parent_dir->entries[2], parent_dir->entries[3]);
+                LOG_ERROR_MSG("  PDE[0]=0x%llx, PDE[1]=0x%llx, PDE[2]=0x%llx, PDE[3]=0x%llx\n",
+                             (unsigned long long)parent_dir->entries[0],
+                             (unsigned long long)parent_dir->entries[1],
+                             (unsigned long long)parent_dir->entries[2],
+                             (unsigned long long)parent_dir->entries[3]);
                 kernel::Interrupts::restore(prev_state);
                 return (uint32_t)-1;
             }

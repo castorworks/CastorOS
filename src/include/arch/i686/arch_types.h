@@ -40,7 +40,7 @@ typedef int                 arch_ssize_t;
  * ========================================================================== */
 
 /** Kernel virtual base address (higher-half kernel) */
-#define KERNEL_VIRTUAL_BASE     0x80000000UL
+#define KERNEL_VIRTUAL_BASE     0x80000000
 
 /** User space ends at kernel base */
 #define USER_SPACE_END          KERNEL_VIRTUAL_BASE
@@ -59,7 +59,7 @@ typedef int                 arch_ssize_t;
 #define PAGE_SHIFT              12
 
 /** Page alignment mask */
-#define PAGE_MASK               0xFFFFF000UL
+#define PAGE_MASK               0xFFFFF000
 
 /** Number of page table levels (2 for i686) */
 #define PAGE_TABLE_LEVELS       2

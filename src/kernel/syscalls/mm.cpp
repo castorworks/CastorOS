@@ -76,20 +76,21 @@ uintptr_t syscall::Mm::brk(uint32_t addr) {
     
     // 如果 addr 为 0，返回当前堆结束地址
     if (addr == 0) {
-        LOG_DEBUG_MSG("syscall::Mm::brk: returning current heap_end=0x%x\n", current->heap_end);
+        LOG_DEBUG_MSG("syscall::Mm::brk: returning current heap_end=0x%llx\n",
+                      (unsigned long long)current->heap_end);
         return current->heap_end;
     }
     
     // 验证地址范围
     if (addr < current->heap_start) {
-        LOG_ERROR_MSG("syscall::Mm::brk: addr 0x%x below heap_start 0x%x\n", 
-                      addr, current->heap_start);
+        LOG_ERROR_MSG("syscall::Mm::brk: addr 0x%llx below heap_start 0x%llx\n",
+                      (unsigned long long)addr, (unsigned long long)current->heap_start);
         return (uintptr_t)-1;
     }
     
     if (addr > current->heap_max) {
-        LOG_ERROR_MSG("syscall::Mm::brk: addr 0x%x exceeds heap_max 0x%x\n", 
-                      addr, current->heap_max);
+        LOG_ERROR_MSG("syscall::Mm::brk: addr 0x%llx exceeds heap_max 0x%llx\n",
+                      (unsigned long long)addr, (unsigned long long)current->heap_max);
         return (uintptr_t)-1;
     }
     

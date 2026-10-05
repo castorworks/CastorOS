@@ -572,8 +572,8 @@ void mm::Heap::print_info() {
     }
     
     kprintf("\n===================================== Heap =====================================\n");
-    kprintf("Total: %u KB\n", info.total/1024);
-    kprintf("Used:  %u KB\n", info.used/1024);
-    kprintf("Free:  %u KB\n", info.free/1024);
+    kprintf("Total: %llu KB\n", (unsigned long long)(info.total / 1024));
+    kprintf("Used:  %llu KB\n", (unsigned long long)(info.used / 1024));
+    kprintf("Free:  %llu KB\n", (unsigned long long)(info.free / 1024));
     kprintf("================================================================================\n\n");
 }
