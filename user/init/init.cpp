@@ -108,6 +108,6 @@ int main() {
         struct ipc_msg reply = {};
         reply.label = m.label;
         reply.data[0] = result;
-        ipc_send(m.sender, &reply);
+        ipc_reply(m.sender, &reply);
     }
 }

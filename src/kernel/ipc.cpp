@@ -53,7 +53,26 @@ static int wait_for_peer(task_t *current) {
     return current->ipc_result;
 }
 
-int Ipc::send(uint32_t dest, const ipc_msg *msg) {
+/** target 是否正阻塞在 recv 上，并且愿意接收 sender 发来的消息 */
+static bool ready_to_receive(task_t *target, uint32_t sender) {
+    // BLOCKED 之外的 RECEIVING 是刚被 kill 唤醒、即将放弃等待的任务
+    return target->state == TASK_BLOCKED && target->ipc_state == IPC_RECEIVING &&
+           (target->ipc_peer == IPC_ANY || target->ipc_peer == sender);
+}
+
+/** 把 *msg 交给正在等待的 target 并唤醒它 */
+static void deliver(task_t *target, const ipc_msg *msg, uint32_t sender) {
+    target->ipc_buf = *msg;
+    target->ipc_buf.sender = sender;
+    finish_wait(target, 0);
+}
+
+/**
+ * send 和 call 的公共部分。
+ * is_call 时，消息被对方收下后当前任务不返回，而是直接转入“等 dest 的应答”：
+ * 中间没有空档，对方的 reply 不会因为当前任务还没开始接收而失败。
+ */
+static int send_common(uint32_t dest, ipc_msg *msg, bool is_call) {
     task_t *current = Scheduler::get_current();
     if (!current || !msg || dest == current->pid) {
         return -1;
@@ -66,22 +85,54 @@ int Ipc::send(uint32_t dest, const ipc_msg *msg) {
         return -1;
     }
 
-    // 对方已经在等这条消息：直接交给它
-    // （BLOCKED 之外的 RECEIVING 是刚被 kill 唤醒、即将放弃等待的任务）
-    if (target->state == TASK_BLOCKED && target->ipc_state == IPC_RECEIVING &&
-        (target->ipc_peer == IPC_ANY || target->ipc_peer == current->pid)) {
-        target->ipc_buf = *msg;
-        target->ipc_buf.sender = current->pid;
-        finish_wait(target, 0);
-        return 0;
+    if (ready_to_receive(target, current->pid)) {
+        // 对方已经在等这条消息：直接交给它
+        deliver(target, msg, current->pid);
+        if (!is_call) {
+            return 0;
+        }
+        current->ipc_peer = dest;
+        current->ipc_state = IPC_RECEIVING;
+    } else {
+        // 否则把消息留在自己这里，等对方来取（见 Ipc::recv）
+        current->ipc_buf = *msg;
+        current->ipc_buf.sender = current->pid;
+        current->ipc_peer = dest;
+        current->ipc_calling = is_call;
+        current->ipc_state = IPC_SENDING;
     }
 
-    // 否则把消息留在自己这里，等对方来取
-    current->ipc_buf = *msg;
-    current->ipc_buf.sender = current->pid;
-    current->ipc_peer = dest;
-    current->ipc_state = IPC_SENDING;
-    return wait_for_peer(current);
+    int result = wait_for_peer(current);
+    current->ipc_calling = false;
+    if (result == 0 && is_call) {
+        *msg = current->ipc_buf;
+    }
+    return result;
+}
+
+int Ipc::send(uint32_t dest, const ipc_msg *msg) {
+    return send_common(dest, const_cast<ipc_msg *>(msg), false);
+}
+
+int Ipc::call(uint32_t dest, ipc_msg *msg) {
+    return send_common(dest, msg, true);
+}
+
+int Ipc::reply(uint32_t dest, const ipc_msg *msg) {
+    task_t *current = Scheduler::get_current();
+    if (!current || !msg) {
+        return -1;
+    }
+
+    InterruptGuard guard;
+
+    // 只投递给正在专门等当前任务的接收者（call 的后半段）；否则立刻失败，绝不阻塞
+    task_t *target = live_task(dest);
+    if (!target || target->ipc_peer != current->pid || !ready_to_receive(target, current->pid)) {
+        return -1;
+    }
+    deliver(target, msg, current->pid);
+    return 0;
 }
 
 int Ipc::recv(uint32_t from, ipc_msg *msg) {
@@ -108,7 +159,12 @@ int Ipc::recv(uint32_t from, ipc_msg *msg) {
             continue;
         }
         *msg = sender->ipc_buf;
-        finish_wait(sender, 0);
+        if (sender->ipc_calling) {
+            // 对方在 call：留在阻塞状态，直接改为等我们的应答（ipc_peer 已经是我们）
+            sender->ipc_state = IPC_RECEIVING;
+        } else {
+            finish_wait(sender, 0);
+        }
         return 0;
     }
 
@@ -123,13 +179,6 @@ int Ipc::recv(uint32_t from, ipc_msg *msg) {
         *msg = current->ipc_buf;
     }
     return result;
-}
-
-int Ipc::call(uint32_t dest, ipc_msg *msg) {
-    if (send(dest, msg) != 0) {
-        return -1;
-    }
-    return recv(dest, msg);
 }
 
 void Ipc::notify(task_t *task) {

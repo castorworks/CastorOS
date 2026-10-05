@@ -250,6 +250,7 @@ typedef struct task {
     ipc_state_t ipc_state;           ///< 是否正阻塞在 send/recv 上
     uint32_t ipc_peer;               ///< SENDING: 目标 PID；RECEIVING: 期望的发送者或 IPC_ANY
     int ipc_result;                  ///< 等待结束时对方（或退出路径）写入的结果
+    bool ipc_calling;                ///< SENDING 且处于 call 中：消息被取走后直接转为等应答
     ipc_msg ipc_buf;                 ///< SENDING: 待取走的消息；RECEIVING: 投递进来的消息
     uint32_t irq_pending;            ///< 已到达、还没被 recv 取走的设备中断（kernel/user_irq.h）
 

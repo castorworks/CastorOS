@@ -25,7 +25,7 @@ static void add_server(void) {
             exit(0);
         }
         m.data[0] += m.data[1];
-        ipc_send(m.sender, &m);
+        ipc_reply(m.sender, &m);
     }
 }
 
@@ -69,6 +69,11 @@ static void demo_ipc(void) {
         }
     }
     printf("demo: ipc call x3 to server %d: %s\n", server, ok ? "ok" : "FAILED");
+
+    // reply 只对正在 call 自己的进程有效，否则立刻失败而不是阻塞
+    struct ipc_msg stray = {};
+    printf("demo: ipc reply to a process that is not calling: %s\n",
+           ipc_reply(server, &stray) == -1 ? "refused" : "FAILED");
 
     // 让服务退出；之后再发消息应当失败
     struct ipc_msg quit = {};

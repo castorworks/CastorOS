@@ -9,8 +9,9 @@
  *
  * 进程之间唯一的通信方式。消息定长，按 PID 寻址，没有缓冲：
  * send 阻塞到对方 recv 为止，recv 阻塞到有人 send 为止（会合）。
- * 服务进程的典型循环是 recv(IPC_ANY) -> 处理 -> send(msg.sender)；
- * 客户用 call 一次完成“发请求 + 等这个服务的应答”。
+ * 服务进程的典型循环是 recv(IPC_ANY) -> 处理 -> reply(msg.sender)；
+ * 客户用 call 一次完成“发请求 + 等这个服务的应答”。reply 从不阻塞，
+ * 所以客户无法把服务卡住。
  */
 
 /** recv 的 from 参数：接收任何进程发来的消息 */
@@ -57,8 +58,17 @@ public:
      */
     static int recv(uint32_t from, ipc_msg *msg);
 
-    /** send(dest) 之后 recv(dest)：请求-应答，结果写回 *msg */
+    /**
+     * 请求-应答：把 *msg 发给 dest，然后等 dest 的应答并写回 *msg。
+     * 发送和转入等待是一个原子步骤，服务方可以放心用 reply 应答。
+     */
     static int call(uint32_t dest, ipc_msg *msg);
+
+    /**
+     * 应答一个正在 call 当前任务的进程。从不阻塞：
+     * @return 0 成功；-1 dest 没有在等当前任务的应答（已退出、被 kill，或根本没有 call）
+     */
+    static int reply(uint32_t dest, const ipc_msg *msg);
 
     /**
      * task 有了待处理的内核消息（设备中断）：如果它正阻塞在 recv(IPC_ANY) 上，

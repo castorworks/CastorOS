@@ -115,7 +115,7 @@ static bool reply_reader(int reader) {
         rx_tail = (rx_tail + 1) % RX_BUF_SIZE;
     }
     m.data[0] = n;
-    ipc_send(reader, &m);
+    ipc_reply(reader, &m);
     return true;
 }
 
@@ -147,7 +147,7 @@ int main() {
             if (waiting_reader != 0) {
                 struct ipc_msg busy = {};
                 busy.label = UART_READ;
-                ipc_send(m.sender, &busy);
+                ipc_reply(m.sender, &busy);
             } else {
                 waiting_reader = (int)m.sender;
             }

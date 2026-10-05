@@ -24,11 +24,12 @@ enum {
     SYS_IPC_SEND        = 13,
     SYS_IPC_RECV        = 14,
     SYS_IPC_CALL        = 15,
-    SYS_IO_READ         = 16,
-    SYS_IO_WRITE        = 17,
-    SYS_IRQ_CLAIM       = 18,
-    SYS_IRQ_ACK         = 19,
-    SYS_DROP_PRIVILEGE  = 20,
+    SYS_IPC_REPLY       = 16,
+    SYS_IO_READ         = 18,
+    SYS_IO_WRITE        = 19,
+    SYS_IRQ_CLAIM       = 21,
+    SYS_IRQ_ACK         = 22,
+    SYS_DROP_PRIVILEGE  = 23,
 };
 
 typedef uintptr_t syscall_arg_t;
@@ -84,7 +85,7 @@ ssize_t console_write(const void *buf, size_t count);
 // ============================================================================
 // 进程间通信：同步、定长消息、按 PID 寻址
 //
-// 服务进程:  for (;;) { ipc_recv(IPC_ANY, &m); ...; ipc_send(m.sender, &m); }
+// 服务进程:  for (;;) { ipc_recv(IPC_ANY, &m); ...; ipc_reply(m.sender, &m); }
 // 客户进程:  ipc_call(server_pid, &m);   // 请求放在 m 里，应答写回 m
 // ============================================================================
 
@@ -105,6 +106,8 @@ int ipc_send(int dest, const struct ipc_msg *msg);
 int ipc_recv(int from, struct ipc_msg *msg);
 /** 发送请求并等待 dest 的应答（写回 *msg） */
 int ipc_call(int dest, struct ipc_msg *msg);
+/** 应答正在 ipc_call 自己的进程。从不阻塞；对方已不在等待时返回 -1 */
+int ipc_reply(int dest, const struct ipc_msg *msg);
 
 // ============================================================================
 // 硬件访问（仅特权进程）

@@ -37,13 +37,14 @@ enum {
     SYS_IPC_SEND        = 13,  // ipc_send(dest, msg)
     SYS_IPC_RECV        = 14,  // ipc_recv(from, msg)：from 为 IPC_ANY 或指定 PID
     SYS_IPC_CALL        = 15,  // ipc_call(dest, msg)：发送后等待 dest 的应答
+    SYS_IPC_REPLY       = 16,  // ipc_reply(dest, msg)：应答正在 call 自己的进程，从不阻塞
 
     // 硬件访问（仅特权进程，供用户态驱动使用）
-    SYS_IO_READ         = 16,  // io_read(addr, width, value*)：x86 是 I/O 端口，arm64 是设备寄存器物理地址
-    SYS_IO_WRITE        = 17,  // io_write(addr, width, value)
-    SYS_IRQ_CLAIM       = 18,  // irq_claim(irq)：中断以 IPC 消息的形式投递（见 kernel/user_irq.h）
-    SYS_IRQ_ACK         = 19,  // irq_ack(irq)：处理完毕，重新打开中断线
-    SYS_DROP_PRIVILEGE  = 20,  // drop_privilege()：放弃特权，不可恢复
+    SYS_IO_READ         = 18,  // io_read(addr, width, value*)：x86 是 I/O 端口，arm64 是设备寄存器物理地址
+    SYS_IO_WRITE        = 19,  // io_write(addr, width, value)
+    SYS_IRQ_CLAIM       = 21,  // irq_claim(irq)：中断以 IPC 消息的形式投递（见 kernel/user_irq.h）
+    SYS_IRQ_ACK         = 22,  // irq_ack(irq)：处理完毕，重新打开中断线
+    SYS_DROP_PRIVILEGE  = 23,  // drop_privilege()：放弃特权，不可恢复
 
     SYS_MAX
 };

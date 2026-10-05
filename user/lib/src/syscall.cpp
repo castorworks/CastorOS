@@ -131,6 +131,10 @@ int ipc_call(int dest, struct ipc_msg *msg) {
     return (int)syscall2(SYS_IPC_CALL, (syscall_arg_t)dest, PTR_TO_ARG(msg));
 }
 
+int ipc_reply(int dest, const struct ipc_msg *msg) {
+    return (int)syscall2(SYS_IPC_REPLY, (syscall_arg_t)dest, PTR_TO_ARG(msg));
+}
+
 // ============================================================================
 // 硬件访问
 // ============================================================================

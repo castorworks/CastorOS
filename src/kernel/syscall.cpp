@@ -207,6 +207,13 @@ static syscall_arg_t sys_ipc_recv_wrapper(syscall_arg_t *frame, syscall_arg_t fr
     return sys_ret32((uint32_t)kernel::Ipc::recv((uint32_t)from, (ipc_msg *)(uintptr_t)msg));
 }
 
+static syscall_arg_t sys_ipc_reply_wrapper(syscall_arg_t *frame, syscall_arg_t dest, syscall_arg_t msg,
+                                           syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p3; (void)p4; (void)p5;
+    if (!user_rd(msg, sizeof(ipc_msg))) return SYSCALL_FAIL;
+    return sys_ret32((uint32_t)kernel::Ipc::reply((uint32_t)dest, (const ipc_msg *)(uintptr_t)msg));
+}
+
 static syscall_arg_t sys_ipc_call_wrapper(syscall_arg_t *frame, syscall_arg_t dest, syscall_arg_t msg,
                                           syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
@@ -337,6 +344,7 @@ void syscall_init(void) {
     syscall_table[SYS_IPC_SEND]      = sys_ipc_send_wrapper;
     syscall_table[SYS_IPC_RECV]      = sys_ipc_recv_wrapper;
     syscall_table[SYS_IPC_CALL]      = sys_ipc_call_wrapper;
+    syscall_table[SYS_IPC_REPLY]     = sys_ipc_reply_wrapper;
     syscall_table[SYS_IO_READ]       = sys_io_read_wrapper;
     syscall_table[SYS_IO_WRITE]      = sys_io_write_wrapper;
     syscall_table[SYS_IRQ_CLAIM]     = sys_irq_claim_wrapper;
