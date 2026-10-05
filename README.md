@@ -39,7 +39,7 @@ make clean-all
 make help
 ```
 
-内核启动后加载内嵌的 `user/init`：它演示 `mmap`、`fork`/`waitpid`、IPC 和特权，然后启动用户态串口驱动 `user/uart`，把驱动通过 IPC 送来的输入回显出来。
+内核启动后加载内嵌的 `user/init`：它启动用户态串口驱动 `user/uart` 和示例程序 `user/demo`，自己充当名字服务。demo 演示 `mmap`、`fork`/`waitpid`、IPC、特权和名字服务，然后按名字找到 uart 驱动，把驱动通过 IPC 送来的输入回显出来。
 
 ## 目录
 
@@ -51,14 +51,15 @@ src/drivers/   串口和时钟
 src/lib/       kprintf / klog / 字符串 / C++ 运行时
 src/tests/     内核测试 (KTEST=1)
 user/lib/      用户态库
-user/init/     第一个用户进程
-user/uart/     用户态串口输入驱动（第一个模块）
+user/init/     第一个用户进程：启动模块 + 名字服务
+user/uart/     用户态串口输入驱动
+user/demo/     示例程序（非特权）
 docs/          文档
 ```
 
 ## 文档
 
-+ [微内核结构](./docs/microkernel.md)：内核边界、启动流程、系统调用表、IPC、硬件访问、如何加模块
++ [微内核结构](./docs/microkernel.md)：内核边界、启动流程、系统调用表、IPC、名字服务、硬件访问、如何加模块
 + [概念讲解](./docs/concepts/00-overview.md)
 + 开发过程记录（写于精简为微内核之前，其中提到的 GRUB 磁盘镜像、VGA、shell 等已不在代码里）：
   [环境](./docs/00-environment.md)、[引导](./docs/01-boot.md)、[基础设施](./docs/02-infrastructure.md)、

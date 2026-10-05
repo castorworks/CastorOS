@@ -76,8 +76,9 @@ make info
 
 `user/lib` is the user library (syscall wrappers, printf, string). `user/init` is the first
 process; its ELF is embedded into the kernel image by `src/kernel/init_image.S` (`.incbin`),
-so there is no disk image. Modules started by init (currently `user/uart`, the serial input
-driver) are embedded into init the same way (`user/init/modules.S`). Every user program's
+so there is no disk image. init starts the modules and is the name server (`names.h` in
+`user/lib`). Modules (`user/uart`, the privileged serial input driver; `user/demo`, an
+unprivileged example client) are embedded into init the same way (`user/init/modules.S`). Every user program's
 Makefile just sets `TARGET`/`SOURCES` and includes `user/program.mk`. The kernel Makefile
 rebuilds all of it when `user/` changes.
 
@@ -115,8 +116,9 @@ CastorOS/
 │   └── tests/              # Kernel unit tests (KTEST=1)
 ├── user/                   # User-space programs
 │   ├── lib/                # User library
-│   ├── init/               # First user process, embedded in the kernel
-│   ├── uart/               # Serial input driver (user-space module, started by init)
+│   ├── init/               # First user process: starts modules, name service
+│   ├── uart/               # Serial input driver (privileged module)
+│   ├── demo/               # Example client (unprivileged module): syscall demos, echoes input
 │   ├── program.mk          # Shared build rules for user programs
 │   └── linker/             # User linker scripts
 ├── docs/                   # Documentation (Chinese)
@@ -178,12 +180,12 @@ make test TEST_TIMEOUT=120     # 自定义超时
 
 内核不会自己关机，QEMU 运行到超时为止。`make test` 把完整日志写到
 `build/<arch>-ktest/test.log`，并汇总各模块的 `Total/Passed/Failed tests` 计数；
-有失败用例或 init 没有启动（日志里没有 `init: ready`）时返回非零。
+有失败用例或用户态没有起来（日志里没有 `demo: ready`）时返回非零。
 
 ### 手动运行
 
 ```bash
-# 控制台是串口；向 QEMU 的标准输入写入即可给 init 发送输入
+# 控制台是串口；向 QEMU 的标准输入写入的内容经 uart 驱动送到 demo 回显
 timeout 20 qemu-system-i386 -kernel build/i686/castor.bin -serial stdio -display none
 timeout 20 qemu-system-x86_64 -kernel build/x86_64/castor32.elf -serial stdio -display none
 timeout 20 qemu-system-aarch64 -M virt -cpu cortex-a72 -kernel build/arm64/castor.bin -serial stdio -display none

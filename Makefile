@@ -110,7 +110,7 @@ endif
 # 第一个用户进程，以 .incbin 嵌入内核 (src/kernel/init_image.S)
 INIT_ELF = user/init/build/$(ARCH)/init.elf
 INIT_DEPS = $(wildcard user/program.mk user/linker/*.ld \
-              user/init/* user/uart/* \
+              user/init/* user/uart/* user/demo/* \
               user/lib/Makefile user/lib/src/*.cpp user/lib/src/arch/$(ARCH)/*.S \
               user/lib/include/*.h)
 
@@ -223,8 +223,8 @@ run-test: $(BOOT_IMAGE)
 	@awk 'function num(key,  s) { if (!match($$0, key ": *[0-9]+")) return 0; \
 	         s = substr($$0, RSTART, RLENGTH); sub(/.*: */, "", s); return s + 0 } \
 	     { t += num("Total tests"); p += num("Passed tests"); f += num("Failed tests") } \
-	     /init: ready/ { booted = 1 } \
-	     END { printf "$(ARCH): %d tests, %d passed, %d failed; init %s (log: $(BUILD_DIR)/test.log)\n", \
+	     /demo: ready/ { booted = 1 } \
+	     END { printf "$(ARCH): %d tests, %d passed, %d failed; user space %s (log: $(BUILD_DIR)/test.log)\n", \
 	               t, p, f, booted ? "started" : "NOT started"; \
 	           exit (t == 0 || f > 0 || !booted) }' $(BUILD_DIR)/test.log
 
@@ -241,10 +241,11 @@ clean:
 	rm -rf build/$(ARCH) build/$(ARCH)-ktest
 	@$(MAKE) --no-print-directory -C user/init clean ARCH=$(ARCH)
 	@$(MAKE) --no-print-directory -C user/uart clean ARCH=$(ARCH)
+	@$(MAKE) --no-print-directory -C user/demo clean ARCH=$(ARCH)
 	@$(MAKE) --no-print-directory -C user/lib clean ARCH=$(ARCH)
 
 clean-all:
-	rm -rf build user/init/build user/uart/build user/lib/build
+	rm -rf build user/*/build
 
 # ============================================================================
 # 工具

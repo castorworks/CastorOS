@@ -24,9 +24,12 @@ CastorOS 的内核只保留五件事：CPU/中断、内存管理、任务调度�
 
 ## init 和模块
 
-`user/init` 是第一个用户进程。构建内核时先编译出 `user/init/build/<arch>/init.elf`，再由 `src/kernel/init_image.S` 用 `.incbin` 嵌进内核映像，不需要磁盘或文件系统。
+`user/init` 是第一个用户进程（PID 1），负责启动模块并充当名字服务。构建内核时先编译出 `user/init/build/<arch>/init.elf`，再由 `src/kernel/init_image.S` 用 `.incbin` 嵌进内核映像，不需要磁盘或文件系统。
 
-init 要启动的模块（目前只有 `user/uart`）用同样的办法嵌在 init 自己的映像里（`user/init/modules.S`），启动方式是 `fork` + `exec(image, size)`。
+init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/init/modules.S`），启动方式是 `fork` + `exec(image, size)`。目前有两个：
+
+- `user/uart`：串口输入驱动，保留特权启动。
+- `user/demo`：示例程序，放弃特权后启动。它演示内存、进程、IPC、特权和名字服务，然后按名字找到 uart 驱动并回显输入。
 
 ## 系统调用
 
@@ -74,13 +77,25 @@ for (;;) {
 
 客户进程用 `ipc_call(server_pid, &m)` 一次完成请求和应答。`user/init/init.cpp` 里有一个完整的例子。
 
-当前的限制：没有名字服务（客户要通过 fork 的返回值等方式知道服务的 PID）；大块数据还不能传递（没有共享内存）；应答用的是普通 `send`，客户若不去 `recv`，服务会阻塞在应答上。
+当前的限制：大块数据还不能传递（没有共享内存）；应答用的是普通 `send`，客户若不去 `recv`，服务会阻塞在应答上（init 的名字服务也是如此）。
+
+## 名字服务
+
+客户进程按名字找到服务的 PID。服务端在 init 里（`user/init/init.cpp`），所以地址固定是 PID 1；协议和客户端接口在 `user/lib`（`names.h`）：
+
+- `name_register(name)`：把名字登记到调用者名下。登记的 PID 取自内核填写的 `sender`，不能替别人登记；名字已被占用时失败。
+- `name_lookup(name)`：返回 PID，没有登记返回 0。
+- `name_wait(name)`：轮询到名字出现为止，用于启动顺序不确定的场合。
+
+名字最长 47 个字符，最多登记 16 个。init 在处理请求时顺便回收已退出的子进程，并注销它们登记的名字。
+
+当前的限制：任何进程都可以登记任何还没被占用的名字，没有访问控制；只有 init 的直接子进程退出后名字才会被注销。
 
 ## 特权与硬件访问
 
 用户态驱动需要碰硬件，内核为此提供三样东西，都只对带 `privileged` 标志的进程开放：
 
-- **特权的来源**：内核直接创建的 init 有特权，`fork` 和 `exec` 都保留；进程调用 `drop_privilege()` 之后永久失去。init 启动驱动时保留特权，启动普通服务时先让子进程放弃。
+- **特权的来源**：内核直接创建的 init 有特权，`fork` 和 `exec` 都保留；进程调用 `drop_privilege()` 之后永久失去。init 启动驱动时保留特权，启动其他模块时先让子进程放弃。
 - **设备寄存器**：`io_read` / `io_write`，宽度 1/2/4 字节。x86 上 `addr` 是 I/O 端口号；arm64 上是寄存器的物理地址（限 QEMU virt 的设备区，1GB 以下），由内核代为访问。
 - **设备中断**：`irq_claim(irq)` 认领一条内核自己没在用的中断线（x86 是 PIC 的 IRQ 号，arm64 是 GIC 的 SPI 中断号）。中断到来时内核屏蔽这条线，并向属主投递一条 `sender == IPC_KERNEL`、`label == IPC_LABEL_IRQ`、`data[0] == irq` 的消息；属主没在 `recv` 时记为待处理，下一次 `recv(IPC_ANY)` 先收到它。驱动处理完设备后调用 `irq_ack(irq)` 重新打开中断线。进程退出时它认领的中断线被屏蔽并释放。
 
@@ -96,7 +111,7 @@ for (;;) {
 2. 主循环 `ipc_recv(IPC_ANY)`：收到内核的中断消息就把硬件 FIFO 读进自己的缓冲区并 `irq_ack`；收到 `UART_READ` 请求就记下读者。
 3. 缓冲区里有数据且有读者在等时，把数据作为应答发回去。
 
-协议定义在 `user/uart/uart.h`。init 在主循环里用 `ipc_call(uart, UART_READ)` 取输入并回显。
+协议定义在 `user/uart/uart.h`。驱动以 `"uart"` 这个名字登记；`user/demo` 用 `name_wait("uart")` 找到它，再用 `ipc_call(uart, UART_READ)` 取输入并回显。
 
 ## 用户态的约束
 
@@ -105,5 +120,6 @@ for (;;) {
 ## 怎么加模块
 
 1. 在 `user/` 下新建目录，写一个三行的 Makefile（`TARGET`、`SOURCES`、`include ../program.mk`），链接 `user/lib`。
-2. 定义它的 IPC 协议（请求的 `label` 和 `data` 布局），主循环按上面服务进程的结构写。
-3. 在 `user/init/modules.S` 里 `.incbin` 它的映像，在 `user/init/Makefile` 的 `MODULES` 里加上它，由 init 用 `start_module` 启动；不需要硬件的模块在启动前 `drop_privilege()`。
+2. 定义它的 IPC 协议（请求的 `label` 和 `data` 布局），主循环按上面服务进程的结构写，启动后用 `name_register` 登记自己的名字。
+3. 把它加进 `user/init/Makefile` 的 `MODULE_NAMES` 和 `user/init/modules.S`，在 init 的 `main` 里用 `start_module` 启动；最后一个参数决定它是否保留特权（只有驱动需要）。
+4. 客户用 `name_wait("名字")` 拿到 PID，再用 `ipc_call` 发请求。

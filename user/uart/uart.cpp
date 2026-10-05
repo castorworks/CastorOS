@@ -7,6 +7,7 @@
 #include <syscall.h>
 #include <stdio.h>
 #include <string.h>
+#include <names.h>
 #include "uart.h"
 
 #if defined(ARCH_ARM64)
@@ -125,6 +126,10 @@ int main() {
     }
     hw_init();
     drain_hw();
+    if (name_register("uart") != 0) {
+        printf("uart: cannot register name\n");
+        return 1;
+    }
     printf("uart: driver ready (pid %d, irq %d)\n", getpid(), UART_IRQ);
 
     struct ipc_msg m;
