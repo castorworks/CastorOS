@@ -10,7 +10,7 @@
 int main(int argc, char **argv) {
     bool invert = argc > 1 && strcmp(argv[1], "-v") == 0;
     if (argc != (invert ? 3 : 2)) {
-        printf("usage: grep [-v] <text>\n");
+        eprintf("usage: grep [-v] <text>\n");
         return 2;
     }
     const char *text = argv[argc - 1];

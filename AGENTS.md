@@ -198,6 +198,8 @@ CastorOS/
   save those registers across context switches.
 - Program arguments travel through the argument page at the top of the user stack region
   (`USER_ARGS_ADDR` / `user_args_t` in `kernel/task.h`, mirrored in `user/lib/src/crt0.cpp`).
+- Usage text and error messages go to standard error with `eprintf`, never `printf`: with
+  `cmd > file` or a pipe they must still reach the screen.
 - Programs write output with `printf`/`write_out` and read input with `read_line`/`read_input`
   (`stdio.h`), never with `console_write`/`console_read` directly, so that `cmd > file` and
   `cmd1 | cmd2` work. Standard input/output is a user-library concept: sh passes a hidden last
@@ -234,7 +236,7 @@ make test TEST_TIMEOUT=300     # 机器很忙时放宽上限（默认 180 秒）
 
 内核不会自己关机：`make test` 通过 `scripts/shell-test.sh` 启动 QEMU，等日志里出现 `sh: ready`
 （以 `TEST_TIMEOUT` 为上限），然后向串口输入一串命令检查命令行的行为（运行程序、后台任务、
-Ctrl-C、`kill`、被终止的服务的端口能否重用、程序读键盘输入、重定向和管道），每一步等到预期的输出出现为止（每步最多
+Ctrl-C、`kill`、被终止的服务的端口能否重用、程序读键盘输入、重定向和管道、引号、标准错误），每一步等到预期的输出出现为止（每步最多
 `STEP_TIMEOUT` 秒，默认 30），做完就结束 QEMU。完整日志写到 `build/<arch>-ktest/test.log`，
 命令行检查的结果写到 `build/<arch>-ktest/shell-test.log`（每项一行 `shelltest: <名字>: ok|FAILED`）。
 最后汇总各模块的 `Total/Passed/Failed tests` 计数；有失败用例、用户态没有起来、用户态自检
@@ -254,7 +256,8 @@ Ctrl-C、`kill`、被终止的服务的端口能否重用、程序读键盘输�
 # 控制台是串口；向 QEMU 的标准输入写入的内容经 uart 驱动送到 sh
 # （help、jobs、kill <pid> 是内置命令；其余如 ls、cat <file>、write <file> [text] 是程序；
 #   行尾加 & 后台运行，Ctrl-C（0x03）终止前台程序；前台程序运行期间输入归它，
-#   行首的 Ctrl-D（0x04）表示输入结束；cmd < in > out、cmd >> out、cmd1 | cmd2 可用）
+#   行首的 Ctrl-D（0x04）表示输入结束；cmd < in > out 2> err、cmd >> out、cmd1 | cmd2、
+#   "带 空格 的参数" 可用）
 timeout 20 qemu-system-i386 -kernel build/i686/castor.bin -serial stdio -display none
 timeout 20 qemu-system-x86_64 -kernel build/x86_64/castor32.elf -serial stdio -display none
 timeout 20 qemu-system-aarch64 -M virt -cpu cortex-a72 -kernel build/arm64/castor.bin -serial stdio -display none

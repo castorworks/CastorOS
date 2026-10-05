@@ -10,12 +10,12 @@
 int main(int argc, char **argv) {
     uint32_t ip;
     if (argc < 2 || net_parse_ip(argv[1], &ip) != 0) {
-        printf("usage: ping <a.b.c.d> [count]\n");
+        eprintf("usage: ping <a.b.c.d> [count]\n");
         return 1;
     }
     struct net_info info;
     if (net_info(&info) != 0) {
-        printf("ping: no network\n");
+        eprintf("ping: no network\n");
         return 1;
     }
     int count = argc > 2 ? atoi(argv[2]) : 3;

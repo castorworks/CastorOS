@@ -10,17 +10,17 @@
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        printf("usage: dns <name>\n");
+        eprintf("usage: dns <name>\n");
         return 1;
     }
     struct net_info info;
     if (net_info(&info) != 0 || info.ip == 0) {
-        printf("dns: no network\n");
+        eprintf("dns: no network\n");
         return 1;
     }
     uint32_t ip;
     if (net_resolve(argv[1], &ip) != 0) {
-        printf("dns: %s: not found\n", argv[1]);
+        eprintf("dns: %s: not found\n", argv[1]);
         return 1;
     }
     char text[16];

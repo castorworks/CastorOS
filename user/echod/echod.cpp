@@ -16,10 +16,10 @@ int main(int argc, char **argv) {
 
     int listener = net_tcp_listen((uint16_t)port);
     if (listener < 0) {
-        printf("echod: cannot listen on port %d\n", port);
+        eprintf("echod: cannot listen on port %d\n", port);
         return 1;
     }
-    printf("echod: listening on port %d\n", port);
+    eprintf("echod: listening on port %d\n", port);
 
     static char buf[2048];
     for (int i = 0; i < count; i++) {
@@ -27,12 +27,12 @@ int main(int argc, char **argv) {
         uint16_t peer_port = 0;
         int conn = net_tcp_accept(listener, 60000, &peer_ip, &peer_port);
         if (conn < 0) {
-            printf("echod: nobody connected within a minute\n");
+            eprintf("echod: nobody connected within a minute\n");
             break;
         }
         char text[16];
         net_format_ip(peer_ip, text);
-        printf("echod: connection from %s:%u\n", text, peer_port);
+        eprintf("echod: connection from %s:%u\n", text, peer_port);
 
         unsigned total = 0;
         long n;
@@ -43,7 +43,7 @@ int main(int argc, char **argv) {
             total += (unsigned)n;
         }
         net_tcp_close(conn);
-        printf("echod: connection closed, %u bytes echoed\n", total);
+        eprintf("echod: connection closed, %u bytes echoed\n", total);
     }
     net_tcp_close(listener);
     return 0;

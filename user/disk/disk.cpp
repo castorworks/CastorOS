@@ -13,20 +13,20 @@ static char sector_buf[BLK_SECTOR_SIZE];
 int main(int argc, char **argv) {
     uint64_t sectors = blk_capacity();
     if (sectors == 0) {
-        printf("disk: no block device\n");
+        eprintf("disk: no block device\n");
         return 1;
     }
     if (argc < 3) {
         printf("%u sectors of %d bytes (%u MB)\n", (uint32_t)sectors, BLK_SECTOR_SIZE,
                (uint32_t)(sectors / 2048));
-        printf("usage: disk read <sector> | disk write <sector> <words...>\n");
+        eprintf("usage: disk read <sector> | disk write <sector> <words...>\n");
         return 0;
     }
 
     uint32_t sector = (uint32_t)atoi(argv[2]);
     if (strcmp(argv[1], "read") == 0) {
         if (blk_read(sector, sector_buf, 1) != 0) {
-            printf("disk: read of sector %u failed\n", sector);
+            eprintf("disk: read of sector %u failed\n", sector);
             return 1;
         }
         sector_buf[BLK_SECTOR_SIZE - 1] = '\0';
@@ -48,11 +48,11 @@ int main(int argc, char **argv) {
             len += n;
         }
         if (blk_write(sector, sector_buf, 1) != 0) {
-            printf("disk: write of sector %u failed\n", sector);
+            eprintf("disk: write of sector %u failed\n", sector);
             return 1;
         }
         return 0;
     }
-    printf("usage: disk read <sector> | disk write <sector> <words...>\n");
+    eprintf("usage: disk read <sector> | disk write <sector> <words...>\n");
     return 1;
 }

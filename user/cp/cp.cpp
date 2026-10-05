@@ -5,17 +5,17 @@
 
 int main(int argc, char **argv) {
     if (argc != 3) {
-        printf("usage: cp <from> <to>\n");
+        eprintf("usage: cp <from> <to>\n");
         return 1;
     }
     int in = fs_open(argv[1], 0);
     if (in < 0) {
-        printf("cp: %s: no such file\n", argv[1]);
+        eprintf("cp: %s: no such file\n", argv[1]);
         return 1;
     }
     int out = fs_open(argv[2], FS_O_CREATE | FS_O_TRUNC);
     if (out < 0) {
-        printf("cp: %s: cannot create\n", argv[2]);
+        eprintf("cp: %s: cannot create\n", argv[2]);
         return 1;
     }
 
@@ -24,7 +24,7 @@ int main(int argc, char **argv) {
     long n;
     while ((n = fs_read(in, offset, buf, sizeof(buf))) > 0) {
         if (fs_write(out, offset, buf, (size_t)n) != n) {
-            printf("cp: %s: write failed (disk full?)\n", argv[2]);
+            eprintf("cp: %s: write failed (disk full?)\n", argv[2]);
             return 1;
         }
         offset += (uint32_t)n;

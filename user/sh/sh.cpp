@@ -3,7 +3,8 @@
 // 由 init 启动（非特权）。输入来自 uart 驱动。除了几个内置命令，一行的第一个词
 // 被当作文件服务里的程序：读出它的 ELF 映像，fork 之后带着这一行的参数 exec。
 // 行尾加 & 让程序在后台运行；前台程序运行期间按 Ctrl-C 终止它。
-// cmd < in > out 把程序的标准输入/输出换成文件，cmd1 | cmd2 把前一个的输出接到后一个的输入。
+// cmd < in > out 2> err 把程序的标准输入/输出/错误输出换成文件，cmd1 | cmd2 把前一个的输出
+// 接到后一个的输入；引号里的内容原样作为参数。
 // 启动时先执行文件 "rc" 里的每一行。
 //
 // sh 是终端的主人（见 <console.h>）：程序在前台运行期间，键盘输入归那个程序，
@@ -182,6 +183,8 @@ struct stage {
     const char *in_file;        // < file
     const char *out_file;       // > file 或 >> file
     bool append;
+    const char *err_file;       // 2> file 或 2>> file
+    bool err_append;
     void *image;
     size_t image_size;
     int pid;
@@ -192,7 +195,7 @@ struct stage {
 // 在 fork 出来的子进程里：换成这一段的程序。标准输入/输出不是控制台时，
 // 在参数最后附上说明（格式见 <stdio.h>），由新程序的启动代码去设置
 static void exec_stage(struct stage *st, int in_pid, int out_pid) {
-    static char spec[2 * FS_NAME_MAX + 8];
+    static char spec[3 * FS_NAME_MAX + 12];
     char in[FS_NAME_MAX + 2] = "";
     char out[FS_NAME_MAX + 2] = "";
     if (st->in_file) {
@@ -205,8 +208,13 @@ static void exec_stage(struct stage *st, int in_pid, int out_pid) {
     } else if (out_pid != 0) {
         snprintf(out, sizeof(out), "p%d", out_pid);
     }
-    if (in[0] || out[0]) {
-        snprintf(spec, sizeof(spec), "%c%s%c%s", STDIO_ARG_MARK, in, STDIO_ARG_MARK, out);
+    char err[FS_NAME_MAX + 2] = "";
+    if (st->err_file) {
+        snprintf(err, sizeof(err), "%c%s", st->err_append ? 'a' : 'f', st->err_file);
+    }
+    if (in[0] || out[0] || err[0]) {
+        snprintf(spec, sizeof(spec), "%c%s%c%s%c%s", STDIO_ARG_MARK, in, STDIO_ARG_MARK, out,
+                 STDIO_ARG_MARK, err);
         st->argv[st->argc] = spec;
         st->argv[st->argc + 1] = NULL;
     }
@@ -322,111 +330,195 @@ unload:
     }
 }
 
-// 把管道的一段按空格切成参数，摘出重定向（< file、> file、>> file，文件名可以紧跟符号）。
-// @return 写得对不对
-static bool parse_stage(char *text, struct stage *st) {
-    char *p = text;
-    while (*p == ' ') {
-        p++;
-    }
-    const char **target = NULL;     // 上一个词是重定向符号：这个词是它的文件名
-    while (*p) {
-        char *word = p;
-        while (*p && *p != ' ') {
-            p++;
+// ============================================================================
+// 解析命令行
+// ============================================================================
+
+#define MAX_TOKENS 64
+
+// 一行切出来的一个单位：一个词，或者一个运算符
+enum {
+    TOK_WORD,
+    TOK_PIPE,           // |
+    TOK_BACKGROUND,     // &
+    TOK_IN,             // <
+    TOK_OUT,            // >
+    TOK_OUT_APPEND,     // >>
+    TOK_ERR,            // 2>
+    TOK_ERR_APPEND,     // 2>>
+};
+
+struct token {
+    int kind;
+    const char *text;   // TOK_WORD：词的内容（引号已经去掉）
+};
+
+/**
+ * 把一行切成词和运算符。词的内容复制到 text 里（每个词以 NUL 结尾）。
+ *
+ * 引号（"..." 或 '...'）里的内容原样成为词的一部分：空格不分词，| & < > 不是运算符。
+ * 引号可以出现在词的中间（a"b c"d 是一个词 ab cd），两个引号紧挨着是一个空的词。
+ * 没有转义字符，也没有变量。
+ *
+ * @param text 至少 strlen(line) + MAX_TOKENS 字节
+ * @return 切出来的个数；引号没有配对或者太多时返回 -1
+ */
+static int tokenize(const char *line, struct token *tokens, char *text) {
+    int count = 0;
+    const char *src = line;
+
+    for (;;) {
+        while (*src == ' ' || *src == '\t') {
+            src++;
         }
-        while (*p == ' ') {
-            *p++ = '\0';
+        if (*src == '\0') {
+            return count;
+        }
+        if (count == MAX_TOKENS) {
+            return -1;
+        }
+        struct token *tok = &tokens[count++];
+        tok->text = NULL;
+
+        // 运算符。"2>" 只有在一个词的开头才是运算符（a2>b 里的 2 属于前面的词）
+        if (src[0] == '2' && src[1] == '>') {
+            tok->kind = src[2] == '>' ? TOK_ERR_APPEND : TOK_ERR;
+            src += src[2] == '>' ? 3 : 2;
+            continue;
+        }
+        if (*src == '|' || *src == '&' || *src == '<' || *src == '>') {
+            tok->kind = *src == '|' ? TOK_PIPE : *src == '&' ? TOK_BACKGROUND : *src == '<' ? TOK_IN
+                      : src[1] == '>' ? TOK_OUT_APPEND : TOK_OUT;
+            src += tok->kind == TOK_OUT_APPEND ? 2 : 1;
+            continue;
         }
 
-        if (target) {
-            *target = word;
-            target = NULL;
-        } else if (word[0] == '<' || word[0] == '>') {
-            bool output = word[0] == '>';
-            if (output && word[1] == '>') {
-                st->append = true;
-                word++;
-            } else if (output) {
-                st->append = false;
+        // 一个词：读到没有被引号括住的空白或运算符为止
+        tok->kind = TOK_WORD;
+        tok->text = text;
+        char quote = 0;
+        for (; *src; src++) {
+            char c = *src;
+            if (quote) {
+                if (c == quote) {
+                    quote = 0;
+                } else {
+                    *text++ = c;
+                }
+            } else if (c == '"' || c == '\'') {
+                quote = c;
+            } else if (c == ' ' || c == '\t' || c == '|' || c == '&' || c == '<' || c == '>') {
+                break;
+            } else {
+                *text++ = c;
             }
-            target = output ? &st->out_file : &st->in_file;
-            if (word[1] != '\0') {
-                *target = word + 1;
-                target = NULL;
-            }
-        } else if (st->argc < MAX_ARGS) {
-            st->argv[st->argc++] = word;
         }
+        if (quote) {
+            return -1;
+        }
+        *text++ = '\0';
     }
-    st->argv[st->argc] = NULL;
-    return st->argc > 0 && target == NULL &&
-           (!st->in_file || strlen(st->in_file) < FS_NAME_MAX) &&
-           (!st->out_file || strlen(st->out_file) < FS_NAME_MAX);
 }
 
 static void run_command(char *line) {
+    static struct token tokens[MAX_TOKENS];
+    static struct stage stages[MAX_STAGES];
+    static char text[256 + MAX_TOKENS];
+
     while (*line == ' ') {
         line++;
     }
-    if (*line == '\0' || *line == '#') {
+    if (*line == '#') {
+        return;
+    }
+    int ntok = strlen(line) <= 256 ? tokenize(line, tokens, text) : -1;
+    if (ntok == 0) {
         return;
     }
 
-    if (strcmp(line, "help") == 0) {
-        printf("builtins: help, jobs, kill <pid>\n");
-        printf("anything else runs a program from the file service with the rest of the\n");
-        printf("line as its arguments, e.g.: ls, cat <file>, write <file>, ping <ip>, hello\n");
-        printf("  cmd &                  run in the background; Ctrl-C stops the foreground program\n");
-        printf("  cmd < file > file      read input from / write output to a file (>> appends)\n");
-        printf("  cmd | cmd              feed one program's output to the next, e.g.: ls | grep sh | wc\n");
-        return;
-    }
-    if (strcmp(line, "jobs") == 0) {
-        cmd_jobs();
-        return;
-    }
-
-    // 行尾的 &：后台运行
-    bool background = false;
-    size_t len = strlen(line);
-    while (len > 0 && line[len - 1] == ' ') {
-        line[--len] = '\0';
-    }
-    if (len > 0 && line[len - 1] == '&') {
-        background = true;
-        line[--len] = '\0';
-    }
-
-    // 按 | 切成几段。重定向只能在两头：第一段的输入、最后一段的输出
-    static struct stage stages[MAX_STAGES];
+    // 把词和运算符组装成管道的各段。重定向的文件名是运算符后面的那个词；
+    // 输入重定向只能在第一段，输出重定向只能在最后一段，& 只能在行尾
     memset(stages, 0, sizeof(stages));
-    int count = 0;
-    bool ok = true;
-    for (char *text = line; ok && text; ) {
-        char *bar = strchr(text, '|');
-        if (bar) {
-            *bar++ = '\0';
+    int count = 1;
+    bool background = false;
+    bool ok = ntok > 0;        // -1：引号没有配对
+    for (int i = 0; ok && i < ntok; i++) {
+        struct stage *st = &stages[count - 1];
+        const char *file = (i + 1 < ntok && tokens[i + 1].kind == TOK_WORD) ? tokens[i + 1].text : NULL;
+        switch (tokens[i].kind) {
+        case TOK_WORD:
+            if (st->argc < MAX_ARGS) {
+                st->argv[st->argc++] = (char *)tokens[i].text;
+            }
+            break;
+        case TOK_PIPE:
+            ok = st->argc > 0 && !st->out_file && count < MAX_STAGES;
+            count++;
+            break;
+        case TOK_BACKGROUND:
+            ok = i == ntok - 1;
+            background = true;
+            break;
+        case TOK_IN:
+            ok = file && count == 1;
+            st->in_file = file;
+            i++;
+            break;
+        case TOK_OUT:
+        case TOK_OUT_APPEND:
+            ok = file != NULL;
+            st->out_file = file;
+            st->append = tokens[i].kind == TOK_OUT_APPEND;
+            i++;
+            break;
+        case TOK_ERR:
+        case TOK_ERR_APPEND:
+            ok = file != NULL;
+            st->err_file = file;
+            st->err_append = tokens[i].kind == TOK_ERR_APPEND;
+            i++;
+            break;
         }
-        ok = count < MAX_STAGES && parse_stage(text, &stages[count]);
-        count++;
-        text = bar;
     }
     for (int i = 0; ok && i < count; i++) {
-        ok = (i == 0 || !stages[i].in_file) && (i == count - 1 || !stages[i].out_file);
+        struct stage *st = &stages[i];
+        ok = st->argc > 0 &&
+             (!st->in_file || strlen(st->in_file) < FS_NAME_MAX) &&
+             (!st->out_file || strlen(st->out_file) < FS_NAME_MAX) &&
+             (!st->err_file || strlen(st->err_file) < FS_NAME_MAX);
+        st->argv[st->argc] = NULL;
     }
     if (!ok) {
         printf("sh: syntax error\n");
         return;
     }
 
-    if (count == 1 && strcmp(stages[0].argv[0], "kill") == 0) {
-        if (stages[0].argc == 2) {
-            cmd_kill(stages[0].argv[1]);
-        } else {
-            printf("usage: kill <pid>\n");
+    // 内置命令
+    if (count == 1) {
+        struct stage *st = &stages[0];
+        if (strcmp(st->argv[0], "help") == 0) {
+            printf("builtins: help, jobs, kill <pid>\n");
+            printf("anything else runs a program from the file service with the rest of the\n");
+            printf("line as its arguments, e.g.: ls, cat <file>, write <file>, ping <ip>, hello\n");
+            printf("  \"two words\"            quotes (\" or ') keep spaces and | & < > in an argument\n");
+            printf("  cmd &                  run in the background; Ctrl-C stops the foreground program\n");
+            printf("  cmd < file > file      read input from / write output to a file (>> appends)\n");
+            printf("  cmd 2> file            write error messages to a file\n");
+            printf("  cmd | cmd              feed one program's output to the next, e.g.: ls | grep sh | wc\n");
+            return;
         }
-        return;
+        if (strcmp(st->argv[0], "jobs") == 0) {
+            cmd_jobs();
+            return;
+        }
+        if (strcmp(st->argv[0], "kill") == 0) {
+            if (st->argc == 2) {
+                cmd_kill(st->argv[1]);
+            } else {
+                printf("usage: kill <pid>\n");
+            }
+            return;
+        }
     }
     run_pipeline(stages, count, background);
 }

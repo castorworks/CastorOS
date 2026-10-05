@@ -17,7 +17,7 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         int fd = fs_open(argv[i], 0);
         if (fd < 0) {
-            printf("cat: %s: no such file\n", argv[i]);
+            eprintf("cat: %s: no such file\n", argv[i]);
             status = 1;
             continue;
         }

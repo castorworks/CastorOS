@@ -1,5 +1,5 @@
 #!/bin/bash
-# 启动 QEMU，等命令行就绪后向串口输入一串命令，检查命令行的行为（后台任务、Ctrl-C、kill、程序读键盘输入、重定向和管道）。
+# 启动 QEMU，等命令行就绪后向串口输入一串命令，检查命令行的行为（后台任务、Ctrl-C、kill、程序读键盘输入、重定向和管道、引号、标准错误）。
 # 由 make test 调用：
 #
 #   scripts/shell-test.sh <log> <results> <boot-timeout-seconds> <qemu command...>
@@ -176,6 +176,31 @@ pipe_errors() {
     send 'jobs\n'; expect '^\(no background jobs\)$'
 }
 check "pipe errors and background pipes" pipe_errors
+
+# ---- 引号：空格和运算符原样进参数，可以出现在词的中间，没配对是语法错误 ----
+quoting() {
+    send 'echo "a  b" c\n'; expect '^a  b c$' || return 1
+    send "echo 'x | y > z' end\n"; expect '^x \| y > z end$' || return 1
+    send 'echo a"b c"d | wc\n'; expect '^1 2 6$' || return 1
+    send 'write quoted "hello   world"\n'; expect '> $' || return 1
+    send 'cat quoted\n'; expect '^hello   world$' || return 1
+    send 'echo "unterminated\n'; expect '^sh: syntax error$'
+}
+check "quoting" quoting
+
+# ---- 标准错误：重定向输出时报错仍然在屏幕上；2> 把它收进文件 ----
+standard_error() {
+    send 'cat nosuchfile > captured\n'; expect '^cat: nosuchfile: no such file$' || return 1
+    send 'wc < captured\n'; expect '^0 0 0$' || return 1
+    send 'cat nosuchfile | wc\n'; expect '^cat: nosuchfile: no such file$' && expect '^0 0 0$' || return 1
+    send 'cat nosuchfile 2> errors\n'; expect '^cat: exit status 1$' || return 1
+    ! output | grep -aq 'no such file' || return 1
+    send 'cat errors\n'; expect '^cat: nosuchfile: no such file$' || return 1
+    send 'cat nosuchfile quoted 2>> errors > both\n'; expect '^cat: exit status 1$' || return 1
+    send 'wc < errors\n'; expect '^2 10 60$' || return 1
+    send 'cat both\n'; expect '^hello   world$'
+}
+check "standard error" standard_error
 
 [ $failed -eq 0 ] && echo "shelltest: all passed" >> "$RESULTS"
 exit 0

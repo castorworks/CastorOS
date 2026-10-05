@@ -6,7 +6,7 @@
 int main() {
     struct net_info info;
     if (net_info(&info) != 0) {
-        printf("ifconfig: no network\n");
+        eprintf("ifconfig: no network\n");
         return 1;
     }
     if (info.ip == 0) {

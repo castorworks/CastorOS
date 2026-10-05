@@ -17,6 +17,7 @@ struct stream {
 
 static struct stream in;
 static struct stream out;
+static struct stream err;
 
 // 已经从输入来源取来、还没交给程序的字节
 static char pending[256];
@@ -64,19 +65,24 @@ void stdio_setup(const char *spec) {
     if (!sep) {
         return;
     }
+    const char *output = sep + 1;
+    const char *sep2 = strchr(output, STDIO_ARG_MARK);
     open_stream(&in, input, (size_t)(sep - input), false);
-    open_stream(&out, sep + 1, strlen(sep + 1), true);
+    open_stream(&out, output, sep2 ? (size_t)(sep2 - output) : strlen(output), true);
+    if (sep2 && sep2[1] != 'p') {
+        open_stream(&err, sep2 + 1, strlen(sep2 + 1), true);
+    }
 }
 
-long write_out(const void *buf, size_t len) {
+static long write_stream(struct stream *s, const void *buf, size_t len) {
     const char *p = (const char *)buf;
     size_t done = 0;
 
-    switch (out.kind) {
+    switch (s->kind) {
     case IO_FILE: {
-        long n = fs_write(out.fd, out.offset, buf, len);
+        long n = fs_write(s->fd, s->offset, buf, len);
         if (n > 0) {
-            out.offset += (uint32_t)n;
+            s->offset += (uint32_t)n;
         }
         return n == (long)len ? n : -1;
     }
@@ -87,7 +93,7 @@ long write_out(const void *buf, size_t len) {
             m.label = STDIO_DATA;
             m.data[0] = chunk;
             memcpy(&m.data[1], p + done, chunk);
-            if (ipc_send(out.peer, &m) != 0) {
+            if (ipc_send(s->peer, &m) != 0) {
                 exit(1);        // 没有人读了：再写下去没有意义
             }
             done += chunk;
@@ -104,6 +110,14 @@ long write_out(const void *buf, size_t len) {
         }
         return (long)len;
     }
+}
+
+long write_out(const void *buf, size_t len) {
+    return write_stream(&out, buf, len);
+}
+
+long write_err(const void *buf, size_t len) {
+    return write_stream(&err, buf, len);
 }
 
 // pending 空了就从输入来源再取一些。@return 还有没有输入

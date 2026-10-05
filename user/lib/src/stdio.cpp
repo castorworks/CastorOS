@@ -73,13 +73,9 @@ void num_to_str_oct(unsigned long long val, char *tmp, int *len) {
 // 支持格式符: %s, %d, %i, %u, %c, %x, %X, %o, %p, %ld, %lu, %lld, %llu, %%
 // 支持标志: -, 0 (左对齐, 零填充)
 // 支持宽度: %5d, %-10s 等
-void printf(const char *format, ...) {
+static void format_and_write(bool to_err, const char *format, __builtin_va_list args) {
     static char buffer[8192];  // 足够大的静态缓冲区
     size_t pos = 0;
-    
-    // 使用内置的变参宏
-    __builtin_va_list args;
-    __builtin_va_start(args, format);
     
     while (*format && pos < sizeof(buffer) - 1) {
         if (*format == '%' && *(format + 1)) {
@@ -339,10 +335,26 @@ void printf(const char *format, ...) {
         format++;
     }
     
-    __builtin_va_end(args);
-    
     buffer[pos] = '\0';
-    print(buffer);
+    if (to_err) {
+        write_err(buffer, pos);
+    } else {
+        write_out(buffer, pos);
+    }
+}
+
+void printf(const char *format, ...) {
+    __builtin_va_list args;
+    __builtin_va_start(args, format);
+    format_and_write(false, format, args);
+    __builtin_va_end(args);
+}
+
+void eprintf(const char *format, ...) {
+    __builtin_va_list args;
+    __builtin_va_start(args, format);
+    format_and_write(true, format, args);
+    __builtin_va_end(args);
 }
 
 void print(const char *msg) {

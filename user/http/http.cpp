@@ -13,7 +13,7 @@
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        printf("usage: http <host> [path]\n");
+        eprintf("usage: http <host> [path]\n");
         return 1;
     }
     const char *host = argv[1];
@@ -21,16 +21,16 @@ int main(int argc, char **argv) {
 
     uint32_t ip;
     if (net_resolve(host, &ip) != 0) {
-        printf("http: cannot resolve %s\n", host);
+        eprintf("http: cannot resolve %s\n", host);
         return 1;
     }
     char text[16];
     net_format_ip(ip, text);
-    printf("connecting to %s (%s) port 80\n", host, text);
+    eprintf("connecting to %s (%s) port 80\n", host, text);
 
     int conn = net_tcp_connect(ip, 80, 5000);
     if (conn < 0) {
-        printf("http: connection failed\n");
+        eprintf("http: connection failed\n");
         return 1;
     }
 
@@ -39,7 +39,7 @@ int main(int argc, char **argv) {
                      "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: CastorOS\r\nConnection: close\r\n\r\n",
                      path, host);
     if (net_tcp_send(conn, request, (size_t)n) != n) {
-        printf("http: send failed\n");
+        eprintf("http: send failed\n");
         net_tcp_close(conn);
         return 1;
     }
@@ -56,6 +56,6 @@ int main(int argc, char **argv) {
         total += (size_t)got;
     }
     net_tcp_close(conn);
-    printf("\n[%u bytes received%s]\n", (unsigned)total, got < 0 ? ", then the connection timed out" : "");
+    eprintf("\n[%u bytes received%s]\n", (unsigned)total, got < 0 ? ", then the connection timed out" : "");
     return total > 0 ? 0 : 1;
 }
