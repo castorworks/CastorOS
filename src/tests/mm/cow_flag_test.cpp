@@ -592,60 +592,11 @@ TEST_CASE(test_vmm_user_mapping_rejected_in_kernel_space) {
 // 2MB 对齐、位于用户地址范围内且其它测试不使用的地址
 #define TEST_VIRT_HUGE  0x30000000
 
-/**
- * @brief unmap_page_in_directory 对大页/块映射必须返回 0
- *
- * 回归测试：以前先 query 再 unmap 并忽略 unmap 的结果，对块映射会返回其
- * 物理地址，调用者（munmap）随后把不属于进程的帧释放掉（arm64 的用户地址
- * 空间里有内核的块映射）。
- */
-TEST_CASE(test_vmm_unmap_block_mapping_returns_zero) {
-    paddr_t huge = PADDR_INVALID;
-    paddr_t before = 0;
-
-#if defined(ARCH_ARM64)
-    // arm64 的低地址范围已经由引导时的 1GB 块恒等映射覆盖，直接用它
-    bool have_block = hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)TEST_VIRT_HUGE,
-                                      &before, NULL);
-#else
-    bool have_block = false;
-#endif
-    if (!have_block) {
-        huge = mm::Pmm::alloc_huge_page();
-        if (huge == PADDR_INVALID) {
-            return;  // 没有连续的 2MB 物理内存，无法构造场景
-        }
-        if (!hal::Mmu::map_huge(HAL_ADDR_SPACE_CURRENT, (vaddr_t)TEST_VIRT_HUGE, huge,
-                                HAL_PAGE_PRESENT | HAL_PAGE_WRITE)) {
-            mm::Pmm::free_huge_page(huge);
-            return;
-        }
-        hal::Mmu::flush_tlb((vaddr_t)TEST_VIRT_HUGE);
-        before = huge;
-    }
-
-    uintptr_t dir = mm::Vmm::get_page_directory();
-    uintptr_t inside = (uintptr_t)TEST_VIRT_HUGE + 3 * PAGE_SIZE;
-    ASSERT_TRUE(mm::Vmm::unmap_page_in_directory(dir, (uintptr_t)TEST_VIRT_HUGE) == 0);
-    ASSERT_TRUE(mm::Vmm::unmap_page_in_directory(dir, inside) == 0);
-
-    // 块映射保持原样
-    paddr_t after = 0;
-    ASSERT_TRUE(hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)TEST_VIRT_HUGE, &after, NULL));
-    ASSERT_TRUE(after == before);
-
-    if (huge != PADDR_INVALID) {
-        hal::Mmu::unmap_huge(HAL_ADDR_SPACE_CURRENT, (vaddr_t)TEST_VIRT_HUGE);
-        hal::Mmu::flush_tlb((vaddr_t)TEST_VIRT_HUGE);
-        mm::Pmm::free_huge_page(huge);
-    }
-}
 #endif
 
 TEST_SUITE(vmm_mapping_guard_tests) {
     RUN_TEST(test_vmm_user_mapping_rejected_in_kernel_space);
 #if !defined(ARCH_I686)
-    RUN_TEST(test_vmm_unmap_block_mapping_returns_zero);
 #endif
 }
 

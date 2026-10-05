@@ -139,9 +139,4 @@ typedef struct x86_64_context {
 /** Default RFLAGS value (interrupts enabled, reserved bit 1 set) */
 #define X86_64_RFLAGS_DEFAULT 0x202ULL
 
-/* ============================================================================
- * HAL Context Type Alias
- * ========================================================================== */
-
-
 #endif /* _ARCH_X86_64_CONTEXT64_H_ */

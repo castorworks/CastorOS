@@ -99,18 +99,6 @@ public:
     static paddr_t alloc_frame();
 
     /**
-     * @brief 从指定区域分配连续物理页帧（用于 DMA）
-     * @param count 页帧数量
-     * @param zone 内存区域 (ZONE_DMA 用于 DMA 缓冲区)
-     * @return 成功返回起始物理地址，失败返回 PADDR_INVALID
-     * 
-     * DMA 区域 (ZONE_DMA) 限制在 0-16MB 范围内，适用于 ISA DMA。
-     * 
-     * @see Requirements 10.1
-     */
-    static paddr_t alloc_frames_zone(size_t count, pmm_zone_t zone);
-
-    /**
      * @brief 释放一个物理页帧
      * @param frame 页帧的物理地址
      * 
@@ -121,36 +109,10 @@ public:
      */
     static void free_frame(paddr_t frame);
 
-    /**
-     * @brief 释放连续物理页帧
-     * @param frame 起始物理地址
-     * @param count 页帧数量
-     */
-    static void free_frames(paddr_t frame, size_t count);
-
     /*============================================================================
      * 大页分配接口（2MB 对齐）
      * @see Requirements 8.1
      *============================================================================*/
-
-    /**
-     * @brief 分配一个 2MB 大页
-     * @return 成功返回 2MB 对齐的物理地址，失败返回 PADDR_INVALID
-     * 
-     * 分配 512 个连续的 4KB 页帧，起始地址 2MB 对齐。
-     * 分配后会清零页帧内容。
-     * 
-     * @see Requirements 8.1
-     */
-    static paddr_t alloc_huge_page();
-
-    /**
-     * @brief 释放一个 2MB 大页
-     * @param huge_page 大页的物理地址（必须 2MB 对齐）
-     * 
-     * @see Requirements 8.1
-     */
-    static void free_huge_page(paddr_t huge_page);
 
     /**
      * @brief 检查物理地址是否 2MB 对齐

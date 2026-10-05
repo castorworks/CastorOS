@@ -66,16 +66,6 @@ void hal::Syscall::init(hal_syscall_handler_t handler) {
     serial_puts("ARM64 system call mechanism initialized\n");
 }
 
-/**
- * @brief Get the registered syscall handler
- * @return The currently registered system call handler function
- *
- * This can be used by the exception handler if needed.
- */
-hal_syscall_handler_t hal_get_syscall_handler(void) {
-    return g_syscall_handler;
-}
-
 /* ============================================================================
  * User Mode Transition
  * ============================================================================ */

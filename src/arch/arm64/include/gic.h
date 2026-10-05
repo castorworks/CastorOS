@@ -187,10 +187,4 @@ void gic_handle_irq(void);
  */
 void gic_register_handler(uint32_t irq, hal_interrupt_handler_t handler, void *data);
 
-/**
- * @brief Unregister an interrupt handler
- * @param irq Interrupt number
- */
-void gic_unregister_handler(uint32_t irq);
-
 #endif /* _ARCH_ARM64_GIC_H_ */

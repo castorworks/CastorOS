@@ -52,8 +52,6 @@ void irq64_init(void);
  * @param handler Handler function
  */
 void irq64_register_handler(uint8_t irq, isr_handler_t handler);
-void irq64_add_shared_handler(uint8_t irq, isr_handler_t handler);
-
 /**
  * @brief Disable (mask) an IRQ line
  * @param irq IRQ number (0-15)
@@ -68,19 +66,6 @@ void irq64_disable_line(uint8_t irq);
  * @param irq IRQ number (0-15)
  */
 void irq64_enable_line(uint8_t irq);
-
-/**
- * @brief Get IRQ count
- * @param irq IRQ number (0-15)
- * @return Number of times this IRQ has fired
- */
-uint64_t irq64_get_count(uint8_t irq);
-
-/**
- * @brief Get timer tick count
- * @return Number of timer ticks since boot
- */
-uint64_t irq64_get_timer_ticks(void);
 
 /* Compatibility wrappers */
 #define irq_init() irq64_init()

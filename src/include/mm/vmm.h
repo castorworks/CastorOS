@@ -169,12 +169,6 @@ public:
     static bool map_page(uintptr_t virt, uintptr_t phys, uint32_t flags);
 
     /**
-     * @brief 取消虚拟页映射
-     * @param virt 虚拟地址（页对齐）
-     */
-    static void unmap_page(uintptr_t virt);
-
-    /**
      * @brief 刷新TLB缓存
      * @param virt 虚拟地址（0表示刷新全部）
      */
@@ -272,61 +266,6 @@ public:
      * @return 是否成功处理（如果成功，不需要 panic）
      */
     static bool handle_cow_page_fault(uintptr_t addr, uint32_t error_code);
-
-    /**
-     * @brief 映射 MMIO 区域
-     * @param phys_addr 物理地址
-     * @param size 映射大小（字节）
-     * @return 成功返回映射的虚拟地址，失败返回 0
-     * 
-     * 用于映射设备寄存器等内存映射 I/O 区域
-     * 映射的页面标记为不可缓存（Cache-Disable）
-     */
-    static uintptr_t map_mmio(uintptr_t phys_addr, size_t size);
-
-    /**
-     * @brief 映射帧缓冲区域（使用 Write-Combining 模式）
-     * @param phys_addr 物理地址
-     * @param size 映射大小（字节）
-     * @return 成功返回映射的虚拟地址，失败返回 0
-     * 
-     * 帧缓冲区使用 Write-Combining 缓存模式，可以将多个连续写入
-     * 合并为一个操作，大幅提升图形输出性能。
-     */
-    static uintptr_t map_framebuffer(uintptr_t phys_addr, size_t size);
-
-    /**
-     * @brief 取消 MMIO 区域映射
-     * @param virt_addr 虚拟地址
-     * @param size 映射大小（字节）
-     */
-    static void unmap_mmio(uintptr_t virt_addr, size_t size);
-
-    /**
-     * @brief 通过查询页表获取虚拟地址对应的物理地址
-     * @param virt 虚拟地址
-     * @return 物理地址，如果虚拟地址未映射则返回 0
-     * 
-     * 注意：此函数会查询当前页目录的页表来获取真正的物理地址，
-     * 而不是简单地使用 VIRT_TO_PHYS 宏（该宏只对恒等映射有效）。
-     * 对于动态分配的堆内存，必须使用此函数获取物理地址用于 DMA 等操作。
-     */
-    static uintptr_t virt_to_phys(uintptr_t virt);
-
-    /**
-     * @brief 转储页表内容（调试功能）
-     * @param dir_phys 页目录的物理地址（0 表示当前页目录）
-     * @param start_virt 起始虚拟地址
-     * @param end_virt 结束虚拟地址
-     * 
-     * 打印指定虚拟地址范围内的页表映射信息，包括：
-     * - 虚拟地址
-     * - 物理地址
-     * - 页标志（Present, Write, User, COW 等）
-     * 
-     * @see Requirements 11.1
-     */
-    static void dump_page_tables(uintptr_t dir_phys, uintptr_t start_virt, uintptr_t end_virt);
 
     /* ============================================================================
      * 错误码转换函数

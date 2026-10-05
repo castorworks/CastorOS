@@ -163,42 +163,6 @@ void irq_register_handler(uint8_t irq, isr_handler_t handler) {
     irq_handlers[irq] = handler;
 }
 
-/**
- * Add a handler to an IRQ line without displacing the ones already there.
- * For PCI device drivers, whose lines may be shared.
- */
-void irq_add_shared_handler(uint8_t irq, isr_handler_t handler) {
-    if (irq >= 16 || handler == 0) {
-        return;
-    }
-    
-    if (!irq_registry_lock_initialized) {
-        irq_registry_lock.init();
-        irq_registry_lock_initialized = true;
-    }
-    
-    sync::SpinlockIrqGuard guard(irq_registry_lock);
-    if (irq_handlers[irq] == 0) {
-        irq_handlers[irq] = handler;
-        return;
-    }
-    if (irq_handlers[irq] == handler) {
-        return;
-    }
-    for (int i = 0; i < IRQ_SHARED_MAX; i++) {
-        if (irq_shared_handlers[irq][i] == handler) {
-            return;
-        }
-    }
-    for (int i = 0; i < IRQ_SHARED_MAX; i++) {
-        if (irq_shared_handlers[irq][i] == 0) {
-            irq_shared_handlers[irq][i] = handler;
-            return;
-        }
-    }
-    LOG_ERROR_MSG("IRQ %u: too many shared handlers\n", irq);
-}
-
 bool irq_has_handler(uint8_t irq) {
     return irq < 16 && irq_handlers[irq] != 0;
 }
@@ -298,19 +262,3 @@ void irq_init(void) {
     LOG_DEBUG_MSG("  Interrupts enabled\n");
 }
 
-/**
- * 获取特定 IRQ 的触发次数
- */
-uint64_t irq_get_count(uint8_t irq) {
-    if (irq < 16) {
-        return irq_counts[irq];
-    }
-    return 0;
-}
-
-/**
- * 获取定时器滴答数
- */
-uint64_t irq_get_timer_ticks(void) {
-    return timer_ticks;
-}

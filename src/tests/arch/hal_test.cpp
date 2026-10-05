@@ -50,39 +50,6 @@
  * ========================================================================== */
 
 /**
- * @brief Test that HAL CPU initialization completed successfully
- * 
- * **Feature: multi-arch-support, Property 1: HAL Initialization Dispatch**
- * **Validates: Requirements 1.1**
- */
-TEST_CASE(hal_cpu_init_dispatch) {
-    /* Verify CPU initialization state */
-    ASSERT_TRUE(hal::Cpu::initialized());
-}
-
-/**
- * @brief Test that HAL interrupt initialization completed successfully
- * 
- * **Feature: multi-arch-support, Property 1: HAL Initialization Dispatch**
- * **Validates: Requirements 1.1**
- */
-TEST_CASE(hal_interrupt_init_dispatch) {
-    /* Verify interrupt initialization state */
-    ASSERT_TRUE(hal::Interrupt::initialized());
-}
-
-/**
- * @brief Test that HAL MMU initialization completed successfully
- * 
- * **Feature: multi-arch-support, Property 1: HAL Initialization Dispatch**
- * **Validates: Requirements 1.1**
- */
-TEST_CASE(hal_mmu_init_dispatch) {
-    /* Verify MMU initialization state */
-    ASSERT_TRUE(hal::Mmu::initialized());
-}
-
-/**
  * @brief Test that architecture name is correct for the build target
  * 
  * **Feature: multi-arch-support, Property 1: HAL Initialization Dispatch**
@@ -135,29 +102,6 @@ TEST_CASE(hal_is_64bit_correct) {
 #elif defined(ARCH_X86_64) || defined(ARCH_ARM64)
     ASSERT_TRUE(hal_is_64bit());
 #endif
-}
-
-/**
- * @brief Test that all HAL subsystems are initialized together
- * 
- * This is a comprehensive test that verifies the HAL initialization
- * dispatch correctly initialized all required subsystems.
- * 
- * **Feature: multi-arch-support, Property 1: HAL Initialization Dispatch**
- * **Validates: Requirements 1.1**
- */
-TEST_CASE(hal_all_subsystems_initialized) {
-    /* All three core subsystems must be initialized */
-    bool cpu_ok = hal::Cpu::initialized();
-    bool int_ok = hal::Interrupt::initialized();
-    bool mmu_ok = hal::Mmu::initialized();
-    
-    ASSERT_TRUE(cpu_ok);
-    ASSERT_TRUE(int_ok);
-    ASSERT_TRUE(mmu_ok);
-    
-    /* All must be true for complete initialization */
-    ASSERT_TRUE(cpu_ok && int_ok && mmu_ok);
 }
 
 /* ============================================================================
@@ -557,13 +501,9 @@ TEST_CASE(hal_mmu_switch_space_multiple) {
  * **Validates: Requirements 1.1, 7.1**
  */
 TEST_SUITE(hal_init_tests) {
-    RUN_TEST(hal_cpu_init_dispatch);
-    RUN_TEST(hal_interrupt_init_dispatch);
-    RUN_TEST(hal_mmu_init_dispatch);
     RUN_TEST(hal_arch_name_correct);
     RUN_TEST(hal_pointer_size_correct);
     RUN_TEST(hal_is_64bit_correct);
-    RUN_TEST(hal_all_subsystems_initialized);
 }
 
 /**
@@ -608,39 +548,6 @@ TEST_SUITE(hal_addr_space_tests) {
 // 架构诊断信息打印
 // ============================================================================
 
-/**
- * @brief 打印架构诊断信息
- * 
- * 在测试开始时打印当前架构的详细信息，帮助调试
- * **Validates: Requirements 7.1, 7.3**
- */
-static void print_arch_diagnostics(void) {
-    kprintf("\n");
-    kprintf("================================================================================\n");
-    kprintf("HAL Architecture Diagnostics\n");
-    kprintf("================================================================================\n");
-    kprintf("  Architecture:     %s\n", hal_arch_name());
-    kprintf("  Pointer Size:     %u bytes\n", (unsigned)hal_pointer_size());
-    kprintf("  64-bit Mode:      %s\n", hal_is_64bit() ? "yes" : "no");
-    kprintf("  CPU Initialized:  %s\n", hal::Cpu::initialized() ? "yes" : "no");
-    kprintf("  IRQ Initialized:  %s\n", hal::Interrupt::initialized() ? "yes" : "no");
-    kprintf("  MMU Initialized:  %s\n", hal::Mmu::initialized() ? "yes" : "no");
-    
-#if defined(ARCH_I686)
-    kprintf("  Page Table:       2-level (PDE -> PTE)\n");
-    kprintf("  Address Space:    32-bit (4GB)\n");
-#elif defined(ARCH_X86_64)
-    kprintf("  Page Table:       4-level (PML4 -> PDPT -> PD -> PT)\n");
-    kprintf("  Address Space:    48-bit canonical\n");
-#elif defined(ARCH_ARM64)
-    kprintf("  Page Table:       4-level (L0 -> L1 -> L2 -> L3)\n");
-    kprintf("  Address Space:    48-bit\n");
-#endif
-    
-    kprintf("================================================================================\n");
-    kprintf("\n");
-}
-
 // ============================================================================
 // 运行所有测试
 // ============================================================================
@@ -659,7 +566,6 @@ void run_hal_tests(void) {
     unittest_init();
     
     // 打印架构诊断信息
-    print_arch_diagnostics();
     
     // Property 1: HAL Initialization Dispatch
     // **Feature: multi-arch-support, Property 1: HAL Initialization Dispatch**

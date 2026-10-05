@@ -74,16 +74,6 @@ void hal::Syscall::init(hal_syscall_handler_t handler) {
 }
 
 /**
- * @brief Get the registered syscall handler
- * @return The currently registered system call handler function
- *
- * This can be used by the assembly entry point if needed.
- */
-hal_syscall_handler_t hal_get_syscall_handler(void) {
-    return g_syscall_handler;
-}
-
-/**
  * @brief Set the kernel stack for syscall entry
  * @param stack_ptr Kernel stack pointer
  *

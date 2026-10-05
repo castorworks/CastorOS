@@ -19,9 +19,6 @@ public:
     /** Milliseconds since init() */
     static uint64_t get_uptime_ms();
 
-    /** Ticks since init() */
-    static uint64_t get_ticks();
-
     /** Tick frequency in Hz */
     static uint32_t get_frequency();
 

@@ -39,36 +39,6 @@ void* kmalloc(size_t size);
  */
 void kfree(void* ptr);
 
-/**
- * @brief 重新分配内存
- * @param ptr 原内存指针
- * @param size 新的字节数
- * @return 成功返回新内存地址，失败返回 NULL（原内存仍有效）
- */
-void* krealloc(void* ptr, size_t size);
-
-/**
- * @brief 分配并清零内存
- * @param num 元素数量
- * @param size 每个元素的大小
- * @return 成功返回分配的内存地址，失败返回 NULL
- */
-void* kcalloc(size_t num, size_t size);
-
-/**
- * @brief 分配对齐内存
- * @param size 要分配的字节数
- * @param alignment 对齐边界（必须是 2 的幂）
- * @return 成功返回对齐的内存地址，失败返回 NULL
- */
-void* kmalloc_aligned(size_t size, size_t alignment);
-
-/**
- * @brief 释放对齐内存
- * @param ptr 由 kmalloc_aligned 返回的指针
- */
-void kfree_aligned(void* ptr);
-
 namespace mm {
 
 /**
@@ -95,33 +65,6 @@ public:
      */
     static void init(uintptr_t start, uint32_t size);
 
-    /**
-     * @brief 获取堆使用统计信息
-     * @param info 输出参数，用于存储堆统计信息
-     * @return 成功返回 0，失败返回 -1
-     */
-    static int get_info(HeapInfo *info);
-
-    /**
-     * @brief 检查堆块链表是否完整
-     * @return 链表从堆起始到堆末尾首尾相接、前后指针一致时返回 true
-     *
-     * 每个块的数据区结束处必须正好是下一个块的块头，最后一个块必须结束在
-     * 堆的当前末尾。用于测试和调试。
-     */
-    static bool verify();
-
-    /**
-     * @brief 获取堆占用的虚拟地址范围
-     * @param start 输出：第一个块的地址
-     * @param max 输出：堆可增长到的最大地址
-     */
-    static void get_range(uintptr_t *start, uintptr_t *max);
-
-    /**
-     * @brief 打印堆使用信息
-     */
-    static void print_info();
 };
 
 } // namespace mm

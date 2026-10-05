@@ -68,35 +68,10 @@
 
 /* Note: HAL MMU functions are declared in hal/hal.h with proper types */
 
-/**
- * @brief 启用分页 (i686)
- */
-void hal_mmu_enable_paging(void);
-
-/**
- * @brief 检查分页是否启用 (i686)
- * @return true 如果分页已启用
- */
-bool hal_mmu_is_paging_enabled(void);
-
-/* ============================================================================
- * i686 页表格式验证函数
- * ========================================================================== */
-
 /* ============================================================================
  * HAL MMU 扩展函数声明 (i686 特定)
  * ========================================================================== */
 
 #include <hal/hal.h>
-
-/**
- * @brief 使用错误码解析页错误信息 (i686)
- * 
- * 此函数应由页错误 ISR 调用，传入 CPU 推送的错误码。
- * 
- * @param[out] info 页错误信息结构
- * @param error_code CPU 推送的错误码
- */
-void hal_mmu_parse_fault_with_error(hal_page_fault_info_t *info, uint32_t error_code);
 
 #endif /* _ARCH_I686_PAGING_H_ */

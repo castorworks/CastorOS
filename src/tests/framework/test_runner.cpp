@@ -31,7 +31,6 @@
 #include <tests/kernel/usermode_test.h>
 #include <tests/arch/hal_test.h>
 #include <tests/arch/arch_types_test.h>
-#include <tests/arch/interrupt_handler_test.h>
 #include <tests/pbt/pbt.h>
 
 #ifdef ARCH_X86_64
@@ -42,7 +41,6 @@
 #ifdef ARCH_ARM64
 #include <tests/arch/arm64/arm64_mmu_test.h>
 #include <tests/arch/arm64/arm64_exception_test.h>
-#include <tests/arch/arm64/arm64_fault_test.h>
 #endif
 #include <lib/kprintf.h>
 
@@ -155,9 +153,7 @@ const arch_info_t* test_get_arch_info(void) {
 void test_print_arch_info(void) {
     const arch_info_t *info = &g_arch_info;
     
-    kconsole_set_color(KCOLOR_LIGHT_CYAN, KCOLOR_BLACK);
     kprintf("Architecture Information:\n");
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
     
     kprintf("  Name:              %s\n", info->name);
     kprintf("  Bits:              %u-bit\n", info->bits);
@@ -192,18 +188,14 @@ void test_print_failure_diagnostics(const char *test_name,
                                      int line) {
     const arch_info_t *info = &g_arch_info;
     
-    kconsole_set_color(KCOLOR_LIGHT_RED, KCOLOR_BLACK);
     kprintf("\n================================================================================\n");
     kprintf("TEST FAILURE DIAGNOSTICS\n");
     kprintf("================================================================================\n");
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
     
     kprintf("Test:     %s\n", test_name ? test_name : "(unknown)");
     kprintf("Location: %s:%d\n", file ? file : "(unknown)", line);
     
-    kconsole_set_color(KCOLOR_YELLOW, KCOLOR_BLACK);
     kprintf("\nArchitecture Context:\n");
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
     
     kprintf("  Architecture:      %s (%u-bit)\n", info->name, info->bits);
     kprintf("  Page Size:         %u bytes\n", info->page_size);
@@ -225,9 +217,7 @@ void test_print_failure_diagnostics(const char *test_name,
     kprintf("  User Space End:    0x%016llx\n", (uint64_t)USER_SPACE_END);
 #endif
 
-    kconsole_set_color(KCOLOR_YELLOW, KCOLOR_BLACK);
     kprintf("\nDebugging Hints:\n");
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
     
 #if defined(ARCH_I686)
     kprintf("  - Check 32-bit address calculations\n");
@@ -243,9 +233,7 @@ void test_print_failure_diagnostics(const char *test_name,
     kprintf("  - Check memory attribute settings (MAIR)\n");
 #endif
 
-    kconsole_set_color(KCOLOR_LIGHT_RED, KCOLOR_BLACK);
     kprintf("================================================================================\n\n");
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
 }
 
 
@@ -289,7 +277,6 @@ static const test_entry_t test_suite[] = {
     // 架构测试 (arch/)
     TEST_ENTRY("Architecture Type Size Tests", run_arch_types_tests),
     TEST_ENTRY("HAL Property Tests", run_hal_tests),
-    TEST_ENTRY("Interrupt Handler Registration Tests", run_interrupt_handler_tests),
     
 #ifdef ARCH_I686
     TEST_ENTRY("i686 User Mode Transition Tests", run_usermode_tests),
@@ -304,7 +291,6 @@ static const test_entry_t test_suite[] = {
 #ifdef ARCH_ARM64
     TEST_ENTRY("ARM64 MMU Property Tests", run_arm64_mmu_tests),
     TEST_ENTRY("ARM64 Exception Register Preservation Tests", run_arm64_exception_tests),
-    TEST_ENTRY("ARM64 Page Fault Interpretation Tests", run_arm64_fault_tests),
 #endif
     
     // 内核核心测试 (kernel/)
@@ -318,18 +304,13 @@ void run_all_tests(void) {
     const arch_info_t *arch = test_get_arch_info();
     
     kprintf("\n");
-    kconsole_set_color(KCOLOR_LIGHT_CYAN, KCOLOR_BLACK);
     kprintf("================================================================================\n");
     kprintf("|| CastorOS Unit Test Suite\n");
     kprintf("================================================================================\n");
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
     kprintf("\n");
     
-    kconsole_set_color(KCOLOR_YELLOW, KCOLOR_BLACK);
     kprintf("Target Architecture: ");
-    kconsole_set_color(KCOLOR_LIGHT_GREEN, KCOLOR_BLACK);
     kprintf("%s (%u-bit)\n", arch->name, arch->bits);
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
     
     kprintf("Page Size: %u bytes, Page Table Levels: %u\n", 
             arch->page_size, arch->page_table_levels);
@@ -346,9 +327,7 @@ void run_all_tests(void) {
     kprintf("Total test modules: %u\n\n", (unsigned int)test_count);
     
     if (test_count == 0) {
-        kconsole_set_color(KCOLOR_YELLOW, KCOLOR_BLACK);
         kprintf("No test modules registered.\n");
-        kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
         return;
     }
     
@@ -363,18 +342,14 @@ void run_all_tests(void) {
         if (test_suite[i].test_func != NULL) {
             test_suite[i].test_func();
         } else {
-            kconsole_set_color(KCOLOR_YELLOW, KCOLOR_BLACK);
             kprintf("Warning: Test function is NULL\n");
-            kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
         }
     }
     
     kprintf("\n");
-    kconsole_set_color(KCOLOR_LIGHT_CYAN, KCOLOR_BLACK);
     kprintf("================================================================================\n");
     kprintf("|| All Tests Completed on %s (%u-bit)\n", arch->name, arch->bits);
     kprintf("================================================================================\n");
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
     kprintf("\n");
 }
 

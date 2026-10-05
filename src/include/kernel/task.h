@@ -348,15 +348,6 @@ public:
     static void init();
 
     /**
-     * @brief 创建内核线程
-     * 
-     * @param entry 线程入口函数
-     * @param name 线程名称
-     * @return 成功返回 PID，失败返回 0
-     */
-    static uint32_t create_kernel_thread(void (*entry)(), const char *name);
-
-    /**
      * @brief 创建用户进程
      * 
      * @param name 进程名称
@@ -509,13 +500,6 @@ public:
      * @param task 任务指针
      */
     static void ready_queue_add(task_t *task);
-
-    /**
-     * @brief 获取系统中的任务数量
-     * 
-     * @return 活动任务数量
-     */
-    static uint32_t get_count();
 
     /* ============================================================================
      * 汇编函数声明（在 task_asm.asm 中实现）

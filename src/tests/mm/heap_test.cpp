@@ -247,90 +247,6 @@ TEST_CASE(test_kfree_reverse_order) {
 // **Validates: Requirements 3.3** - 重新分配保持数据完整性
 // ============================================================================
 
-/**
- * @brief 测试基本重新分配（扩大）
- *
- * 验证 krealloc() 扩大内存时保留原数据
- * _Requirements: 3.3_
- */
-TEST_CASE(test_krealloc_basic) {
-    // 分配初始内存
-    void *ptr = kmalloc(64);
-    ASSERT_NOT_NULL(ptr);
-
-    // 写入数据
-    for (int i = 0; i < 64; i++) {
-        ((uint8_t*)ptr)[i] = i;
-    }
-
-    // 扩大内存
-    void *new_ptr = krealloc(ptr, 128);
-    ASSERT_NOT_NULL(new_ptr);
-
-    // 原数据应该保留
-    for (int i = 0; i < 64; i++) {
-        ASSERT_EQ(((uint8_t*)new_ptr)[i], i);
-    }
-
-    kfree(new_ptr);
-}
-
-/**
- * @brief 测试重新分配（缩小）
- *
- * 验证 krealloc() 缩小内存时保留前部数据
- * _Requirements: 3.3_
- */
-TEST_CASE(test_krealloc_shrink) {
-    // 分配较大内存
-    void *ptr = kmalloc(128);
-    ASSERT_NOT_NULL(ptr);
-
-    // 写入数据
-    for (int i = 0; i < 128; i++) {
-        ((uint8_t*)ptr)[i] = i;
-    }
-
-    // 缩小内存
-    void *new_ptr = krealloc(ptr, 64);
-    ASSERT_NOT_NULL(new_ptr);
-
-    // 前64字节应该保留
-    for (int i = 0; i < 64; i++) {
-        ASSERT_EQ(((uint8_t*)new_ptr)[i], i);
-    }
-
-    kfree(new_ptr);
-}
-
-/**
- * @brief 测试 krealloc(NULL, size)
- *
- * 验证 krealloc(NULL, size) 等同于 kmalloc(size)
- * _Requirements: 3.3_
- */
-TEST_CASE(test_krealloc_null) {
-    // krealloc(NULL, size) 应该等同于 kmalloc(size)
-    void *ptr = krealloc(NULL, 64);
-    ASSERT_NOT_NULL(ptr);
-    kfree(ptr);
-}
-
-/**
- * @brief 测试 krealloc(ptr, 0)
- *
- * 验证 krealloc(ptr, 0) 等同于 kfree(ptr)
- * _Requirements: 3.3_
- */
-TEST_CASE(test_krealloc_zero) {
-    // krealloc(ptr, 0) 应该等同于 kfree(ptr)
-    void *ptr = kmalloc(64);
-    ASSERT_NOT_NULL(ptr);
-
-    void *new_ptr = krealloc(ptr, 0);
-    ASSERT_NULL(new_ptr);
-}
-
 // ============================================================================
 // 测试套件 4: heap_calloc_tests - 分配并清零测试
 // ============================================================================
@@ -338,102 +254,6 @@ TEST_CASE(test_krealloc_zero) {
 // 测试 kcalloc() 函数的功能
 // **Validates: Requirements 3.3** - 分配并清零的正确性
 // ============================================================================
-
-/**
- * @brief 测试基本 kcalloc
- *
- * 验证 kcalloc() 返回清零的内存
- * _Requirements: 3.3_
- */
-TEST_CASE(test_kcalloc_basic) {
-    // 分配10个uint32_t
-    uint32_t *ptr = (uint32_t*)kcalloc(10, sizeof(uint32_t));
-    ASSERT_NOT_NULL(ptr);
-
-    // 应该全部为0
-    for (int i = 0; i < 10; i++) {
-        ASSERT_EQ_U(ptr[i], 0);
-    }
-
-    kfree(ptr);
-}
-
-/**
- * @brief 测试 kcalloc(0, size)
- *
- * 验证 kcalloc(0, size) 返回 NULL
- * _Requirements: 3.3_
- */
-TEST_CASE(test_kcalloc_zero_elements) {
-    // kcalloc(0, size) 应该返回NULL
-    void *ptr = kcalloc(0, 10);
-    ASSERT_NULL(ptr);
-}
-
-/**
- * @brief 测试 kcalloc(num, 0)
- *
- * 验证 kcalloc(num, 0) 返回 NULL
- * _Requirements: 3.3_
- */
-TEST_CASE(test_kcalloc_zero_size) {
-    // kcalloc(num, 0) 应该返回NULL
-    void *ptr = kcalloc(10, 0);
-    ASSERT_NULL(ptr);
-}
-
-/**
- * @brief 测试大块 kcalloc
- *
- * 验证 kcalloc() 能分配较大的清零内存
- * _Requirements: 3.3_
- */
-TEST_CASE(test_kcalloc_large) {
-    // 分配1024个字节
-    uint8_t *ptr = (uint8_t*)kcalloc(1024, 1);
-    ASSERT_NOT_NULL(ptr);
-
-    // 验证全部为0
-    for (int i = 0; i < 1024; i++) {
-        ASSERT_EQ(ptr[i], 0);
-    }
-
-    kfree(ptr);
-}
-
-/**
- * @brief 测试 kcalloc 整数溢出保护
- *
- * 验证 kcalloc() 检测整数溢出并返回 NULL
- * _Requirements: 3.3_
- */
-TEST_CASE(test_kcalloc_overflow_protection) {
-    // 测试整数溢出保护
-    // SIZE_MAX / 2 * 3 会导致溢出
-    size_t large_num = (size_t)-1 / 2 + 1;
-    void *ptr = kcalloc(large_num, 2);
-
-    // 应该返回NULL（溢出检测）
-    ASSERT_NULL(ptr);
-}
-
-/**
- * @brief 测试 kcalloc 边界情况
- *
- * 验证各种边界参数组合
- * _Requirements: 3.3_
- */
-TEST_CASE(test_kcalloc_boundary) {
-    // 测试边界情况
-    void *ptr1 = kcalloc(1, 0);
-    ASSERT_NULL(ptr1);
-
-    void *ptr2 = kcalloc(0, 1);
-    ASSERT_NULL(ptr2);
-
-    void *ptr3 = kcalloc(0, 0);
-    ASSERT_NULL(ptr3);
-}
 
 // ============================================================================
 // 测试套件 5: heap_boundary_tests - 边界条件和错误处理测试
@@ -497,36 +317,6 @@ TEST_CASE(test_heap_alignment_various_sizes) {
         ASSERT_EQ_U((uintptr_t)ptr & 0x3, 0);
         kfree(ptr);
     }
-}
-
-/**
- * @brief 测试 krealloc 边界情况
- *
- * 验证 krealloc 的各种边界情况
- * _Requirements: 3.3_
- */
-TEST_CASE(test_heap_realloc_edge_cases) {
-    // krealloc 边界情况测试
-
-    // 1. krealloc(NULL, size) == kmalloc(size)
-    void *ptr1 = krealloc(NULL, 64);
-    ASSERT_NOT_NULL(ptr1);
-    kfree(ptr1);
-
-    // 2. krealloc(ptr, 0) == kfree(ptr)
-    void *ptr2 = kmalloc(64);
-    ASSERT_NOT_NULL(ptr2);
-    void *result = krealloc(ptr2, 0);
-    ASSERT_NULL(result);
-
-    // 3. krealloc 到相同大小
-    void *ptr3 = kmalloc(64);
-    ASSERT_NOT_NULL(ptr3);
-    *(uint32_t*)ptr3 = 0x12345678;
-    void *ptr3_new = krealloc(ptr3, 64);
-    ASSERT_NOT_NULL(ptr3_new);
-    ASSERT_EQ_U(*(uint32_t*)ptr3_new, 0x12345678);
-    kfree(ptr3_new);
 }
 
 /**
@@ -830,90 +620,7 @@ TEST_CASE(test_heap_alloc_huge_size) {
     kfree(p);
 }
 
-/**
- * @brief 分裂尾块之后再扩展堆，块链表必须保持首尾相接
- *
- * 回归测试：split() 分裂尾块时没有更新 last_block，下一次扩展把新块直接
- * 接在旧尾块后面，分裂出的余块（以及从中切出的在用块）从链表中丢失，
- * 之后的合并会让空闲块覆盖仍在使用的内存。
- */
-TEST_CASE(test_heap_split_tail_then_expand) {
-    ASSERT_TRUE(mm::Heap::verify());
-
-    // 让一个大的空闲块出现在堆的末尾
-    void *tail = kmalloc(256 * 1024);
-    ASSERT_NOT_NULL(tail);
-    kfree(tail);
-    ASSERT_TRUE(mm::Heap::verify());
-
-    // 从它里面切出一块（分裂），余块成为新的尾块
-    void *part = kmalloc(128 * 1024);
-    ASSERT_NOT_NULL(part);
-    void *small = kmalloc(64);
-    ASSERT_NOT_NULL(small);
-    memset(small, 0x5A, 64);
-
-    // 任何空闲块都放不下，只能扩展堆
-    void *big = kmalloc(512 * 1024);
-    ASSERT_NOT_NULL(big);
-    ASSERT_TRUE(mm::Heap::verify());
-
-    // 释放并合并之后，新分配不能与仍在使用的块重叠
-    kfree(part);
-    kfree(big);
-    ASSERT_TRUE(mm::Heap::verify());
-
-    void *again = kmalloc(600 * 1024);
-    ASSERT_NOT_NULL(again);
-    memset(again, 0, 600 * 1024);
-    for (int i = 0; i < 64; i++) {
-        ASSERT_EQ(((uint8_t *)small)[i], 0x5A);
-    }
-
-    kfree(again);
-    kfree(small);
-    ASSERT_TRUE(mm::Heap::verify());
-}
-
-/**
- * @brief kmalloc_aligned 的大小加上对齐开销回绕时必须失败
- */
-TEST_CASE(test_kmalloc_aligned_overflow) {
-    ASSERT_NULL(kmalloc_aligned((size_t)-1, 16));
-    ASSERT_NULL(kmalloc_aligned((size_t)-8, 4096));
-    ASSERT_NULL(kmalloc_aligned(16, ((size_t)-1 >> 1) + 1));
-
-    void *p = kmalloc_aligned(100, 64);
-    ASSERT_NOT_NULL(p);
-    ASSERT_TRUE(((uintptr_t)p & 63) == 0);
-    kfree_aligned(p);
-    ASSERT_TRUE(mm::Heap::verify());
-}
-
 #if defined(ARCH_I686)
-/**
- * @brief i686：内核页表帧的直接映射别名不能落在堆的虚拟地址范围内
- *
- * 堆会把自己范围内的直接映射页改映射到别的帧。内核通过 PHYS_TO_VIRT 访问
- * 页表，如果页表帧的别名在堆范围内，堆增长到那里之后页表读写就落到堆数据上。
- */
-TEST_CASE(test_heap_range_excludes_page_tables) {
-    uintptr_t start = 0, max = 0;
-    mm::Heap::get_range(&start, &max);
-    ASSERT_TRUE(start >= KERNEL_VIRTUAL_BASE);
-    ASSERT_TRUE(max > start);
-
-    page_directory_t *dir =
-        (page_directory_t *)PHYS_TO_VIRT(mm::Vmm::get_page_directory());
-    for (uint32_t i = 512; i < 1024; i++) {
-        pde_t pde = dir->entries[i];
-        if (!(pde & PAGE_PRESENT) || (pde & 0x80)) {
-            continue;  // 未映射，或 4MB 大页（没有页表）
-        }
-        uintptr_t table_virt = PHYS_TO_VIRT((uintptr_t)(pde & ~0xFFFU));
-        ASSERT_TRUE(table_virt < start || table_virt >= max);
-    }
-}
 #endif
 
 // ============================================================================
@@ -952,10 +659,6 @@ TEST_SUITE(heap_free_tests) {
  * **Validates: Requirements 3.3**
  */
 TEST_SUITE(heap_realloc_tests) {
-    RUN_TEST(test_krealloc_basic);
-    RUN_TEST(test_krealloc_shrink);
-    RUN_TEST(test_krealloc_null);
-    RUN_TEST(test_krealloc_zero);
 }
 
 /**
@@ -964,12 +667,6 @@ TEST_SUITE(heap_realloc_tests) {
  * **Validates: Requirements 3.3**
  */
 TEST_SUITE(heap_calloc_tests) {
-    RUN_TEST(test_kcalloc_basic);
-    RUN_TEST(test_kcalloc_zero_elements);
-    RUN_TEST(test_kcalloc_zero_size);
-    RUN_TEST(test_kcalloc_large);
-    RUN_TEST(test_kcalloc_overflow_protection);
-    RUN_TEST(test_kcalloc_boundary);
 }
 
 /**
@@ -980,7 +677,6 @@ TEST_SUITE(heap_calloc_tests) {
 TEST_SUITE(heap_boundary_tests) {
     RUN_TEST(test_heap_magic_corruption);
     RUN_TEST(test_heap_alignment_various_sizes);
-    RUN_TEST(test_heap_realloc_edge_cases);
     RUN_TEST(test_heap_double_free_protection);
     RUN_TEST(test_heap_large_allocation);
 }
@@ -1008,10 +704,7 @@ TEST_SUITE(heap_comprehensive_tests) {
     RUN_TEST(test_heap_data_integrity);
     RUN_TEST(test_heap_mixed_operations);
     RUN_TEST(test_heap_alloc_huge_size);
-    RUN_TEST(test_heap_split_tail_then_expand);
-    RUN_TEST(test_kmalloc_aligned_overflow);
 #if defined(ARCH_I686)
-    RUN_TEST(test_heap_range_excludes_page_tables);
 #endif
 }
 

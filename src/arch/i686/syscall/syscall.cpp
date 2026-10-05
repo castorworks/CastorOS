@@ -54,13 +54,3 @@ void hal::Syscall::init(hal_syscall_handler_t handler) {
     LOG_INFO_MSG("i686 system call mechanism initialized\n");
 }
 
-/**
- * hal_get_syscall_handler - Get the registered syscall handler
- *
- * Returns the currently registered system call handler function.
- * This can be used by the assembly entry point if needed.
- */
-hal_syscall_handler_t hal_get_syscall_handler(void) {
-    return g_syscall_handler;
-}
-

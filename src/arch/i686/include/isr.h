@@ -127,27 +127,4 @@ static inline gpf_info_t parse_gpf_error(uint32_t err_code) {
     return info;
 }
 
-/**
- * 获取特定中断的触发次数
- * @param int_no 中断号
- * @return 触发次数
- */
-uint64_t isr_get_interrupt_count(uint8_t int_no);
-
-/**
- * 获取所有中断的总次数
- * @return 总触发次数
- */
-uint64_t isr_get_total_interrupt_count(void);
-
-/**
- * 重置中断统计
- */
-void isr_reset_interrupt_counts(void);
-
-/**
- * 打印中断统计信息
- */
-void isr_print_statistics(void);
-
 #endif // _ARCH_I686_ISR_H_

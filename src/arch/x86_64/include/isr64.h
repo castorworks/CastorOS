@@ -166,26 +166,6 @@ static inline gpf_info_t parse_gpf_error(uint64_t err_code) {
     return info;
 }
 
-/**
- * @brief Get interrupt count for a specific vector
- */
-uint64_t isr64_get_interrupt_count(uint8_t int_no);
-
-/**
- * @brief Get total interrupt count
- */
-uint64_t isr64_get_total_interrupt_count(void);
-
-/**
- * @brief Reset interrupt statistics
- */
-void isr64_reset_interrupt_counts(void);
-
-/**
- * @brief Print interrupt statistics
- */
-void isr64_print_statistics(void);
-
 /* Compatibility wrappers */
 #define isr_get_interrupt_count(n) isr64_get_interrupt_count(n)
 #define isr_get_total_interrupt_count() isr64_get_total_interrupt_count()

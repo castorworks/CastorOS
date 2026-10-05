@@ -36,10 +36,6 @@ void drivers::Timer::init(uint32_t frequency) {
     LOG_INFO_MSG("PIT initialized (%u Hz)\n", timer_frequency);
 }
 
-uint64_t drivers::Timer::get_ticks() {
-    return timer_ticks;
-}
-
 uint32_t drivers::Timer::get_frequency() {
     return timer_frequency;
 }

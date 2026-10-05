@@ -175,11 +175,6 @@ static inline uint64_t read_tcr_el1(void) {
     return val;
 }
 
-/** @brief 写入 TCR_EL1 */
-static inline void write_tcr_el1(uint64_t val) {
-    __asm__ volatile("msr tcr_el1, %0" : : "r"(val));
-}
-
 /** @brief 读取 MAIR_EL1 (Memory Attribute Indirection Register) */
 static inline uint64_t read_mair_el1(void) {
     uint64_t val;
@@ -187,45 +182,9 @@ static inline uint64_t read_mair_el1(void) {
     return val;
 }
 
-/** @brief 写入 MAIR_EL1 */
-static inline void write_mair_el1(uint64_t val) {
-    __asm__ volatile("msr mair_el1, %0" : : "r"(val));
-}
-
-/** @brief 读取 SCTLR_EL1 (System Control Register) */
-static inline uint64_t read_sctlr_el1(void) {
-    uint64_t val;
-    __asm__ volatile("mrs %0, sctlr_el1" : "=r"(val));
-    return val;
-}
-
-/** @brief 写入 SCTLR_EL1 */
-static inline void write_sctlr_el1(uint64_t val) {
-    __asm__ volatile("msr sctlr_el1, %0" : : "r"(val));
-}
-
-/** @brief 读取 FAR_EL1 (Fault Address Register) */
-static inline uint64_t read_far_el1(void) {
-    uint64_t val;
-    __asm__ volatile("mrs %0, far_el1" : "=r"(val));
-    return val;
-}
-
-/** @brief 读取 ESR_EL1 (Exception Syndrome Register) */
-static inline uint64_t read_esr_el1(void) {
-    uint64_t val;
-    __asm__ volatile("mrs %0, esr_el1" : "=r"(val));
-    return val;
-}
-
 /* ============================================================================
  * TLB 和屏障操作
  * ========================================================================== */
-
-/** @brief 数据同步屏障 */
-static inline void dsb_sy(void) {
-    __asm__ volatile("dsb sy" ::: "memory");
-}
 
 /** @brief 数据同步屏障 (inner shareable) */
 static inline void dsb_ish(void) {
@@ -302,16 +261,6 @@ void hal::Mmu::switch_space(paddr_t space) {
 }
 
 /**
- * @brief 获取页错误地址 (ARM64)
- * @return FAR_EL1 寄存器中的错误地址
- * 
- * @see Requirements 6.4
- */
-vaddr_t hal::Mmu::get_fault_addr() {
-    return (vaddr_t)read_far_el1();
-}
-
-/**
  * @brief 获取当前用户空间页表物理地址 (ARM64)
  * @return TTBR0_EL1 寄存器的值 (物理地址部分)
  */
@@ -326,29 +275,6 @@ paddr_t hal::Mmu::get_current_page_table() {
  */
 hal_addr_space_t hal::Mmu::current_space() {
     return (hal_addr_space_t)hal::Mmu::get_current_page_table();
-}
-
-/**
- * @brief 检查 MMU 是否启用 (ARM64)
- * @return true 如果 MMU 已启用
- */
-bool hal_mmu_is_paging_enabled(void) {
-    uint64_t sctlr = read_sctlr_el1();
-    return (sctlr & 0x1) != 0;  /* M bit */
-}
-
-/**
- * @brief 启用 MMU (ARM64)
- * 
- * 设置 SCTLR_EL1.M 位启用 MMU
- * 注意：在调用此函数前必须先配置好 TCR_EL1, MAIR_EL1, TTBR0/1_EL1
- */
-void hal_mmu_enable_paging(void) {
-    uint64_t sctlr = read_sctlr_el1();
-    sctlr |= 0x1;  /* Set M bit */
-    dsb_sy();
-    write_sctlr_el1(sctlr);
-    isb();
 }
 
 /* ============================================================================
@@ -371,56 +297,6 @@ void hal_mmu_enable_paging(void) {
 #define TCR_TG1_4KB         (2ULL << 30)    /**< 4KB granule for TTBR1 */
 #define TCR_IPS_48BIT       (5ULL << 32)    /**< 48-bit physical address */
 #define TCR_AS_16BIT        (1ULL << 36)    /**< 16-bit ASID */
-
-/**
- * @brief 初始化 MMU (ARM64)
- * 
- * 配置 TCR_EL1 和 MAIR_EL1 寄存器。
- * 
- * TCR_EL1 配置:
- *   - T0SZ = 16 (48-bit VA for TTBR0, user space)
- *   - T1SZ = 16 (48-bit VA for TTBR1, kernel space)
- *   - TG0 = 4KB granule
- *   - TG1 = 4KB granule
- *   - IPS = 48-bit physical address
- *   - Inner/Outer cacheable, Inner Shareable
- * 
- * MAIR_EL1 配置:
- *   - Index 0: Device-nGnRnE (0x00)
- *   - Index 1: Normal Non-Cacheable (0x44)
- *   - Index 2: Normal Write-Through (0xBB)
- *   - Index 3: Normal Write-Back (0xFF)
- * 
- * @see Requirements 6.1
- */
-void hal::Mmu::init() {
-    /* Configure MAIR_EL1 */
-    uint64_t mair = ((uint64_t)MAIR_DEVICE_nGnRnE << (MAIR_IDX_DEVICE_nGnRnE * 8)) |
-                    ((uint64_t)MAIR_NORMAL_NC << (MAIR_IDX_NORMAL_NC * 8)) |
-                    ((uint64_t)MAIR_NORMAL_WT << (MAIR_IDX_NORMAL_WT * 8)) |
-                    ((uint64_t)MAIR_NORMAL_WB << (MAIR_IDX_NORMAL_WB * 8));
-    write_mair_el1(mair);
-    
-    /* Configure TCR_EL1 for 48-bit VA, 4KB granule */
-    uint64_t tcr = (16ULL << TCR_T0SZ_SHIFT) |      /* T0SZ = 16 -> 48-bit VA */
-                   TCR_IRGN0_WB_WA |
-                   TCR_ORGN0_WB_WA |
-                   TCR_SH0_INNER |
-                   TCR_TG0_4KB |
-                   (16ULL << TCR_T1SZ_SHIFT) |      /* T1SZ = 16 -> 48-bit VA */
-                   TCR_IRGN1_WB_WA |
-                   TCR_ORGN1_WB_WA |
-                   TCR_SH1_INNER |
-                   TCR_TG1_4KB |
-                   TCR_IPS_48BIT;
-    write_tcr_el1(tcr);
-    
-    isb();
-    
-    LOG_INFO_MSG("ARM64 MMU: TCR_EL1 = 0x%llx, MAIR_EL1 = 0x%llx\n",
-                 (unsigned long long)tcr, (unsigned long long)mair);
-}
-
 
 
 /* ============================================================================
@@ -949,22 +825,6 @@ bool hal::Mmu::protect(hal_addr_space_t space, vaddr_t virt,
     return true;
 }
 
-/**
- * @brief 虚拟地址转物理地址 (ARM64)
- * 
- * 便捷函数，查询当前地址空间中虚拟地址对应的物理地址。
- * 
- * @param virt 虚拟地址
- * @return 物理地址，未映射返回 PADDR_INVALID
- */
-paddr_t hal::Mmu::virt_to_phys(vaddr_t virt) {
-    paddr_t phys;
-    if (hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, virt, &phys, NULL)) {
-        return phys;
-    }
-    return PADDR_INVALID;
-}
-
 
 /* ============================================================================
  * ARM64 地址空间管理实现
@@ -1327,15 +1187,6 @@ hal_addr_space_t hal::Mmu::clone_space(hal_addr_space_t src) {
     return (hal_addr_space_t)new_l0_phys;
 }
 
-/**
- * @brief 销毁页表 (ARM64, 兼容旧接口)
- * @param page_table_phys 页表物理地址
- * @deprecated 使用 hal::Mmu::destroy_space() 代替
- */
-void hal::Mmu::destroy_page_table(paddr_t page_table_phys) {
-    hal::Mmu::destroy_space((hal_addr_space_t)page_table_phys);
-}
-
 
 /* ============================================================================
  * ARM64 页错误处理
@@ -1410,63 +1261,6 @@ static bool is_permission_fault(uint32_t dfsc) {
 }
 
 /**
- * @brief 检查 DFSC 是否为访问标志错误
- * @param dfsc Data Fault Status Code
- * @return true 如果是访问标志错误
- */
-static bool is_access_flag_fault(uint32_t dfsc) {
-    return (dfsc >= DFSC_ACCESS_L1 && dfsc <= DFSC_ACCESS_L3);
-}
-
-/**
- * @brief 解析页错误信息 (ARM64)
- * 
- * 从 FAR_EL1 和 ESR_EL1 寄存器中提取页错误详细信息。
- * 
- * @param[out] info 页错误信息结构
- * 
- * @see Requirements 6.4
- */
-void hal::Mmu::parse_fault(hal_page_fault_info_t *info) {
-    if (info == NULL) {
-        return;
-    }
-    
-    /* Get fault address from FAR_EL1 */
-    info->fault_addr = (vaddr_t)read_far_el1();
-    
-    /* Get exception syndrome from ESR_EL1 */
-    uint64_t esr = read_esr_el1();
-    info->raw_error = (uint32_t)esr;
-    
-    /* Extract exception class */
-    uint32_t ec = (esr & ESR_EC_MASK) >> ESR_EC_SHIFT;
-    
-    /* Extract ISS (Instruction Specific Syndrome) */
-    uint32_t iss = esr & ESR_ISS_MASK;
-    uint32_t dfsc = iss & ESR_ISS_DFSC_MASK;
-    
-    /* Determine fault type based on exception class */
-    bool is_data_abort = (ec == ESR_EC_DABT_LOW || ec == ESR_EC_DABT_CUR);
-    bool is_inst_abort = (ec == ESR_EC_IABT_LOW || ec == ESR_EC_IABT_CUR);
-    
-    /* is_present: true if page exists but permission denied */
-    info->is_present = is_permission_fault(dfsc) || is_access_flag_fault(dfsc);
-    
-    /* is_write: true if write operation caused the fault */
-    info->is_write = is_data_abort && ((iss & ESR_ISS_WNR) != 0);
-    
-    /* is_user: true if fault occurred from EL0 (user mode) */
-    info->is_user = (ec == ESR_EC_DABT_LOW || ec == ESR_EC_IABT_LOW);
-    
-    /* is_exec: true if instruction fetch caused the fault */
-    info->is_exec = is_inst_abort;
-    
-    /* is_reserved: not applicable on ARM64, set to false */
-    info->is_reserved = false;
-}
-
-/**
  * @brief 检查是否为 COW 页错误 (ARM64)
  * @param esr ESR_EL1 寄存器值
  * @return true 如果是 COW 页错误
@@ -1504,133 +1298,6 @@ bool arm64_is_cow_fault(uint64_t esr) {
 /** @brief 缓存行大小 (ARM64 通常为 64 字节) */
 #define CACHE_LINE_SIZE     64
 
-/**
- * @brief 按虚拟地址清理缓存行到 PoC (Point of Coherency)
- * @param addr 虚拟地址
- * 
- * DC CVAC: Data Cache Clean by VA to PoC
- * 将脏数据写回到主存
- */
-static inline void dc_cvac(uint64_t addr) {
-    __asm__ volatile("dc cvac, %0" : : "r"(addr) : "memory");
-}
-
-/**
- * @brief 按虚拟地址使缓存行无效到 PoC
- * @param addr 虚拟地址
- * 
- * DC IVAC: Data Cache Invalidate by VA to PoC
- * 丢弃缓存中的数据，强制从主存重新读取
- */
-static inline void dc_ivac(uint64_t addr) {
-    __asm__ volatile("dc ivac, %0" : : "r"(addr) : "memory");
-}
-
-/**
- * @brief 按虚拟地址清理并使缓存行无效到 PoC
- * @param addr 虚拟地址
- * 
- * DC CIVAC: Data Cache Clean and Invalidate by VA to PoC
- * 先写回脏数据，然后使缓存行无效
- */
-static inline void dc_civac(uint64_t addr) {
-    __asm__ volatile("dc civac, %0" : : "r"(addr) : "memory");
-}
-
-/**
- * @brief 清理缓存区域 (ARM64)
- * 
- * 将指定内存区域的脏缓存行写回到主存。
- * 用于 DMA 读操作前（设备从内存读取数据）。
- * 
- * @param addr 区域起始虚拟地址
- * @param size 区域大小（字节）
- * 
- * @see Requirements 10.2
- */
-void hal::Cache::clean(void *addr, size_t size) {
-    if (addr == NULL || size == 0) {
-        return;
-    }
-    
-    uint64_t start = (uint64_t)addr;
-    uint64_t end = start + size;
-    
-    /* Align start down to cache line boundary */
-    start &= ~(CACHE_LINE_SIZE - 1);
-    
-    /* Clean each cache line */
-    dsb_sy();
-    for (uint64_t line = start; line < end; line += CACHE_LINE_SIZE) {
-        dc_cvac(line);
-    }
-    dsb_sy();
-}
-
-/**
- * @brief 使缓存区域无效 (ARM64)
- * 
- * 使指定内存区域的缓存行无效，强制后续读取从主存获取。
- * 用于 DMA 写操作后（设备向内存写入数据）。
- * 
- * @param addr 区域起始虚拟地址
- * @param size 区域大小（字节）
- * 
- * @warning 可能丢弃脏数据！如果区域可能包含修改过的数据，
- *          请使用 hal::Cache::clean_invalidate()。
- * 
- * @see Requirements 10.2
- */
-void hal::Cache::invalidate(void *addr, size_t size) {
-    if (addr == NULL || size == 0) {
-        return;
-    }
-    
-    uint64_t start = (uint64_t)addr;
-    uint64_t end = start + size;
-    
-    /* Align start down to cache line boundary */
-    start &= ~(CACHE_LINE_SIZE - 1);
-    
-    /* Invalidate each cache line */
-    dsb_sy();
-    for (uint64_t line = start; line < end; line += CACHE_LINE_SIZE) {
-        dc_ivac(line);
-    }
-    dsb_sy();
-}
-
-/**
- * @brief 清理并使缓存区域无效 (ARM64)
- * 
- * 先将脏数据写回主存，然后使缓存行无效。
- * 用于双向 DMA 缓冲区。
- * 
- * @param addr 区域起始虚拟地址
- * @param size 区域大小（字节）
- * 
- * @see Requirements 10.2
- */
-void hal::Cache::clean_invalidate(void *addr, size_t size) {
-    if (addr == NULL || size == 0) {
-        return;
-    }
-    
-    uint64_t start = (uint64_t)addr;
-    uint64_t end = start + size;
-    
-    /* Align start down to cache line boundary */
-    start &= ~(CACHE_LINE_SIZE - 1);
-    
-    /* Clean and invalidate each cache line */
-    dsb_sy();
-    for (uint64_t line = start; line < end; line += CACHE_LINE_SIZE) {
-        dc_civac(line);
-    }
-    dsb_sy();
-}
-
-
 
 /* ============================================================================
  * 大页映射实现 (2MB Blocks) - ARM64
@@ -1646,14 +1313,6 @@ void hal::Cache::clean_invalidate(void *addr, size_t size) {
 
 /** @brief 2MB 块物理地址掩码 (bits 47:21) */
 #define DESC_BLOCK_ADDR_MASK_2MB    0x0000FFFFFFE00000ULL
-
-/**
- * @brief 检查是否支持大页 (ARM64)
- * @return true (ARM64 支持 2MB 块)
- */
-bool hal::Mmu::huge_pages_supported() {
-    return true;
-}
 
 /**
  * @brief 检查地址是否 2MB 对齐
@@ -1738,127 +1397,5 @@ bool hal::Mmu::map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint
                   (unsigned long long)virt, (unsigned long long)phys);
     
     return true;
-}
-
-/**
- * @brief 取消 2MB 大页映射 (ARM64)
- * 
- * @param space 地址空间句柄
- * @param virt 虚拟地址（必须 2MB 对齐）
- * @return 原物理地址，未映射返回 PADDR_INVALID
- * 
- * @see Requirements 8.2
- */
-paddr_t hal::Mmu::unmap_huge(hal_addr_space_t space, vaddr_t virt) {
-    /* Validate 2MB alignment */
-    if (!is_huge_page_aligned((uint64_t)virt)) {
-        LOG_ERROR_MSG("hal::Mmu::unmap_huge: address not 2MB-aligned (virt=0x%llx)\n",
-                      (unsigned long long)virt);
-        return PADDR_INVALID;
-    }
-    
-    uint64_t *l0 = get_l0_table(space, virt);
-    
-    /* Get indices for each level */
-    uint64_t l0_idx = l0_index((uint64_t)virt);
-    uint64_t l1_idx = l1_index((uint64_t)virt);
-    uint64_t l2_idx = l2_index((uint64_t)virt);
-    
-    /* Level 0 */
-    uint64_t l0e = l0[l0_idx];
-    if (!desc_is_valid(l0e) || !desc_is_table(l0e)) {
-        return PADDR_INVALID;
-    }
-    
-    /* Level 1 */
-    uint64_t *l1 = (uint64_t*)PADDR_TO_KVADDR(desc_get_addr(l0e));
-    uint64_t l1e = l1[l1_idx];
-    if (!desc_is_valid(l1e)) {
-        return PADDR_INVALID;
-    }
-    
-    /* Cannot unmap if this is a 1GB block */
-    if (desc_is_block(l1e)) {
-        LOG_ERROR_MSG("hal::Mmu::unmap_huge: cannot unmap 1GB block with this function\n");
-        return PADDR_INVALID;
-    }
-    
-    if (!desc_is_table(l1e)) {
-        return PADDR_INVALID;
-    }
-    
-    /* Level 2 */
-    uint64_t *l2 = (uint64_t*)PADDR_TO_KVADDR(desc_get_addr(l1e));
-    uint64_t l2e = l2[l2_idx];
-    if (!desc_is_valid(l2e)) {
-        return PADDR_INVALID;
-    }
-    
-    /* Verify this is a 2MB block */
-    if (!desc_is_block(l2e)) {
-        LOG_ERROR_MSG("hal::Mmu::unmap_huge: entry is not a 2MB block\n");
-        return PADDR_INVALID;
-    }
-    
-    /* Get physical address before clearing */
-    paddr_t phys = l2e & DESC_BLOCK_ADDR_MASK_2MB;
-    
-    /* Clear the entry */
-    l2[l2_idx] = 0;
-    
-    LOG_DEBUG_MSG("hal::Mmu::unmap_huge: Unmapped 2MB block virt=0x%llx (was phys=0x%llx)\n",
-                  (unsigned long long)virt, (unsigned long long)phys);
-    
-    return phys;
-}
-
-/**
- * @brief 查询映射是否为大页 (ARM64)
- * 
- * @param space 地址空间句柄
- * @param virt 虚拟地址
- * @return true 如果是 2MB 块映射
- * 
- * @see Requirements 8.3
- */
-bool hal::Mmu::is_huge_page(hal_addr_space_t space, vaddr_t virt) {
-    uint64_t *l0 = get_l0_table(space, virt);
-    
-    /* Get indices for each level */
-    uint64_t l0_idx = l0_index((uint64_t)virt);
-    uint64_t l1_idx = l1_index((uint64_t)virt);
-    uint64_t l2_idx = l2_index((uint64_t)virt);
-    
-    /* Level 0 */
-    uint64_t l0e = l0[l0_idx];
-    if (!desc_is_valid(l0e) || !desc_is_table(l0e)) {
-        return false;
-    }
-    
-    /* Level 1 */
-    uint64_t *l1 = (uint64_t*)PADDR_TO_KVADDR(desc_get_addr(l0e));
-    uint64_t l1e = l1[l1_idx];
-    if (!desc_is_valid(l1e)) {
-        return false;
-    }
-    
-    /* Check for 1GB block */
-    if (desc_is_block(l1e)) {
-        return true;  /* 1GB block */
-    }
-    
-    if (!desc_is_table(l1e)) {
-        return false;
-    }
-    
-    /* Level 2 */
-    uint64_t *l2 = (uint64_t*)PADDR_TO_KVADDR(desc_get_addr(l1e));
-    uint64_t l2e = l2[l2_idx];
-    if (!desc_is_valid(l2e)) {
-        return false;
-    }
-    
-    /* Check for 2MB block */
-    return desc_is_block(l2e);
 }
 

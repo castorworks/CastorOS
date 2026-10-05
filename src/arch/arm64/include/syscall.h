@@ -14,28 +14,6 @@
 #include <types.h>
 
 /* ============================================================================
- * ARM64 System Call Convention
- * ============================================================================
- * 
- * ARM64 uses the SVC (Supervisor Call) instruction for system calls.
- * 
- * Register usage:
- *   X8  = System call number
- *   X0  = Argument 1 / Return value
- *   X1  = Argument 2
- *   X2  = Argument 3
- *   X3  = Argument 4
- *   X4  = Argument 5
- *   X5  = Argument 6
- * 
- * The SVC instruction triggers a synchronous exception with:
- *   - Exception Class (EC) = 0x15 (ESR_EC_SVC64)
- *   - ISS field contains the immediate value from SVC instruction
- * 
- * Return value is placed in X0.
- * ========================================================================== */
-
-/* ============================================================================
  * System Call Entry/Exit
  * ========================================================================== */
 

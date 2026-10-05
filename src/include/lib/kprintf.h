@@ -57,16 +57,6 @@ void kprint(const char *msg);
  */
 void kputchar(char c);
 
-/**
- * 格式化输出到字符串缓冲区
- * @param str 目标缓冲区
- * @param size 缓冲区大小
- * @param fmt 格式字符串
- * @param ... 可变参数
- * @return 写入的字符数（不包括 \0）
- */
-int ksnprintf(char *str, size_t size, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
-
 /* ============================================================================
  * 控制台颜色：串口控制台上是空操作，接口保留给测试框架
  * ============================================================================ */
@@ -89,12 +79,5 @@ typedef enum {
     KCOLOR_YELLOW       = 14,
     KCOLOR_WHITE        = 15
 } kcolor_t;
-
-/**
- * 设置控制台颜色
- * @param fg 前景色（KCOLOR_xxx）
- * @param bg 背景色（KCOLOR_xxx）
- */
-void kconsole_set_color(kcolor_t fg, kcolor_t bg);
 
 #endif /* _LIB_KPRINTF_H_ */

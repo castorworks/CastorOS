@@ -18,14 +18,6 @@ static log_level_t current_log_level = LOG_INFO;
 #define ANSI_RED     "\033[31m"    // 红色 - ERROR
 #define ANSI_BOLD    "\033[1m"     // 粗体
 
-void klog_set_level(log_level_t level) {
-    current_log_level = level;
-}
-
-log_level_t klog_get_level(void) {
-    return current_log_level;
-}
-
 void klog(log_level_t level, const char *fmt, ...) {
     // 过滤低等级日志
     if (level < current_log_level) {

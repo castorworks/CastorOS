@@ -15,27 +15,11 @@
 void int32_to_str(int32_t value, char *buffer);
 
 /**
- * 将整数转换为十六进制字符串
- * @param value 要转换的值
- * @param buffer 输出缓冲区（至少 11 字节）
- * @param uppercase 是否使用大写字母（A-F）
- */
-void int32_to_hex(int32_t value, char *buffer, bool uppercase);
-
-/**
  * 将无符号整数转换为十进制字符串
  * @param value 要转换的值
  * @param buffer 输出缓冲区（至少 12 字节）
  */
 void uint32_to_str(uint32_t value, char *buffer);
-
-/**
- * 将整数转换为十六进制字符串
- * @param value 要转换的值
- * @param buffer 输出缓冲区（至少 11 字节）
- * @param uppercase 是否使用大写字母（A-F）
- */
-void uint32_to_hex(uint32_t value, char *buffer, bool uppercase);
 
 /**
  * 将64位整数转换为十进制字符串
@@ -45,27 +29,11 @@ void uint32_to_hex(uint32_t value, char *buffer, bool uppercase);
 void int64_to_str(int64_t value, char *buffer);
 
 /**
- * 将64位整数转换为十六进制字符串
- * @param value 要转换的值
- * @param buffer 输出缓冲区（至少 19 字节）
- * @param uppercase 是否使用大写字母（A-F）
- */
-void int64_to_hex(int64_t value, char *buffer, bool uppercase);
-
-/**
  * 将64位无符号整数转换为十进制字符串
  * @param value 要转换的值
  * @param buffer 输出缓冲区（至少 21 字节）
  */
 void uint64_to_str(uint64_t value, char *buffer);
-
-/**
- * 将64位整数转换为十六进制字符串
- * @param value 要转换的值
- * @param buffer 输出缓冲区（至少 19 字节）
- * @param uppercase 是否使用大写字母（A-F）
- */
-void uint64_to_hex(uint64_t value, char *buffer, bool uppercase);
 
 /**
  * 计算字符串长度
@@ -92,14 +60,6 @@ int strcmp(const char *s1, const char *s2);
 int strncmp(const char *s1, const char *s2, size_t n);
 
 /**
- * 比较两个字符串（不区分大小写）
- * @param s1 第一个字符串
- * @param s2 第二个字符串
- * @return 0 表示相等，< 0 表示 s1 < s2，> 0 表示 s1 > s2
- */
-int strcasecmp(const char *s1, const char *s2);
-
-/**
  * 复制字符串
  * @param dest 目标缓冲区
  * @param src 源字符串
@@ -115,15 +75,6 @@ char *strcpy(char *dest, const char *src);
  * @return 目标缓冲区指针
  */
 char *strncpy(char *dest, const char *src, size_t n);
-
-/**
- * 将字符串分解为标记序列
- * @param str 要分解的字符串（首次调用时传入），后续调用传入 NULL
- * @param delim 分隔符字符串
- * @return 指向下一个标记的指针，没有更多标记时返回 NULL
- * @note 该函数会修改原字符串，使用静态变量保存状态，非线程安全
- */
-char *strtok(char *str, const char *delim);
 
 /**
  * 设置内存区域
@@ -160,26 +111,6 @@ extern "C" int memcmp(const void *ptr1, const void *ptr2, size_t num);
  * @return dest
  */
 extern "C" void *memmove(void *dest, const void *src, size_t num);
-
-/**
- * 格式化字符串输出（带长度限制）
- * @param str 目标缓冲区
- * @param size 缓冲区大小（包括 '\0'）
- * @param format 格式字符串
- * @param ... 可变参数
- * @return 写入的字符数（不包括 '\0'），如果超过 size 则返回应写入的字符数
- * 
- * 支持的格式说明符：
- * - %d, %i: 有符号十进制整数
- * - %u: 无符号十进制整数
- * - %x: 无符号十六进制整数（小写）
- * - %X: 无符号十六进制整数（大写）
- * - %p: 指针（十六进制）
- * - %s: 字符串
- * - %c: 字符
- * - %%: 百分号
- */
-int snprintf(char *str, size_t size, const char *format, ...);
 
 #endif /* _LIB_STRING_H_ */
 

@@ -88,16 +88,6 @@ void hal::Mmu::switch_space(paddr_t page_table_phys) {
 }
 
 /**
- * @brief 获取页错误地址 (i686)
- * @return CR2 寄存器中的错误地址
- */
-vaddr_t hal::Mmu::get_fault_addr() {
-    uint32_t fault_addr;
-    __asm__ volatile("mov %%cr2, %0" : "=r"(fault_addr));
-    return (vaddr_t)fault_addr;
-}
-
-/**
  * @brief 获取当前页目录物理地址 (i686)
  * @return CR3 寄存器的值
  */
@@ -105,29 +95,6 @@ paddr_t hal::Mmu::get_current_page_table() {
     uint32_t cr3;
     __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
     return (paddr_t)cr3;
-}
-
-/**
- * @brief 启用分页 (i686)
- * 
- * 设置 CR0 的 PG 位启用分页
- * 注意：在调用此函数前必须先设置好 CR3
- */
-void hal_mmu_enable_paging(void) {
-    uint32_t cr0;
-    __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
-    cr0 |= 0x80000000;  // Set PG bit
-    __asm__ volatile("mov %0, %%cr0" : : "r"(cr0) : "memory");
-}
-
-/**
- * @brief 检查分页是否启用 (i686)
- * @return true 如果分页已启用
- */
-bool hal_mmu_is_paging_enabled(void) {
-    uint32_t cr0;
-    __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
-    return (cr0 & 0x80000000) != 0;
 }
 
 
@@ -346,81 +313,6 @@ hal_addr_space_t hal::Mmu::clone_space(hal_addr_space_t src) {
 }
 
 /**
- * @brief 解析页错误信息 (i686)
- * 
- * 从 CR2 寄存器和错误码中提取页错误详细信息。
- * 
- * i686 Page Fault Error Code (pushed by CPU):
- *   Bit 0 (P):    1 = 页面存在（保护违规），0 = 页面不存在
- *   Bit 1 (W/R):  1 = 写操作，0 = 读操作
- *   Bit 2 (U/S):  1 = 用户模式，0 = 内核模式
- *   Bit 3 (RSVD): 1 = 保留位被设置
- *   Bit 4 (I/D):  1 = 指令获取导致（仅当 NX 启用时）
- * 
- * @param[out] info 页错误信息结构
- * 
- * @note 此函数应在页错误处理程序中调用，错误码从栈上获取
- * 
- * @see Requirements 4.3
- */
-void hal::Mmu::parse_fault(hal_page_fault_info_t *info) {
-    if (info == NULL) {
-        return;
-    }
-    
-    /* Get fault address from CR2 */
-    info->fault_addr = hal::Mmu::get_fault_addr();
-    
-    /* 
-     * Get error code from the ISR stack frame
-     * The error code is pushed by the CPU before the ISR is called.
-     * We need to access it through the current task's interrupt frame.
-     * 
-     * For now, we'll use a simplified approach: the error code should be
-     * passed to the page fault handler and stored in a global variable
-     * or passed through the info structure.
-     * 
-     * Since we can't directly access the stack frame here, we'll provide
-     * a helper function that the ISR can call with the error code.
-     */
-    
-    /* Default values - caller should update raw_error if available */
-    info->raw_error = 0;
-    info->is_present = false;
-    info->is_write = false;
-    info->is_user = false;
-    info->is_exec = false;
-    info->is_reserved = false;
-}
-
-/**
- * @brief 使用错误码解析页错误信息 (i686)
- * 
- * 此函数应由页错误 ISR 调用，传入 CPU 推送的错误码。
- * 
- * @param[out] info 页错误信息结构
- * @param error_code CPU 推送的错误码
- * 
- * @see Requirements 4.3
- */
-void hal_mmu_parse_fault_with_error(hal_page_fault_info_t *info, uint32_t error_code) {
-    if (info == NULL) {
-        return;
-    }
-    
-    /* Get fault address from CR2 */
-    info->fault_addr = hal::Mmu::get_fault_addr();
-    
-    /* Parse error code */
-    info->raw_error = error_code;
-    info->is_present = (error_code & 0x01) != 0;   /* Bit 0: Present */
-    info->is_write = (error_code & 0x02) != 0;     /* Bit 1: Write */
-    info->is_user = (error_code & 0x04) != 0;      /* Bit 2: User */
-    info->is_reserved = (error_code & 0x08) != 0;  /* Bit 3: Reserved bit set */
-    info->is_exec = (error_code & 0x10) != 0;      /* Bit 4: Instruction fetch (NX) */
-}
-
-/**
  * @brief 创建新地址空间 (i686)
  * 
  * 分配并初始化新的页目录，内核空间映射从主内核页目录复制。
@@ -597,31 +489,6 @@ paddr_t hal::Mmu::unmap(hal_addr_space_t space, vaddr_t virt) {
     return phys;
 }
 
-/**
- * @brief 虚拟地址转物理地址 (i686)
- * 
- * 便捷函数，查询当前地址空间中虚拟地址对应的物理地址。
- * 
- * @param virt 虚拟地址
- * @return 物理地址，未映射返回 PADDR_INVALID
- */
-paddr_t hal::Mmu::virt_to_phys(vaddr_t virt) {
-    paddr_t phys;
-    if (hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, virt, &phys, NULL)) {
-        return phys;
-    }
-    return PADDR_INVALID;
-}
-
-/**
- * @brief 销毁页表 (i686, 兼容旧接口)
- * @param page_table_phys 页表物理地址
- * @deprecated 使用 hal::Mmu::destroy_space() 代替
- */
-void hal::Mmu::destroy_page_table(paddr_t page_table_phys) {
-    hal::Mmu::destroy_space((hal_addr_space_t)page_table_phys);
-}
-
 /* ============================================================================
  * 大页映射实现 (i686)
  * 
@@ -637,114 +504,3 @@ void hal::Mmu::destroy_page_table(paddr_t page_table_phys) {
 /** @brief 2MB 大页包含的 4KB 页数 (local definition to avoid conflict with pmm.h) */
 #define HUGE_PAGE_FRAMES_I686   (HUGE_PAGE_SIZE_2MB / PAGE_SIZE)
 
-/**
- * @brief 检查是否支持大页 (i686)
- * @return false (i686 使用回退实现)
- * 
- * i686 理论上支持 4MB 大页（PSE），但此实现返回 false
- * 表示不支持原生 2MB 大页，将使用回退方式。
- */
-bool hal::Mmu::huge_pages_supported() {
-    return false;  /* Use fallback implementation */
-}
-
-/**
- * @brief 检查地址是否 2MB 对齐
- */
-static inline bool is_huge_page_aligned(uint32_t addr) {
-    return (addr & (HUGE_PAGE_SIZE_2MB - 1)) == 0;
-}
-
-/**
- * @brief 映射 2MB 大页 (i686 回退实现)
- * 
- * 由于 i686 不支持原生 2MB 大页，此函数将 2MB 区域
- * 映射为 512 个连续的 4KB 页。
- * 
- * @param space 地址空间句柄
- * @param virt 虚拟地址（必须 2MB 对齐）
- * @param phys 物理地址（必须 2MB 对齐）
- * @param flags HAL 页标志
- * @return true 成功，false 失败
- * 
- * @see Requirements 8.2, 8.4
- */
-bool hal::Mmu::map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags) {
-    /* Validate 2MB alignment */
-    if (!is_huge_page_aligned((uint32_t)virt) || !is_huge_page_aligned((uint32_t)phys)) {
-        LOG_ERROR_MSG("hal::Mmu::map_huge: addresses not 2MB-aligned (virt=0x%lx, phys=0x%llx)\n",
-                      (unsigned long)virt, (unsigned long long)phys);
-        return false;
-    }
-    
-    LOG_DEBUG_MSG("hal::Mmu::map_huge (i686 fallback): Mapping 512 x 4KB pages at virt=0x%lx\n",
-                  (unsigned long)virt);
-    
-    /* Map 512 individual 4KB pages */
-    for (uint32_t i = 0; i < HUGE_PAGE_FRAMES_I686; i++) {
-        vaddr_t page_virt = virt + (i * PAGE_SIZE);
-        paddr_t page_phys = phys + (i * PAGE_SIZE);
-        
-        if (!hal::Mmu::map(space, page_virt, page_phys, flags)) {
-            /* Rollback on failure */
-            LOG_ERROR_MSG("hal::Mmu::map_huge: Failed at page %u, rolling back\n", i);
-            for (uint32_t j = 0; j < i; j++) {
-                hal::Mmu::unmap(space, virt + (j * PAGE_SIZE));
-            }
-            return false;
-        }
-    }
-    
-    return true;
-}
-
-/**
- * @brief 取消 2MB 大页映射 (i686 回退实现)
- * 
- * @param space 地址空间句柄
- * @param virt 虚拟地址（必须 2MB 对齐）
- * @return 原物理地址，未映射返回 PADDR_INVALID
- * 
- * @see Requirements 8.2
- */
-paddr_t hal::Mmu::unmap_huge(hal_addr_space_t space, vaddr_t virt) {
-    /* Validate 2MB alignment */
-    if (!is_huge_page_aligned((uint32_t)virt)) {
-        LOG_ERROR_MSG("hal::Mmu::unmap_huge: address not 2MB-aligned (virt=0x%lx)\n",
-                      (unsigned long)virt);
-        return PADDR_INVALID;
-    }
-    
-    /* Get the physical address of the first page */
-    paddr_t first_phys;
-    if (!hal::Mmu::query(space, virt, &first_phys, NULL)) {
-        return PADDR_INVALID;
-    }
-    
-    LOG_DEBUG_MSG("hal::Mmu::unmap_huge (i686 fallback): Unmapping 512 x 4KB pages at virt=0x%lx\n",
-                  (unsigned long)virt);
-    
-    /* Unmap all 512 pages */
-    for (uint32_t i = 0; i < HUGE_PAGE_FRAMES_I686; i++) {
-        vaddr_t page_virt = virt + (i * PAGE_SIZE);
-        hal::Mmu::unmap(space, page_virt);
-    }
-    
-    return first_phys;
-}
-
-/**
- * @brief 查询映射是否为大页 (i686)
- * 
- * @param space 地址空间句柄
- * @param virt 虚拟地址
- * @return false (i686 回退实现不使用原生大页)
- * 
- * @see Requirements 8.3
- */
-bool hal::Mmu::is_huge_page(hal_addr_space_t space, vaddr_t virt) {
-    (void)space;
-    (void)virt;
-    /* i686 fallback implementation doesn't use native huge pages */
-    return false;
-}

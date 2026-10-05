@@ -215,12 +215,6 @@ public:
     static void init();
 
     /**
-     * @brief Get current CPU ID (reserved for multi-core support)
-     * @return Current CPU ID (0 for single-core systems)
-     */
-    static uint32_t id();
-
-    /**
      * @brief Halt the CPU
      * 
      * Puts the CPU into a low-power state until the next interrupt.
@@ -331,11 +325,6 @@ public:
      * HAL Initialization State Query
      * ========================================================================== */
 
-    /**
-     * @brief Check if CPU has been initialized via HAL
-     * @return true if hal_cpu_init() has completed successfully
-     */
-    static bool initialized();
 };
 
 } // namespace hal
@@ -425,15 +414,6 @@ public:
                          uint32_t set_flags, uint32_t clear_flags);
 
     /**
-     * @brief Check if huge pages are supported on this architecture
-     * @return true if 2MB huge pages are supported
-     * 
-     * @note i686 does not support huge pages in this implementation
-     * @note x86_64 and ARM64 support 2MB huge pages
-     */
-    static bool huge_pages_supported();
-
-    /**
      * @brief Map a 2MB huge page
      * 
      * Creates a 2MB huge page mapping. Both virtual and physical addresses
@@ -452,30 +432,6 @@ public:
      * @see Requirements 8.2
      */
     static bool map_huge(hal_addr_space_t space, vaddr_t virt, paddr_t phys, uint32_t flags);
-
-    /**
-     * @brief Unmap a 2MB huge page
-     * 
-     * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
-     * @param virt Virtual address (must be 2MB aligned)
-     * @return Previously mapped physical address, or PADDR_INVALID if not mapped
-     * 
-     * @note This function does NOT flush the TLB.
-     * 
-     * @see Requirements 8.2
-     */
-    static paddr_t unmap_huge(hal_addr_space_t space, vaddr_t virt);
-
-    /**
-     * @brief Query if a mapping is a huge page
-     * 
-     * @param space Address space handle (HAL_ADDR_SPACE_CURRENT for current)
-     * @param virt Virtual address
-     * @return true if the mapping is a 2MB huge page, false otherwise
-     * 
-     * @see Requirements 8.3
-     */
-    static bool is_huge_page(hal_addr_space_t space, vaddr_t virt);
 
     /**
      * @brief Flush TLB entry for a specific address
@@ -549,31 +505,6 @@ public:
     static hal_addr_space_t current_space();
 
     /**
-     * @brief Parse page fault information
-     * 
-     * Reads architecture-specific fault registers and fills the
-     * hal_page_fault_info_t structure with architecture-independent information.
-     * 
-     * Call this from the page fault handler to get fault details:
-     *   - i686/x86_64: Reads CR2 and error code from stack
-     *   - ARM64: Reads FAR_EL1 and ESR_EL1
-     * 
-     * @param[out] info Pointer to structure to fill with fault information
-     * 
-     * @see Requirements 4.3
-     */
-    static void parse_fault(hal_page_fault_info_t *info);
-
-    /**
-     * @brief Get the faulting address from a page fault
-     * 
-     * Quick accessor for just the fault address without full fault parsing.
-     * 
-     * @return The virtual address that caused the page fault
-     */
-    static vaddr_t get_fault_addr();
-
-    /**
      * @brief Translate virtual address to physical address
      * 
      * Convenience wrapper around hal_mmu_query() for the current address space.
@@ -599,19 +530,6 @@ public:
      */
     static paddr_t create_page_table();
 
-    /**
-     * @brief Destroy a page table
-     * 
-     * @param page_table_phys Physical address of the page table to destroy
-     * @deprecated Use hal_mmu_destroy_space() instead
-     */
-    static void destroy_page_table(paddr_t page_table_phys);
-
-    /**
-     * @brief Check if MMU has been initialized via HAL
-     * @return true if hal_mmu_init() has completed successfully
-     */
-    static bool initialized();
 };
 
 } // namespace hal
@@ -641,38 +559,9 @@ public:
     static void register_handler(uint32_t irq, hal_interrupt_handler_t handler, void *data);
 
     /**
-     * @brief Unregister an interrupt handler
-     * @param irq Architecture-independent IRQ number
-     */
-    static void unregister_handler(uint32_t irq);
-
-    /**
      * @brief Enable interrupts globally
      */
     static void enable();
-
-    /**
-     * @brief Disable interrupts globally
-     */
-    static void disable();
-
-    /**
-     * @brief Save interrupt state and disable interrupts
-     * @return Previous interrupt state (for restoration)
-     */
-    static uint64_t save();
-
-    /**
-     * @brief Restore interrupt state
-     * @param state Previously saved interrupt state
-     */
-    static void restore(uint64_t state);
-
-    /**
-     * @brief Send End-Of-Interrupt signal
-     * @param irq IRQ number that was handled
-     */
-    static void eoi(uint32_t irq);
 
     /**
      * @brief 设备中断线 irq 能否交给用户态驱动：线号有效，且内核自己没有在用
@@ -685,11 +574,6 @@ public:
     /** @brief 在中断控制器上打开一条中断线 */
     static void unmask_irq(uint32_t irq);
 
-    /**
-     * @brief Check if interrupt system has been initialized via HAL
-     * @return true if hal::Interrupt::init() has completed successfully
-     */
-    static bool initialized();
 };
 
 } // namespace hal
@@ -709,12 +593,6 @@ public:
     static void init(uint32_t freq_hz, hal_timer_callback_t callback);
 
     /**
-     * @brief Get system tick count
-     * @return Number of timer ticks since boot
-     */
-    static uint64_t get_ticks();
-
-    /**
      * @brief Get timer frequency
      * @return Timer frequency in Hz
      */
@@ -730,54 +608,6 @@ namespace hal {
  */
 class Cache {
 public:
-    /**
-     * @brief Clean cache for a memory region (write back dirty data)
-     * 
-     * Ensures that any dirty cache lines in the specified region are written
-     * back to main memory. This should be called before a DMA read operation
-     * (device reading from memory) to ensure the device sees the latest data.
-     * 
-     * @param addr Virtual address of the region start
-     * @param size Size of the region in bytes
-     * 
-     * @note On x86, this is a no-op as caches are DMA-coherent.
-     * @note On ARM64, this performs DC CVAC (Clean by VA to PoC) operations.
-     */
-    static void clean(void *addr, size_t size);
-
-    /**
-     * @brief Invalidate cache for a memory region (discard cached data)
-     * 
-     * Invalidates any cache lines in the specified region, forcing subsequent
-     * reads to fetch data from main memory. This should be called after a DMA
-     * write operation (device writing to memory) to ensure the CPU sees the
-     * new data written by the device.
-     * 
-     * @param addr Virtual address of the region start
-     * @param size Size of the region in bytes
-     * 
-     * @warning This may discard dirty data! Use hal_cache_clean_invalidate()
-     *          if the region may contain modified data.
-     * 
-     * @note On x86, this is a no-op as caches are DMA-coherent.
-     * @note On ARM64, this performs DC IVAC (Invalidate by VA to PoC) operations.
-     */
-    static void invalidate(void *addr, size_t size);
-
-    /**
-     * @brief Clean and invalidate cache for a memory region
-     * 
-     * Combines clean and invalidate operations: writes back dirty data and
-     * then invalidates the cache lines. This is the safest option for
-     * bidirectional DMA buffers.
-     * 
-     * @param addr Virtual address of the region start
-     * @param size Size of the region in bytes
-     * 
-     * @note On x86, this is a no-op as caches are DMA-coherent.
-     * @note On ARM64, this performs DC CIVAC (Clean and Invalidate by VA to PoC).
-     */
-    static void clean_invalidate(void *addr, size_t size);
 };
 
 } // namespace hal
@@ -986,12 +816,6 @@ namespace hal {
 class Context {
 public:
     /**
-     * @brief Get the size of the architecture-specific context structure
-     * @return Size in bytes
-     */
-    static size_t size();
-
-    /**
      * @brief Initialize a task context
      * @param ctx Pointer to context structure to initialize
      * @param entry Entry point address
@@ -1000,13 +824,6 @@ public:
      */
     static void init(hal_context_t *ctx, uintptr_t entry, 
                           uintptr_t stack, bool is_user);
-
-    /**
-     * @brief Perform a context switch
-     * @param old_ctx Pointer to save current context (can be NULL)
-     * @param new_ctx Pointer to context to switch to
-     */
-    static void switch_to(hal_context_t **old_ctx, hal_context_t *new_ctx);
 
     /**
      * @brief Set the kernel stack for the current CPU

@@ -141,9 +141,4 @@ static_assert(__builtin_offsetof(arm64_context_t, kernel_sp) == 280, "kernel_sp 
 /** Default PSTATE for kernel mode (EL1h, interrupts enabled) */
 #define ARM64_PSTATE_KERNEL_DEFAULT ARM64_PSTATE_EL1h
 
-/* ============================================================================
- * HAL Context Type Alias
- * ========================================================================== */
-
-
 #endif /* _ARCH_ARM64_CONTEXT_H_ */

@@ -89,29 +89,6 @@ TEST_CASE(test_strncmp_partial_match) {
 // 测试用例：strcasecmp 函数（不区分大小写比较）
 // ============================================================================
 
-TEST_CASE(test_strcasecmp_equal) {
-    ASSERT_EQ(strcasecmp("hello", "HELLO"), 0);
-    ASSERT_EQ(strcasecmp("Hello", "hello"), 0);
-    ASSERT_EQ(strcasecmp("WORLD", "world"), 0);
-    ASSERT_EQ(strcasecmp("", ""), 0);
-}
-
-TEST_CASE(test_strcasecmp_mixed_case) {
-    ASSERT_EQ(strcasecmp("HeLLo", "hEllO"), 0);
-    ASSERT_EQ(strcasecmp("CastorOS", "castoRos"), 0);
-}
-
-TEST_CASE(test_strcasecmp_different) {
-    ASSERT_NE(strcasecmp("hello", "world"), 0);
-    ASSERT_TRUE(strcasecmp("abc", "abd") < 0);
-    ASSERT_TRUE(strcasecmp("xyz", "abc") > 0);
-}
-
-TEST_CASE(test_strcasecmp_numbers_special) {
-    ASSERT_EQ(strcasecmp("test123", "TEST123"), 0);
-    ASSERT_EQ(strcasecmp("hello-world", "HELLO-WORLD"), 0);
-}
-
 // ============================================================================
 // 测试用例：strcpy 函数
 // ============================================================================
@@ -181,74 +158,6 @@ TEST_CASE(test_strncpy_return_value) {
 // ============================================================================
 // 测试用例：strtok 函数
 // ============================================================================
-
-TEST_CASE(test_strtok_simple) {
-    char str[] = "hello world test";
-    char *token;
-    
-    token = strtok(str, " ");
-    ASSERT_STR_EQ(token, "hello");
-    
-    token = strtok(NULL, " ");
-    ASSERT_STR_EQ(token, "world");
-    
-    token = strtok(NULL, " ");
-    ASSERT_STR_EQ(token, "test");
-    
-    token = strtok(NULL, " ");
-    ASSERT_NULL(token);
-}
-
-TEST_CASE(test_strtok_multiple_delimiters) {
-    char str[] = "apple,banana;orange:grape";
-    char *token;
-    
-    token = strtok(str, ",;:");
-    ASSERT_STR_EQ(token, "apple");
-    
-    token = strtok(NULL, ",;:");
-    ASSERT_STR_EQ(token, "banana");
-    
-    token = strtok(NULL, ",;:");
-    ASSERT_STR_EQ(token, "orange");
-    
-    token = strtok(NULL, ",;:");
-    ASSERT_STR_EQ(token, "grape");
-    
-    token = strtok(NULL, ",;:");
-    ASSERT_NULL(token);
-}
-
-TEST_CASE(test_strtok_consecutive_delimiters) {
-    char str[] = "a,,b,,c";
-    char *token;
-    
-    token = strtok(str, ",");
-    ASSERT_STR_EQ(token, "a");
-    
-    token = strtok(NULL, ",");
-    ASSERT_STR_EQ(token, "b");
-    
-    token = strtok(NULL, ",");
-    ASSERT_STR_EQ(token, "c");
-    
-    token = strtok(NULL, ",");
-    ASSERT_NULL(token);
-}
-
-TEST_CASE(test_strtok_leading_trailing_delimiters) {
-    char str[] = "  hello  world  ";
-    char *token;
-    
-    token = strtok(str, " ");
-    ASSERT_STR_EQ(token, "hello");
-    
-    token = strtok(NULL, " ");
-    ASSERT_STR_EQ(token, "world");
-    
-    token = strtok(NULL, " ");
-    ASSERT_NULL(token);
-}
 
 // ============================================================================
 // 测试用例：memset 函数
@@ -438,54 +347,9 @@ TEST_CASE(test_uint32_to_str_max) {
 // 测试用例：int32_to_hex 函数
 // ============================================================================
 
-TEST_CASE(test_int32_to_hex_lowercase) {
-    char buffer[11];
-    int32_to_hex(0xDEADBEEF, buffer, false);
-    ASSERT_STR_EQ(buffer, "deadbeef");
-    
-    int32_to_hex(0x12345678, buffer, false);
-    ASSERT_STR_EQ(buffer, "12345678");
-}
-
-TEST_CASE(test_int32_to_hex_uppercase) {
-    char buffer[11];
-    int32_to_hex(0xDEADBEEF, buffer, true);
-    ASSERT_STR_EQ(buffer, "DEADBEEF");
-    
-    int32_to_hex(0xCAFEBABE, buffer, true);
-    ASSERT_STR_EQ(buffer, "CAFEBABE");
-}
-
-TEST_CASE(test_int32_to_hex_zero) {
-    char buffer[11];
-    int32_to_hex(0, buffer, false);
-    ASSERT_STR_EQ(buffer, "0");
-}
-
 // ============================================================================
 // 测试用例：uint32_to_hex 函数
 // ============================================================================
-
-TEST_CASE(test_uint32_to_hex_lowercase) {
-    char buffer[11];
-    uint32_to_hex(0xDEADBEEF, buffer, false);
-    ASSERT_STR_EQ(buffer, "deadbeef");
-}
-
-TEST_CASE(test_uint32_to_hex_uppercase) {
-    char buffer[11];
-    uint32_to_hex(0xCAFEBABE, buffer, true);
-    ASSERT_STR_EQ(buffer, "CAFEBABE");
-}
-
-TEST_CASE(test_uint32_to_hex_max) {
-    char buffer[11];
-    uint32_to_hex(0xFFFFFFFF, buffer, false);
-    ASSERT_STR_EQ(buffer, "ffffffff");
-    
-    uint32_to_hex(0xFFFFFFFF, buffer, true);
-    ASSERT_STR_EQ(buffer, "FFFFFFFF");
-}
 
 // ============================================================================
 // 测试用例：int64_to_str 函数
@@ -541,121 +405,13 @@ TEST_CASE(test_uint64_to_str_max) {
 // 测试用例：int64_to_hex 函数
 // ============================================================================
 
-TEST_CASE(test_int64_to_hex_lowercase) {
-    char buffer[19];
-    int64_to_hex(0xDEADBEEFCAFEBABELL, buffer, false);
-    ASSERT_STR_EQ(buffer, "deadbeefcafebabe");
-}
-
-TEST_CASE(test_int64_to_hex_uppercase) {
-    char buffer[19];
-    int64_to_hex(0xDEADBEEFCAFEBABELL, buffer, true);
-    ASSERT_STR_EQ(buffer, "DEADBEEFCAFEBABE");
-}
-
-TEST_CASE(test_int64_to_hex_zero) {
-    char buffer[19];
-    int64_to_hex(0, buffer, false);
-    ASSERT_STR_EQ(buffer, "0");
-}
-
 // ============================================================================
 // 测试用例：uint64_to_hex 函数
 // ============================================================================
 
-TEST_CASE(test_uint64_to_hex_lowercase) {
-    char buffer[19];
-    uint64_to_hex(0xDEADBEEFCAFEBABEULL, buffer, false);
-    ASSERT_STR_EQ(buffer, "deadbeefcafebabe");
-}
-
-TEST_CASE(test_uint64_to_hex_uppercase) {
-    char buffer[19];
-    uint64_to_hex(0xDEADBEEFCAFEBABEULL, buffer, true);
-    ASSERT_STR_EQ(buffer, "DEADBEEFCAFEBABE");
-}
-
-TEST_CASE(test_uint64_to_hex_max) {
-    char buffer[19];
-    uint64_to_hex(0xFFFFFFFFFFFFFFFFULL, buffer, false);
-    ASSERT_STR_EQ(buffer, "ffffffffffffffff");
-    
-    uint64_to_hex(0xFFFFFFFFFFFFFFFFULL, buffer, true);
-    ASSERT_STR_EQ(buffer, "FFFFFFFFFFFFFFFF");
-}
-
 // ============================================================================
 // 测试用例：snprintf 函数
 // ============================================================================
-
-TEST_CASE(test_snprintf_string) {
-    char buffer[50];
-    int result = snprintf(buffer, sizeof(buffer), "Hello, %s!", "world");
-    ASSERT_STR_EQ(buffer, "Hello, world!");
-    ASSERT_EQ(result, 13);
-}
-
-TEST_CASE(test_snprintf_integer) {
-    char buffer[50];
-    snprintf(buffer, sizeof(buffer), "Number: %d", 42);
-    ASSERT_STR_EQ(buffer, "Number: 42");
-    
-    snprintf(buffer, sizeof(buffer), "Negative: %d", -123);
-    ASSERT_STR_EQ(buffer, "Negative: -123");
-}
-
-TEST_CASE(test_snprintf_unsigned) {
-    char buffer[50];
-    snprintf(buffer, sizeof(buffer), "Unsigned: %u", 12345U);
-    ASSERT_STR_EQ(buffer, "Unsigned: 12345");
-}
-
-TEST_CASE(test_snprintf_hex) {
-    char buffer[50];
-    snprintf(buffer, sizeof(buffer), "Hex: %x", 0xABCD);
-    ASSERT_STR_EQ(buffer, "Hex: abcd");
-    
-    snprintf(buffer, sizeof(buffer), "HEX: %X", 0xABCD);
-    ASSERT_STR_EQ(buffer, "HEX: ABCD");
-}
-
-TEST_CASE(test_snprintf_char) {
-    char buffer[50];
-    snprintf(buffer, sizeof(buffer), "Char: %c", 'A');
-    ASSERT_STR_EQ(buffer, "Char: A");
-}
-
-TEST_CASE(test_snprintf_pointer) {
-    char buffer[50];
-    void *ptr = (void *)0x12345678;
-    snprintf(buffer, sizeof(buffer), "Pointer: %p", ptr);
-    ASSERT_STR_EQ(buffer, "Pointer: 12345678");
-}
-
-TEST_CASE(test_snprintf_percent) {
-    char buffer[50];
-    snprintf(buffer, sizeof(buffer), "Percent: %%");
-    ASSERT_STR_EQ(buffer, "Percent: %");
-}
-
-TEST_CASE(test_snprintf_mixed) {
-    char buffer[100];
-    snprintf(buffer, sizeof(buffer), "String: %s, Int: %d, Hex: %x", "test", 42, 0xFF);
-    ASSERT_STR_EQ(buffer, "String: test, Int: 42, Hex: ff");
-}
-
-TEST_CASE(test_snprintf_buffer_limit) {
-    char buffer[10];
-    snprintf(buffer, sizeof(buffer), "This is a very long string");
-    ASSERT_EQ(strlen(buffer), 9);  // 应该被截断为 9 个字符 + '\0'
-    ASSERT_EQ(buffer[9], '\0');    // 最后一个字符应该是 '\0'
-}
-
-TEST_CASE(test_snprintf_empty_buffer) {
-    char buffer[1];
-    snprintf(buffer, sizeof(buffer), "test");
-    ASSERT_EQ(buffer[0], '\0');  // 只能容纳 '\0'
-}
 
 // ============================================================================
 // 测试套件定义
@@ -680,10 +436,6 @@ TEST_SUITE(string_compare_tests) {
 }
 
 TEST_SUITE(string_casecmp_tests) {
-    RUN_TEST(test_strcasecmp_equal);
-    RUN_TEST(test_strcasecmp_mixed_case);
-    RUN_TEST(test_strcasecmp_different);
-    RUN_TEST(test_strcasecmp_numbers_special);
 }
 
 TEST_SUITE(string_copy_tests) {
@@ -698,10 +450,6 @@ TEST_SUITE(string_copy_tests) {
 }
 
 TEST_SUITE(string_token_tests) {
-    RUN_TEST(test_strtok_simple);
-    RUN_TEST(test_strtok_multiple_delimiters);
-    RUN_TEST(test_strtok_consecutive_delimiters);
-    RUN_TEST(test_strtok_leading_trailing_delimiters);
 }
 
 TEST_SUITE(memory_operation_tests) {
@@ -733,15 +481,9 @@ TEST_SUITE(uint32_conversion_tests) {
 }
 
 TEST_SUITE(int32_hex_tests) {
-    RUN_TEST(test_int32_to_hex_lowercase);
-    RUN_TEST(test_int32_to_hex_uppercase);
-    RUN_TEST(test_int32_to_hex_zero);
 }
 
 TEST_SUITE(uint32_hex_tests) {
-    RUN_TEST(test_uint32_to_hex_lowercase);
-    RUN_TEST(test_uint32_to_hex_uppercase);
-    RUN_TEST(test_uint32_to_hex_max);
 }
 
 TEST_SUITE(int64_conversion_tests) {
@@ -758,28 +500,12 @@ TEST_SUITE(uint64_conversion_tests) {
 }
 
 TEST_SUITE(int64_hex_tests) {
-    RUN_TEST(test_int64_to_hex_lowercase);
-    RUN_TEST(test_int64_to_hex_uppercase);
-    RUN_TEST(test_int64_to_hex_zero);
 }
 
 TEST_SUITE(uint64_hex_tests) {
-    RUN_TEST(test_uint64_to_hex_lowercase);
-    RUN_TEST(test_uint64_to_hex_uppercase);
-    RUN_TEST(test_uint64_to_hex_max);
 }
 
 TEST_SUITE(snprintf_tests) {
-    RUN_TEST(test_snprintf_string);
-    RUN_TEST(test_snprintf_integer);
-    RUN_TEST(test_snprintf_unsigned);
-    RUN_TEST(test_snprintf_hex);
-    RUN_TEST(test_snprintf_char);
-    RUN_TEST(test_snprintf_pointer);
-    RUN_TEST(test_snprintf_percent);
-    RUN_TEST(test_snprintf_mixed);
-    RUN_TEST(test_snprintf_buffer_limit);
-    RUN_TEST(test_snprintf_empty_buffer);
 }
 
 // ============================================================================

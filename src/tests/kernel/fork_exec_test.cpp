@@ -364,78 +364,6 @@ TEST_CASE(test_exec_user_mode_transition_setup) {
 }
 
 /**
- * Test: Context initialization for user mode is correct
- * 
- * Verifies that hal::Context::init correctly sets up a user-mode context.
- */
-TEST_CASE(test_exec_context_init_user_mode) {
-#if defined(ARCH_I686)
-    cpu_context_t ctx;
-    
-    uintptr_t entry = 0x08048000;  // Typical ELF entry point
-    uintptr_t stack = 0x7FFFF000;  // User stack
-    
-    hal::Context::init((hal_context_t*)&ctx, entry, stack, true);
-    
-    // Property: Entry point must be set
-    ASSERT_EQ_U(ctx.eip, entry);
-    
-    // Property: Stack must be set
-    ASSERT_EQ_U(ctx.esp, stack);
-    
-    // Property: User code segment
-    ASSERT_EQ_U(ctx.cs, 0x1B);
-    
-    // Property: User data segment
-    ASSERT_EQ_U(ctx.ds, 0x23);
-    ASSERT_EQ_U(ctx.ss, 0x23);
-    
-    // Property: Interrupts enabled
-    ASSERT_TRUE((ctx.eflags & 0x200) != 0);
-    
-#elif defined(ARCH_X86_64)
-    x86_64_context_t ctx;
-    
-    uint64_t entry = 0x00400000ULL;
-    uint64_t stack = 0x7FFFFFFFE000ULL;
-    
-    hal::Context::init((hal_context_t*)&ctx, entry, stack, true);
-    
-    // Property: Entry point must be set
-    ASSERT_EQ_U(ctx.rip, entry);
-    
-    // Property: Stack must be set
-    ASSERT_EQ_U(ctx.rsp, stack);
-    
-    // Property: User code segment (GDT index 4 = 0x20 | RPL=3 = 0x23)
-    ASSERT_EQ_U(ctx.cs, 0x23);
-    
-    // Property: User stack segment (GDT index 3 = 0x18 | RPL=3 = 0x1B)
-    ASSERT_EQ_U(ctx.ss, 0x1B);
-    
-    // Property: Interrupts enabled
-    ASSERT_TRUE((ctx.rflags & 0x200) != 0);
-    
-#elif defined(ARCH_ARM64)
-    arm64_context_t ctx;
-    
-    uint64_t entry = 0x00400000ULL;
-    uint64_t stack = 0x7FFFFFFFE000ULL;
-    
-    hal::Context::init((hal_context_t*)&ctx, entry, stack, true);
-    
-    // Property: Entry point must be set
-    ASSERT_EQ_U(ctx.pc, entry);
-    
-    // Property: Stack must be set
-    ASSERT_EQ_U(ctx.sp, stack);
-    
-    // Property: PSTATE must indicate EL0
-    ASSERT_EQ_U(ctx.pstate & 0x0F, ARM64_PSTATE_EL0t);
-#endif
-}
-
-/**
  * Test: Page directory creation for new process
  * 
  * Verifies that mm::Vmm::create_page_directory creates a valid
@@ -793,7 +721,6 @@ TEST_SUITE(fork_cow_tests) {
 
 TEST_SUITE(exec_tests) {
     RUN_TEST(test_exec_user_mode_transition_setup);
-    RUN_TEST(test_exec_context_init_user_mode);
     RUN_TEST(test_exec_page_directory_creation);
     RUN_TEST(test_exec_user_stack_setup);
     RUN_TEST(test_exec_program_code_mapping);

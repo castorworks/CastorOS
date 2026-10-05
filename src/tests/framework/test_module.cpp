@@ -177,11 +177,9 @@ void test_run_with_options(const test_registry_t *registry,
     const arch_info_t *arch = test_get_arch_info();
     
     kprintf("\n");
-    kconsole_set_color(KCOLOR_LIGHT_CYAN, KCOLOR_BLACK);
     kprintf("================================================================================\n");
     kprintf("|| CastorOS Modular Test Suite\n");
     kprintf("================================================================================\n");
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
     
     kprintf("\nTarget Architecture: %s (%u-bit)\n", arch->name, arch->bits);
     kprintf("Registered modules: %u\n", registry->count);
@@ -278,11 +276,9 @@ void test_run_with_options(const test_registry_t *registry,
     
 done:
     kprintf("\n");
-    kconsole_set_color(KCOLOR_LIGHT_CYAN, KCOLOR_BLACK);
     kprintf("================================================================================\n");
     kprintf("|| Modules executed: %u, Skipped: %u\n", executed_count, skipped_count);
     kprintf("================================================================================\n");
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
 }
 
 void test_run_subsystem(const test_registry_t *registry, const char *subsystem) {

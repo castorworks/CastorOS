@@ -50,68 +50,6 @@
 // ============================================================================
 
 /**
- * @brief 测试基本页面映射
- * 
- * 验证 mm::Vmm::map_page() 能正确映射虚拟地址到物理地址
- * _Requirements: 3.2_
- */
-TEST_CASE(test_vmm_map_page_basic) {
-    // 分配一个物理页帧
-    paddr_t frame = mm::Pmm::alloc_frame();
-    ASSERT_NE_U(frame, PADDR_INVALID);
-    
-    // 映射到虚拟地址
-    bool result = mm::Vmm::map_page(TEST_VIRT_ADDR1, (uintptr_t)frame, 
-                               PAGE_PRESENT | PAGE_WRITE);
-    ASSERT_TRUE(result);
-    
-    // 写入数据验证映射成功
-    uint32_t *ptr = (uint32_t*)TEST_VIRT_ADDR1;
-    *ptr = 0xDEADBEEF;
-    ASSERT_EQ_U(*ptr, 0xDEADBEEF);
-    
-    // 清理
-    mm::Vmm::unmap_page(TEST_VIRT_ADDR1);
-    mm::Pmm::free_frame(frame);
-}
-
-/**
- * @brief 测试多页面映射
- * 
- * 验证多个页面可以独立映射到不同的虚拟地址
- * _Requirements: 3.2_
- */
-TEST_CASE(test_vmm_map_page_multiple) {
-    // 分配多个物理页帧
-    paddr_t frame1 = mm::Pmm::alloc_frame();
-    paddr_t frame2 = mm::Pmm::alloc_frame();
-    ASSERT_NE_U(frame1, PADDR_INVALID);
-    ASSERT_NE_U(frame2, PADDR_INVALID);
-    
-    // 映射到不同的虚拟地址
-    ASSERT_TRUE(mm::Vmm::map_page(TEST_VIRT_ADDR1, (uintptr_t)frame1, 
-                             PAGE_PRESENT | PAGE_WRITE));
-    ASSERT_TRUE(mm::Vmm::map_page(TEST_VIRT_ADDR2, (uintptr_t)frame2, 
-                             PAGE_PRESENT | PAGE_WRITE));
-    
-    // 写入不同的数据
-    uint32_t *ptr1 = (uint32_t*)TEST_VIRT_ADDR1;
-    uint32_t *ptr2 = (uint32_t*)TEST_VIRT_ADDR2;
-    *ptr1 = 0x11111111;
-    *ptr2 = 0x22222222;
-    
-    // 验证数据独立性
-    ASSERT_EQ_U(*ptr1, 0x11111111);
-    ASSERT_EQ_U(*ptr2, 0x22222222);
-    
-    // 清理
-    mm::Vmm::unmap_page(TEST_VIRT_ADDR1);
-    mm::Vmm::unmap_page(TEST_VIRT_ADDR2);
-    mm::Pmm::free_frame(frame1);
-    mm::Pmm::free_frame(frame2);
-}
-
-/**
  * @brief 测试页面映射对齐检查
  * 
  * 验证非对齐地址的映射请求被正确拒绝
@@ -130,30 +68,6 @@ TEST_CASE(test_vmm_map_page_alignment) {
     mm::Pmm::free_frame(frame);
 }
 
-/**
- * @brief 测试页面映射标志
- * 
- * 验证不同的页面标志（PRESENT, WRITE, USER）能正确设置
- * _Requirements: 3.2, 7.2_
- */
-TEST_CASE(test_vmm_map_page_flags) {
-    paddr_t frame = mm::Pmm::alloc_frame();
-    ASSERT_NE_U(frame, PADDR_INVALID);
-    
-    // 使用不同的标志映射
-    ASSERT_TRUE(mm::Vmm::map_page(TEST_VIRT_ADDR1, (uintptr_t)frame, 
-                             PAGE_PRESENT | PAGE_WRITE | PAGE_USER));
-    
-    // 验证可以读写
-    uint32_t *ptr = (uint32_t*)TEST_VIRT_ADDR1;
-    *ptr = 0xCAFEBABE;
-    ASSERT_EQ_U(*ptr, 0xCAFEBABE);
-    
-    // 清理
-    mm::Vmm::unmap_page(TEST_VIRT_ADDR1);
-    mm::Pmm::free_frame(frame);
-}
-
 // ============================================================================
 // 测试套件 2: vmm_unmap_tests - 取消页面映射测试
 // ============================================================================
@@ -161,63 +75,6 @@ TEST_CASE(test_vmm_map_page_flags) {
 // 测试 mm::Vmm::unmap_page() 和 mm::Vmm::unmap_page_in_directory() 函数
 // **Validates: Requirements 3.2** - VMM 取消映射功能
 // ============================================================================
-
-/**
- * @brief 测试基本取消映射
- * 
- * 验证 mm::Vmm::unmap_page() 能正确取消页面映射
- * _Requirements: 3.2_
- */
-TEST_CASE(test_vmm_unmap_page_basic) {
-    paddr_t frame = mm::Pmm::alloc_frame();
-    ASSERT_NE_U(frame, PADDR_INVALID);
-    
-    // 映射
-    ASSERT_TRUE(mm::Vmm::map_page(TEST_VIRT_ADDR1, (uintptr_t)frame, 
-                             PAGE_PRESENT | PAGE_WRITE));
-    
-    // 取消映射
-    mm::Vmm::unmap_page(TEST_VIRT_ADDR1);
-    
-    // 注意：访问已取消映射的地址会导致页错误，所以不测试访问
-    
-    // 清理
-    mm::Pmm::free_frame(frame);
-}
-
-/**
- * @brief 测试双重取消映射
- * 
- * 验证对同一地址多次取消映射不会导致问题
- * _Requirements: 3.2_
- */
-TEST_CASE(test_vmm_unmap_page_double) {
-    paddr_t frame = mm::Pmm::alloc_frame();
-    ASSERT_NE_U(frame, PADDR_INVALID);
-    
-    // 映射
-    ASSERT_TRUE(mm::Vmm::map_page(TEST_VIRT_ADDR1, (uintptr_t)frame, 
-                             PAGE_PRESENT | PAGE_WRITE));
-    
-    // 取消映射两次（第二次应该无害）
-    mm::Vmm::unmap_page(TEST_VIRT_ADDR1);
-    mm::Vmm::unmap_page(TEST_VIRT_ADDR1);
-    
-    // 清理
-    mm::Pmm::free_frame(frame);
-}
-
-/**
- * @brief 测试取消映射非对齐地址
- * 
- * 验证取消映射非对齐地址时系统保持稳定
- * _Requirements: 3.2_
- */
-TEST_CASE(test_vmm_unmap_page_alignment) {
-    // 尝试取消映射非对齐地址（应该被忽略）
-    mm::Vmm::unmap_page(TEST_VIRT_ADDR1 + 0x456);
-    // 如果没有崩溃就是成功
-}
 
 /**
  * @brief 测试在指定页目录中取消映射
@@ -287,70 +144,6 @@ TEST_CASE(test_vmm_unmap_page_in_directory_alignment) {
 // 测试套件 1 (续): vmm_map_tests - 重复映射和覆盖测试
 // ============================================================================
 
-/**
- * @brief 测试重新映射
- * 
- * 验证同一虚拟地址可以重新映射到不同的物理地址
- * _Requirements: 3.2_
- */
-TEST_CASE(test_vmm_map_page_remap) {
-    paddr_t frame1 = mm::Pmm::alloc_frame();
-    paddr_t frame2 = mm::Pmm::alloc_frame();
-    ASSERT_NE_U(frame1, PADDR_INVALID);
-    ASSERT_NE_U(frame2, PADDR_INVALID);
-    
-    // 第一次映射
-    ASSERT_TRUE(mm::Vmm::map_page(TEST_VIRT_ADDR1, (uintptr_t)frame1, 
-                             PAGE_PRESENT | PAGE_WRITE));
-    uint32_t *ptr = (uint32_t*)TEST_VIRT_ADDR1;
-    *ptr = 0x11111111;
-    ASSERT_EQ_U(*ptr, 0x11111111);
-    
-    // 重新映射到不同的物理页
-    ASSERT_TRUE(mm::Vmm::map_page(TEST_VIRT_ADDR1, (uintptr_t)frame2, 
-                             PAGE_PRESENT | PAGE_WRITE));
-    
-    // 现在应该映射到 frame2（内容应该不同）
-    // frame2 是新分配的，已经被清零
-    ASSERT_EQ_U(*ptr, 0x00000000);
-    
-    // 写入新数据
-    *ptr = 0x22222222;
-    ASSERT_EQ_U(*ptr, 0x22222222);
-    
-    // 清理
-    mm::Vmm::unmap_page(TEST_VIRT_ADDR1);
-    mm::Pmm::free_frame(frame1);
-    mm::Pmm::free_frame(frame2);
-}
-
-/**
- * @brief 测试不同标志的映射
- * 
- * 验证同一页面可以用不同的标志重新映射
- * _Requirements: 3.2, 7.2_
- */
-TEST_CASE(test_vmm_map_page_different_flags) {
-    paddr_t frame = mm::Pmm::alloc_frame();
-    ASSERT_NE_U(frame, PADDR_INVALID);
-    
-    // 首先映射为只读（实际上x86的supervisor模式总是可写的）
-    ASSERT_TRUE(mm::Vmm::map_page(TEST_VIRT_ADDR1, (uintptr_t)frame, PAGE_PRESENT));
-    
-    // 重新映射为可写
-    ASSERT_TRUE(mm::Vmm::map_page(TEST_VIRT_ADDR1, (uintptr_t)frame, 
-                             PAGE_PRESENT | PAGE_WRITE));
-    
-    // 应该能写入
-    uint32_t *ptr = (uint32_t*)TEST_VIRT_ADDR1;
-    *ptr = 0xABCDEF12;
-    ASSERT_EQ_U(*ptr, 0xABCDEF12);
-    
-    // 清理
-    mm::Vmm::unmap_page(TEST_VIRT_ADDR1);
-    mm::Pmm::free_frame(frame);
-}
-
 // ============================================================================
 // 测试套件 3: vmm_tlb_tests - TLB 刷新测试
 // ============================================================================
@@ -358,70 +151,6 @@ TEST_CASE(test_vmm_map_page_different_flags) {
 // 测试 mm::Vmm::flush_tlb() 函数的功能
 // **Validates: Requirements 3.2** - TLB 刷新后映射仍然有效
 // ============================================================================
-
-/**
- * @brief 测试单页 TLB 刷新
- * 
- * 验证刷新单个页面的 TLB 后映射仍然有效
- * _Requirements: 3.2_
- */
-TEST_CASE(test_vmm_flush_tlb_single_page) {
-    paddr_t frame = mm::Pmm::alloc_frame();
-    ASSERT_NE_U(frame, PADDR_INVALID);
-    
-    // 映射页面
-    ASSERT_TRUE(mm::Vmm::map_page(TEST_VIRT_ADDR1, (uintptr_t)frame, 
-                             PAGE_PRESENT | PAGE_WRITE));
-    
-    // 写入数据
-    *(uint32_t*)TEST_VIRT_ADDR1 = 0xDEADBEEF;
-    
-    // 刷新单个页面的TLB
-    mm::Vmm::flush_tlb(TEST_VIRT_ADDR1);
-    
-    // 应该仍然能访问
-    ASSERT_EQ_U(*(uint32_t*)TEST_VIRT_ADDR1, 0xDEADBEEF);
-    
-    // 清理
-    mm::Vmm::unmap_page(TEST_VIRT_ADDR1);
-    mm::Pmm::free_frame(frame);
-}
-
-/**
- * @brief 测试完整 TLB 刷新
- * 
- * 验证刷新整个 TLB 后所有映射仍然有效
- * _Requirements: 3.2_
- */
-TEST_CASE(test_vmm_flush_tlb_full) {
-    paddr_t frame1 = mm::Pmm::alloc_frame();
-    paddr_t frame2 = mm::Pmm::alloc_frame();
-    ASSERT_NE_U(frame1, PADDR_INVALID);
-    ASSERT_NE_U(frame2, PADDR_INVALID);
-    
-    // 映射多个页面
-    ASSERT_TRUE(mm::Vmm::map_page(TEST_VIRT_ADDR1, (uintptr_t)frame1, 
-                             PAGE_PRESENT | PAGE_WRITE));
-    ASSERT_TRUE(mm::Vmm::map_page(TEST_VIRT_ADDR2, (uintptr_t)frame2, 
-                             PAGE_PRESENT | PAGE_WRITE));
-    
-    // 写入数据
-    *(uint32_t*)TEST_VIRT_ADDR1 = 0x11111111;
-    *(uint32_t*)TEST_VIRT_ADDR2 = 0x22222222;
-    
-    // 刷新整个TLB（传入0）
-    mm::Vmm::flush_tlb(0);
-    
-    // 应该仍然能访问
-    ASSERT_EQ_U(*(uint32_t*)TEST_VIRT_ADDR1, 0x11111111);
-    ASSERT_EQ_U(*(uint32_t*)TEST_VIRT_ADDR2, 0x22222222);
-    
-    // 清理
-    mm::Vmm::unmap_page(TEST_VIRT_ADDR1);
-    mm::Vmm::unmap_page(TEST_VIRT_ADDR2);
-    mm::Pmm::free_frame(frame1);
-    mm::Pmm::free_frame(frame2);
-}
 
 // ============================================================================
 // 测试套件 4: vmm_directory_tests - 页目录操作测试
@@ -933,12 +662,7 @@ TEST_CASE(test_vmm_multiple_page_tables) {
  * **Validates: Requirements 3.2**
  */
 TEST_SUITE(vmm_map_tests) {
-    RUN_TEST(test_vmm_map_page_basic);
-    RUN_TEST(test_vmm_map_page_multiple);
     RUN_TEST(test_vmm_map_page_alignment);
-    RUN_TEST(test_vmm_map_page_flags);
-    RUN_TEST(test_vmm_map_page_remap);
-    RUN_TEST(test_vmm_map_page_different_flags);
 }
 
 /**
@@ -947,9 +671,6 @@ TEST_SUITE(vmm_map_tests) {
  * **Validates: Requirements 3.2**
  */
 TEST_SUITE(vmm_unmap_tests) {
-    RUN_TEST(test_vmm_unmap_page_basic);
-    RUN_TEST(test_vmm_unmap_page_double);
-    RUN_TEST(test_vmm_unmap_page_alignment);
     RUN_TEST(test_vmm_unmap_page_in_directory_basic);
     RUN_TEST(test_vmm_unmap_page_in_directory_nonexistent);
     RUN_TEST(test_vmm_unmap_page_in_directory_alignment);
@@ -991,8 +712,6 @@ TEST_SUITE(vmm_cow_tests) {
  * **Validates: Requirements 3.2**
  */
 TEST_SUITE(vmm_tlb_tests) {
-    RUN_TEST(test_vmm_flush_tlb_single_page);
-    RUN_TEST(test_vmm_flush_tlb_full);
 }
 
 /**
@@ -1010,103 +729,6 @@ TEST_SUITE(vmm_comprehensive_tests) {
 // **Feature: multi-arch-support, Property 3: VMM Page Table Format Correctness**
 // **Validates: Requirements 5.2**
 // ============================================================================
-
-/**
- * Property Test: Page table entries have correct format
- * 
- * *For any* virtual-to-physical mapping operation, the VMM SHALL generate 
- * page table entries in the correct format for the target architecture 
- * (2-level for i686, 4-level for x86_64, 4-level for ARM64).
- */
-TEST_CASE(test_pbt_vmm_page_table_format) {
-    #define PBT_VMM_ITERATIONS 20
-    
-    paddr_t frames[PBT_VMM_ITERATIONS];
-    uint32_t virt_addrs[PBT_VMM_ITERATIONS];
-    uint32_t allocated = 0;
-    
-    // Allocate frames and map them
-    for (uint32_t i = 0; i < PBT_VMM_ITERATIONS; i++) {
-        frames[i] = mm::Pmm::alloc_frame();
-        if (frames[i] == PADDR_INVALID) {
-            break;
-        }
-        
-        // Use different virtual addresses in user space
-        virt_addrs[i] = TEST_VIRT_ADDR3 + (i * PAGE_SIZE);
-        
-        // Map with various flags
-        uint32_t flags = PAGE_PRESENT | PAGE_WRITE;
-        if (i % 2 == 0) {
-            flags |= PAGE_USER;
-        }
-        
-        bool result = mm::Vmm::map_page(virt_addrs[i], (uintptr_t)frames[i], flags);
-        ASSERT_TRUE(result);
-        
-        allocated++;
-        
-        // Property: Physical address in mapping must be page-aligned
-        ASSERT_EQ_U(frames[i] & (PAGE_SIZE - 1), 0);
-        
-        // Property: Virtual address must be page-aligned
-        ASSERT_EQ_U(virt_addrs[i] & (PAGE_SIZE - 1), 0);
-    }
-    
-    // Verify we allocated at least some mappings
-    ASSERT_TRUE(allocated > 0);
-    
-    // Cleanup
-    for (uint32_t i = 0; i < allocated; i++) {
-        mm::Vmm::unmap_page(virt_addrs[i]);
-        mm::Pmm::free_frame(frames[i]);
-    }
-}
-
-/**
- * Property Test: Page table levels match architecture
- * 
- * *For any* i686 system, the page table SHALL use 2 levels.
- * This is verified by checking that mappings work correctly
- * with the expected address decomposition.
- */
-TEST_CASE(test_pbt_vmm_page_table_levels) {
-    // For i686: 2-level page table
-    // Virtual address decomposition:
-    //   [31:22] - Page Directory Index (10 bits, 1024 entries)
-    //   [21:12] - Page Table Index (10 bits, 1024 entries)
-    //   [11:0]  - Page Offset (12 bits, 4KB page)
-    
-    // Test that we can map addresses that span different PDE entries
-    paddr_t frame1 = mm::Pmm::alloc_frame();
-    paddr_t frame2 = mm::Pmm::alloc_frame();
-    ASSERT_NE_U(frame1, PADDR_INVALID);
-    ASSERT_NE_U(frame2, PADDR_INVALID);
-    
-    // Address in PDE 0x40 (virtual 0x10000000)
-    uint32_t virt1 = 0x10000000;
-    // Address in PDE 0x41 (virtual 0x10400000, 4MB boundary)
-    uintptr_t virt2 = 0x10400000;
-    
-    // Property: Both addresses should map successfully
-    ASSERT_TRUE(mm::Vmm::map_page(virt1, (uintptr_t)frame1, PAGE_PRESENT | PAGE_WRITE));
-    ASSERT_TRUE(mm::Vmm::map_page(virt2, (uintptr_t)frame2, PAGE_PRESENT | PAGE_WRITE));
-    
-    // Property: Data written to each address should be independent
-    uint32_t *ptr1 = (uint32_t*)(uintptr_t)virt1;
-    uint32_t *ptr2 = (uint32_t*)(uintptr_t)virt2;
-    *ptr1 = 0xAAAAAAAA;
-    *ptr2 = 0xBBBBBBBB;
-    
-    ASSERT_EQ_U(*ptr1, 0xAAAAAAAA);
-    ASSERT_EQ_U(*ptr2, 0xBBBBBBBB);
-    
-    // Cleanup
-    mm::Vmm::unmap_page(virt1);
-    mm::Vmm::unmap_page(virt2);
-    mm::Pmm::free_frame(frame1);
-    mm::Pmm::free_frame(frame2);
-}
 
 /**
  * Property Test: Kernel virtual address range correctness
@@ -1355,112 +977,7 @@ TEST_CASE(test_pbt_vmm_kernel_mapping_no_user_flag) {
 // **Validates: Requirements 9.1**
 // ============================================================================
 
-/**
- * Property Test: MMIO mapping has no-cache flag
- * 
- * *For any* MMIO mapping, the page table entry SHALL have the cache-disable
- * flag set (HAL_PAGE_NOCACHE).
- * 
- * This property ensures that device memory is not cached, which is essential
- * for correct device I/O behavior. Caching device registers could cause
- * stale reads or coalesced writes that break device protocols.
- */
-TEST_CASE(test_pbt_vmm_mmio_nocache_flag) {
-    #define PBT_MMIO_TEST_SIZE  (PAGE_SIZE * 3)  // Test with 3 pages
-    
-    // Use a fake physical address for MMIO (we won't actually access it)
-    // This simulates mapping a device's MMIO region
-    uintptr_t fake_mmio_phys = 0xFEE00000;  // Typical APIC region
-    
-    // Map the MMIO region
-    uintptr_t mmio_virt = mm::Vmm::map_mmio(fake_mmio_phys, PBT_MMIO_TEST_SIZE);
-    
-    // Property: MMIO mapping should succeed
-    ASSERT_NE_U(mmio_virt, 0);
-    
-    // Property: MMIO virtual address should be page-aligned
-    ASSERT_EQ_U(mmio_virt & (PAGE_SIZE - 1), fake_mmio_phys & (PAGE_SIZE - 1));
-    
-    // Property: Verify the mapping has NOCACHE flag by querying via HAL
-    // We check each page in the mapped region
-    uintptr_t virt_base = mmio_virt & ~(PAGE_SIZE - 1);
-    uint32_t num_pages = (PBT_MMIO_TEST_SIZE + PAGE_SIZE - 1) / PAGE_SIZE;
-    
-    for (uint32_t i = 0; i < num_pages; i++) {
-        uintptr_t virt = virt_base + (i * PAGE_SIZE);
-        paddr_t phys;
-        uint32_t flags;
-        
-        // Query the mapping
-        bool mapped = hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)virt, &phys, &flags);
-        
-        // Property: Page should be mapped
-        ASSERT_TRUE(mapped);
-        
-        // Property: Page should be present
-        ASSERT_TRUE((flags & HAL_PAGE_PRESENT) != 0);
-        
-        // Property: Page should have NOCACHE flag (critical for MMIO)
-        ASSERT_TRUE((flags & HAL_PAGE_NOCACHE) != 0);
-        
-        // Property: Page should be writable (MMIO typically needs write access)
-        ASSERT_TRUE((flags & HAL_PAGE_WRITE) != 0);
-    }
-    
-    // Cleanup
-    mm::Vmm::unmap_mmio(mmio_virt, PBT_MMIO_TEST_SIZE);
-    
-    // Property: After unmapping, pages should no longer be mapped
-    for (uint32_t i = 0; i < num_pages; i++) {
-        uintptr_t virt = virt_base + (i * PAGE_SIZE);
-        paddr_t phys;
-        
-        bool still_mapped = hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)virt, &phys, NULL);
-        ASSERT_FALSE(still_mapped);
-    }
-}
-
-/**
- * Property Test: Multiple MMIO mappings are independent
- * 
- * *For any* two MMIO mappings, they SHALL be at different virtual addresses
- * and both SHALL have the NOCACHE flag set.
- */
-TEST_CASE(test_pbt_vmm_mmio_multiple_mappings) {
-    // Map two different MMIO regions
-    uintptr_t phys1 = 0xFEC00000;  // Typical I/O APIC
-    uintptr_t phys2 = 0xFEE00000;  // Typical Local APIC
-    size_t size1 = PAGE_SIZE;
-    size_t size2 = PAGE_SIZE * 2;
-    
-    uintptr_t virt1 = mm::Vmm::map_mmio(phys1, size1);
-    uintptr_t virt2 = mm::Vmm::map_mmio(phys2, size2);
-    
-    // Property: Both mappings should succeed
-    ASSERT_NE_U(virt1, 0);
-    ASSERT_NE_U(virt2, 0);
-    
-    // Property: Mappings should be at different virtual addresses
-    ASSERT_NE_U(virt1, virt2);
-    
-    // Property: Both should have NOCACHE flag
-    paddr_t p1, p2;
-    uint32_t f1, f2;
-    
-    ASSERT_TRUE(hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)(virt1 & ~(PAGE_SIZE-1)), &p1, &f1));
-    ASSERT_TRUE(hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)(virt2 & ~(PAGE_SIZE-1)), &p2, &f2));
-    
-    ASSERT_TRUE((f1 & HAL_PAGE_NOCACHE) != 0);
-    ASSERT_TRUE((f2 & HAL_PAGE_NOCACHE) != 0);
-    
-    // Cleanup
-    mm::Vmm::unmap_mmio(virt1, size1);
-    mm::Vmm::unmap_mmio(virt2, size2);
-}
-
 TEST_SUITE(vmm_property_tests) {
-    RUN_TEST(test_pbt_vmm_page_table_format);
-    RUN_TEST(test_pbt_vmm_page_table_levels);
     RUN_TEST(test_pbt_vmm_kernel_address_range);
     RUN_TEST(test_pbt_vmm_page_directory_isolation);
     
@@ -1475,8 +992,6 @@ TEST_SUITE(vmm_property_tests) {
     
     /* Property 14: MMIO Mapping Has No-Cache Flag */
     /* **Validates: Requirements 9.1** */
-    RUN_TEST(test_pbt_vmm_mmio_nocache_flag);
-    RUN_TEST(test_pbt_vmm_mmio_multiple_mappings);
 }
 
 // ============================================================================

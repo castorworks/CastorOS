@@ -302,15 +302,3 @@ void gic_register_handler(uint32_t irq, hal_interrupt_handler_t handler, void *d
     irq_handlers[irq].data = data;
 }
 
-/**
- * @brief Unregister an interrupt handler
- */
-void gic_unregister_handler(uint32_t irq) {
-    if (irq >= GIC_MAX_INTERRUPTS) {
-        return;
-    }
-    
-    irq_handlers[irq].handler = NULL;
-    irq_handlers[irq].data = NULL;
-}
-

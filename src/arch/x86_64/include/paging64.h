@@ -148,63 +148,10 @@ typedef struct {
  * ========================================================================== */
 
 /**
- * @brief 验证 x86_64 页表项格式
- * @param entry 页表项
- * @return true 如果格式正确
- */
-bool x86_64_validate_pte_format(pte64_t entry);
-
-/**
- * @brief 获取 x86_64 页表级数
- * @return 4 (x86_64 使用 4 级页表)
- */
-uint32_t x86_64_get_page_table_levels(void);
-
-/**
- * @brief 获取 x86_64 页大小
- * @return 4096 (4KB)
- */
-uint32_t x86_64_get_page_size(void);
-
-/**
- * @brief 获取 x86_64 内核虚拟基址
- * @return 0xFFFF800000000000 (高半核)
- */
-uint64_t x86_64_get_kernel_virtual_base(void);
-
-/**
  * @brief 检查虚拟地址是否为规范地址 (canonical)
  * @param virt 虚拟地址
  * @return true 如果是规范地址
  */
 bool x86_64_is_canonical_address(uint64_t virt);
-
-/**
- * @brief 检查地址是否在内核空间
- * @param virt 虚拟地址
- * @return true 如果在内核空间
- */
-bool x86_64_is_kernel_address(uint64_t virt);
-
-/**
- * @brief 检查地址是否在用户空间
- * @param virt 虚拟地址
- * @return true 如果在用户空间
- */
-bool x86_64_is_user_address(uint64_t virt);
-
-/**
- * @brief 解析 x86_64 页错误错误码
- * @param error_code 错误码
- * @return 解析后的页错误信息
- */
-x86_64_page_fault_info_t x86_64_parse_page_fault_error(uint64_t error_code);
-
-/**
- * @brief 检查是否为 COW 页错误
- * @param error_code 错误码
- * @return true 如果是 COW 页错误
- */
-bool x86_64_is_cow_fault(uint64_t error_code);
 
 #endif /* _ARCH_X86_64_PAGING64_H_ */

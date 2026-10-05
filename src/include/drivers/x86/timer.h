@@ -26,9 +26,6 @@ public:
     /** 启动以来的毫秒数 */
     static uint64_t get_uptime_ms();
 
-    /** 启动以来的 tick 数 */
-    static uint64_t get_ticks();
-
     /** 实际的 tick 频率 (Hz) */
     static uint32_t get_frequency();
 };

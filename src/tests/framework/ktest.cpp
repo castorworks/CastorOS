@@ -19,21 +19,15 @@ static int g_last_failure_line = 0;
 // ============================================================================
 
 static void print_pass(const char* msg) {
-    kconsole_set_color(KCOLOR_LIGHT_GREEN, KCOLOR_BLACK);
     kprintf("%s", msg);
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
 }
 
 static void print_fail(const char* msg) {
-    kconsole_set_color(KCOLOR_LIGHT_RED, KCOLOR_BLACK);
     kprintf("%s", msg);
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
 }
 
 static void print_info(const char* msg) {
-    kconsole_set_color(KCOLOR_LIGHT_CYAN, KCOLOR_BLACK);
     kprintf("%s", msg);
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
 }
 
 // ============================================================================
@@ -110,17 +104,13 @@ void unittest_print_summary(void) {
     
     if (g_test_ctx.stats.passed > 0) {
         kprintf("Passed tests:     ");
-        kconsole_set_color(KCOLOR_LIGHT_GREEN, KCOLOR_BLACK);
         kprintf("%u", g_test_ctx.stats.passed);
-        kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
         kprintf("\n");
     }
     
     if (g_test_ctx.stats.failed > 0) {
         kprintf("Failed tests:     ");
-        kconsole_set_color(KCOLOR_LIGHT_RED, KCOLOR_BLACK);
         kprintf("%u", g_test_ctx.stats.failed);
-        kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
         kprintf("\n");
     }
     
@@ -128,14 +118,10 @@ void unittest_print_summary(void) {
     
     kprintf("\nResult: ");
     if (g_test_ctx.stats.failed == 0) {
-        kconsole_set_color(KCOLOR_LIGHT_GREEN, KCOLOR_BLACK);
         kprintf("ALL TESTS PASSED on %s", arch->name);
-        kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
         kprintf("\n");
     } else {
-        kconsole_set_color(KCOLOR_LIGHT_RED, KCOLOR_BLACK);
         kprintf("SOME TESTS FAILED on %s", arch->name);
-        kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
         kprintf("\n");
         
         // Print detailed architecture info when tests fail

@@ -173,8 +173,12 @@ CastorOS/
 
 - Kernel subsystems: namespace + class, e.g. `mm::Pmm::alloc_frame()`,
   `kernel::Scheduler::yield()`, `syscall::Process::fork()`, `drivers::Timer::get_uptime_ms()`.
-  Singleton modules use static member functions; `sync::Spinlock`/`Mutex`/`Semaphore` use real members.
-- Prefer RAII guards (`sync::SpinlockIrqGuard`, `sync::MutexGuard`) over manual lock/unlock pairs.
+  Singleton modules use static member functions; `sync::Spinlock` uses real members.
+- Prefer the RAII guard `sync::SpinlockIrqGuard` over manual lock/unlock pairs. The spinlock is the
+  only lock in the kernel: nothing needed a mutex or a semaphore, so they were removed.
+- Kernel code that nothing calls gets deleted together with its tests, not kept "for later". To
+  find it: build with `-ffunction-sections -fdata-sections` and link with
+  `--gc-sections --print-gc-sections`; whatever the linker would drop is unreachable.
 - Still C-style free functions: syscall wrappers (`sys_*_wrapper`), `kprintf`/`klog`/string library,
   `kmalloc()`/`kfree()`, and all of user space (POSIX-style API).
 - User programs are built without FP/SIMD (`-mno-sse` / `-mgeneral-regs-only`): the kernel does not

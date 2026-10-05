@@ -57,10 +57,6 @@ uint64_t drivers::Timer::get_uptime_ms() {
     return elapsed / (counter_frequency / 1000);
 }
 
-uint64_t drivers::Timer::get_ticks() {
-    return timer_ticks;
-}
-
 uint32_t drivers::Timer::get_frequency() {
     return timer_frequency;
 }

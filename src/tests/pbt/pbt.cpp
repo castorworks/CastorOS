@@ -159,9 +159,7 @@ bool pbt_run_property(const char *name, pbt_property_fn property, uint32_t itera
     if (all_passed) {
         g_pbt_stats.passed_properties++;
         kprintf("  ");
-        kconsole_set_color(KCOLOR_LIGHT_GREEN, KCOLOR_BLACK);
         kprintf("[  OK  ]");
-        kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
         kprintf(" %s: %u iterations passed\n", name, iterations);
         return true;
     } else {
@@ -180,45 +178,34 @@ pbt_stats_t pbt_get_stats(void) {
 
 void pbt_print_summary(void) {
     kprintf("\n");
-    kconsole_set_color(KCOLOR_LIGHT_CYAN, KCOLOR_BLACK);
     kprintf("================================================================================\n");
     kprintf("Property-Based Testing Summary\n");
     kprintf("================================================================================\n");
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
     
     kprintf("Total properties:     %u\n", g_pbt_stats.total_properties);
     kprintf("Passed properties:    ");
     if (g_pbt_stats.passed_properties > 0) {
-        kconsole_set_color(KCOLOR_LIGHT_GREEN, KCOLOR_BLACK);
     }
     kprintf("%u", g_pbt_stats.passed_properties);
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
     kprintf("\n");
     
     kprintf("Failed properties:    ");
     if (g_pbt_stats.failed_properties > 0) {
-        kconsole_set_color(KCOLOR_LIGHT_RED, KCOLOR_BLACK);
     }
     kprintf("%u", g_pbt_stats.failed_properties);
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
     kprintf("\n");
     
     kprintf("Total iterations:     %u\n", g_pbt_stats.total_iterations);
     
     kprintf("\nResult: ");
     if (g_pbt_stats.failed_properties == 0) {
-        kconsole_set_color(KCOLOR_LIGHT_GREEN, KCOLOR_BLACK);
         kprintf("ALL PROPERTIES PASSED");
     } else {
-        kconsole_set_color(KCOLOR_LIGHT_RED, KCOLOR_BLACK);
         kprintf("SOME PROPERTIES FAILED");
     }
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
     kprintf("\n");
     
-    kconsole_set_color(KCOLOR_LIGHT_CYAN, KCOLOR_BLACK);
     kprintf("================================================================================\n");
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
 }
 
 // ============================================================================
@@ -340,11 +327,9 @@ void pbt_record_value(pbt_state_t *state, uint64_t value) {
 
 void pbt_print_failure_diagnostics(pbt_state_t *state, const char *name) {
     kprintf("\n");
-    kconsole_set_color(KCOLOR_LIGHT_RED, KCOLOR_BLACK);
     kprintf("================================================================================\n");
     kprintf("PROPERTY TEST FAILURE DIAGNOSTICS\n");
     kprintf("================================================================================\n");
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
     
     kprintf("Property:     %s\n", name);
     kprintf("Iteration:    %u\n", state->iteration);
@@ -380,9 +365,7 @@ void pbt_print_failure_diagnostics(pbt_state_t *state, const char *name) {
             (unsigned long long)state->initial_seed);
     kprintf("  2. Run iteration %u\n", state->iteration);
     
-    kconsole_set_color(KCOLOR_LIGHT_RED, KCOLOR_BLACK);
     kprintf("================================================================================\n");
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
     kprintf("\n");
 }
 

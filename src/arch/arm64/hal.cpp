@@ -27,8 +27,6 @@ extern "C" void serial_put_hex64(uint64_t value);
 /** Flags to track initialization state */
 static bool g_hal_cpu_initialized = false;
 static bool g_hal_interrupt_initialized = false;
-static bool g_hal_mmu_initialized = false;
-
 /* ============================================================================
  * CPU Initialization
  * ========================================================================== */
@@ -58,16 +56,6 @@ void hal::Cpu::init() {
     
     g_hal_cpu_initialized = true;
     serial_puts("HAL: ARM64 CPU initialization complete\n");
-}
-
-/**
- * @brief Get current CPU ID
- * @return CPU ID from MPIDR_EL1 register
- */
-uint32_t hal::Cpu::id() {
-    uint64_t mpidr;
-    __asm__ volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
-    return (uint32_t)(mpidr & 0xFF);  /* Aff0 field */
 }
 
 /**
@@ -120,58 +108,10 @@ void hal::Interrupt::register_handler(uint32_t irq, hal_interrupt_handler_t hand
 }
 
 /**
- * @brief Unregister an interrupt handler
- * @param irq IRQ number
- */
-void hal::Interrupt::unregister_handler(uint32_t irq) {
-    gic_disable_irq(irq);
-    gic_unregister_handler(irq);
-}
-
-/**
  * @brief Enable interrupts globally
  */
 void hal::Interrupt::enable() {
     __asm__ volatile("msr daifclr, #0xf" ::: "memory");
-}
-
-/**
- * @brief Disable interrupts globally
- */
-void hal::Interrupt::disable() {
-    __asm__ volatile("msr daifset, #0xf" ::: "memory");
-}
-
-/**
- * @brief Save interrupt state and disable interrupts
- * @return Previous DAIF value
- */
-uint64_t hal::Interrupt::save() {
-    uint64_t daif;
-    __asm__ volatile(
-        "mrs %0, daif\n\t"
-        "msr daifset, #0xf"
-        : "=r"(daif)
-        :
-        : "memory"
-    );
-    return daif;
-}
-
-/**
- * @brief Restore interrupt state
- * @param state Previously saved DAIF value
- */
-void hal::Interrupt::restore(uint64_t state) {
-    __asm__ volatile("msr daif, %0" : : "r"(state) : "memory");
-}
-
-/**
- * @brief Send End-Of-Interrupt signal to GIC
- * @param irq IRQ number that was handled
- */
-void hal::Interrupt::eoi(uint32_t irq) {
-    gic_end_irq(irq);
 }
 
 bool hal::Interrupt::irq_is_free(uint32_t irq) {
@@ -248,72 +188,11 @@ void hal::Timer::init(uint32_t freq_hz, hal_timer_callback_t callback) {
     drivers::Timer::init(freq_hz);
 }
 
-/**
- * @brief Get system tick count
- * @return Number of timer ticks since boot (software counter)
- */
-uint64_t hal::Timer::get_ticks() {
-    return g_timer_ticks;
-}
-
-/**
- * @brief Get timer frequency
- * @return Timer frequency in Hz
- */
-uint32_t hal::Timer::get_frequency() {
-    return g_timer_frequency;
-}
-
-/* ============================================================================
- * Memory Barrier Operations (ARM64)
- * 
- * ARM64 provides several memory barrier instructions:
- *   - DMB (Data Memory Barrier): Ensures ordering of memory accesses
- *   - DSB (Data Synchronization Barrier): Ensures completion of memory accesses
- *   - ISB (Instruction Synchronization Barrier): Flushes pipeline
- * 
- * Shareability domains:
- *   - SY: Full system (all observers)
- *   - ISH: Inner Shareable (typically same CPU cluster)
- *   - OSH: Outer Shareable (typically all CPUs)
- *   - NSH: Non-shareable (single CPU)
- * 
- * Access types:
- *   - LD: Load operations only
- *   - ST: Store operations only
- *   - (none): Both load and store
- * 
- * Requirements: 9.1 - MMIO memory barriers
- * ========================================================================== */
-
 /* ============================================================================
  * I/O Operations
  * ========================================================================== */
 
 /* Note: MMIO functions are defined as inline in hal.h */
-
-/* ============================================================================
- * Initialization State Queries
- * ========================================================================== */
-
-bool hal::Cpu::initialized() {
-    return g_hal_cpu_initialized;
-}
-
-bool hal::Interrupt::initialized() {
-    return g_hal_interrupt_initialized;
-}
-
-bool hal::Mmu::initialized() {
-    if (g_hal_mmu_initialized) {
-        return true;
-    }
-
-    /* Check the actual system state: SCTLR_EL1.M (bit 0) is set once the MMU is on */
-    uint64_t sctlr;
-    __asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
-    return (sctlr & 1) != 0;
-}
 
 /* ============================================================================
  * Architecture Information

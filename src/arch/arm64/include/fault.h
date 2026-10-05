@@ -65,45 +65,4 @@
 /** Other Faults */
 #define ARM64_FSC_ALIGNMENT         0x21    /**< Alignment fault */
 
-/* ============================================================================
- * Function Declarations
- * ========================================================================== */
-
-/**
- * @brief Check if FSC indicates a translation fault (page not present)
- * @param fsc Fault Status Code
- * @return true if translation fault
- */
-bool arm64_is_translation_fault(uint32_t fsc);
-
-/**
- * @brief Check if FSC indicates a permission fault (page present but access denied)
- * @param fsc Fault Status Code
- * @return true if permission fault
- */
-bool arm64_is_permission_fault(uint32_t fsc);
-
-/**
- * @brief Check if FSC indicates an access flag fault
- * @param fsc Fault Status Code
- * @return true if access flag fault
- */
-bool arm64_is_access_flag_fault(uint32_t fsc);
-
-/**
- * @brief Check if a page fault is a COW (Copy-on-Write) fault
- * 
- * @param esr ESR_EL1 value
- * @return true if this is a COW fault
- */
-bool arm64_is_cow_page_fault(uint64_t esr);
-
-/**
- * @brief Get the page table level where the fault occurred
- * 
- * @param fsc Fault Status Code
- * @return Page table level (0-3), or -1 if not applicable
- */
-int arm64_get_fault_level(uint32_t fsc);
-
 #endif /* _ARCH_ARM64_FAULT_H_ */

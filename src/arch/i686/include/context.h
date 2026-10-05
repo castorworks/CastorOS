@@ -127,9 +127,4 @@ typedef struct i686_context {
 /** Default EFLAGS value (interrupts enabled) */
 #define I686_EFLAGS_DEFAULT 0x202
 
-/* ============================================================================
- * HAL Context Type Alias
- * ========================================================================== */
-
-
 #endif /* _ARCH_I686_CONTEXT_H_ */

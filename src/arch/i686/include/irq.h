@@ -45,8 +45,6 @@ void irq_init(void);
  * @param handler 处理函数
  */
 void irq_register_handler(uint8_t irq, isr_handler_t handler);
-void irq_add_shared_handler(uint8_t irq, isr_handler_t handler);
-
 /**
  * 禁用（屏蔽）指定 IRQ 线路
  * @param irq IRQ 号（0-15）
@@ -79,18 +77,5 @@ extern "C" void irq12(void);
 extern "C" void irq13(void);
 extern "C" void irq14(void);
 extern "C" void irq15(void);
-
-/**
- * 获取特定 IRQ 的触发次数
- * @param irq IRQ 号 (0-15)
- * @return 触发次数
- */
-uint64_t irq_get_count(uint8_t irq);
-
- /**
-  * 获取定时器滴答数
-  * @return 定时器滴答数
-  */
-uint64_t irq_get_timer_ticks(void);
 
 #endif // _ARCH_I686_IRQ_H_

@@ -18,19 +18,6 @@ typedef enum {
 } log_level_t;
 
 /**
- * 设置当前日志等级阈值
- * 只有等级 >= 阈值的日志才会输出
- * @param level 日志等级阈值
- */
-void klog_set_level(log_level_t level);
-
-/**
- * 获取当前日志等级阈值
- * @return 当前日志等级阈值
- */
-log_level_t klog_get_level(void);
-
-/**
  * 输出日志（带等级和颜色）
  * @param level 日志等级
  * @param fmt 格式字符串

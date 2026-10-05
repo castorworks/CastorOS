@@ -240,15 +240,6 @@ task_t* kernel::Scheduler::get_current() {
     return current_task;
 }
 
-/**
- * @brief 获取活动任务数量
- */
-uint32_t kernel::Scheduler::get_count() {
-    sync::SpinlockIrqGuard guard(task_lock);
-    uint32_t count = active_task_count;
-    return count;
-}
-
 /* ============================================================================
  * 用户栈设置
  * ========================================================================== */
@@ -485,105 +476,6 @@ bool kernel::Scheduler::should_fail_stack_page(uint32_t page_index) {
 /* ============================================================================
  * 任务创建
  * ========================================================================== */
-
-/**
- * @brief 创建内核线程
- */
-uint32_t kernel::Scheduler::create_kernel_thread(void (*entry)(void), const char *name) {
-    if (!entry) {
-        LOG_ERROR_MSG("kernel::Scheduler::create_kernel_thread: Invalid entry point\n");
-        return 0;
-    }
-    
-    // 分配 PCB
-    task_t *task = kernel::Scheduler::alloc();
-    if (!task) {
-        LOG_ERROR_MSG("kernel::Scheduler::create_kernel_thread: Failed to allocate PCB\n");
-        return 0;
-    }
-    
-    // 设置任务名称
-    strncpy(task->name, name, sizeof(task->name) - 1);
-    task->name[sizeof(task->name) - 1] = '\0';
-    
-    // 内核线程标志
-    task->is_user_process = false;
-    
-    // 分配内核栈
-    task->kernel_stack_base = (uintptr_t)kmalloc(KERNEL_STACK_SIZE);
-    if (!task->kernel_stack_base) {
-        LOG_ERROR_MSG("kernel::Scheduler::create_kernel_thread: Failed to allocate kernel stack\n");
-        kernel::Scheduler::free(task);
-        return 0;
-    }
-    
-    // 内核栈顶（栈向下增长）
-    task->kernel_stack = task->kernel_stack_base + KERNEL_STACK_SIZE;
-    
-    // 使用内核页目录
-    task->page_dir_phys = mm::Vmm::get_page_directory();
-    task->page_dir = (page_directory_t*)PHYS_TO_VIRT(task->page_dir_phys);
-    
-    // 初始化上下文
-    memset(&task->context, 0, sizeof(cpu_context_t));
-    
-#if defined(ARCH_ARM64)
-    // ARM64: 设置内核模式上下文
-    // 设置栈指针
-    task->context.sp = task->kernel_stack;
-    
-    // 入口点：和 x86 一样经过 task_enter_kernel_thread 蹦床（入口函数放在
-    // callee-saved 的 X19 里）。上下文切换的内核态恢复路径不恢复 DAIF，而
-    // schedule() 是关着中断切过来的：直接跳到入口函数的话线程会一直在屏蔽
-    // 中断的状态下运行，入口函数返回时还会跳回自己的开头（LR == 入口）。
-    // 蹦床负责打开中断，并在入口函数返回后调用 task_exit。
-    task->context.pc = (uintptr_t)task_enter_kernel_thread;
-    task->context.x[19] = (uintptr_t)entry;
-
-    // 设置 PSTATE (EL1h, 中断使能)
-    task->context.pstate = ARM64_PSTATE_EL1h;
-
-    // 设置页表基址
-    task->context.ttbr0 = task->page_dir_phys;
-#else
-    // x86: 设置段寄存器（内核段）
-    task->context.cs = GDT_KERNEL_CODE_SEGMENT;  // 0x08
-    task->context.ss = GDT_KERNEL_DATA_SEGMENT;  // 0x10
-#if !defined(ARCH_X86_64)
-    // i686: 需要设置所有段寄存器
-    task->context.ds = GDT_KERNEL_DATA_SEGMENT;
-    task->context.es = GDT_KERNEL_DATA_SEGMENT;
-    task->context.fs = GDT_KERNEL_DATA_SEGMENT;
-    task->context.gs = GDT_KERNEL_DATA_SEGMENT;
-#endif
-    
-    // 设置栈指针
-    task->context.esp = task->kernel_stack;
-    
-    // 设置入口点（通过 task_enter_kernel_thread 包装）
-    task->context.eip = (uintptr_t)task_enter_kernel_thread;
-    
-    // 设置 EFLAGS（启用中断）
-    task->context.eflags = 0x202;  // IF=1
-    
-    // 设置 CR3
-    task->context.cr3 = task->page_dir_phys;
-    
-    // 在栈上压入入口函数地址（task_enter_kernel_thread 会从栈顶获取）
-    // task_enter_kernel_thread 执行 pop eax/rax，所以栈顶应该是入口函数地址
-    uintptr_t *stack_ptr = (uintptr_t*)task->kernel_stack;
-    stack_ptr[-1] = (uintptr_t)entry;       // 入口函数
-    task->context.esp = (uintptr_t)&stack_ptr[-1];  // ESP/RSP 指向入口函数
-#endif
-    
-    // 添加到就绪队列
-    task->state = TASK_READY;
-    kernel::Scheduler::ready_queue_add(task);
-    
-    LOG_INFO_MSG("Created kernel thread: PID=%u, name=%s\n", task->pid, task->name);
-    
-    return task->pid;
-}
 
 /**
  * @brief 创建用户进程
@@ -1430,8 +1322,4 @@ void kernel::Scheduler::init() {
     LOG_DEBUG_MSG("  Kernel stack size: %d KB\n", KERNEL_STACK_SIZE / 1024);
     LOG_DEBUG_MSG("  User stack size: %d MB\n", USER_STACK_SIZE / (1024 * 1024));
 }
-
-/* ============================================================================
- * 调试和监控
- * ========================================================================== */
 

@@ -186,70 +186,8 @@ typedef struct boot_info {
 } boot_info_t;
 
 /* ============================================================================
- * Global Boot Info Access
- * ========================================================================== */
-
-/**
- * @brief Get the global boot information structure
- * 
- * @return Pointer to the boot_info_t structure, or NULL if not initialized
- * 
- * This function returns the boot information populated during early boot.
- * The returned pointer is valid for the lifetime of the kernel.
- */
-boot_info_t *boot_info_get(void);
-
-/**
- * @brief Check if boot information is valid
- * 
- * @return true if boot info has been successfully populated
- */
-bool boot_info_is_valid(void);
-
-/**
- * @brief Get total usable memory from boot info
- * 
- * @return Total usable memory in bytes, or 0 if not available
- */
-uint64_t boot_info_get_total_memory(void);
-
-/**
- * @brief Find a memory region by type
- * 
- * @param type Memory type to search for
- * @param index Index of the region (for multiple regions of same type)
- * @return Pointer to memory map entry, or NULL if not found
- */
-const boot_mmap_entry_t *boot_info_find_memory(boot_mem_type_t type, uint32_t index);
-
-/**
- * @brief Print boot information summary (for debugging)
- */
-void boot_info_print(void);
-
-/* ============================================================================
  * Architecture-Specific Initialization
  * ========================================================================== */
-
-/**
- * @brief Initialize boot info from Multiboot (i686)
- * 
- * @param mbi Pointer to Multiboot info structure
- * @return Pointer to populated boot_info_t, or NULL on failure
- * 
- * This function is implemented in arch/i686/boot/boot_info.c
- */
-boot_info_t *boot_info_init_multiboot(void *mbi);
-
-/**
- * @brief Initialize boot info from Multiboot2 (x86_64)
- * 
- * @param mbi Pointer to Multiboot2 info structure
- * @return Pointer to populated boot_info_t, or NULL on failure
- * 
- * This function is implemented in arch/x86_64/boot/boot_info.c
- */
-boot_info_t *boot_info_init_multiboot2(void *mbi);
 
 /**
  * @brief Initialize boot info from Device Tree Blob (ARM64)

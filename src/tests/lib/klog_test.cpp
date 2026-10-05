@@ -16,76 +16,9 @@
 // 测试用例：日志等级设置和获取
 // ============================================================================
 
-TEST_CASE(test_klog_default_level) {
-    // 确保设置为默认等级
-    klog_set_level(LOG_INFO);
-    
-    // 测试默认日志等级应该是 LOG_INFO
-    log_level_t level = klog_get_level();
-    ASSERT_EQ(LOG_INFO, level);
-}
-
-TEST_CASE(test_klog_set_level_debug) {
-    klog_set_level(LOG_DEBUG);
-    log_level_t level = klog_get_level();
-    ASSERT_EQ(LOG_DEBUG, level);
-    
-    // 恢复默认等级
-    klog_set_level(LOG_INFO);
-}
-
-TEST_CASE(test_klog_set_level_info) {
-    klog_set_level(LOG_INFO);
-    log_level_t level = klog_get_level();
-    ASSERT_EQ(LOG_INFO, level);
-}
-
-TEST_CASE(test_klog_set_level_warn) {
-    klog_set_level(LOG_WARN);
-    log_level_t level = klog_get_level();
-    ASSERT_EQ(LOG_WARN, level);
-    
-    // 恢复默认等级
-    klog_set_level(LOG_INFO);
-}
-
-TEST_CASE(test_klog_set_level_error) {
-    klog_set_level(LOG_ERROR);
-    log_level_t level = klog_get_level();
-    ASSERT_EQ(LOG_ERROR, level);
-    
-    // 恢复默认等级
-    klog_set_level(LOG_INFO);
-}
-
-TEST_CASE(test_klog_level_sequence) {
-    // 测试按顺序设置各个等级
-    log_level_t levels[] = {LOG_DEBUG, LOG_INFO, LOG_WARN, LOG_ERROR};
-    
-    for (int i = 0; i < 4; i++) {
-        klog_set_level(levels[i]);
-        log_level_t current = klog_get_level();
-        ASSERT_EQ(levels[i], current);
-    }
-    
-    // 恢复默认等级
-    klog_set_level(LOG_INFO);
-}
-
 // ============================================================================
 // 测试用例：基本日志输出
 // ============================================================================
-
-TEST_CASE(test_klog_debug_message) {
-    // 设置为 DEBUG 级别以确保消息可以输出
-    klog_set_level(LOG_DEBUG);
-    
-    // 测试 DEBUG 级别日志输出不会崩溃
-    klog(LOG_DEBUG, "Debug message: %s\n", "test");
-    
-    // 恢复默认等级
-    klog_set_level(LOG_INFO);
-}
 
 TEST_CASE(test_klog_info_message) {
     // 测试 INFO 级别日志输出
@@ -121,70 +54,9 @@ TEST_CASE(test_klog_multiple_arguments) {
 // 测试用例：日志过滤功能
 // ============================================================================
 
-TEST_CASE(test_klog_filter_debug_when_info) {
-    // 设置日志等级为 INFO
-    klog_set_level(LOG_INFO);
-    
-    // DEBUG 级别的日志应该被过滤（不输出）
-    // 这个测试主要验证不会崩溃
-    klog(LOG_DEBUG, "This DEBUG message should be filtered\n");
-    
-    // INFO 级别的日志应该输出
-    klog(LOG_INFO, "This INFO message should be visible\n");
-}
-
-TEST_CASE(test_klog_filter_debug_info_when_warn) {
-    // 设置日志等级为 WARN
-    klog_set_level(LOG_WARN);
-    
-    // DEBUG 和 INFO 级别的日志应该被过滤
-    klog(LOG_DEBUG, "Filtered DEBUG\n");
-    klog(LOG_INFO, "Filtered INFO\n");
-    
-    // WARN 级别的日志应该输出
-    klog(LOG_WARN, "Visible WARN\n");
-    
-    // 恢复默认等级
-    klog_set_level(LOG_INFO);
-}
-
-TEST_CASE(test_klog_filter_all_except_error) {
-    // 设置日志等级为 ERROR
-    klog_set_level(LOG_ERROR);
-    
-    // 只有 ERROR 级别的日志应该输出
-    klog(LOG_DEBUG, "Filtered DEBUG\n");
-    klog(LOG_INFO, "Filtered INFO\n");
-    klog(LOG_WARN, "Filtered WARN\n");
-    klog(LOG_ERROR, "Visible ERROR\n");
-    
-    // 恢复默认等级
-    klog_set_level(LOG_INFO);
-}
-
-TEST_CASE(test_klog_show_all_when_debug) {
-    // 设置日志等级为 DEBUG
-    klog_set_level(LOG_DEBUG);
-    
-    // 所有级别的日志都应该输出
-    klog(LOG_DEBUG, "Visible DEBUG\n");
-    klog(LOG_INFO, "Visible INFO\n");
-    klog(LOG_WARN, "Visible WARN\n");
-    klog(LOG_ERROR, "Visible ERROR\n");
-    
-    // 恢复默认等级
-    klog_set_level(LOG_INFO);
-}
-
 // ============================================================================
 // 测试用例：便捷宏
 // ============================================================================
-
-TEST_CASE(test_klog_debug_macro) {
-    klog_set_level(LOG_DEBUG);
-    LOG_DEBUG_MSG("Debug macro test: %d\n", 1);
-    klog_set_level(LOG_INFO);
-}
 
 TEST_CASE(test_klog_info_macro) {
     LOG_INFO_MSG("Info macro test: %s\n", "working");
@@ -196,17 +68,6 @@ TEST_CASE(test_klog_warn_macro) {
 
 TEST_CASE(test_klog_error_macro) {
     LOG_ERROR_MSG("Error macro test: error=%d\n", 3);
-}
-
-TEST_CASE(test_klog_all_macros) {
-    klog_set_level(LOG_DEBUG);
-    
-    LOG_DEBUG_MSG("Using all macros\n");
-    LOG_INFO_MSG("Testing macros\n");
-    LOG_WARN_MSG("Macro warning\n");
-    LOG_ERROR_MSG("Macro error\n");
-    
-    klog_set_level(LOG_INFO);
 }
 
 // ============================================================================
@@ -315,14 +176,11 @@ TEST_CASE(test_klog_color_preservation) {
 
 TEST_CASE(test_klog_nested_color_changes) {
     // 测试嵌套的颜色变化场景（使用 kconsole_set_color 兼容图形/文本模式）
-    kconsole_set_color(KCOLOR_LIGHT_GREEN, KCOLOR_BLACK);
     klog(LOG_INFO, "Log with custom color\n");
     
-    kconsole_set_color(KCOLOR_YELLOW, KCOLOR_BLACK);
     klog(LOG_WARN, "Another log\n");
     
     // 恢复默认颜色
-    kconsole_set_color(KCOLOR_WHITE, KCOLOR_BLACK);
 }
 
 // ============================================================================
@@ -330,16 +188,9 @@ TEST_CASE(test_klog_nested_color_changes) {
 // ============================================================================
 
 TEST_SUITE(klog_level_tests) {
-    RUN_TEST(test_klog_default_level);
-    RUN_TEST(test_klog_set_level_debug);
-    RUN_TEST(test_klog_set_level_info);
-    RUN_TEST(test_klog_set_level_warn);
-    RUN_TEST(test_klog_set_level_error);
-    RUN_TEST(test_klog_level_sequence);
 }
 
 TEST_SUITE(klog_output_tests) {
-    RUN_TEST(test_klog_debug_message);
     RUN_TEST(test_klog_info_message);
     RUN_TEST(test_klog_warn_message);
     RUN_TEST(test_klog_error_message);
@@ -349,18 +200,12 @@ TEST_SUITE(klog_output_tests) {
 }
 
 TEST_SUITE(klog_filter_tests) {
-    RUN_TEST(test_klog_filter_debug_when_info);
-    RUN_TEST(test_klog_filter_debug_info_when_warn);
-    RUN_TEST(test_klog_filter_all_except_error);
-    RUN_TEST(test_klog_show_all_when_debug);
 }
 
 TEST_SUITE(klog_macro_tests) {
-    RUN_TEST(test_klog_debug_macro);
     RUN_TEST(test_klog_info_macro);
     RUN_TEST(test_klog_warn_macro);
     RUN_TEST(test_klog_error_macro);
-    RUN_TEST(test_klog_all_macros);
 }
 
 TEST_SUITE(klog_format_tests) {
