@@ -11,6 +11,7 @@
 #include <names.h>
 #include <blk.h>
 #include <virtio.h>
+#include <clients.h>
 
 #define PAGE_SIZE 4096
 
@@ -98,58 +99,12 @@ static bool do_request(uint32_t type, uint64_t sector, uint32_t count) {
     return *req_status == 0;
 }
 
-// ============================================================================
-// 客户（每个客户一块共享缓冲区，由授予通知送来）
-// ============================================================================
-
-#define MAX_CLIENTS 16
-
-static struct {
-    int pid;            // 0 表示空闲
-    char *buf;
-} clients[MAX_CLIENTS];
-
-static int find_client(int pid) {
-    for (int i = 0; i < MAX_CLIENTS; i++) {
-        if (clients[i].pid == pid) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-static void attach_client(int pid, char *buf, size_t size) {
-    if (size != BLK_BUF_SIZE) {
-        munmap(buf, size);
-        return;
-    }
-    int i = find_client(pid);
-    if (i >= 0) {
-        munmap(clients[i].buf, BLK_BUF_SIZE);
-        clients[i].buf = buf;
-        return;
-    }
-    // 顺便清掉已经退出的客户，再找空位
-    for (int j = 0; j < MAX_CLIENTS; j++) {
-        if (clients[j].pid != 0 && kill(clients[j].pid, 0) != 0) {
-            munmap(clients[j].buf, BLK_BUF_SIZE);
-            clients[j].pid = 0;
-        }
-    }
-    i = find_client(0);
-    if (i < 0) {
-        munmap(buf, size);
-        return;
-    }
-    clients[i].pid = pid;
-    clients[i].buf = buf;
-}
-
 int main() {
     if (!device_init()) {
         printf("blk: no usable virtio-blk device\n");
         return 1;
     }
+    clients_init(BLK_BUF_SIZE, NULL);
     if (name_register(BLK_SERVICE_NAME) != 0) {
         printf("blk: cannot register name\n");
         return 1;
@@ -169,7 +124,7 @@ int main() {
             continue;
         }
         if (m.label == IPC_LABEL_GRANT) {
-            attach_client((int)m.sender, (char *)(uintptr_t)m.data[0], (size_t)m.data[1]);
+            clients_attach(&m);
             continue;
         }
 
@@ -177,21 +132,21 @@ int main() {
         reply.label = m.label;
         int64_t result = -1;
 
-        int c = find_client((int)m.sender);
+        char *buf = clients_buf((int)m.sender);
         if (m.label == BLK_INFO) {
             result = 0;
             reply.data[1] = capacity;
-        } else if ((m.label == BLK_READ || m.label == BLK_WRITE) && c >= 0) {
+        } else if ((m.label == BLK_READ || m.label == BLK_WRITE) && buf) {
             uint64_t sector = m.data[0];
             uint64_t count = m.data[1];
             if (count >= 1 && count <= BLK_BUF_SIZE / BLK_SECTOR_SIZE &&
                 sector < capacity && count <= capacity - sector) {
                 size_t bytes = (size_t)count * BLK_SECTOR_SIZE;
                 if (m.label == BLK_WRITE) {
-                    memcpy(req_data, clients[c].buf, bytes);
+                    memcpy(req_data, buf, bytes);
                     result = do_request(VIRTIO_BLK_T_OUT, sector, (uint32_t)count) ? 0 : -1;
                 } else if (do_request(VIRTIO_BLK_T_IN, sector, (uint32_t)count)) {
-                    memcpy(clients[c].buf, req_data, bytes);
+                    memcpy(buf, req_data, bytes);
                     result = 0;
                 }
             }
