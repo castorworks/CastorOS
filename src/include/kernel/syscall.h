@@ -38,7 +38,7 @@ enum {
     SYS_IPC_RECV        = 14,  // ipc_recv(from, msg)：from 为 IPC_ANY 或指定 PID
     SYS_IPC_CALL        = 15,  // ipc_call(dest, msg)：发送后等待 dest 的应答
     SYS_IPC_REPLY       = 16,  // ipc_reply(dest, msg)：应答正在 call 自己的进程，从不阻塞
-    SYS_MEM_GRANT       = 17,  // mem_grant(pid, addr, len)：把自己的一段内存共享给 pid，返回它在对方的地址
+    SYS_MEM_GRANT       = 17,  // mem_grant(pid, addr, len)：把自己的一段内存共享给 pid，对方收到 IPC_LABEL_GRANT 消息
 
     // 硬件访问（仅特权进程，供用户态驱动使用）
     SYS_IO_READ         = 18,  // io_read(port, width, value*)：x86 I/O 端口（arm64 上没有，恒失败）

@@ -20,8 +20,20 @@
 /** 内核发来的消息的 sender（PID 0 是 idle，不会是真正的发送者） */
 #define IPC_KERNEL      0
 
-/** 内核消息的 label：设备中断，data[0] 是中断号（见 kernel/user_irq.h） */
-#define IPC_LABEL_IRQ   1
+/**
+ * 最高位为 1 的 label 保留给内核：用户进程发不出这样的消息，
+ * 所以接收方看到它们就知道内容是内核担保的。
+ */
+#define IPC_LABEL_RESERVED  0x80000000u
+
+/** sender == IPC_KERNEL：设备中断，data[0] 是中断号（见 kernel/user_irq.h） */
+#define IPC_LABEL_IRQ       0x80000001u
+
+/**
+ * sender == 授予者的 PID：对方用 mem_grant 把一段内存共享了过来，
+ * data[0] 是它在接收者地址空间里的地址，data[1] 是长度（字节）
+ */
+#define IPC_LABEL_GRANT     0x80000002u
 
 #define IPC_MSG_WORDS   6
 

@@ -81,9 +81,11 @@ int munmap(void *addr, size_t length);
 /**
  * 把自己的 [addr, addr+length) 共享给进程 pid：之后两个进程读写的是同一批物理页。
  * addr 必须页对齐，区间必须已映射且可写（例如 mmap 得到的内存）。
- * @return 这段内存在对方地址空间里的地址（通过 IPC 告诉对方）；失败返回 MAP_FAILED
+ * 内核给对方发一条 label == IPC_LABEL_GRANT 的消息告诉它映射的位置
+ * （data[0] 地址，data[1] 长度，sender 是调用者）；调用阻塞到对方收下为止。
+ * @return 0 成功，-1 失败
  */
-void *mem_grant(int pid, void *addr, size_t length);
+int mem_grant(int pid, void *addr, size_t length);
 
 // ============================================================================
 // 调试输出（内核串口控制台）
@@ -100,7 +102,10 @@ ssize_t console_write(const void *buf, size_t count);
 
 #define IPC_ANY         0
 #define IPC_KERNEL      0       // 内核发来的消息的 sender
-#define IPC_LABEL_IRQ   1       // 内核消息：设备中断，data[0] 是中断号
+// 最高位为 1 的 label 保留给内核：用户进程发不出，收到就说明内容是内核担保的
+#define IPC_LABEL_RESERVED  0x80000000u
+#define IPC_LABEL_IRQ       0x80000001u     // sender == IPC_KERNEL：设备中断，data[0] 是中断号
+#define IPC_LABEL_GRANT     0x80000002u     // sender 用 mem_grant 共享来一段内存：data[0] 地址，data[1] 长度
 #define IPC_MSG_WORDS   6
 
 struct ipc_msg {

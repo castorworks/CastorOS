@@ -16,6 +16,7 @@
 #include <lib/string.h>
 #include <hal/hal.h>
 #include <kernel/uaccess.h>
+#include <kernel/ipc.h>
 
 /**
  * 取消当前进程一个用户页的映射并释放其物理帧。
@@ -448,26 +449,26 @@ uintptr_t syscall::Mm::map_device(uint64_t phys, size_t length) {
     return vaddr;
 }
 
-uintptr_t syscall::Mm::grant(uint32_t pid, uintptr_t addr, size_t length) {
+int syscall::Mm::grant(uint32_t pid, uintptr_t addr, size_t length) {
     task_t *current = kernel::Scheduler::get_current();
     task_t *target = kernel::Scheduler::get_by_pid(pid);
     if (!current || !target || target == current || !target->is_user_process ||
         target->state == TASK_ZOMBIE || target->state == TASK_TERMINATED ||
         length == 0 || length > SHARED_MAP_MAX_SIZE || (addr & (PAGE_SIZE - 1))) {
-        return (uintptr_t)-1;
+        return -1;
     }
     length = PAGE_ALIGN_UP(length);
 
     // 只能共享自己的可写页；can_write 同时把还处于写时复制状态的页先复制出来，
     // 保证交出去的帧不再与 fork 出来的其他进程共用
     if (!kernel::UAccess::can_write((void *)addr, length)) {
-        return (uintptr_t)-1;
+        return -1;
     }
 
     hal_addr_space_t target_space = (hal_addr_space_t)target->page_dir_phys;
     uintptr_t vaddr = find_free_vaddr(target_space, 0, length);
     if (vaddr == 0) {
-        return (uintptr_t)-1;
+        return -1;
     }
 
     const uint32_t flags = PAGE_PRESENT | PAGE_USER | PAGE_WRITE | PAGE_SHARED;
@@ -476,12 +477,26 @@ uintptr_t syscall::Mm::grant(uint32_t pid, uintptr_t addr, size_t length) {
         if (!hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, (vaddr_t)(addr + off), &frame, NULL) ||
             !mm::Vmm::map_page_in_directory(target->page_dir_phys, vaddr + off, (uintptr_t)frame, flags)) {
             rollback_mappings(target->page_dir_phys, vaddr, vaddr + off);
-            return (uintptr_t)-1;
+            return -1;
         }
         mm::Pmm::frame_ref_share(frame);
 
         // 自己这一侧也标成共享：以后 fork 不会把它变成写时复制而悄悄断开共享
         hal::Mmu::protect(HAL_ADDR_SPACE_CURRENT, (vaddr_t)(addr + off), HAL_PAGE_SHARED, 0);
     }
-    return vaddr;
+
+    // 由内核告诉对方这段内存在哪：label 在保留区，用户进程伪造不了
+    ipc_msg msg = {};
+    msg.label = IPC_LABEL_GRANT;
+    msg.data[0] = vaddr;
+    msg.data[1] = length;
+    if (kernel::Ipc::send(pid, &msg) != 0) {
+        // 对方没收到（多半是退出了）：还活着的话把映射撤掉
+        target = kernel::Scheduler::get_by_pid(pid);
+        if (target && target->state != TASK_ZOMBIE && target->state != TASK_TERMINATED) {
+            rollback_mappings(target->page_dir_phys, vaddr, vaddr + length);
+        }
+        return -1;
+    }
+    return 0;
 }

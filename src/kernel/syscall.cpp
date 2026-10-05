@@ -193,10 +193,15 @@ static syscall_arg_t sys_console_write_wrapper(syscall_arg_t *frame, syscall_arg
     return len;
 }
 
+/** 用户进程不能发 label 落在内核保留区的消息 */
+static inline bool user_label_ok(syscall_arg_t msg) {
+    return !(((const ipc_msg *)(uintptr_t)msg)->label & IPC_LABEL_RESERVED);
+}
+
 static syscall_arg_t sys_ipc_send_wrapper(syscall_arg_t *frame, syscall_arg_t dest, syscall_arg_t msg,
                                           syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    if (!user_rd(msg, sizeof(ipc_msg))) return SYSCALL_FAIL;
+    if (!user_rd(msg, sizeof(ipc_msg)) || !user_label_ok(msg)) return SYSCALL_FAIL;
     return sys_ret32((uint32_t)kernel::Ipc::send((uint32_t)dest, (const ipc_msg *)(uintptr_t)msg));
 }
 
@@ -210,14 +215,14 @@ static syscall_arg_t sys_ipc_recv_wrapper(syscall_arg_t *frame, syscall_arg_t fr
 static syscall_arg_t sys_ipc_reply_wrapper(syscall_arg_t *frame, syscall_arg_t dest, syscall_arg_t msg,
                                            syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    if (!user_rd(msg, sizeof(ipc_msg))) return SYSCALL_FAIL;
+    if (!user_rd(msg, sizeof(ipc_msg)) || !user_label_ok(msg)) return SYSCALL_FAIL;
     return sys_ret32((uint32_t)kernel::Ipc::reply((uint32_t)dest, (const ipc_msg *)(uintptr_t)msg));
 }
 
 static syscall_arg_t sys_ipc_call_wrapper(syscall_arg_t *frame, syscall_arg_t dest, syscall_arg_t msg,
                                           syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    if (!user_wr(msg, sizeof(ipc_msg))) return SYSCALL_FAIL;
+    if (!user_wr(msg, sizeof(ipc_msg)) || !user_label_ok(msg)) return SYSCALL_FAIL;
     return sys_ret32((uint32_t)kernel::Ipc::call((uint32_t)dest, (ipc_msg *)(uintptr_t)msg));
 }
 
@@ -272,7 +277,7 @@ static syscall_arg_t sys_map_device_wrapper(syscall_arg_t *frame, syscall_arg_t 
 static syscall_arg_t sys_mem_grant_wrapper(syscall_arg_t *frame, syscall_arg_t pid, syscall_arg_t addr,
                                            syscall_arg_t length, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
-    return syscall::Mm::grant((uint32_t)pid, (uintptr_t)addr, (size_t)length);
+    return sys_ret32((uint32_t)syscall::Mm::grant((uint32_t)pid, (uintptr_t)addr, (size_t)length));
 }
 
 static syscall_arg_t sys_irq_claim_wrapper(syscall_arg_t *frame, syscall_arg_t irq, syscall_arg_t p2,

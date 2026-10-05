@@ -107,9 +107,8 @@ int munmap(void *addr, size_t length) {
     return (int)syscall2(SYS_MUNMAP, PTR_TO_ARG(addr), (syscall_arg_t)length);
 }
 
-void *mem_grant(int pid, void *addr, size_t length) {
-    return (void *)(uintptr_t)syscall3(SYS_MEM_GRANT, (syscall_arg_t)pid, PTR_TO_ARG(addr),
-                                       (syscall_arg_t)length);
+int mem_grant(int pid, void *addr, size_t length) {
+    return (int)syscall3(SYS_MEM_GRANT, (syscall_arg_t)pid, PTR_TO_ARG(addr), (syscall_arg_t)length);
 }
 
 // ============================================================================

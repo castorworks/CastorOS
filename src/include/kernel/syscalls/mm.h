@@ -68,11 +68,12 @@ public:
 
     /**
      * 把当前进程的 [addr, addr+length) 共享给进程 pid：同一批物理页同时映射在
-     * 两个进程里，地址由内核在对方的 mmap 区域里选择
+     * 两个进程里，地址由内核在对方的 mmap 区域里选择，并以一条 IPC_LABEL_GRANT
+     * 消息告诉对方（阻塞到对方收下这条消息为止）
      * @param addr 必须页对齐，区间内的页必须已映射且可写
-     * @return 这段内存在对方地址空间里的虚拟地址，失败返回 (uintptr_t)-1
+     * @return 0 成功，-1 失败
      */
-    static uintptr_t grant(uint32_t pid, uintptr_t addr, size_t length);
+    static int grant(uint32_t pid, uintptr_t addr, size_t length);
 };
 
 } // namespace syscall

@@ -713,16 +713,17 @@ uint32_t syscall::Process::kill(uint32_t pid, uint32_t signal) {
         return (uint32_t)-1;
     }
 
+    // 信号 0：只探测目标是否存在，任何进程都可以问
+    // （服务进程靠它发现客户已经退出，回收为客户保留的资源）
+    if (signal == 0) {
+        return 0;
+    }
+
     // 非特权进程只能向自己和自己的子孙进程发信号
     if (!kernel::Scheduler::current_is_privileged() && target != current &&
         !kernel::Scheduler::is_descendant(target, current)) {
         LOG_WARN_MSG("syscall::Process::kill: PID %u may not signal PID %u\n", current->pid, pid);
         return (uint32_t)-1;
-    }
-
-    // 信号 0：只探测目标是否存在
-    if (signal == 0) {
-        return 0;
     }
 
     // 已经是僵尸：进程已退出，等待父进程回收，视为成功
