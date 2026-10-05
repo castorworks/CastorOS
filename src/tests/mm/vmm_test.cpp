@@ -34,7 +34,9 @@
 #include <lib/string.h>
 #include <types.h>
 
-// 测试用虚拟地址（用户空间范围）
+// 测试用虚拟地址（用户空间范围）。
+// 克隆和写时复制的测试用带 PAGE_USER 的映射，和真实进程一样：用户页表里的纯内核
+// 映射在 arm64 上克隆时原样共享、不做写时复制（见 pt::kernel_only_leaf），不是这里要测的
 #define TEST_VIRT_ADDR1  0x10000000
 #define TEST_VIRT_ADDR2  0x10001000
 #define TEST_VIRT_ADDR3  0x20000000
@@ -304,7 +306,7 @@ TEST_CASE(test_vmm_clone_page_directory_basic) {
     paddr_t frame = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame, PADDR_INVALID);
     ASSERT_TRUE(mm::Vmm::map_page_in_directory(src_dir, TEST_VIRT_ADDR1, (uintptr_t)frame,
-                                          PAGE_PRESENT | PAGE_WRITE));
+                                          PAGE_PRESENT | PAGE_WRITE | PAGE_USER));
     
     // 克隆页目录
     uintptr_t clone_dir = mm::Vmm::clone_page_directory(src_dir);
@@ -335,7 +337,7 @@ TEST_CASE(test_vmm_clone_page_directory_data_isolation) {
     paddr_t frame = mm::Pmm::alloc_frame();
     ASSERT_NE_U(frame, PADDR_INVALID);
     ASSERT_TRUE(mm::Vmm::map_page_in_directory(src_dir, TEST_VIRT_ADDR1, (uintptr_t)frame,
-                                          PAGE_PRESENT | PAGE_WRITE));
+                                          PAGE_PRESENT | PAGE_WRITE | PAGE_USER));
     
     // 切换到源页目录并写入数据
     mm::Vmm::switch_page_directory(src_dir);
@@ -428,7 +430,7 @@ TEST_CASE(test_vmm_cow_refcount) {
     
     // 映射到源页目录
     ASSERT_TRUE(mm::Vmm::map_page_in_directory(src_dir, TEST_VIRT_ADDR1, (uintptr_t)frame,
-                                          PAGE_PRESENT | PAGE_WRITE));
+                                          PAGE_PRESENT | PAGE_WRITE | PAGE_USER));
     
     // 克隆页目录（COW）
     uintptr_t clone_dir = mm::Vmm::clone_page_directory(src_dir);
@@ -477,7 +479,7 @@ TEST_CASE(test_vmm_cow_multiple_pages) {
         ASSERT_NE_U(frames[i], PADDR_INVALID);
         ASSERT_TRUE(mm::Vmm::map_page_in_directory(src_dir, 
             TEST_VIRT_ADDR1 + i * PAGE_SIZE, (uintptr_t)frames[i],
-            PAGE_PRESENT | PAGE_WRITE));
+            PAGE_PRESENT | PAGE_WRITE | PAGE_USER));
     }
     
     // 克隆页目录
@@ -694,6 +696,11 @@ TEST_SUITE(vmm_comprehensive_tests) {
 // Property-Based Tests: VMM Page Table Format Correctness
 // ============================================================================
 
+/** 一个地址确定在内核映像里的东西，测试拿它当"内核地址"的样本 */
+static void kernel_probe_function(void) {
+}
+static int kernel_probe_data = 42;
+
 /**
  * Property Test: Kernel virtual address range correctness
  * 
@@ -702,26 +709,16 @@ TEST_SUITE(vmm_comprehensive_tests) {
  * (≥0x80000000 for i686).
  */
 TEST_CASE(test_pbt_vmm_kernel_address_range) {
-    // Property: KERNEL_VIRTUAL_BASE must be architecture-appropriate
-#if defined(ARCH_X86_64)
-    ASSERT_TRUE(KERNEL_VIRTUAL_BASE == 0xFFFF800000000000ULL);
-#else
-    ASSERT_EQ_U(KERNEL_VIRTUAL_BASE, 0x80000000);
-#endif
-    
-    // Property: PHYS_TO_VIRT should produce addresses >= KERNEL_VIRTUAL_BASE
+    // 内核在高半区：直接映射区里的地址都不低于 KERNEL_VIRTUAL_BASE，
+    // PHYS_TO_VIRT 和 VIRT_TO_PHYS 互为逆运算
     uintptr_t test_phys_addrs[] = {0x0, 0x1000, 0x100000, 0x1000000, 0x10000000};
     for (uint32_t i = 0; i < sizeof(test_phys_addrs)/sizeof(test_phys_addrs[0]); i++) {
         uintptr_t virt = PHYS_TO_VIRT(test_phys_addrs[i]);
         ASSERT_TRUE(virt >= KERNEL_VIRTUAL_BASE);
+        ASSERT_TRUE(VIRT_TO_PHYS(virt) == test_phys_addrs[i]);
     }
-    
-    // Property: VIRT_TO_PHYS should be the inverse of PHYS_TO_VIRT
-    for (uint32_t i = 0; i < sizeof(test_phys_addrs)/sizeof(test_phys_addrs[0]); i++) {
-        uintptr_t virt = PHYS_TO_VIRT(test_phys_addrs[i]);
-        uintptr_t phys_back = VIRT_TO_PHYS(virt);
-        ASSERT_TRUE(phys_back == test_phys_addrs[i]);
-    }
+    // 内核自己的代码也在那里
+    ASSERT_TRUE((uintptr_t)&kernel_probe_function >= KERNEL_VIRTUAL_BASE);
 }
 
 /**
@@ -773,53 +770,24 @@ TEST_CASE(test_pbt_vmm_page_directory_isolation) {
  * when switching between processes.
  */
 TEST_CASE(test_pbt_vmm_kernel_space_shared) {
+    // 每个地址空间看到的内核都是同一个：同一个内核地址在新建的地址空间里
+    // 映射到和当前地址空间相同的物理页
     #define PBT_KERNEL_ITERATIONS 10
-    
-    // Create multiple page directories
-    uintptr_t dirs[PBT_KERNEL_ITERATIONS];
-    uint32_t created = 0;
-    
+    vaddr_t probes[] = {
+        (vaddr_t)&kernel_probe_function & ~(vaddr_t)(PAGE_SIZE - 1),
+        (vaddr_t)&kernel_probe_data & ~(vaddr_t)(PAGE_SIZE - 1),
+    };
+
     for (uint32_t i = 0; i < PBT_KERNEL_ITERATIONS; i++) {
-        dirs[i] = mm::Vmm::create_page_directory();
-        if (dirs[i] == 0) {
-            break;
+        uintptr_t dir = mm::Vmm::create_page_directory();
+        ASSERT_NE_U(dir, 0);
+        for (uint32_t j = 0; j < sizeof(probes) / sizeof(probes[0]); j++) {
+            paddr_t here = 0, there = 0;
+            ASSERT_TRUE(hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, probes[j], &here, NULL));
+            ASSERT_TRUE(hal::Mmu::query((hal_addr_space_t)dir, probes[j], &there, NULL));
+            ASSERT_TRUE(here == there);
         }
-        created++;
-    }
-    
-    // Verify we created at least 2 directories
-    ASSERT_TRUE(created >= 2);
-    
-    // Get the current (boot) page directory for comparison
-    uintptr_t boot_dir = mm::Vmm::get_page_directory();
-    ASSERT_NE_U(boot_dir, 0);
-    
-    // Property: For each created directory, kernel space entries should match boot directory
-    // We check the kernel space page directory entries (indices 512-1023 for i686)
-    // These should point to the same page tables
-    page_directory_t *boot_pd = (page_directory_t*)PHYS_TO_VIRT(boot_dir);
-    
-    for (uint32_t i = 0; i < created; i++) {
-        page_directory_t *new_pd = (page_directory_t*)PHYS_TO_VIRT(dirs[i]);
-        
-        // Check kernel space entries (512-1023 for i686, 256-511 for x86_64)
-#if defined(ARCH_X86_64)
-        uint32_t kernel_start = 256;
-        uint32_t kernel_end = 512;
-#else
-        uint32_t kernel_start = 512;
-        uint32_t kernel_end = 1024;
-#endif
-        
-        for (uint32_t j = kernel_start; j < kernel_end; j++) {
-            // Property: Kernel PDE entries must match between all address spaces
-            ASSERT_EQ_U(new_pd->entries[j], boot_pd->entries[j]);
-        }
-    }
-    
-    // Cleanup
-    for (uint32_t i = 0; i < created; i++) {
-        mm::Vmm::free_page_directory(dirs[i]);
+        mm::Vmm::free_page_directory(dir);
     }
 }
 
@@ -867,34 +835,17 @@ TEST_CASE(test_pbt_vmm_user_mapping_flags) {
     // Verify we mapped at least some pages
     ASSERT_TRUE(mapped > 0);
     
-    // Property: All user space mappings should have USER flag set
-    // We verify this by checking the page table entries
-    [[maybe_unused]] page_directory_t *pd = (page_directory_t*)PHYS_TO_VIRT(dir);
-    
+    // 带 USER 标志建立的映射：查得到，指向那个物理页，用户态可以访问、可以写
     for (uint32_t i = 0; i < mapped; i++) {
-        uintptr_t virt = virt_addrs[i];
-        
-        // Property: Virtual address must be in user space
-        ASSERT_TRUE(virt < KERNEL_VIRTUAL_BASE);
-        
-#if !defined(ARCH_X86_64)
-        // For i686, we can directly check the page table entries
-        uint32_t pd_idx = virt >> 22;
-        uint32_t pt_idx = (virt >> 12) & 0x3FF;
-        
-        // Check PDE has USER flag (for user space, PDE should allow user access)
-        pde_t pde = pd->entries[pd_idx];
-        ASSERT_TRUE((pde & PAGE_PRESENT) != 0);
-        ASSERT_TRUE((pde & PAGE_USER) != 0);
-        
-        // Check PTE has USER flag
-        page_table_t *pt = (page_table_t*)PHYS_TO_VIRT(pde & 0xFFFFF000);
-        pte_t pte = pt->entries[pt_idx];
-        ASSERT_TRUE((pte & PAGE_PRESENT) != 0);
-        ASSERT_TRUE((pte & PAGE_USER) != 0);
-#endif
+        ASSERT_TRUE(virt_addrs[i] < KERNEL_VIRTUAL_BASE);
+        paddr_t phys = 0;
+        uint32_t flags = 0;
+        ASSERT_TRUE(hal::Mmu::query((hal_addr_space_t)dir, virt_addrs[i], &phys, &flags));
+        ASSERT_TRUE(phys == frames[i]);
+        ASSERT_TRUE((flags & HAL_PAGE_USER) != 0);
+        ASSERT_TRUE((flags & HAL_PAGE_WRITE) != 0);
     }
-    
+
     // Cleanup
     mm::Vmm::free_page_directory(dir);
 }
@@ -909,26 +860,16 @@ TEST_CASE(test_pbt_vmm_user_mapping_flags) {
  * is protected from user-mode access.
  */
 TEST_CASE(test_pbt_vmm_kernel_mapping_no_user_flag) {
-    // Get the current page directory
-    uintptr_t dir = mm::Vmm::get_page_directory();
-    ASSERT_NE_U(dir, 0);
-    
-    [[maybe_unused]] page_directory_t *pd = (page_directory_t*)PHYS_TO_VIRT(dir);
-    
-#if !defined(ARCH_X86_64)
-    // Check kernel space entries (512-1023 for i686)
-    // Property: Kernel PDEs should NOT have USER flag
-    for (uint32_t i = 512; i < 1024; i++) {
-        pde_t pde = pd->entries[i];
-        if (pde & PAGE_PRESENT) {
-            // Property: Kernel PDE must NOT have USER flag
-            ASSERT_TRUE((pde & PAGE_USER) == 0);
-        }
+    // 内核的代码和数据对用户态不可见
+    vaddr_t probes[] = {
+        (vaddr_t)&kernel_probe_function & ~(vaddr_t)(PAGE_SIZE - 1),
+        (vaddr_t)&kernel_probe_data & ~(vaddr_t)(PAGE_SIZE - 1),
+    };
+    for (uint32_t i = 0; i < sizeof(probes) / sizeof(probes[0]); i++) {
+        uint32_t flags = HAL_PAGE_USER;
+        ASSERT_TRUE(hal::Mmu::query(HAL_ADDR_SPACE_CURRENT, probes[i], NULL, &flags));
+        ASSERT_TRUE((flags & HAL_PAGE_USER) == 0);
     }
-#endif
-    
-    // Property: Kernel virtual addresses should be >= KERNEL_VIRTUAL_BASE
-    ASSERT_TRUE(KERNEL_VIRTUAL_BASE >= 0x80000000);
 }
 
 // ============================================================================

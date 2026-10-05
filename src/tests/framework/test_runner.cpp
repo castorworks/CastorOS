@@ -259,10 +259,7 @@ static const test_entry_t test_suite[] = {
     
     // 内存管理测试 (mm/)
     TEST_ENTRY("Physical Memory Manager Tests", run_pmm_tests),
-#ifdef ARCH_I686
-    // 测试用例假设 i686 的地址空间布局，在 64 位架构上不适用
     TEST_ENTRY("Virtual Memory Manager Tests", run_vmm_tests),
-#endif
     TEST_ENTRY("Heap Allocator Tests", run_heap_tests),
     TEST_ENTRY("Task Manager Tests", run_task_tests),
     TEST_ENTRY("Synchronization Primitive Tests", run_sync_tests),
