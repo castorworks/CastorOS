@@ -111,13 +111,16 @@ static syscall_arg_t sys_fork_wrapper(syscall_arg_t *frame, syscall_arg_t p1, sy
 }
 
 /**
- * exec(image, size)：ELF 映像由调用者放在自己的地址空间里，内核不认识文件
+ * exec(image, size, args, args_size)：ELF 映像和参数块都由调用者放在自己的地址空间里，
+ * 内核不认识文件
  */
 static syscall_arg_t sys_exec_wrapper(syscall_arg_t *frame, syscall_arg_t image, syscall_arg_t size,
-                                      syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)p3; (void)p4; (void)p5;
+                                      syscall_arg_t args, syscall_arg_t args_size, syscall_arg_t p5) {
+    (void)p5;
     if (!user_rd(image, (size_t)size)) return SYSCALL_FAIL;
-    return sys_ret32(syscall::Process::exec(frame, (const void *)(uintptr_t)image, (size_t)size));
+    if (args_size > USER_ARGS_MAX || !user_rd(args, (size_t)args_size)) return SYSCALL_FAIL;
+    return sys_ret32(syscall::Process::exec(frame, (const void *)(uintptr_t)image, (size_t)size,
+                                            (const char *)(uintptr_t)args, (size_t)args_size));
 }
 
 static syscall_arg_t sys_waitpid_wrapper(syscall_arg_t *frame, syscall_arg_t pid, syscall_arg_t wstatus_ptr,

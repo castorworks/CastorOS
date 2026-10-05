@@ -359,7 +359,8 @@ bool kernel::Scheduler::setup_user_stack(task_t *task) {
     
     /* Set stack pointers (stack grows downward, 16-byte aligned for ARM64 ABI) */
     task->user_stack_base = stack_bottom;
-    task->user_stack = stack_top - 16;  /* 16-byte alignment for ARM64 */
+    /* The top page holds the program arguments (USER_ARGS_ADDR); the stack starts below it */
+    task->user_stack = USER_ARGS_ADDR - 16;  /* 16-byte alignment for ARM64 */
     
     LOG_DEBUG_MSG("kernel::Scheduler::setup_user_stack (ARM64): User stack set up at 0x%llx-0x%llx\n", 
                  (unsigned long long)stack_bottom, (unsigned long long)stack_top);
@@ -449,13 +450,17 @@ bool kernel::Scheduler::setup_user_stack(task_t *task) {
             
             return false;
         }
+
+        // 清零：不把别的进程留下的内容带进新进程，也保证参数页默认是“没有参数”
+        memset((void *)PHYS_TO_VIRT((uintptr_t)phys_addr), 0, PAGE_SIZE);
     }
     
     // 设置栈指针。入口 _start 是按普通函数编译的，它假定自己是被 call 进来的：
     // 栈顶留出一个返回地址的位置，函数体内的栈才是 16 字节对齐的
     // （x86_64 上编译器会对栈上的对象使用 movaps，没对齐就是 #GP）
     task->user_stack_base = stack_bottom;
-    task->user_stack = stack_top - sizeof(uintptr_t);
+    // 最顶上一页是参数页（USER_ARGS_ADDR），栈从它下面开始
+    task->user_stack = USER_ARGS_ADDR - sizeof(uintptr_t);
     
     LOG_DEBUG_MSG("kernel::Scheduler::setup_user_stack: User stack set up at 0x%x-0x%x\n", 
                  stack_bottom, stack_top);
@@ -728,7 +733,7 @@ uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entr
     task->state = TASK_READY;
     kernel::Scheduler::ready_queue_add(task);
     
-    LOG_INFO_MSG("Created user process: PID=%u, name=%s, entry=0x%llx\n", 
+    LOG_DEBUG_MSG("Created user process: PID=%u, name=%s, entry=0x%llx\n", 
                  task->pid, task->name, (unsigned long long)entry_point);
     
     return task->pid;
@@ -899,7 +904,7 @@ void kernel::Scheduler::schedule() {
         pending_cleanup_head = task_to_cleanup->next;
         task_to_cleanup->next = NULL;
 
-        LOG_INFO_MSG("Cleaning up terminated task %u (%s)\n",
+        LOG_DEBUG_MSG("Cleaning up terminated task %u (%s)\n",
                      task_to_cleanup->pid, task_to_cleanup->name);
 
         kernel::Scheduler::free(task_to_cleanup);
@@ -1073,7 +1078,7 @@ void kernel::Scheduler::exit_current(uint32_t exit_code, bool signaled, uint32_t
         }
     }
 
-    LOG_INFO_MSG("Task %u (%s) exiting with code %u\n",
+    LOG_DEBUG_MSG("Task %u (%s) exiting with code %u\n",
                  current_task->pid, current_task->name, exit_code);
 
     // 用户态异常（x86 的 ISR 存根）是带着 interrupt_enter 的计数进来的，而退出
@@ -1325,7 +1330,7 @@ void kernel::Scheduler::deliver_pending_kill() {
 
     uint32_t signal = task->kill_signal;
     task->kill_pending = false;
-    LOG_INFO_MSG("Task %u (%s) terminated by signal %u\n", task->pid, task->name, signal);
+    LOG_DEBUG_MSG("Task %u (%s) terminated by signal %u\n", task->pid, task->name, signal);
     kernel::Scheduler::exit_current(128 + signal, true, signal);
 }
 

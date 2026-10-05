@@ -1,7 +1,7 @@
 // sh - 一个很小的命令行
 //
-// 由 init 启动（非特权）。输入来自 uart 驱动，文件操作交给文件服务。
-// 不是内置命令的名字被当作文件服务里的程序：读出它的 ELF 映像，fork 之后 exec。
+// 由 init 启动（非特权）。输入来自 uart 驱动。除了两个内置命令，一行的第一个词
+// 被当作文件服务里的程序：读出它的 ELF 映像，fork 之后带着这一行的参数 exec。
 // 启动时先执行文件 "rc" 里的每一行。
 
 #include <syscall.h>
@@ -15,34 +15,7 @@
 // 内置命令
 // ============================================================================
 
-static void cmd_ls(void) {
-    char name[FS_NAME_MAX];
-    uint32_t size;
-    int i = 0;
-    for (; fs_list(i, name, &size) == 0; i++) {
-        printf("%8u  %s\n", size, name);
-    }
-    if (i == 0) {
-        printf("(no files)\n");
-    }
-}
-
-static void cmd_cat(const char *name) {
-    int fd = fs_open(name, 0);
-    if (fd < 0) {
-        printf("cat: %s: no such file\n", name);
-        return;
-    }
-    char buf[256];
-    uint32_t offset = 0;
-    long n;
-    while ((n = fs_read(fd, offset, buf, sizeof(buf))) > 0) {
-        console_write(buf, (size_t)n);
-        offset += (uint32_t)n;
-    }
-    fs_close(fd);
-}
-
+// write <file> <text>：把这一行剩下的文字写进文件（命令行没有输出重定向，所以它留在这里）
 static void cmd_write(char *args) {
     char *text = strchr(args, ' ');
     if (!text) {
@@ -86,7 +59,11 @@ static void *load_file(const char *name, size_t *size) {
     return image;
 }
 
-static void run_program(const char *name) {
+#define MAX_ARGS 16
+
+// argv[0] 是程序名，同时也是文件服务里的文件名
+static void run_program(char **argv) {
+    const char *name = argv[0];
     size_t size = 0;
     void *image = load_file(name, &size);
     if (!image) {
@@ -96,7 +73,7 @@ static void run_program(const char *name) {
 
     int pid = fork();
     if (pid == 0) {
-        exec(image, size);
+        exec(image, size, argv);
         printf("%s: not an executable\n", name);
         exit(126);
     }
@@ -122,29 +99,33 @@ static void run_command(char *line) {
     if (*line == '\0' || *line == '#') {
         return;
     }
-    char *args = strchr(line, ' ');
-    if (args) {
-        *args++ = '\0';
-    } else {
-        args = line + strlen(line);
+
+    if (strncmp(line, "write ", 6) == 0) {
+        cmd_write(line + 6);
+        return;
+    }
+    if (strcmp(line, "help") == 0) {
+        printf("builtins: help, write <file> <text>\n");
+        printf("anything else runs a program from the file service with the rest of the\n");
+        printf("line as its arguments, e.g.: ls, cat <file>, rm <file>, echo <words>, hello\n");
+        return;
     }
 
-    if (strcmp(line, "help") == 0) {
-        printf("builtins: ls, cat <file>, write <file> <text>, rm <file>, help\n");
-        printf("any other name runs that program from the file service (see ls)\n");
-    } else if (strcmp(line, "ls") == 0) {
-        cmd_ls();
-    } else if (strcmp(line, "cat") == 0 && *args) {
-        cmd_cat(args);
-    } else if (strcmp(line, "write") == 0 && *args) {
-        cmd_write(args);
-    } else if (strcmp(line, "rm") == 0 && *args) {
-        if (fs_unlink(args) != 0) {
-            printf("rm: %s: no such file\n", args);
+    // 按空格切成参数
+    char *argv[MAX_ARGS + 1];
+    int argc = 0;
+    char *p = line;
+    while (*p && argc < MAX_ARGS) {
+        argv[argc++] = p;
+        while (*p && *p != ' ') {
+            p++;
         }
-    } else {
-        run_program(line);
+        while (*p == ' ') {
+            *p++ = '\0';
+        }
     }
+    argv[argc] = NULL;
+    run_program(argv);
 }
 
 // 执行启动脚本：文件 "rc" 里每行一条命令

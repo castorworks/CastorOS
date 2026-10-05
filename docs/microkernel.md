@@ -26,7 +26,7 @@ CastorOS 的内核只保留五件事：CPU/中断、内存管理、任务调度�
 
 `user/init` 是第一个用户进程，负责启动模块并充当名字服务。内核保证它的 PID 是 1（普通任务从 2 开始编号），用户态把这个 PID 当作名字服务的固定地址。构建内核时先编译出 `user/init/build/<arch>/init.elf`，再由 `src/kernel/init_image.S` 用 `.incbin` 嵌进内核映像，不需要磁盘或文件系统。
 
-init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/init/modules.S`），启动方式是 `fork` + `exec(image, size)`。目前有三个：
+init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/init/modules.S`），启动方式是 `fork` + `exec`。目前有三个：
 
 - `user/uart`：串口输入驱动，保留特权启动。
 - `user/ramfs`：内存文件系统服务，放弃特权后启动。启动映像嵌在它里面。
@@ -34,18 +34,21 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 
 其余程序不嵌在 init 里，而是放在启动映像中，由命令行从文件服务里读出来运行：
 
-- `user/selftest`：用户态自检（内存、进程、IPC、特权、共享内存、名字服务、文件服务），开机时由 `rc` 脚本运行一次。
-- `user/hello`：最小的示例程序。
+- `user/selftest`：用户态自检（程序参数、内存、进程、IPC、特权、共享内存、名字服务、文件服务），开机时由 `rc` 脚本运行一次。
+- `user/ls`、`user/cat`、`user/rm`、`user/echo`：小工具。
+- `user/hello`：最小的示例程序，打印自己的 PID 和参数。
 
 ## 启动映像和运行程序
 
 构建 `user/ramfs` 时，`user/bootfs/` 下的文件和 `BOOT_PROGRAMS` 里列出的程序（以去掉 `.elf` 的名字）被打成一个 ustar 归档，用 `.incbin` 嵌进 ramfs 的映像；ramfs 启动时把它展开成普通文件。
 
-命令行把不是内置命令的名字当作程序：通过文件服务读出整个文件，`fork`，子进程 `exec(image, size)`，父进程 `waitpid`。启动时它先执行文件 `rc` 里的每一行（目前只有 `selftest`）。
+命令行只有两个内置命令（`help` 和 `write <file> <text>`）。其余的输入，第一个词是程序名：通过文件服务读出整个文件，`fork`，子进程带着这一行按空格切开的参数 `exec`，父进程 `waitpid` 并报告非零的退出状态。启动时它先执行文件 `rc` 里的每一行（目前只有 `selftest`）。
+
+程序参数的传递方式：用户栈区域最顶上的一页是参数页（地址固定，栈从它下面开始）。`exec` 把调用者给的参数块（`"arg0\0arg1\0..."`，最多约 4KB）写进新进程的参数页；启动代码 `crt0` 从这个固定地址取出来切成 `argv`，再调用 `main(argc, argv)`。这样不依赖任何架构的寄存器或栈帧约定。进程在内核里的名字取自 `argv[0]`。
 
 所以加一个程序只需要：在 `user/` 下建目录写好 Makefile，把名字加进 `user/ramfs/Makefile` 的 `BOOT_PROGRAMS`。不用改 init，也不用改内核。
 
-当前的限制：`exec` 不传参数，程序拿不到命令行参数；程序运行期间命令行不读输入，没有办法中断它。
+当前的限制：没有环境变量；命令行不支持引号、重定向和管道；程序运行期间命令行不读输入，没有办法中断它。
 
 ## 系统调用
 
@@ -55,7 +58,7 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 |------|------|------|
 | 0 | `exit(code)` | |
 | 1 | `fork()` | 写时复制 |
-| 2 | `exec(image, size)` | 用调用者内存里的 ELF 映像替换当前进程；内核不认识路径 |
+| 2 | `exec(image, size, args, args_size)` | 用调用者内存里的 ELF 映像替换当前进程，并把参数块交给新程序；内核不认识路径 |
 | 3 | `waitpid(pid, wstatus, options)` | 支持 `WNOHANG` |
 | 4 / 5 | `getpid()` / `getppid()` | |
 | 6 | `yield()` | |

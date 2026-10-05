@@ -80,7 +80,7 @@ so there is no disk image. init starts the modules and is the name server (`name
 `user/lib`). Resident modules are embedded into init the same way (`user/init/modules.S`):
 `user/uart` (privileged serial input driver), `user/ramfs` (in-memory file service, protocol
 and client in `fs.h`) and `user/sh` (command line). Other programs (`user/selftest`,
-`user/hello`) go into the boot image: a ustar archive of `user/bootfs/*` plus the programs
+`user/ls`, `user/cat`, `user/rm`, `user/echo`, `user/hello`) go into the boot image: a ustar archive of `user/bootfs/*` plus the programs
 in `BOOT_PROGRAMS` (`user/ramfs/Makefile`), embedded in ramfs and unpacked at startup. sh
 runs them with fork + exec, and runs the `rc` file (which starts `selftest`) at boot.
 To add a program, create `user/<name>/` and add it to `BOOT_PROGRAMS`. Every user program's
@@ -124,9 +124,9 @@ CastorOS/
 │   ├── init/               # First user process: starts modules, name service
 │   ├── uart/               # Serial input driver (privileged module)
 │   ├── ramfs/              # In-memory file service (unprivileged module), holds the boot image
-│   ├── sh/                 # Command line (unprivileged module): file builtins, runs programs
+│   ├── sh/                 # Command line (unprivileged module): runs programs with arguments
 │   ├── selftest/           # User-space self-checks, in the boot image, run from rc at boot
-│   ├── hello/              # Minimal example program, in the boot image
+│   ├── ls/ cat/ rm/ echo/ hello/   # Small programs in the boot image
 │   ├── bootfs/             # Static files for the boot image (rc, readme.txt)
 │   ├── program.mk          # Shared build rules for user programs
 │   └── linker/             # User linker scripts
@@ -161,6 +161,8 @@ CastorOS/
   `kmalloc()`/`kfree()`, and all of user space (POSIX-style API).
 - User programs are built without FP/SIMD (`-mno-sse` / `-mgeneral-regs-only`): the kernel does not
   save those registers across context switches.
+- Program arguments travel through the argument page at the top of the user stack region
+  (`USER_ARGS_ADDR` / `user_args_t` in `kernel/task.h`, mirrored in `user/lib/src/crt0.cpp`).
 - Syscall numbers live in `src/include/kernel/syscall.h` and must match `user/lib/include/syscall.h`.
 - Inside a member function, call a same-named global function with `::name()` (unqualified names
   bind to the class member first).
@@ -196,7 +198,7 @@ make test TEST_TIMEOUT=120     # 自定义超时
 
 ```bash
 # 控制台是串口；向 QEMU 的标准输入写入的内容经 uart 驱动送到 sh
-# （ls / cat <file> / write <file> <text> / rm <file> / help，其他名字当作程序运行）
+# （help、write <file> <text> 是内置命令；其余如 ls、cat <file>、echo <words> 是程序）
 timeout 20 qemu-system-i386 -kernel build/i686/castor.bin -serial stdio -display none
 timeout 20 qemu-system-x86_64 -kernel build/x86_64/castor32.elf -serial stdio -display none
 timeout 20 qemu-system-aarch64 -M virt -cpu cortex-a72 -kernel build/arm64/castor.bin -serial stdio -display none

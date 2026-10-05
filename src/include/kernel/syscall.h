@@ -17,7 +17,7 @@ enum {
     // 进程
     SYS_EXIT            = 0,
     SYS_FORK            = 1,
-    SYS_EXEC            = 2,   // exec(image, size)：用用户内存里的 ELF 映像替换当前进程
+    SYS_EXEC            = 2,   // exec(image, size, args, args_size)：用用户内存里的 ELF 映像替换当前进程
     SYS_WAITPID         = 3,
     SYS_GETPID          = 4,
     SYS_GETPPID         = 5,

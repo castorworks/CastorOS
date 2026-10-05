@@ -68,7 +68,7 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
         return (uint32_t)-1;
     }
     
-    LOG_INFO_MSG("syscall::Process::fork: Parent PID %u\n", parent->pid);
+    LOG_DEBUG_MSG("syscall::Process::fork: Parent PID %u\n", parent->pid);
     
     // 只有用户进程才能 fork
     if (!parent->is_user_process) {
@@ -193,7 +193,8 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
     }
     
     // 复制父进程信息
-    snprintf(child->name, sizeof(child->name), "%s-child", parent->name);
+    strncpy(child->name, parent->name, sizeof(child->name) - 1);
+    child->name[sizeof(child->name) - 1] = '\0';
     child->is_user_process = true;
     child->priority = parent->priority;
     child->time_slice = DEFAULT_TIME_SLICE;
@@ -322,7 +323,7 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
     child->state = TASK_READY;
     kernel::Scheduler::ready_queue_add(child);
     
-    LOG_INFO_MSG("syscall::Process::fork: Created child PID %u\n", child->pid);
+    LOG_DEBUG_MSG("syscall::Process::fork: Created child PID %u\n", child->pid);
     
     // 恢复中断状态
     kernel::Interrupts::restore(prev_state);
@@ -340,9 +341,12 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
  * @param frame 系统调用栈帧指针（架构相关大小）
  * @param image ELF 映像
  * @param size  映像大小
+ * @param args  参数块（"arg0\0arg1\0..."），可为 NULL
+ * @param args_size 参数块长度，不超过 USER_ARGS_MAX
  * @return 成功则不返回到原程序，失败返回 -1
  */
-uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size) {
+uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size,
+                                const char *args, size_t args_size) {
     task_t *current = kernel::Scheduler::get_current();
     if (!current || !frame || !image) {
         return (uint32_t)-1;
@@ -362,11 +366,27 @@ uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size
     }
     memcpy(elf_data, image, file_size);
 
+    // 参数块同样要先拿进内核；它总是以 NUL 结尾
+    if (!args || args_size > USER_ARGS_MAX) {
+        args_size = 0;
+    }
+    char *kargs = NULL;
+    if (args_size > 0) {
+        kargs = (char *)kmalloc(args_size);
+        if (!kargs) {
+            kfree(elf_data);
+            return (uint32_t)-1;
+        }
+        memcpy(kargs, args, args_size);
+        kargs[args_size - 1] = '\0';
+    }
+
     // 完整校验 ELF 映像（文件头、程序头表、各段的文件范围和地址范围、入口点），
     // 在创建新地址空间之前就拒绝不合法的映像
     if (!kernel::Elf::validate(elf_data, file_size)) {
         LOG_DEBUG_MSG("syscall::Process::exec: invalid ELF image\n");
         kfree(elf_data);
+        kfree(kargs);
         return (uint32_t)-1;
     }
 
@@ -374,6 +394,7 @@ uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size
     if (entry_point == 0) {
         LOG_ERROR_MSG("syscall::Process::exec: no entry point\n");
         kfree(elf_data);
+        kfree(kargs);
         return (uint32_t)-1;
     }
 
@@ -388,6 +409,7 @@ uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size
     if (!new_dir_phys) {
         LOG_ERROR_MSG("syscall::Process::exec: failed to create new page directory\n");
         kfree(elf_data);
+        kfree(kargs);
         return (uint32_t)-1;
     }
 #if defined(ARCH_ARM64)
@@ -408,6 +430,7 @@ uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size
         LOG_ERROR_MSG("syscall::Process::exec: failed to load ELF\n");
         mm::Vmm::free_page_directory(new_dir_phys);
         kfree(elf_data);
+        kfree(kargs);
         return (uint32_t)-1;
     }
     
@@ -429,6 +452,7 @@ uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size
         current->page_dir = old_dir;
         current->page_dir_phys = old_dir_phys;
         mm::Vmm::free_page_directory(new_dir_phys);
+        kfree(kargs);
         return (uint32_t)-1;  // ENOMEM
     }
     
@@ -439,6 +463,7 @@ uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size
         current->page_dir = old_dir;
         current->page_dir_phys = old_dir_phys;
         mm::Vmm::free_page_directory(new_dir_phys);
+        kfree(kargs);
         return (uint32_t)-1;
     }
     
@@ -459,6 +484,18 @@ uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size
     // ============================================================================
     
     mm::Vmm::switch_page_directory(new_dir_phys);
+
+    // 现在处于新地址空间：把参数写进参数页（新栈的页都已清零）
+    if (kargs) {
+        // 进程以 argv[0] 命名
+        strncpy(current->name, kargs, sizeof(current->name) - 1);
+        current->name[sizeof(current->name) - 1] = '\0';
+
+        user_args_t *uargs = (user_args_t *)USER_ARGS_ADDR;
+        uargs->length = (uint32_t)args_size;
+        memcpy(uargs->data, kargs, args_size);
+        kfree(kargs);
+    }
     
     // 释放旧页目录及其映射的所有用户空间物理页
     // 这解决了 exec 覆盖映射导致的内存泄露问题

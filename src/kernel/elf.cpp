@@ -191,9 +191,9 @@ static bool elf_load_impl(const void *elf_data, page_directory_t *page_dir,
     const elf_native_phdr_t *phdr =
         (const elf_native_phdr_t *)((const uint8_t *)elf_data + ehdr->e_phoff);
 
-    LOG_INFO_MSG("ELF: Loading executable\n");
-    LOG_INFO_MSG("  Entry point: 0x%llx\n", (unsigned long long)ehdr->e_entry);
-    LOG_INFO_MSG("  Program headers: %u\n", ehdr->e_phnum);
+    LOG_DEBUG_MSG("ELF: Loading executable\n");
+    LOG_DEBUG_MSG("  Entry point: 0x%llx\n", (unsigned long long)ehdr->e_entry);
+    LOG_DEBUG_MSG("  Program headers: %u\n", ehdr->e_phnum);
 
     uintptr_t max_vaddr = 0;
 
@@ -244,7 +244,7 @@ static bool elf_load_impl(const void *elf_data, page_directory_t *page_dir,
     *entry_point = (uintptr_t)ehdr->e_entry;
     if (program_end) *program_end = max_vaddr;
 
-    LOG_INFO_MSG("ELF: Load complete, entry=0x%llx, program_end=0x%llx\n",
+    LOG_DEBUG_MSG("ELF: Load complete, entry=0x%llx, program_end=0x%llx\n",
                 (unsigned long long)*entry_point, (unsigned long long)max_vaddr);
     return true;
 }

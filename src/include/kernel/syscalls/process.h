@@ -33,9 +33,12 @@ public:
      * @param frame 系统调用栈帧指针（架构相关大小）
      * @param image ELF 映像（调用者地址空间内，入口已校验可读）
      * @param size  映像大小
+     * @param args  参数块 "arg0\0arg1\0..."（调用者地址空间内，入口已校验可读），可为 NULL
+     * @param args_size 参数块长度
      * @return 成功则返回 0（通过修改 frame 返回到新程序），失败返回 -1
      */
-    static uint32_t exec(uintptr_t *frame, const void *image, size_t size);
+    static uint32_t exec(uintptr_t *frame, const void *image, size_t size,
+                         const char *args, size_t args_size);
 
     /**
      * syscall::Process::getpid - 获取当前进程 PID

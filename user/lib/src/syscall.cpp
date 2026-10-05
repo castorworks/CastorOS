@@ -3,6 +3,7 @@
  */
 
 #include <syscall.h>
+#include <string.h>
 
 #define PTR_TO_ARG(p) ((syscall_arg_t)(uintptr_t)(p))
 
@@ -19,8 +20,20 @@ int fork(void) {
     return (int)syscall0(SYS_FORK);
 }
 
-int exec(const void *image, size_t size) {
-    return (int)syscall2(SYS_EXEC, PTR_TO_ARG(image), (syscall_arg_t)size);
+int exec(const void *image, size_t size, const char *const argv[]) {
+    // 打包成内核要的参数块："arg0\0arg1\0...argN\0"
+    static char block[4092];
+    size_t len = 0;
+    for (int i = 0; argv && argv[i]; i++) {
+        size_t n = strlen(argv[i]) + 1;
+        if (len + n > sizeof(block)) {
+            return -1;
+        }
+        memcpy(block + len, argv[i], n);
+        len += n;
+    }
+    return (int)syscall4(SYS_EXEC, PTR_TO_ARG(image), (syscall_arg_t)size,
+                         PTR_TO_ARG(block), (syscall_arg_t)len);
 }
 
 int waitpid(int pid, int *wstatus, int options) {

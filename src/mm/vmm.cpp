@@ -182,7 +182,7 @@ static void register_page_directory(uintptr_t dir_phys) {
     
     protect_phys_frame(dir_phys);
     active_page_directories[active_pd_count++] = dir_phys;
-    LOG_INFO_MSG("VMM: Registered page directory 0x%lx (total: %u)\n", (unsigned long)dir_phys, active_pd_count);
+    LOG_DEBUG_MSG("VMM: Registered page directory 0x%lx (total: %u)\n", (unsigned long)dir_phys, active_pd_count);
 }
 
 /**
@@ -195,7 +195,7 @@ static void unregister_page_directory(uintptr_t dir_phys) {
             unprotect_phys_frame(dir_phys);
             // 用最后一个元素替换当前元素
             active_page_directories[i] = active_page_directories[--active_pd_count];
-            LOG_INFO_MSG("VMM: Unregistered page directory 0x%lx (remaining: %u)\n", (unsigned long)dir_phys, active_pd_count);
+            LOG_DEBUG_MSG("VMM: Unregistered page directory 0x%lx (remaining: %u)\n", (unsigned long)dir_phys, active_pd_count);
             return;
         }
     }
@@ -499,7 +499,7 @@ bool mm::Vmm::handle_cow_page_fault(uintptr_t addr, uint32_t error_code) {
     
     uint32_t refcount = mm::Pmm::frame_get_refcount(old_frame);
     
-    LOG_INFO_MSG("COW: Handling page fault - addr=0x%lx, old_frame=0x%llx, refcount=%u\n", 
+    LOG_DEBUG_MSG("COW: Handling page fault - addr=0x%lx, old_frame=0x%llx, refcount=%u\n", 
                 (unsigned long)addr, (unsigned long long)old_frame, refcount);
     
     if (refcount == 0) {
@@ -981,7 +981,7 @@ void mm::Vmm::free_page_directory(uintptr_t dir_phys) {
     }
     return;
 #else
-    LOG_INFO_MSG("mm::Vmm::free_page_directory: Attempting to free page directory 0x%lx\n", (unsigned long)dir_phys);
+    LOG_DEBUG_MSG("mm::Vmm::free_page_directory: Attempting to free page directory 0x%lx\n", (unsigned long)dir_phys);
     
     // 【安全检查】防止释放当前正在使用的页目录
     if (dir_phys == current_dir_phys) {
@@ -1068,7 +1068,7 @@ void mm::Vmm::free_page_directory(uintptr_t dir_phys) {
             
             // 打印栈区域的详细信息
             if (i >= 510) {
-                LOG_INFO_MSG("mm::Vmm::free_page_directory: PDE %u has %u pages\n", i, pages_in_table);
+                LOG_DEBUG_MSG("mm::Vmm::free_page_directory: PDE %u has %u pages\n", i, pages_in_table);
             }
             
             dir->entries[i] = 0;
@@ -1091,7 +1091,7 @@ void mm::Vmm::free_page_directory(uintptr_t dir_phys) {
     mm::Pmm::free_frame((paddr_t)dir_phys);
     
     mm::PmmInfo info_end = mm::Pmm::get_info();
-    LOG_INFO_MSG("mm::Vmm::free_page_directory: freed %u pages (PMM: %llu -> %llu, diff %d), %u tables, 1 directory\n", 
+    LOG_DEBUG_MSG("mm::Vmm::free_page_directory: freed %u pages (PMM: %llu -> %llu, diff %d), %u tables, 1 directory\n", 
                   freed_pages, (unsigned long long)info_start.used_frames, (unsigned long long)info_end.used_frames, 
                   (int)(info_start.used_frames - info_end.used_frames), freed_tables);
     

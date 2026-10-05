@@ -215,7 +215,10 @@ static void test_fs(void) {
     report("file service", ok, "ok");
 }
 
-int main() {
+int main(int argc, char **argv) {
+    // 命令行（或 rc）是带着程序名启动我们的
+    report("program arguments", argc >= 1 && strcmp(argv[0], "selftest") == 0 && argv[argc] == NULL, "ok");
+
     test_memory_and_fork();
     test_ipc();
     test_privilege();

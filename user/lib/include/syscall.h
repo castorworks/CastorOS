@@ -56,8 +56,12 @@ extern "C" syscall_arg_t syscall6(syscall_arg_t num, syscall_arg_t arg0, syscall
 
 void exit(int status) __attribute__((noreturn));
 int fork(void);
-/** 用内存中的 ELF 映像替换当前进程；成功不返回 */
-int exec(const void *image, size_t size);
+/**
+ * 用内存中的 ELF 映像替换当前进程；成功不返回。
+ * argv 是以 NULL 结尾的参数数组（argv[0] 习惯上是程序名），可以为 NULL；
+ * 新程序在 main(argc, argv) 里收到它。所有参数连同结尾的 NUL 合计不能超过约 4KB。
+ */
+int exec(const void *image, size_t size, const char *const argv[]);
 int waitpid(int pid, int *wstatus, int options);
 int wait(int *wstatus);
 int getpid(void);

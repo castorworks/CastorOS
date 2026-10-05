@@ -25,7 +25,8 @@ static int start_module(const char *name, const char *image, const char *image_e
         if (!privileged) {
             drop_privilege();
         }
-        exec(image, (size_t)(image_end - image));
+        const char *argv[] = { name, NULL };
+        exec(image, (size_t)(image_end - image), argv);
         printf("init: exec %s failed\n", name);
         exit(1);
     }

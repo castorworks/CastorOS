@@ -1,10 +1,10 @@
 # ramfs - 内存文件系统服务。启动映像（一个 ustar 归档）嵌在它的映像里：
-# user/bootfs 下的文件原样放入，BOOT_PROGRAMS 里的程序以去掉 .elf 的名字放入。
+# user/bootfs 下的文件原样放入，BOOT_PROGRAMS 里的程序去掉调试信息后以不带 .elf 的名字放入。
 TARGET = ramfs
 SOURCES = ramfs.cpp
 ASM_SOURCES = bootfs.S
 
-BOOT_PROGRAMS = hello selftest
+BOOT_PROGRAMS = ls cat rm echo hello selftest
 
 BOOTFS_DIR = build/$(ARCH)/bootfs
 BOOTFS_TAR = build/$(ARCH)/bootfs.tar
@@ -30,6 +30,6 @@ FORCE:
 $(BOOTFS_TAR): $(BOOT_ELFS) $(BOOT_FILES)
 	@rm -rf $(BOOTFS_DIR) && mkdir -p $(BOOTFS_DIR)
 	@cp $(BOOT_FILES) $(BOOTFS_DIR)/
-	@for p in $(BOOT_PROGRAMS); do cp ../$$p/build/$(ARCH)/$$p.elf $(BOOTFS_DIR)/$$p; done
+	@for p in $(BOOT_PROGRAMS); do $(CROSS)strip -o $(BOOTFS_DIR)/$$p ../$$p/build/$(ARCH)/$$p.elf; done
 	@cd $(BOOTFS_DIR) && COPYFILE_DISABLE=1 tar --format=ustar -cf ../bootfs.tar *
 	@echo "[OK] boot image: $(BOOTFS_TAR) ($(notdir $(BOOT_FILES)) $(BOOT_PROGRAMS))"

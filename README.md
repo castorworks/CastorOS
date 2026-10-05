@@ -43,18 +43,24 @@ make help
 
 ```
 > ls
-   39904  hello
+   20916  cat
+   16780  echo
+   16820  hello
+   20876  ls
       55  rc
-     215  readme.txt
-   54144  selftest
-> hello
-hello from pid 12 (parent 4)
+     232  readme.txt
+   20908  rm
+   21244  selftest
+> hello one two
+hello from pid 15 (parent 5)
+  argv[1] = one
+  argv[2] = two
 > write a.txt hi there
 > cat a.txt
 hi there
 ```
 
-键盘输入经 串口中断 → uart 驱动 → IPC 到达 sh；文件操作经 IPC 和共享缓冲区交给 ramfs；运行程序是从 ramfs 读出 ELF 后 `fork` + `exec`。
+键盘输入经 串口中断 → uart 驱动 → IPC 到达 sh；文件操作经 IPC 和共享缓冲区交给 ramfs；运行程序是从 ramfs 读出 ELF 后 `fork` + `exec`，这一行的其余部分作为参数传给 `main(argc, argv)`。
 
 ## 目录
 
@@ -71,7 +77,7 @@ user/uart/     用户态串口输入驱动
 user/ramfs/    内存文件系统服务（内嵌启动映像）
 user/sh/       命令行
 user/selftest/ 用户态自检程序（在启动映像里）
-user/hello/    最小的示例程序（在启动映像里）
+user/ls/ cat/ rm/ echo/ hello/   小程序（在启动映像里）
 user/bootfs/   启动映像里的静态文件
 docs/          文档
 ```

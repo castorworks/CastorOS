@@ -70,7 +70,7 @@ TEST_CASE(test_user_stack_full_allocation_and_release) {
     ASSERT_TRUE(ok);
 
     ASSERT_NE_U(0, task.user_stack_base);
-    ASSERT_EQ_UINT(USER_SPACE_END - 4, task.user_stack);
+    ASSERT_EQ_UINT(USER_ARGS_ADDR - 4, task.user_stack);
 
     page_directory_t *dir = (page_directory_t*)PHYS_TO_VIRT(task.page_dir_phys);
     uint32_t start_pd = TEST_PDE_IDX(USER_SPACE_END - USER_STACK_SIZE);

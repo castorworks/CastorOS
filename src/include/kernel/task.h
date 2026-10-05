@@ -41,6 +41,28 @@
  */
 #define INIT_PID 1
 
+/** @brief 用户栈区域的顶端（不含） */
+#if defined(ARCH_ARM64)
+#define USER_STACK_TOP  ARM64_USER_STACK_TOP
+#else
+#define USER_STACK_TOP  USER_SPACE_END
+#endif
+
+/**
+ * @brief 参数页：用户栈区域最顶上的一页不当栈用，exec 把程序参数放在这里
+ *
+ * 布局是 user_args_t：一个长度，后面跟着 length 字节、以 NUL 分隔的参数串。
+ * 地址固定，所以用户态的启动代码不依赖任何寄存器约定就能找到它
+ * （user/lib/src/crt0.cpp 里有同样的定义）。栈从这一页的下面开始向下长。
+ */
+#define USER_ARGS_ADDR  (USER_STACK_TOP - PAGE_SIZE)
+#define USER_ARGS_MAX   (PAGE_SIZE - sizeof(uint32_t))
+
+typedef struct {
+    uint32_t length;                ///< data 里有效的字节数；0 表示没有参数
+    char data[USER_ARGS_MAX];       ///< "arg0\0arg1\0...argN\0"
+} user_args_t;
+
 /** @brief 默认时间片（10ms） */
 #define DEFAULT_TIME_SLICE 10
 

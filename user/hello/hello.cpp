@@ -3,7 +3,10 @@
 #include <syscall.h>
 #include <stdio.h>
 
-int main() {
+int main(int argc, char **argv) {
     printf("hello from pid %d (parent %d)\n", getpid(), getppid());
+    for (int i = 1; i < argc; i++) {
+        printf("  argv[%d] = %s\n", i, argv[i]);
+    }
     return 0;
 }
