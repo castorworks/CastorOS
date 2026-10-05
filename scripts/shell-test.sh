@@ -1,5 +1,5 @@
 #!/bin/bash
-# 启动 QEMU，等命令行就绪后向串口输入一串命令，检查命令行的行为（后台任务、Ctrl-C、kill）。
+# 启动 QEMU，等命令行就绪后向串口输入一串命令，检查命令行的行为（后台任务、Ctrl-C、kill、程序读键盘输入）。
 # 由 make test 调用：
 #
 #   scripts/shell-test.sh <log> <results> <boot-timeout-seconds> <qemu command...>
@@ -109,6 +109,32 @@ listener_reclaimed() {
     send "kill $pid\\n"; expect '^echod: killed by signal 9$'
 }
 check "killed server's port is reusable" listener_reclaimed
+
+# ---- 前台程序读键盘输入：按行读、退格、行首 Ctrl-D 结束 ----
+program_input() {
+    send 'write notes\n'; expect '^\(type lines' || return 1
+    send 'first line\n'; expect '^first line$' || return 1
+    send 'secx\177ond\n\004'; expect '> $' || return 1
+    send 'cat notes\n'; expect '^first line$' && expect '^second$'
+}
+check "program reads keyboard input" program_input
+
+# ---- 程序启动前就敲进来的输入归它，它没读的部分回到命令行 ----
+typed_ahead() {
+    send 'write burst\nline one\nline two\n\004echo back at the prompt\n'
+    expect '^back at the prompt$' || return 1
+    send 'cat burst\n'; expect '^line one$' && expect '^line two$' || return 1
+    send 'sleep 1\necho after sleep\n'; expect '^after sleep$'
+}
+check "typed-ahead input" typed_ahead
+
+# ---- 后台任务读不到输入；读输入的前台程序可以用 Ctrl-C 终止 ----
+background_input() {
+    send 'write nothing &\n'; expect '\[[0-9]+\] done  write$' || return 1
+    send 'write nothing\n'; expect '^\(type lines' || return 1
+    send 'abc\003'; expect '^write: killed by signal 2$'
+}
+check "input goes to the foreground only" background_input
 
 [ $failed -eq 0 ] && echo "shelltest: all passed" >> "$RESULTS"
 exit 0

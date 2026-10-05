@@ -81,7 +81,8 @@ make info
 process; its ELF is embedded into the kernel image by `src/kernel/init_image.S` (`.incbin`),
 so there is no disk image. init starts the modules and is the name server (`names.h` in
 `user/lib`). Resident modules are embedded into init the same way (`user/init/modules.S`):
-`user/uart` (privileged serial input driver), `user/blk` (privileged virtio-blk driver,
+`user/uart` (privileged serial input driver; protocol and the `console_read`/`read_line`
+client in `console.h`), `user/blk` (privileged virtio-blk driver,
 protocol and client in `blk.h`), `user/net` (privileged virtio-net driver plus a small
 ARP/IPv4/ICMP/UDP/TCP stack with a DHCP client; protocol and client in `net.h`), `user/ramfs` (in-memory file
 service), `user/diskfs`
@@ -89,7 +90,7 @@ service), `user/diskfs`
 `user/sh` (command line). Both file services share the protocol in `fs.h` and the server
 skeleton in `fs_server.h`; virtio drivers share `virtio.h`; servers that take a shared buffer
 from each client use `clients.h`. Other programs (`user/selftest`, `user/ls`, `user/cat`,
-`user/cp`, `user/rm`, `user/echo`, `user/disk`, `user/ping`, `user/ifconfig`, `user/dns`,
+`user/cp`, `user/rm`, `user/echo`, `user/write`, `user/disk`, `user/ping`, `user/ifconfig`, `user/dns`,
 `user/http`, `user/echod`, `user/sleep`, `user/hello`) go into the boot image: a ustar archive of `user/bootfs/*` plus the programs
 in `BOOT_PROGRAMS` (`user/ramfs/Makefile`), embedded in ramfs and unpacked at startup. sh
 runs them with fork + exec, and runs the `rc` file (which starts `selftest`) at boot.
@@ -143,7 +144,7 @@ CastorOS/
 │   ├── ramfs/              # In-memory file service (unprivileged module), holds the boot image
 │   ├── sh/                 # Command line (unprivileged module): runs programs, background jobs, Ctrl-C
 │   ├── selftest/           # User-space self-checks, in the boot image, run from rc at boot
-│   ├── ls/ cat/ cp/ rm/ echo/ disk/ ping/ ifconfig/ dns/ http/ echod/ hello/   # Programs in the boot image
+│   ├── ls/ cat/ cp/ rm/ echo/ write/ sleep/ disk/ ping/ ifconfig/ dns/ http/ echod/ hello/   # Programs in the boot image
 │   ├── bootfs/             # Static files for the boot image (rc, readme.txt)
 │   ├── program.mk          # Shared build rules for user programs
 │   └── linker/             # User linker scripts
@@ -208,7 +209,7 @@ make test TEST_TIMEOUT=300     # 机器很忙时放宽上限（默认 180 秒）
 
 内核不会自己关机：`make test` 通过 `scripts/shell-test.sh` 启动 QEMU，等日志里出现 `sh: ready`
 （以 `TEST_TIMEOUT` 为上限），然后向串口输入一串命令检查命令行的行为（运行程序、后台任务、
-Ctrl-C、`kill`、被终止的服务的端口能否重用），每一步等到预期的输出出现为止（每步最多
+Ctrl-C、`kill`、被终止的服务的端口能否重用、程序读键盘输入），每一步等到预期的输出出现为止（每步最多
 `STEP_TIMEOUT` 秒，默认 30），做完就结束 QEMU。完整日志写到 `build/<arch>-ktest/test.log`，
 命令行检查的结果写到 `build/<arch>-ktest/shell-test.log`（每项一行 `shelltest: <名字>: ok|FAILED`）。
 最后汇总各模块的 `Total/Passed/Failed tests` 计数；有失败用例、用户态没有起来、用户态自检
@@ -226,8 +227,9 @@ Ctrl-C、`kill`、被终止的服务的端口能否重用），每一步等到�
 #          -netdev user,id=net0,guestfwd=tcp:10.0.2.100:7-cmd:cat -device virtio-net-pci,netdev=net0
 #   arm64: 同上，设备名换成 virtio-blk-device / virtio-net-device
 # 控制台是串口；向 QEMU 的标准输入写入的内容经 uart 驱动送到 sh
-# （help、jobs、kill <pid>、write <file> <text> 是内置命令；其余如 ls、cat <file> 是程序；
-#   行尾加 & 后台运行，Ctrl-C（0x03）终止前台程序）
+# （help、jobs、kill <pid> 是内置命令；其余如 ls、cat <file>、write <file> [text] 是程序；
+#   行尾加 & 后台运行，Ctrl-C（0x03）终止前台程序；前台程序运行期间输入归它，
+#   行首的 Ctrl-D（0x04）表示输入结束）
 timeout 20 qemu-system-i386 -kernel build/i686/castor.bin -serial stdio -display none
 timeout 20 qemu-system-x86_64 -kernel build/x86_64/castor32.elf -serial stdio -display none
 timeout 20 qemu-system-aarch64 -M virt -cpu cortex-a72 -kernel build/arm64/castor.bin -serial stdio -display none

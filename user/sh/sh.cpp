@@ -5,6 +5,9 @@
 // 行尾加 & 让程序在后台运行；前台程序运行期间按 Ctrl-C 终止它。
 // 启动时先执行文件 "rc" 里的每一行。
 //
+// sh 是终端的主人（见 <console.h>）：程序在前台运行期间，键盘输入归那个程序，
+// sh 只收到 Ctrl-C。
+//
 // sh 从不长时间阻塞在别处：等前台程序时它带着超时去读串口，这样既能看到
 // Ctrl-C，又能及时发现程序已经退出。
 
@@ -13,29 +16,7 @@
 #include <string.h>
 #include <names.h>
 #include <fs.h>
-#include <uart.h>
-
-// ============================================================================
-// 内置命令
-// ============================================================================
-
-// write <file> <text>：把这一行剩下的文字写进文件（命令行没有输出重定向，所以它留在这里）
-static void cmd_write(char *args) {
-    char *text = strchr(args, ' ');
-    if (!text) {
-        printf("usage: write <file> <text>\n");
-        return;
-    }
-    *text++ = '\0';
-    int fd = fs_open(args, FS_O_CREATE | FS_O_TRUNC);
-    size_t len = strlen(text);
-    if (fd < 0 || fs_write(fd, 0, text, len) != (long)len || fs_write(fd, (uint32_t)len, "\n", 1) != 1) {
-        printf("write: %s: failed\n", args);
-    }
-    if (fd >= 0) {
-        fs_close(fd);
-    }
-}
+#include <console.h>
 
 // ============================================================================
 // 运行程序
@@ -66,7 +47,7 @@ static void *load_file(const char *name, size_t *size) {
 #define MAX_ARGS 16
 #define MAX_JOBS 8
 
-#define CTRL_C      0x03
+#define CTRL_C      CONSOLE_CTRL_C
 #define SIGINT      2
 #define SIGKILL     9
 
@@ -85,7 +66,7 @@ static bool fetch_input(uint32_t timeout_ms) {
     struct ipc_msg m = {};
     m.label = UART_READ;
     m.data[0] = timeout_ms;
-    if (ipc_call(uart, &m) != 0) {
+    if (ipc_call(uart, &m) != 0 || (long)m.data[0] < 0) {
         return false;
     }
     const char *in = (const char *)&m.data[1];
@@ -105,6 +86,30 @@ static bool take_ctrl_c(void) {
         }
     }
     return false;
+}
+
+/** 告诉驱动谁在前台（0 = 没有）。设置之前，把已经读来还没处理的输入退回去留给它 */
+static void set_foreground(int pid) {
+    if (uart <= 0) {
+        return;
+    }
+    struct ipc_msg m;
+    for (size_t done = 0; pid != 0 && done < pending_len; ) {
+        size_t n = pending_len - done < UART_READ_MAX ? pending_len - done : UART_READ_MAX;
+        m = {};
+        m.label = UART_UNREAD;
+        m.data[0] = n;
+        memcpy(&m.data[1], pending + done, n);
+        ipc_call(uart, &m);
+        done += n;
+    }
+    if (pid != 0) {
+        pending_len = 0;
+    }
+    m = {};
+    m.label = UART_SET_FOREGROUND;
+    m.data[0] = (uint64_t)pid;
+    ipc_call(uart, &m);
 }
 
 // ============================================================================
@@ -209,7 +214,8 @@ static void run_program(char **argv, bool background) {
         return;
     }
 
-    // 前台：等它结束。期间短暂地去读串口，看有没有 Ctrl-C（别的输入留到它结束之后处理）
+    // 前台：等它结束。键盘输入这段时间归它；我们短暂地去读串口，只会读到 Ctrl-C
+    set_foreground(pid);
     int status = 0;
     bool interrupted = false;
     while (waitpid(pid, &status, WNOHANG) != pid) {
@@ -226,6 +232,7 @@ static void run_program(char **argv, bool background) {
             interrupted = true;
         }
     }
+    set_foreground(0);
     report_exit(name, status);
 }
 
@@ -237,14 +244,10 @@ static void run_command(char *line) {
         return;
     }
 
-    if (strncmp(line, "write ", 6) == 0) {
-        cmd_write(line + 6);
-        return;
-    }
     if (strcmp(line, "help") == 0) {
-        printf("builtins: help, jobs, kill <pid>, write <file> <text>\n");
+        printf("builtins: help, jobs, kill <pid>\n");
         printf("anything else runs a program from the file service with the rest of the\n");
-        printf("line as its arguments, e.g.: ls, cat <file>, ping <ip>, http <host>, hello\n");
+        printf("line as its arguments, e.g.: ls, cat <file>, write <file>, ping <ip>, hello\n");
         printf("end a line with & to run it in the background; Ctrl-C stops the foreground program\n");
         return;
     }
@@ -315,13 +318,14 @@ static void run_rc(void) {
 }
 
 int main() {
-    run_rc();       // 这时 uart 还是 0：rc 里的程序不能被 Ctrl-C 打断
-
     uart = name_wait("uart");
-    if (uart <= 0) {
-        printf("sh: cannot find the uart driver\n");
+    struct ipc_msg attach = {};
+    attach.label = UART_ATTACH;
+    if (uart <= 0 || ipc_call(uart, &attach) != 0 || attach.data[0] != 0) {
+        printf("sh: cannot use the uart driver\n");
         return 1;
     }
+    run_rc();
     printf("sh: ready, reading commands from uart (pid %d); try help\n> ", uart);
 
     static char line[128];
@@ -355,7 +359,7 @@ int main() {
                 len--;
                 console_write("\b \b", 3);
             }
-        } else if (len < sizeof(line) - 1) {
+        } else if ((unsigned char)c >= 0x20 && len < sizeof(line) - 1) {
             line[len++] = c;
             console_write(&c, 1);
         }
