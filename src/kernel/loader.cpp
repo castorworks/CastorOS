@@ -28,22 +28,15 @@ bool load_init(void) {
         return false;
     }
 
-#if defined(ARCH_ARM64)
-    /* arm64 的地址空间句柄就是 TTBR0 的物理地址 */
-    page_directory_t *page_dir = (page_directory_t *)page_dir_phys;
-#else
-    page_directory_t *page_dir = (page_directory_t *)PHYS_TO_VIRT(page_dir_phys);
-#endif
-
     uintptr_t entry_point;
     uintptr_t program_end;
-    if (!kernel::Elf::load(init_image_start, size, page_dir, &entry_point, &program_end)) {
+    if (!kernel::Elf::load(init_image_start, size, page_dir_phys, &entry_point, &program_end)) {
         LOG_ERROR_MSG("init: failed to load ELF\n");
         mm::Vmm::free_page_directory(page_dir_phys);
         return false;
     }
 
-    uint32_t pid = kernel::Scheduler::create_user_process("init", entry_point, page_dir, program_end);
+    uint32_t pid = kernel::Scheduler::create_user_process("init", entry_point, page_dir_phys, program_end);
     if (pid == 0) {
         LOG_ERROR_MSG("init: failed to create process\n");
         mm::Vmm::free_page_directory(page_dir_phys);

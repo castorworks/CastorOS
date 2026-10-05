@@ -242,7 +242,6 @@ TEST_SUITE(klog_color_tests) {
 
 void run_klog_tests(void) {
     // 初始化测试框架
-    unittest_init();
     
     // 运行所有测试套件
     RUN_SUITE(klog_level_tests);
@@ -255,6 +254,5 @@ void run_klog_tests(void) {
     RUN_SUITE(klog_color_tests);
     
     // 打印测试摘要
-    unittest_print_summary();
 }
 

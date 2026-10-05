@@ -518,7 +518,6 @@ TEST_SUITE(snprintf_tests) {
 
 void run_string_tests(void) {
     // 初始化测试框架
-    unittest_init();
     
     // 运行所有测试套件
     RUN_SUITE(string_length_tests);
@@ -538,6 +537,5 @@ void run_string_tests(void) {
     RUN_SUITE(snprintf_tests);
     
     // 打印测试摘要
-    unittest_print_summary();
 }
 

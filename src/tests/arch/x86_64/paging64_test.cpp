@@ -774,7 +774,6 @@ TEST_SUITE(paging64_destroy_space_tests) {
 
 void run_paging64_tests(void) {
 #ifdef ARCH_X86_64
-    unittest_init();
     
     /* Property 4: VMM Kernel Mapping Range Correctness (x86_64) */
     /* **Validates: Requirements 5.3** */
@@ -800,7 +799,6 @@ void run_paging64_tests(void) {
     /* **Validates: Requirements 5.5** */
     RUN_SUITE(paging64_destroy_space_tests);
     
-    unittest_print_summary();
 #else
     kprintf("Paging64 tests skipped (not x86_64 architecture)\n");
 #endif

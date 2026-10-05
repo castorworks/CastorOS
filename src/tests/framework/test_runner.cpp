@@ -264,10 +264,8 @@ static const test_entry_t test_suite[] = {
     TEST_ENTRY("Virtual Memory Manager Tests", run_vmm_tests),
 #endif
     TEST_ENTRY("Heap Allocator Tests", run_heap_tests),
-#ifdef ARCH_I686
-    // 同上：依赖 i686 的上下文/地址布局
     TEST_ENTRY("Task Manager Tests", run_task_tests),
-#endif
+    TEST_ENTRY("Synchronization Primitive Tests", run_sync_tests),
     TEST_ENTRY("Memory Management Type Tests", run_mm_types_tests),
     TEST_ENTRY("Page Table Abstraction Tests", run_pgtable_tests),
     TEST_ENTRY("COW Flag Correctness Tests", run_cow_flag_tests),
@@ -337,11 +335,16 @@ void run_all_tests(void) {
         kprintf("[Test Module %u/%u] %s\n", (unsigned int)(i + 1), 
                 (unsigned int)test_count, test_suite[i].name);
         
+        // 计数由这里统一负责：每个模块开始前清零、结束后打印汇总。模块自己不要调
+        // unittest_init / unittest_print_summary——以前有的模块不调，它的结果（包括失败）
+        // 就被下一个模块的清零悄悄丢掉了
+        unittest_init();
         if (test_suite[i].test_func != NULL) {
             test_suite[i].test_func();
         } else {
             kprintf("Warning: Test function is NULL\n");
         }
+        unittest_print_summary();
     }
     
     kprintf("\n");

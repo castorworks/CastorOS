@@ -506,11 +506,9 @@ TEST_SUITE(usermode_property_tests) {
 
 void run_usermode_tests(void) {
     // Initialize test framework
-    unittest_init();
     
     // Run all test suites
     RUN_SUITE(usermode_property_tests);
     
     // Print test summary
-    unittest_print_summary();
 }

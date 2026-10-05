@@ -338,7 +338,6 @@ TEST_SUITE(hal_pgtable_tests) {
 
 void run_pgtable_tests(void) {
     // 初始化测试框架
-    unittest_init();
     
     // Property 7: PTE Construction Round-Trip (mm/pgtable.h macros)
     RUN_SUITE(pgtable_pte_tests);
@@ -350,5 +349,4 @@ void run_pgtable_tests(void) {
     RUN_SUITE(hal_pgtable_tests);
     
     // 打印测试摘要
-    unittest_print_summary();
 }

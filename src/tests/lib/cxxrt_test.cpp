@@ -96,7 +96,5 @@ TEST_SUITE(cxxrt_tests) {
 }
 
 void run_cxxrt_tests(void) {
-    unittest_init();
     RUN_SUITE(cxxrt_tests);
-    unittest_print_summary();
 }

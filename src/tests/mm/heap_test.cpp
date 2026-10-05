@@ -686,7 +686,6 @@ TEST_SUITE(heap_comprehensive_tests) {
  */
 void run_heap_tests(void) {
     // 初始化测试框架
-    unittest_init();
 
     // ========================================================================
     // 功能测试套件
@@ -714,7 +713,6 @@ void run_heap_tests(void) {
     RUN_SUITE(heap_comprehensive_tests);
 
     // 打印测试摘要
-    unittest_print_summary();
 }
 
 // ============================================================================

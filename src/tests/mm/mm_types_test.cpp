@@ -294,7 +294,6 @@ TEST_SUITE(mm_types_pfn_tests) {
 
 void run_mm_types_tests(void) {
     // 初始化测试框架
-    unittest_init();
     
     // Property 1: Physical Address Type Size
     RUN_SUITE(mm_types_paddr_tests);
@@ -306,5 +305,4 @@ void run_mm_types_tests(void) {
     RUN_SUITE(mm_types_pfn_tests);
     
     // 打印测试摘要
-    unittest_print_summary();
 }

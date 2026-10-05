@@ -269,11 +269,9 @@ TEST_SUITE(arch_types_property_tests) {
 
 void run_arch_types_tests(void) {
     // Initialize test framework
-    unittest_init();
     
     // Run all test suites
     RUN_SUITE(arch_types_property_tests);
     
     // Print test summary
-    unittest_print_summary();
 }

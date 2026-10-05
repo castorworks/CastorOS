@@ -267,7 +267,6 @@ PBT_PROPERTY(success_not_error) {
  * @brief Run all system call error consistency property tests
  */
 void run_syscall_error_tests(void) {
-    unittest_init();
     unittest_begin_suite("System Call Error Consistency (Property 13)");
     
     kprintf("\n  Testing: Property 13 - System Call Error Consistency\n");

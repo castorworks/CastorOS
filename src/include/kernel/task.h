@@ -244,7 +244,6 @@ typedef struct task {
 
     /* 内存管理 */
     uintptr_t page_dir_phys;         ///< 页目录物理地址
-    page_directory_t *page_dir;      ///< 页目录虚拟地址
 
     /* 堆管理 */
     uintptr_t heap_start;            ///< 堆起始地址（初始 brk）
@@ -352,15 +351,15 @@ public:
      * 
      * @param name 进程名称
      * @param entry_point 用户程序入口点
-     * @param page_dir 页目录
+     * @param space 地址空间（顶层页表的物理地址）
      * @param program_end 程序加载的最高地址（用于设置堆起始地址）
      * @return 成功返回 PID，失败返回 0
      *
-     * 所有权：成功后 page_dir 归新进程所有，随进程回收一起释放；
-     * 失败（返回 0）时 page_dir 仍归调用者，由调用者销毁。
+     * 所有权：成功后 space 归新进程所有，随进程回收一起释放；
+     * 失败（返回 0）时 space 仍归调用者，由调用者销毁。
      */
     static uint32_t create_user_process(const char *name, uintptr_t entry_point,
-                                       page_directory_t *page_dir, uintptr_t program_end);
+                                       uintptr_t space, uintptr_t program_end);
 
     /**
      * @brief 把刚创建、还没运行过的任务 pid 改成 init（PID 1）

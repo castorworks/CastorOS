@@ -149,13 +149,13 @@ public:
      * 加载 ELF 文件到指定页目录（使用 uintptr_t 支持 32/64 位）
      * @param elf_data ELF 数据指针
      * @param size ELF 文件大小
-     * @param page_dir 目标页目录
+     * @param space 目标地址空间（顶层页表的物理地址）
      * @param entry_point 输出参数：程序入口点地址
      * @param program_end 输出参数：程序加载的最高地址（可选，可为 NULL）
      * @return 成功返回 true
      */
     static bool load(const void *elf_data, uint32_t size, 
-                  page_directory_t *page_dir, uintptr_t *entry_point,
+                  uintptr_t space, uintptr_t *entry_point,
                   uintptr_t *program_end);
 
     /**

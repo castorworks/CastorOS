@@ -166,6 +166,11 @@ CastorOS/
   spaces are written once in `src/mm/pagetable.cpp`. Each architecture only describes its entry
   format through the functions in `src/include/hal/pt.h` (implemented at the end of
   `src/arch/<arch>/mm/*.cpp`). Do not add a per-architecture table walk; extend `pt.h` instead.
+- Register names and the layout of the saved syscall frame appear only in
+  `src/arch/<arch>/task/user_context.cpp` (`hal::UserContext`: initial context of a task, the
+  child's context on fork, redirecting the syscall return on exec). `task.cpp`, `process.cpp` and
+  `loader.cpp` have no `#if ARCH_*`. An address space is always passed around as the physical
+  address of its top-level table (`uintptr_t`), never as a pointer to it.
 - `src/mm/vmm.cpp` has no `#if ARCH_*`: address-space creation, cloning (COW), teardown, extending
   the kernel's direct mapping and the i686 kernel-mapping sync are `hal::Mmu` functions implemented
   per architecture. New architecture-dependent memory code goes behind a `hal::Mmu` function, not
@@ -203,7 +208,10 @@ CastorOS/
   bind to the class member first).
 - Do not declare functions with block-scope `extern` inside member functions; include the header.
 - HAL: `hal::Category::action()` (e.g., `hal::Cpu::init()`, `hal::Mmu::map()`), selected per architecture at compile time
-- Test cases: `test_<name>` with `TEST_CASE()` macro
+- Test cases: `test_<name>` with `TEST_CASE()` macro. A test module only runs its cases; the runner
+  (`run_all_tests`) resets the counters before each module and prints its summary afterwards. Do
+  not call `unittest_init()` / `unittest_print_summary()` in a module, and register every new
+  module in `test_runner.cpp` — a module that is not listed there never runs.
 - Assembly files: `.asm` (NASM) or `.S` (GNU as for ARM64)
 
 #### Memory Layout (i686)

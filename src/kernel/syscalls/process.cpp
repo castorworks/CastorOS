@@ -7,11 +7,9 @@
 #include <kernel/syscalls/process.h>
 #include <kernel/task.h>
 #include <kernel/elf.h>
-#if defined(ARCH_I686) || defined(ARCH_X86_64)
-#include <kernel/gdt.h>
-#endif
 #include <kernel/interrupt.h>
 #include <hal/hal.h>
+#include <hal/user_context.h>
 #include <hal/pgtable.h>
 #include <mm/vmm.h>
 #include <mm/pmm.h>
@@ -86,105 +84,6 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
         return (uint32_t)-12;  // ENOMEM
     }
     
-    // 直接从传递的 frame 参数读取用户态寄存器
-    // frame 指针由 syscall_handler 传递，指向它保存寄存器的位置
-    // 注意：栈帧布局是架构相关的
-#if defined(ARCH_ARM64)
-    // ARM64 栈帧布局（vectors.S kernel_entry）：
-    //   frame[0-30]  = X0-X30 (general purpose registers)
-    //   frame[31]    = SP_EL0 (user stack pointer)
-    //   frame[32]    = ELR_EL1 (user PC / return address)
-    //   frame[33]    = SPSR_EL1 (user PSTATE)
-    // Note: X8 contains syscall number, X0-X5 contain arguments
-    uintptr_t user_sp     = frame[31];  // SP_EL0 (user stack pointer)
-    uintptr_t user_pc     = frame[32];  // ELR_EL1 (user PC)
-    uintptr_t user_pstate = frame[33];  // SPSR_EL1 (user PSTATE)
-    
-    LOG_DEBUG_MSG("syscall::Process::fork: Captured ARM64 user context:\n");
-    LOG_DEBUG_MSG("  PC=0x%lx SP=0x%lx PSTATE=0x%lx\n", 
-                  (unsigned long)user_pc, (unsigned long)user_sp, (unsigned long)user_pstate);
-    LOG_DEBUG_MSG("  X0=0x%lx X1=0x%lx X8=0x%lx X30=0x%lx\n",
-                  (unsigned long)frame[0], (unsigned long)frame[1], 
-                  (unsigned long)frame[8], (unsigned long)frame[30]);
-#elif defined(ARCH_X86_64)
-    // x86_64 栈帧布局（syscall64_asm.asm）：
-    //   frame[0]  = r15
-    //   frame[1]  = r14
-    //   ...
-    //   frame[14] = rax (syscall number)
-    //   frame[15] = user_rsp
-    uintptr_t user_ds     = 0x23;       // 用户数据段（x86_64 不使用 DS）
-    uintptr_t user_eax    = frame[14];  // RAX (系统调用号)
-    uintptr_t user_ebx    = frame[13];  // RBX
-    uintptr_t user_ecx    = frame[12];  // RCX (user RIP)
-    uintptr_t user_edx    = frame[11];  // RDX
-    uintptr_t user_esi    = frame[10];  // RSI
-    uintptr_t user_edi    = frame[9];   // RDI
-    uintptr_t user_ebp    = frame[8];   // RBP
-    uintptr_t user_eip    = frame[12];  // RCX = user RIP (SYSCALL saves RIP to RCX)
-    uintptr_t user_cs     = 0x1B;       // 用户代码段
-    uintptr_t user_eflags = frame[4];   // R11 = user RFLAGS
-    uintptr_t user_esp    = frame[15];  // user RSP
-    uintptr_t user_ss     = 0x23;       // 用户栈段
-    
-    (void)user_eax;  // 系统调用号，不需要复制
-    
-    LOG_DEBUG_MSG("syscall::Process::fork: Captured user context:\n");
-    LOG_DEBUG_MSG("  EIP=0x%lx ESP=0x%lx EBP=0x%lx\n", (unsigned long)user_eip, (unsigned long)user_esp, (unsigned long)user_ebp);
-    LOG_DEBUG_MSG("  CS=0x%lx SS=0x%lx DS=0x%lx EFLAGS=0x%lx\n", 
-                  (unsigned long)user_cs, (unsigned long)user_ss, (unsigned long)user_ds, (unsigned long)user_eflags);
-#else
-    // i686 栈帧布局（syscall_asm.asm）：
-    uintptr_t user_ds     = frame[0];   // DS
-    uintptr_t user_eax    = frame[1];   // EAX (系统调用号)
-    uintptr_t user_ebx    = frame[2];   // EBX
-    uintptr_t user_ecx    = frame[3];   // ECX
-    uintptr_t user_edx    = frame[4];   // EDX
-    uintptr_t user_esi    = frame[5];   // ESI
-    uintptr_t user_edi    = frame[6];   // EDI
-    uintptr_t user_ebp    = frame[7];   // EBP
-    uintptr_t user_eip    = frame[8];   // EIP (IRET)
-    uintptr_t user_cs     = frame[9];   // CS (IRET)
-    uintptr_t user_eflags = frame[10];  // EFLAGS (IRET)
-    uintptr_t user_esp    = frame[11];  // ESP (IRET)
-    uintptr_t user_ss     = frame[12];  // SS (IRET)
-    
-    (void)user_eax;  // 系统调用号，不需要复制
-    
-    LOG_DEBUG_MSG("syscall::Process::fork: Captured user context:\n");
-    LOG_DEBUG_MSG("  EIP=0x%lx ESP=0x%lx EBP=0x%lx\n", (unsigned long)user_eip, (unsigned long)user_esp, (unsigned long)user_ebp);
-    LOG_DEBUG_MSG("  CS=0x%lx SS=0x%lx DS=0x%lx EFLAGS=0x%lx\n", 
-                  (unsigned long)user_cs, (unsigned long)user_ss, (unsigned long)user_ds, (unsigned long)user_eflags);
-#endif
-    
-#if !defined(ARCH_ARM64)
-    // 【安全检查】验证父进程顶层页表的完整性（仅检查前几项）：存在的项必须指向
-    // 一个由 PMM 管理的页帧。用架构自己的页表项格式和完整宽度的物理地址来判断
-    // Note: This check is x86-specific (page directory structure)
-    page_directory_t *parent_dir = parent->page_dir;
-    const paddr_t phys_end = (paddr_t)mm::Pmm::get_info().total_frames * PAGE_SIZE;
-    for (uint32_t i = 0; i < 10; i++) {
-        if (pgtable_is_present(parent_dir->entries[i])) {
-            paddr_t phys = pgtable_get_phys(parent_dir->entries[i]);
-            if (phys == 0 || phys >= phys_end) {
-                LOG_ERROR_MSG("syscall::Process::fork: Parent PDE[%u] corrupted: 0x%llx (phys=0x%llx)\n",
-                             i, (unsigned long long)parent_dir->entries[i], (unsigned long long)phys);
-                LOG_ERROR_MSG("  Parent: PID=%u, name=%s, page_dir=%p, page_dir_phys=0x%llx\n",
-                             parent->pid, parent->name, parent_dir,
-                             (unsigned long long)parent->page_dir_phys);
-                // 打印更多 PDE 以帮助诊断
-                LOG_ERROR_MSG("  PDE[0]=0x%llx, PDE[1]=0x%llx, PDE[2]=0x%llx, PDE[3]=0x%llx\n",
-                             (unsigned long long)parent_dir->entries[0],
-                             (unsigned long long)parent_dir->entries[1],
-                             (unsigned long long)parent_dir->entries[2],
-                             (unsigned long long)parent_dir->entries[3]);
-                kernel::Interrupts::restore(prev_state);
-                return (uint32_t)-1;
-            }
-        }
-    }
-#endif
-    
     // 分配子进程 PCB
     task_t *child = kernel::Scheduler::alloc();
     if (!child) {
@@ -213,7 +112,6 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
         kernel::Interrupts::restore(prev_state);
         return (uint32_t)-12;
     }
-    child->page_dir = (page_directory_t*)PHYS_TO_VIRT(child->page_dir_phys);
     
     // 分配内核栈
     child->kernel_stack_base = (uintptr_t)kmalloc(KERNEL_STACK_SIZE);
@@ -235,83 +133,8 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
     child->heap_end = parent->heap_end;
     child->heap_max = parent->heap_max;
     
-    // 初始化子进程上下文
-    // 按照 Unix fork 语义：子进程从 fork() 调用返回处继续执行
-    memset(&child->context, 0, sizeof(cpu_context_t));
-    
-#if defined(ARCH_ARM64)
-    // ARM64: 复制父进程的用户态寄存器
-    // 子进程 fork 返回 0（X0 = 0）
-    child->context.x[0] = 0;  // 子进程 fork 返回 0
-    // 复制其他寄存器（X1-X30）从保存的帧中
-    for (int i = 1; i < 31; i++) {
-        child->context.x[i] = frame[i];
-    }
-    child->context.sp = user_sp;      // 使用父进程当前的用户栈指针
-    child->context.pc = user_pc;      // 从 fork() 调用返回处继续
-    child->context.pstate = ARM64_PSTATE_EL0t;  // 用户模式，中断使能
-    child->context.ttbr0 = child->page_dir_phys;
-    child->context.kernel_sp = child->kernel_stack;  // 子进程自己的内核栈
-    
-    LOG_DEBUG_MSG("syscall::Process::fork: Child ARM64 context:\n");
-    LOG_DEBUG_MSG("  PC=0x%llx SP=0x%llx PSTATE=0x%llx TTBR0=0x%llx\n",
-                  (unsigned long long)child->context.pc, 
-                  (unsigned long long)child->context.sp,
-                  (unsigned long long)child->context.pstate,
-                  (unsigned long long)child->context.ttbr0);
-#else
-    // x86: 复制父进程的所有用户态寄存器
-    child->context.eax = 0;  // 子进程 fork 返回 0（唯一的区别）
-    child->context.ebx = user_ebx;
-    child->context.ecx = user_ecx;
-    child->context.edx = user_edx;
-    child->context.esi = user_esi;
-    child->context.edi = user_edi;
-    child->context.ebp = user_ebp;
-    child->context.esp = user_esp;  // 使用父进程当前的用户栈指针
-    child->context.eip = user_eip;  // 从 fork() 调用返回处继续
-#if defined(ARCH_X86_64)
-    // x86_64 还有 R8-R15。其中 R12-R15 是被调用者保存的寄存器，子进程从
-    // fork() 返回后调用者保存在里面的值必须和父进程一致。
-    // 帧布局（syscall64_asm.asm）：frame[0..7] = r15, r14, r13, r12, r11, r10, r9, r8
-    child->context.r15 = frame[0];
-    child->context.r14 = frame[1];
-    child->context.r13 = frame[2];
-    child->context.r12 = frame[3];
-    child->context.r11 = frame[4];
-    child->context.r10 = frame[5];
-    child->context.r9  = frame[6];
-    child->context.r8  = frame[7];
-#endif
-
-    // 清理 EFLAGS 中的敏感位，防止权限提升
-    // 保留：CF, PF, AF, ZF, SF, OF, DF, IF
-    // 清除：IOPL, NT, RF, VM, AC, VIF, VIP, ID
-    child->context.eflags = (user_eflags & 0x00000CD5) | 0x00000202;  // IF=1
-    
-    child->context.cr3 = child->page_dir_phys;
-    
-    // 复制段寄存器（强制使用 Ring 3 段，防止权限提升）
-    // 不信任用户提供的段选择子，强制设置为用户态段
-#if defined(ARCH_X86_64)
-    // x86_64 GDT layout:
-    //   0x18 (index 3) = User Data → 0x1B with RPL=3
-    //   0x20 (index 4) = User Code → 0x23 with RPL=3
-    child->context.cs = 0x23;  // 用户代码段（Ring 3）
-    child->context.ss = 0x1B;  // 用户数据段（Ring 3）
-#else
-    // i686 GDT layout:
-    //   0x18 (index 3) = User Code → 0x1B with RPL=3
-    //   0x20 (index 4) = User Data → 0x23 with RPL=3
-    child->context.cs = 0x1B;  // 用户代码段（Ring 3）
-    child->context.ss = 0x23;  // 用户栈段（Ring 3）
-    // i686: 需要设置所有段寄存器
-    child->context.ds = 0x23;  // 用户数据段（Ring 3）
-    child->context.es = 0x23;
-    child->context.fs = 0x23;
-    child->context.gs = 0x23;
-#endif
-#endif /* ARCH_ARM64 */
+    // 子进程的寄存器和父进程进入这次系统调用时一样，只是 fork() 在它那里返回 0
+    hal::UserContext::fork(&child->context, frame, child->page_dir_phys, child->kernel_stack);
     
     // 设置父子关系
     child->parent = parent;
@@ -410,21 +233,13 @@ uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size
         kfree(kargs);
         return (uint32_t)-1;
     }
-#if defined(ARCH_ARM64)
-    // ARM64: new_dir_phys is the address space handle (TTBR0 physical address)
-    // We don't use page_directory_t* directly on ARM64
-    page_directory_t *new_dir = (page_directory_t*)(uintptr_t)new_dir_phys;
-#else
-    page_directory_t *new_dir = (page_directory_t*)PHYS_TO_VIRT(new_dir_phys);
-#endif
     
     // 保存旧的页目录信息，用于回滚或释放
-    page_directory_t *old_dir = current->page_dir;
     uintptr_t old_dir_phys = current->page_dir_phys;
     
     // 加载 ELF 到新页目录
     uintptr_t program_end;
-    if (!kernel::Elf::load(elf_data, file_size, new_dir, &entry_point, &program_end)) {
+    if (!kernel::Elf::load(elf_data, file_size, new_dir_phys, &entry_point, &program_end)) {
         LOG_ERROR_MSG("syscall::Process::exec: failed to load ELF\n");
         mm::Vmm::free_page_directory(new_dir_phys);
         kfree(elf_data);
@@ -436,7 +251,6 @@ uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size
     kfree(elf_data);
     
     // 临时更新进程的页目录指针，以便 kernel::Scheduler::setup_user_stack 操作新目录
-    current->page_dir = new_dir;
     current->page_dir_phys = new_dir_phys;
     
     // 【内存安全检查】在分配用户栈前检查是否有足够内存
@@ -447,7 +261,6 @@ uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size
         LOG_ERROR_MSG("syscall::Process::exec: Insufficient memory for user stack (free=%llu, required=%u)\n",
                      (unsigned long long)execve_mem_info.free_frames, stack_pages_needed);
         // 回滚
-        current->page_dir = old_dir;
         current->page_dir_phys = old_dir_phys;
         mm::Vmm::free_page_directory(new_dir_phys);
         kfree(kargs);
@@ -458,7 +271,6 @@ uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size
     if (!kernel::Scheduler::setup_user_stack(current)) {
         LOG_ERROR_MSG("syscall::Process::exec: failed to setup user stack\n");
         // 回滚
-        current->page_dir = old_dir;
         current->page_dir_phys = old_dir_phys;
         mm::Vmm::free_page_directory(new_dir_phys);
         kfree(kargs);
@@ -503,111 +315,12 @@ uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size
     current->user_entry = entry_point;
     current->is_user_process = true;
     
-    // 设置用户态上下文
-#if defined(ARCH_ARM64)
-    // ARM64: 设置用户模式上下文
-    current->context.pc = entry_point;
-    current->context.sp = current->user_stack;
-    current->context.pstate = ARM64_PSTATE_EL0t;  // 用户模式
-    current->context.ttbr0 = current->page_dir_phys;
-#else
-    // x86: 设置用户态上下文
-    current->context.eip = entry_point;
-#if defined(ARCH_X86_64)
-    // x86_64 GDT layout:
-    //   0x18 (index 3) = User Data → 0x1B with RPL=3
-    //   0x20 (index 4) = User Code → 0x23 with RPL=3
-    current->context.cs = 0x23;  // 用户代码段（Ring 3）
-    current->context.ss = 0x1B;  // 用户数据段（Ring 3）
-#else
-    // i686 GDT layout:
-    //   0x18 (index 3) = User Code → 0x1B with RPL=3
-    //   0x20 (index 4) = User Data → 0x23 with RPL=3
-    current->context.cs = 0x1B;  // 用户代码段（Ring 3）
-    current->context.ss = 0x23;  // 用户栈段（Ring 3）
-    // i686: 需要设置所有段寄存器
-    current->context.ds = 0x23;  // 用户数据段（Ring 3）
-    current->context.es = 0x23;
-    current->context.fs = 0x23;
-    current->context.gs = 0x23;
-#endif
-    current->context.esp = current->user_stack;
-    current->context.eflags = 0x202;  // 中断使能
-    current->context.cr3 = current->page_dir_phys;
-#endif /* ARCH_ARM64 */
-    
-    // ============================================================================
-    // 关键修复：修改系统调用栈帧，让 iret 返回到新程序的入口点
-    // ============================================================================
-    // 
-    // 系统调用栈帧布局（从 syscall_asm.asm）：
-    //   frame[0] = DS
-    //   frame[1] = EAX (返回值)
-    //   frame[2] = EBX
-    //   frame[3] = ECX
-    //   frame[4] = EDX
-    //   frame[5] = ESI
-    //   frame[6] = EDI
-    //   frame[7] = EBP
-    //   
-    // 在 frame 之后（更高地址），CPU 自动压入的 IRET 栈帧：
-    //   frame[8] = EIP  (用户返回地址)
-    //   frame[9] = CS   (代码段)
-    //   frame[10] = EFLAGS
-    //   frame[11] = ESP (用户栈指针)
-    //   frame[12] = SS  (栈段)
-    //
-    // 我们需要修改这些值，让系统调用返回时跳转到新程序
-    
-    {
-#if defined(ARCH_ARM64)
-        // ARM64: 修改 SVC 返回帧
-        // 栈帧布局（vectors.S kernel_entry / svc.S）：
-        //   frame[0-30]  = X0-X30 (general purpose registers)
-        //   frame[31]    = SP_EL0 (user stack pointer)
-        //   frame[32]    = ELR_EL1 (user PC / return address)
-        //   frame[33]    = SPSR_EL1 (user PSTATE)
-        
-        // Clear all general-purpose registers for security (prevent kernel data leak)
-        for (int i = 0; i < 31; i++) {
-            frame[i] = 0;
-        }
-        
-        frame[31] = current->user_stack;   // SP_EL0 = 用户栈顶
-        frame[32] = entry_point;           // ELR_EL1 = 新程序入口点
-        frame[33] = ARM64_PSTATE_EL0t;     // SPSR_EL1 = 用户模式，中断使能
-        
-        LOG_DEBUG_MSG("syscall::Process::exec: modified ARM64 syscall frame:\n");
-        LOG_DEBUG_MSG("  ELR_EL1 (PC) = 0x%llx\n", (unsigned long long)entry_point);
-        LOG_DEBUG_MSG("  SP_EL0 = 0x%llx\n", (unsigned long long)current->user_stack);
-        LOG_DEBUG_MSG("  SPSR_EL1 = 0x%llx\n", (unsigned long long)ARM64_PSTATE_EL0t);
-#elif defined(ARCH_X86_64)
-        // x86_64: 修改 SYSCALL 返回帧
-        // 栈帧布局（syscall64_asm.asm）：
-        //   frame[12] = RCX (user RIP) - SYSRET 会用这个作为返回地址
-        //   frame[4]  = R11 (user RFLAGS)
-        //   frame[15] = user RSP
-        frame[12] = entry_point;           // RCX = 新程序入口点（SYSRET 返回地址）
-        frame[4]  = 0x202;                 // R11 = RFLAGS（中断使能）
-        frame[15] = current->user_stack;   // user RSP = 用户栈顶
-        
-        LOG_DEBUG_MSG("syscall::Process::exec: modified syscall frame to return to 0x%lx\n", (unsigned long)entry_point);
-#else
-        // i686: 修改 IRET 栈帧
-        // 修改用户段寄存器（syscall_handler 会在返回前恢复这些）
-        frame[0] = 0x23;   // DS = 用户数据段
-        
-        // 修改 IRET 栈帧
-        frame[8] = entry_point;        // EIP = 新程序入口点
-        frame[9] = 0x1B;               // CS = 用户代码段 (Ring 3)
-        frame[10] = 0x202;             // EFLAGS = 中断使能
-        frame[11] = current->user_stack;  // ESP = 用户栈顶
-        frame[12] = 0x23;              // SS = 用户栈段 (Ring 3)
-        
-        LOG_DEBUG_MSG("syscall::Process::exec: modified syscall frame to return to 0x%lx\n", (unsigned long)entry_point);
-#endif
-    }
-    
+    // 这次系统调用不回到原来的程序，而是"返回"到新程序的入口；任务自己的现场也换成新的
+    // （里面记着地址空间，下次被换上 CPU 时要用）
+    hal::UserContext::init(&current->context, entry_point, current->user_stack,
+                           current->page_dir_phys, current->kernel_stack);
+    hal::UserContext::exec_return(frame, entry_point, current->user_stack);
+
     // 返回 0，让系统调用正常返回（通过 iret 到新程序）
     return 0;
 }

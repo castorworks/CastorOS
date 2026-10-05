@@ -13,8 +13,14 @@
 #include "../arch/arm64/include/context.h"
 #endif
 
-#define TEST_PDE_IDX(v) ((v) >> 22)
-#define ENTRY_PRESENT(e) ((e) & PAGE_PRESENT)
+/** 栈区（含最顶上的参数页）里有多少页是映射着的 */
+static uint32_t mapped_stack_pages(const task_t *task) {
+    uint32_t mapped = 0;
+    for (uintptr_t virt = USER_STACK_TOP - USER_STACK_SIZE; virt < USER_STACK_TOP; virt += PAGE_SIZE) {
+        mapped += hal::Mmu::query((hal_addr_space_t)task->page_dir_phys, virt, NULL, NULL);
+    }
+    return mapped;
+}
 
 static uint32_t g_task_stack_fail_index = UINT32_MAX;
 
@@ -26,7 +32,6 @@ static void init_dummy_task(task_t *task) {
     memset(task, 0, sizeof(task_t));
     task->is_user_process = true;
     task->page_dir_phys = mm::Vmm::create_page_directory();
-    task->page_dir = (page_directory_t*)PHYS_TO_VIRT(task->page_dir_phys);
 }
 
 static void cleanup_dummy_task(task_t *task) {
@@ -48,12 +53,8 @@ TEST_CASE(test_user_stack_cleanup_on_partial_failure) {
 
     ASSERT_EQ_UINT(0, task.user_stack_base);
 
-    page_directory_t *dir = (page_directory_t*)PHYS_TO_VIRT(task.page_dir_phys);
-    uint32_t start_pd = TEST_PDE_IDX(USER_SPACE_END - USER_STACK_SIZE);
-    uint32_t end_pd = TEST_PDE_IDX(USER_SPACE_END - PAGE_SIZE);
-    for (uint32_t pd = start_pd; pd <= end_pd; pd++) {
-        ASSERT_FALSE(ENTRY_PRESENT(dir->entries[pd]));
-    }
+    // 已经映射的那几页都撤掉了（空出来的页表留到地址空间销毁时回收）
+    ASSERT_EQ_UINT(0, mapped_stack_pages(&task));
 
     cleanup_dummy_task(&task);
     ASSERT_EQ_U(0, task.page_dir_phys);
@@ -70,14 +71,9 @@ TEST_CASE(test_user_stack_full_allocation_and_release) {
     ASSERT_TRUE(ok);
 
     ASSERT_NE_U(0, task.user_stack_base);
-    ASSERT_EQ_UINT(USER_ARGS_ADDR - 4, task.user_stack);
+    ASSERT_TRUE(task.user_stack < USER_ARGS_ADDR && task.user_stack >= USER_ARGS_ADDR - 16);
 
-    page_directory_t *dir = (page_directory_t*)PHYS_TO_VIRT(task.page_dir_phys);
-    uint32_t start_pd = TEST_PDE_IDX(USER_SPACE_END - USER_STACK_SIZE);
-    uint32_t end_pd = TEST_PDE_IDX(USER_SPACE_END - PAGE_SIZE);
-    for (uint32_t pd = start_pd; pd <= end_pd; pd++) {
-        ASSERT_TRUE(ENTRY_PRESENT(dir->entries[pd]));
-    }
+    ASSERT_EQ_UINT(USER_STACK_SIZE / PAGE_SIZE, mapped_stack_pages(&task));
 
     cleanup_dummy_task(&task);
     ASSERT_EQ_U(0, task.page_dir_phys);
@@ -85,21 +81,16 @@ TEST_CASE(test_user_stack_full_allocation_and_release) {
 
 /**
  * create_user_process 失败时不能动调用者传入的地址空间：
- * 调用者（loader、task_create_user_process_arm64）会自己销毁它，
+ * 调用者（loader）会自己销毁它，
  * 这里再释放一次就是二次销毁。
  */
 TEST_CASE(test_create_user_process_failure_keeps_address_space) {
     uintptr_t dir = mm::Vmm::create_page_directory();
     ASSERT_NE_U(0, dir);
-#if defined(ARCH_ARM64)
-    page_directory_t *page_dir = (page_directory_t *)dir;
-#else
-    page_directory_t *page_dir = (page_directory_t *)PHYS_TO_VIRT(dir);
-#endif
 
     g_task_stack_fail_index = 2;
     uint32_t pid = kernel::Scheduler::create_user_process(
-        "fail-test", KTEST_USER_CODE_VADDR, page_dir, KTEST_USER_CODE_VADDR + PAGE_SIZE);
+        "fail-test", KTEST_USER_CODE_VADDR, dir, KTEST_USER_CODE_VADDR + PAGE_SIZE);
     g_task_stack_fail_index = UINT32_MAX;
 
     ASSERT_EQ_U(0, pid);

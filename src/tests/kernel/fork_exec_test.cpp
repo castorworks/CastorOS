@@ -654,11 +654,6 @@ TEST_CASE(test_elf_entry_point_checked) {
 TEST_CASE(test_elf_load_maps_only_valid_images) {
     uintptr_t new_dir = mm::Vmm::create_page_directory();
     ASSERT_NE_U(new_dir, 0);
-#if defined(ARCH_ARM64)
-    page_directory_t *dir = (page_directory_t *)new_dir;
-#else
-    page_directory_t *dir = (page_directory_t *)PHYS_TO_VIRT(new_dir);
-#endif
     hal_addr_space_t space = (hal_addr_space_t)new_dir;
     uintptr_t entry = 0;
     uintptr_t program_end = 0;
@@ -668,12 +663,12 @@ TEST_CASE(test_elf_load_maps_only_valid_images) {
     test_elf_phdr()->p_vaddr = TEST_ELF_IMAGE_LIMIT - PAGE_SIZE;
     test_elf_phdr()->p_memsz = 0x400000;
     test_elf_ehdr()->e_entry = TEST_ELF_IMAGE_LIMIT - PAGE_SIZE;
-    ASSERT_FALSE(kernel::Elf::load(g_test_elf, TEST_ELF_SIZE, dir, &entry, &program_end));
+    ASSERT_FALSE(kernel::Elf::load(g_test_elf, TEST_ELF_SIZE, new_dir, &entry, &program_end));
     ASSERT_FALSE(hal::Mmu::query(space, TEST_ELF_IMAGE_LIMIT - PAGE_SIZE, NULL, NULL));
 
     // 合法映像
     build_test_elf();
-    ASSERT_TRUE(kernel::Elf::load(g_test_elf, TEST_ELF_SIZE, dir, &entry, &program_end));
+    ASSERT_TRUE(kernel::Elf::load(g_test_elf, TEST_ELF_SIZE, new_dir, &entry, &program_end));
     ASSERT_EQ_U(entry, KTEST_USER_CODE_VADDR);
     ASSERT_EQ_U(program_end, KTEST_USER_CODE_VADDR + PAGE_SIZE);
 
@@ -727,7 +722,6 @@ TEST_SUITE(exec_tests) {
 // ============================================================================
 
 void run_fork_exec_tests(void) {
-    unittest_init();
     
     kprintf("\n");
     kprintf("==========================================================\n");
@@ -748,5 +742,4 @@ void run_fork_exec_tests(void) {
     kprintf("\n--- ELF Image Validation Tests ---\n");
     RUN_SUITE(elf_validation_tests);
 
-    unittest_print_summary();
 }

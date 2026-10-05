@@ -10,9 +10,7 @@
 #include <mm/mm_types.h>
 #include <lib/klog.h>
 #include <lib/string.h>
-#if defined(ARCH_ARM64)
 #include <hal/hal.h>
-#endif
 
 /* 本架构使用的 ELF 头/程序头类型 */
 #if defined(ARCH_X86_64) || defined(ARCH_ARM64)
@@ -29,11 +27,7 @@ typedef elf32_phdr_t elf_native_phdr_t;
  * 这样段既到不了内核半区，也不会和栈重叠。
  */
 static inline uint64_t elf_user_image_limit(void) {
-#if defined(ARCH_ARM64)
-    return (uint64_t)ARM64_USER_STACK_TOP - USER_STACK_SIZE;
-#else
-    return (uint64_t)USER_SPACE_END - USER_STACK_SIZE;
-#endif
+    return (uint64_t)USER_STACK_TOP - USER_STACK_SIZE;
 }
 
 bool kernel::Elf::validate_header(const void *elf_data, size_t size) {
@@ -158,34 +152,20 @@ uintptr_t kernel::Elf::get_entry(const void *elf_data, size_t size) {
     return (uintptr_t)ehdr->e_entry;
 }
 
-/**
- * 把一个物理页以用户权限映射到目标地址空间
- *
- * ARM64 上 page_dir 实际是地址空间句柄（TTBR0 物理地址），通过 HAL MMU 接口映射；
- * x86 上通过 VMM 的页目录接口映射。
- */
-static bool elf_map_user_page(page_directory_t *page_dir, uintptr_t vaddr, paddr_t phys,
-                              uint32_t p_flags) {
-#if defined(ARCH_ARM64)
+/** 把一个物理页以用户权限映射到目标地址空间 */
+static bool elf_map_user_page(uintptr_t space, uintptr_t vaddr, paddr_t phys, uint32_t p_flags) {
     uint32_t flags = HAL_PAGE_PRESENT | HAL_PAGE_USER;
     if (p_flags & PF_W) flags |= HAL_PAGE_WRITE;
     if (p_flags & PF_X) flags |= HAL_PAGE_EXEC;
-    return hal::Mmu::map((hal_addr_space_t)(uintptr_t)page_dir, vaddr, phys, flags);
-#else
-    uint32_t flags = PAGE_PRESENT | PAGE_USER;
-    if (p_flags & PF_W) flags |= PAGE_WRITE;
-    if (p_flags & PF_X) flags |= PAGE_EXEC;
-    return mm::Vmm::map_page_in_directory(VIRT_TO_PHYS((uintptr_t)page_dir), vaddr,
-                                          (uintptr_t)phys, flags);
-#endif
+    return hal::Mmu::map((hal_addr_space_t)space, vaddr, phys, flags);
 }
 
 /**
  * 把已通过 validate() 的映像加载到地址空间
  *
- * 失败时已映射的页留在 page_dir 中，由调用者销毁整个地址空间来回收。
+ * 失败时已映射的页留在地址空间里，由调用者销毁整个地址空间来回收。
  */
-static bool elf_load_impl(const void *elf_data, page_directory_t *page_dir,
+static bool elf_load_impl(const void *elf_data, uintptr_t space,
                           uintptr_t *entry_point, uintptr_t *program_end) {
     const elf_native_ehdr_t *ehdr = (const elf_native_ehdr_t *)elf_data;
     const elf_native_phdr_t *phdr =
@@ -222,7 +202,7 @@ static bool elf_load_impl(const void *elf_data, page_directory_t *page_dir,
             uint8_t *phys_ptr = (uint8_t *)PHYS_TO_VIRT((uintptr_t)phys);
             memset(phys_ptr, 0, PAGE_SIZE);
 
-            if (!elf_map_user_page(page_dir, vaddr, phys, ph->p_flags)) {
+            if (!elf_map_user_page(space, vaddr, phys, ph->p_flags)) {
                 LOG_ERROR_MSG("ELF: Failed to map page vaddr=0x%llx\n",
                              (unsigned long long)vaddr);
                 mm::Pmm::free_frame(phys);
@@ -249,13 +229,13 @@ static bool elf_load_impl(const void *elf_data, page_directory_t *page_dir,
     return true;
 }
 
-bool kernel::Elf::load(const void *elf_data, uint32_t size, page_directory_t *page_dir,
+bool kernel::Elf::load(const void *elf_data, uint32_t size, uintptr_t space,
               uintptr_t *entry_point, uintptr_t *program_end) {
-    if (!elf_data || !page_dir || !entry_point) {
+    if (!elf_data || !space || !entry_point) {
         LOG_ERROR_MSG("ELF: Invalid parameters\n");
         return false;
     }
     /* 先完整校验，再开始分配和映射：映射循环里不再有任何未经检查的文件数值 */
     if (!kernel::Elf::validate(elf_data, size)) return false;
-    return elf_load_impl(elf_data, page_dir, entry_point, program_end);
+    return elf_load_impl(elf_data, space, entry_point, program_end);
 }

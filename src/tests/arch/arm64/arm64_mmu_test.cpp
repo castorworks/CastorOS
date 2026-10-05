@@ -366,7 +366,6 @@ TEST_SUITE(arm64_mmu_hal_tests) {
  * @brief Run all ARM64 MMU property tests
  */
 void run_arm64_mmu_tests(void) {
-    unittest_init();
     
     /* Property 4: VMM Kernel Mapping Range Correctness (ARM64) */
     /* **Validates: Requirements 5.3** */
@@ -375,7 +374,6 @@ void run_arm64_mmu_tests(void) {
     /* hal::Mmu regressions: protect() deltas, device windows in new spaces */
     RUN_SUITE(arm64_mmu_hal_tests);
     
-    unittest_print_summary();
 }
 
 #else /* !ARCH_ARM64 */

@@ -16,18 +16,8 @@
 #include <lib/string.h>
 #include <drivers/timer.h>
 
-/* GDT is x86-specific */
-#if defined(ARCH_I686) || defined(ARCH_X86_64)
-#include <kernel/gdt.h>
+#include <hal/user_context.h>
 
-#if defined(ARCH_X86_64)
-/* 定义在 arch/x86_64/syscall/syscall64.cpp */
-extern void hal_syscall_set_kernel_stack(uint64_t stack_ptr);
-#endif
-#endif
-
-// 辅助函数：检查页目录项是否存在
-static inline bool is_present(uint32_t pde) { return pde & 0x1; }
 // 辅助函数：从页目录项中提取物理地址
 static inline uint32_t get_frame(uint32_t pde) { return pde & 0xFFFFF000; }
 
@@ -251,204 +241,46 @@ task_t* kernel::Scheduler::get_current() {
  * i686/x86_64: Uses VMM page directory interface
  */
 bool kernel::Scheduler::setup_user_stack(task_t *task) {
-    if (!task || !task->is_user_process) {
+    if (!task || !task->is_user_process || task->page_dir_phys == 0) {
         LOG_ERROR_MSG("kernel::Scheduler::setup_user_stack: Invalid task\n");
         return false;
     }
-    
-#if defined(ARCH_ARM64)
-    /* ARM64: Use HAL MMU interface for user stack setup */
-    if (task->page_dir_phys == 0) {
-        LOG_ERROR_MSG("kernel::Scheduler::setup_user_stack: No address space for ARM64 task\n");
-        return false;
-    }
-    
-    /* ARM64 user stack is placed at a high address in user space (TTBR0 region) */
-    uintptr_t stack_top = ARM64_USER_STACK_TOP;
-    uintptr_t stack_bottom = stack_top - USER_STACK_SIZE;
-    
-    /* Number of pages to allocate */
-    uint32_t num_pages = USER_STACK_SIZE / PAGE_SIZE;
-    
-    LOG_DEBUG_MSG("kernel::Scheduler::setup_user_stack (ARM64): Allocating %u pages for user stack\n", num_pages);
-    LOG_DEBUG_MSG("  Stack range: 0x%llx - 0x%llx\n", 
-                 (unsigned long long)stack_bottom, (unsigned long long)stack_top);
-    
-    /* Use the task's address space for mapping */
+
+    // 用户栈在用户空间顶部。最顶上一页是参数页（USER_ARGS_ADDR），栈从它下面开始
     hal_addr_space_t space = (hal_addr_space_t)task->page_dir_phys;
-    
-    for (uint32_t i = 0; i < num_pages; i++) {
-        uintptr_t virt_addr = stack_bottom + ((uintptr_t)i * PAGE_SIZE);
-        
-        /* Test mode: check if we should simulate allocation failure */
-        if (kernel::Scheduler::should_fail_stack_page(i)) {
-            LOG_DEBUG_MSG("kernel::Scheduler::setup_user_stack: Simulating allocation failure at page %u\n", i);
-            
-            /* Cleanup already allocated pages */
-            for (uint32_t j = 0; j < i; j++) {
-                uintptr_t cleanup_virt = stack_bottom + ((uintptr_t)j * PAGE_SIZE);
-                paddr_t phys = hal::Mmu::unmap(space, cleanup_virt);
-                if (phys != PADDR_INVALID) {
-                    hal::Mmu::flush_tlb(cleanup_virt);
-                    mm::Pmm::free_frame(phys);
-                }
-            }
-            
-            task->user_stack_base = 0;
-            task->user_stack = 0;
-            return false;
-        }
-        
-        /* Allocate physical page */
-        paddr_t phys_addr = mm::Pmm::alloc_frame();
-        if (phys_addr == PADDR_INVALID) {
-            LOG_ERROR_MSG("kernel::Scheduler::setup_user_stack: Failed to allocate physical page %u/%u\n", 
-                         i + 1, num_pages);
-            
-            /* Cleanup already allocated pages */
-            for (uint32_t j = 0; j < i; j++) {
-                uintptr_t cleanup_virt = stack_bottom + ((uintptr_t)j * PAGE_SIZE);
-                paddr_t cleanup_phys = hal::Mmu::unmap(space, cleanup_virt);
-                if (cleanup_phys != PADDR_INVALID) {
-                    hal::Mmu::flush_tlb(cleanup_virt);
-                    mm::Pmm::free_frame(cleanup_phys);
-                }
-            }
-            
-            return false;
-        }
-        
-        /* Map to user space (user read-write) */
-        uint32_t flags = HAL_PAGE_PRESENT | HAL_PAGE_WRITE | HAL_PAGE_USER;
-        if (!hal::Mmu::map(space, virt_addr, phys_addr, flags)) {
-            LOG_ERROR_MSG("kernel::Scheduler::setup_user_stack: Failed to map page %u/%u at 0x%llx\n", 
-                         i + 1, num_pages, (unsigned long long)virt_addr);
-            
-            /* Free the just-allocated physical page */
-            mm::Pmm::free_frame(phys_addr);
-            
-            /* Cleanup previously mapped pages */
-            for (uint32_t j = 0; j < i; j++) {
-                uintptr_t cleanup_virt = stack_bottom + ((uintptr_t)j * PAGE_SIZE);
-                paddr_t cleanup_phys = hal::Mmu::unmap(space, cleanup_virt);
-                if (cleanup_phys != PADDR_INVALID) {
-                    hal::Mmu::flush_tlb(cleanup_virt);
-                    mm::Pmm::free_frame(cleanup_phys);
-                }
-            }
-            
-            return false;
-        }
-        
-        /* Zero the page (important for security) */
-        void *page_virt = (void*)PADDR_TO_KVADDR(phys_addr);
-        memset(page_virt, 0, PAGE_SIZE);
-    }
-    
-    /* Set stack pointers (stack grows downward, 16-byte aligned for ARM64 ABI) */
-    task->user_stack_base = stack_bottom;
-    /* The top page holds the program arguments (USER_ARGS_ADDR); the stack starts below it */
-    task->user_stack = USER_ARGS_ADDR - 16;  /* 16-byte alignment for ARM64 */
-    
-    LOG_DEBUG_MSG("kernel::Scheduler::setup_user_stack (ARM64): User stack set up at 0x%llx-0x%llx\n", 
-                 (unsigned long long)stack_bottom, (unsigned long long)stack_top);
-    
-    return true;
-    
-#else
-    /* i686/x86_64: Use VMM page directory interface */
-    if (!task->page_dir) {
-        LOG_ERROR_MSG("kernel::Scheduler::setup_user_stack: Invalid task\n");
-        return false;
-    }
-    
-    // 用户栈位于用户空间顶部（0x80000000 - USER_STACK_SIZE）
-    uint32_t stack_top = USER_SPACE_END;
-    uint32_t stack_bottom = stack_top - USER_STACK_SIZE;
-    
-    // 分配并映射用户栈页面
+    uintptr_t stack_top = USER_STACK_TOP;
+    uintptr_t stack_bottom = stack_top - USER_STACK_SIZE;
     uint32_t num_pages = USER_STACK_SIZE / PAGE_SIZE;
-    
-    LOG_DEBUG_MSG("kernel::Scheduler::setup_user_stack: Allocating %u pages for user stack\n", num_pages);
-    
+
     for (uint32_t i = 0; i < num_pages; i++) {
-        uint32_t virt_addr = stack_bottom + (i * PAGE_SIZE);
-        
-        // 测试模式：检查是否应该模拟分配失败
-        if (kernel::Scheduler::should_fail_stack_page(i)) {
-            LOG_DEBUG_MSG("kernel::Scheduler::setup_user_stack: Simulating allocation failure at page %u\n", i);
-            
-            // 清理已分配的页面
+        uintptr_t virt = stack_bottom + (uintptr_t)i * PAGE_SIZE;
+
+        // should_fail_stack_page：测试用它模拟内存不够
+        paddr_t phys = kernel::Scheduler::should_fail_stack_page(i) ? PADDR_INVALID : mm::Pmm::alloc_frame();
+        if (phys != PADDR_INVALID &&
+            !hal::Mmu::map(space, virt, phys, HAL_PAGE_PRESENT | HAL_PAGE_WRITE | HAL_PAGE_USER)) {
+            mm::Pmm::free_frame(phys);
+            phys = PADDR_INVALID;
+        }
+        if (phys == PADDR_INVALID) {
+            // 失败：把已经映射的栈页撤掉。空出来的页表留给地址空间销毁时回收
             for (uint32_t j = 0; j < i; j++) {
-                uint32_t cleanup_virt = stack_bottom + (j * PAGE_SIZE);
-                uint32_t phys = mm::Vmm::unmap_page_in_directory(task->page_dir_phys, cleanup_virt);
-                if (phys) {
-                    mm::Pmm::free_frame(phys);
+                paddr_t mapped = hal::Mmu::unmap(space, stack_bottom + (uintptr_t)j * PAGE_SIZE);
+                if (mapped != PADDR_INVALID) {
+                    mm::Pmm::free_frame(mapped);
                 }
             }
-
-            
             task->user_stack_base = 0;
             task->user_stack = 0;
             return false;
         }
-        
-        // 分配物理页
-        paddr_t phys_addr = mm::Pmm::alloc_frame();
-        if (phys_addr == PADDR_INVALID) {
-            LOG_ERROR_MSG("kernel::Scheduler::setup_user_stack: Failed to allocate physical page %u/%u\n", 
-                         i + 1, num_pages);
-            
-            // 清理已分配的页面
-            for (uint32_t j = 0; j < i; j++) {
-                uint32_t cleanup_virt = stack_bottom + (j * PAGE_SIZE);
-                uint32_t cleanup_phys = mm::Vmm::unmap_page_in_directory(task->page_dir_phys, cleanup_virt);
-                if (cleanup_phys) {
-                    mm::Pmm::free_frame(cleanup_phys);
-                }
-            }
-
-            
-            return false;
-        }
-        
-        // 映射到用户空间（用户可读写）
-        if (!mm::Vmm::map_page_in_directory(task->page_dir_phys, virt_addr, (uintptr_t)phys_addr,
-                                       PAGE_PRESENT | PAGE_WRITE | PAGE_USER)) {
-            LOG_ERROR_MSG("kernel::Scheduler::setup_user_stack: Failed to map page %u/%u\n", i + 1, num_pages);
-            
-            // 释放刚分配的物理页
-            mm::Pmm::free_frame(phys_addr);
-            
-            // 清理之前映射的页面
-            for (uint32_t j = 0; j < i; j++) {
-                uint32_t cleanup_virt = stack_bottom + (j * PAGE_SIZE);
-                uint32_t cleanup_phys = mm::Vmm::unmap_page_in_directory(task->page_dir_phys, cleanup_virt);
-                if (cleanup_phys) {
-                    mm::Pmm::free_frame(cleanup_phys);
-                }
-            }
-
-            
-            return false;
-        }
-
-        // 清零：不把别的进程留下的内容带进新进程，也保证参数页默认是“没有参数”
-        memset((void *)PHYS_TO_VIRT((uintptr_t)phys_addr), 0, PAGE_SIZE);
+        // 清零：不把别的进程留下的内容带进新进程，也保证参数页默认是"没有参数"
+        memset((void *)PADDR_TO_KVADDR(phys), 0, PAGE_SIZE);
     }
-    
-    // 设置栈指针。入口 _start 是按普通函数编译的，它假定自己是被 call 进来的：
-    // 栈顶留出一个返回地址的位置，函数体内的栈才是 16 字节对齐的
-    // （x86_64 上编译器会对栈上的对象使用 movaps，没对齐就是 #GP）
+
     task->user_stack_base = stack_bottom;
-    // 最顶上一页是参数页（USER_ARGS_ADDR），栈从它下面开始
-    task->user_stack = USER_ARGS_ADDR - sizeof(uintptr_t);
-    
-    LOG_DEBUG_MSG("kernel::Scheduler::setup_user_stack: User stack set up at 0x%x-0x%x\n", 
-                 stack_bottom, stack_top);
-    
+    task->user_stack = hal::UserContext::initial_sp(USER_ARGS_ADDR);
     return true;
-#endif
 }
 
 /**
@@ -472,27 +304,12 @@ bool kernel::Scheduler::should_fail_stack_page(uint32_t page_index) {
  * @brief 创建用户进程
  */
 uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entry_point,
-                                   page_directory_t *page_dir, uintptr_t program_end) {
-#if defined(ARCH_ARM64)
-    /* ARM64: page_dir is actually the address space handle (TTBR0 physical address) */
-    if (!name || entry_point == 0) {
+                                   uintptr_t space, uintptr_t program_end) {
+    if (!name || !space || entry_point == 0) {
         LOG_ERROR_MSG("kernel::Scheduler::create_user_process: Invalid parameters\n");
         return 0;
     }
-    
-    /* For ARM64, page_dir is cast from hal_addr_space_t */
-    hal_addr_space_t addr_space = (hal_addr_space_t)(uintptr_t)page_dir;
-    if (addr_space == HAL_ADDR_SPACE_INVALID) {
-        LOG_ERROR_MSG("kernel::Scheduler::create_user_process: Invalid address space\n");
-        return 0;
-    }
-#else
-    if (!name || !page_dir || entry_point == 0) {
-        LOG_ERROR_MSG("kernel::Scheduler::create_user_process: Invalid parameters\n");
-        return 0;
-    }
-#endif
-    
+
     // 分配 PCB
     task_t *task = kernel::Scheduler::alloc();
     if (!task) {
@@ -519,15 +336,7 @@ uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entr
     
     task->kernel_stack = task->kernel_stack_base + KERNEL_STACK_SIZE;
     
-#if defined(ARCH_ARM64)
-    // ARM64: 设置地址空间
-    task->page_dir_phys = (uintptr_t)addr_space;
-    task->page_dir = NULL;  // ARM64 doesn't use page_directory_t*
-#else
-    // 设置页目录
-    task->page_dir_phys = VIRT_TO_PHYS((uintptr_t)page_dir);
-    task->page_dir = page_dir;
-#endif
+    task->page_dir_phys = space;
     
     // 设置用户栈
     if (!kernel::Scheduler::setup_user_stack(task)) {
@@ -535,68 +344,13 @@ uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entr
         // 失败时地址空间仍归调用者所有（由调用者销毁），这里只交还 PCB 自己
         // 分配的资源；内核栈由 kernel::Scheduler::free 释放，不能再手动 kfree
         task->page_dir_phys = 0;
-        task->page_dir = NULL;
         kernel::Scheduler::free(task);
         return 0;
     }
     
-    // 初始化上下文
-    memset(&task->context, 0, sizeof(cpu_context_t));
-    
-#if defined(ARCH_ARM64)
-    // ARM64: 设置用户模式上下文 (EL0)
-    // 设置用户栈指针
-    task->context.sp = task->user_stack;
-    
-    // 设置用户入口点
-    task->context.pc = entry_point;
-    
-    // 设置 PSTATE (EL0t, 用户模式, 中断使能)
-    task->context.pstate = ARM64_PSTATE_EL0t;
-    
-    // 设置用户页表基址
-    task->context.ttbr0 = task->page_dir_phys;
-    
-    // 内核栈顶：返回用户态前 context_asm.S 用它设置 SP_EL1
-    task->context.kernel_sp = task->kernel_stack;
-    
-    LOG_DEBUG_MSG("ARM64 user process context:\n");
-    LOG_DEBUG_MSG("  PC=0x%llx, SP=0x%llx\n", 
-                 (unsigned long long)task->context.pc,
-                 (unsigned long long)task->context.sp);
-    LOG_DEBUG_MSG("  user_stack=0x%llx, user_stack_base=0x%llx\n",
-                 (unsigned long long)task->user_stack,
-                 (unsigned long long)task->user_stack_base);
-    LOG_DEBUG_MSG("  PSTATE=0x%llx, TTBR0=0x%llx\n",
-                 (unsigned long long)task->context.pstate,
-                 (unsigned long long)task->context.ttbr0);
-    LOG_DEBUG_MSG("  Kernel stack (X28)=0x%llx\n",
-                 (unsigned long long)task->context.kernel_sp);
-#else
-    // x86: 设置段寄存器（用户段，Ring 3）
-    task->context.cs = GDT_USER_CODE_SEGMENT | 3;  // 0x1B
-    task->context.ss = GDT_USER_DATA_SEGMENT | 3;  // 0x23
-#if !defined(ARCH_X86_64)
-    // i686: 需要设置所有段寄存器
-    task->context.ds = GDT_USER_DATA_SEGMENT | 3;
-    task->context.es = GDT_USER_DATA_SEGMENT | 3;
-    task->context.fs = GDT_USER_DATA_SEGMENT | 3;
-    task->context.gs = GDT_USER_DATA_SEGMENT | 3;
-#endif
-    
-    // 设置用户栈指针
-    task->context.esp = task->user_stack;
-    
-    // 设置用户入口点
-    task->context.eip = entry_point;
-    
-    // 设置 EFLAGS（启用中断）
-    task->context.eflags = 0x202;  // IF=1
-    
-    // 设置 CR3
-    task->context.cr3 = task->page_dir_phys;
-#endif
-    
+    hal::UserContext::init(&task->context, entry_point, task->user_stack,
+                           task->page_dir_phys, task->kernel_stack);
+
     // 设置堆管理
     // 堆从程序结束后的下一页开始
     task->heap_start = PAGE_ALIGN_UP(program_end);
@@ -619,52 +373,6 @@ uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entr
     return task->pid;
 }
 
-#if defined(ARCH_ARM64)
-/**
- * @brief Create a user process with a new address space (ARM64)
- * 
- * This is a convenience function that creates a new address space using
- * hal::Mmu::create_space() and then creates a user process in that space.
- * 
- * 
- * @param name Process name
- * @param entry_point User program entry point
- * @param program_end End address of loaded program (for heap setup)
- * @return PID on success, 0 on failure
- */
-uint32_t task_create_user_process_arm64(const char *name, uintptr_t entry_point,
-                                         uintptr_t program_end) {
-    if (!name || entry_point == 0) {
-        LOG_ERROR_MSG("task_create_user_process_arm64: Invalid parameters\n");
-        return 0;
-    }
-    
-    /* Create a new address space for the user process */
-    hal_addr_space_t addr_space = hal::Mmu::create_space();
-    if (addr_space == HAL_ADDR_SPACE_INVALID) {
-        LOG_ERROR_MSG("task_create_user_process_arm64: Failed to create address space\n");
-        return 0;
-    }
-    
-    LOG_DEBUG_MSG("task_create_user_process_arm64: Created address space at 0x%llx\n",
-                 (unsigned long long)addr_space);
-    
-    /* Create the user process using the new address space */
-    /* Cast addr_space to page_directory_t* for compatibility with existing API */
-    uint32_t pid = kernel::Scheduler::create_user_process(name, entry_point, 
-                                            (page_directory_t*)(uintptr_t)addr_space, 
-                                            program_end);
-    
-    if (pid == 0) {
-        /* Failed to create process, destroy the address space */
-        hal::Mmu::destroy_space(addr_space);
-        LOG_ERROR_MSG("task_create_user_process_arm64: Failed to create process\n");
-        return 0;
-    }
-    
-    return pid;
-}
-#endif /* ARCH_ARM64 */
 
 /* ============================================================================
  * idle 任务
@@ -719,44 +427,11 @@ static bool task_create_idle(void) {
     
     // 使用内核页目录
     idle_task->page_dir_phys = mm::Vmm::get_page_directory();
-    idle_task->page_dir = (page_directory_t*)PHYS_TO_VIRT(idle_task->page_dir_phys);
-    
-    // 初始化上下文
-    memset(&idle_task->context, 0, sizeof(cpu_context_t));
-    
-#if defined(ARCH_ARM64)
-    // ARM64: 设置内核模式上下文
-    idle_task->context.sp = idle_task->kernel_stack;
-    // 经蹦床进入（见 create_kernel_thread）：idle 必须开着中断执行 wfi，
-    // 否则所有任务都阻塞时定时器中断得不到处理，睡眠的任务永远不会被唤醒
-    idle_task->context.pc = (uintptr_t)task_enter_kernel_thread;
-    idle_task->context.x[19] = (uintptr_t)idle_task_loop;
-    idle_task->context.pstate = ARM64_PSTATE_EL1h;
-    idle_task->context.ttbr0 = idle_task->page_dir_phys;
-#else
-    // x86: 设置段寄存器
-    idle_task->context.cs = GDT_KERNEL_CODE_SEGMENT;
-    idle_task->context.ss = GDT_KERNEL_DATA_SEGMENT;
-#if !defined(ARCH_X86_64)
-    // i686: 需要设置所有段寄存器
-    idle_task->context.ds = GDT_KERNEL_DATA_SEGMENT;
-    idle_task->context.es = GDT_KERNEL_DATA_SEGMENT;
-    idle_task->context.fs = GDT_KERNEL_DATA_SEGMENT;
-    idle_task->context.gs = GDT_KERNEL_DATA_SEGMENT;
-#endif
-    
-    idle_task->context.esp = idle_task->kernel_stack;
-    idle_task->context.eip = (uintptr_t)task_enter_kernel_thread;
-    idle_task->context.eflags = 0x202;
-    idle_task->context.cr3 = idle_task->page_dir_phys;
-    
-    // 在栈上压入入口函数
-    // task_enter_kernel_thread 会执行 pop eax/rax 获取入口函数
-    // 所以栈顶应该是入口函数地址
-    uintptr_t *stack_ptr = (uintptr_t*)idle_task->kernel_stack;
-    stack_ptr[-1] = (uintptr_t)idle_task_loop;  // 入口函数地址
-    idle_task->context.esp = (uintptr_t)&stack_ptr[-1];  // ESP/RSP 指向入口函数
-#endif
+
+    // idle 必须开着中断执行停机指令：否则所有任务都阻塞时定时器中断得不到处理，
+    // 睡眠的任务永远不会被唤醒
+    hal::UserContext::init_kernel(&idle_task->context, idle_task_loop,
+                                  idle_task->kernel_stack, idle_task->page_dir_phys);
     
     active_task_count++;
     
@@ -832,15 +507,7 @@ void kernel::Scheduler::schedule() {
     
     // 更新内核栈（架构相关）
     if (next_task->is_user_process) {
-#if defined(ARCH_I686) || defined(ARCH_X86_64)
-        // x86: 更新 TSS 内核栈
-        tss_set_kernel_stack(next_task->kernel_stack);
-#if defined(ARCH_X86_64)
-        // x86_64: Also set kernel stack for SYSCALL mechanism
-        hal_syscall_set_kernel_stack((uint64_t)next_task->kernel_stack);
-#endif
-#endif
-        // ARM64: 内核栈在上下文切换时自动处理
+        hal::UserContext::set_kernel_stack(next_task->kernel_stack);
     }
     
     // 关键修复：在上下文切换前，先同步 VMM 的 current_dir_phys

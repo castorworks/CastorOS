@@ -970,7 +970,6 @@ TEST_SUITE(vmm_property_tests) {
  */
 void run_vmm_tests(void) {
     // 初始化测试框架
-    unittest_init();
     
     // ========================================================================
     // 功能测试套件
@@ -1002,7 +1001,6 @@ void run_vmm_tests(void) {
     RUN_SUITE(vmm_property_tests);
     
     // 打印测试摘要
-    unittest_print_summary();
 }
 
 // ============================================================================

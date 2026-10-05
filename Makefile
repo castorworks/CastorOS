@@ -252,12 +252,13 @@ run-test: $(BOOT_IMAGE)
 	@awk 'function num(key,  s) { if (!match($$0, key ": *[0-9]+")) return 0; \
 	         s = substr($$0, RSTART, RLENGTH); sub(/.*: */, "", s); return s + 0 } \
 	     { t += num("Total tests"); p += num("Passed tests"); f += num("Failed tests") } \
+	     /\[ FAIL \]/ { fail_lines++ } \
 	     /sh: ready/ { booted = 1 } /selftest: all passed/ { selftest_passed = 1 } /selftest: .*skipped/ { skipped = 1 } \
 	     /shelltest: all passed/ { shell_passed = 1 } \
 	     END { printf "$(ARCH): %d tests, %d passed, %d failed; user space %s (log: $(BUILD_DIR)/test.log)\n", \
 	               t, p, f, booted ? (selftest_passed ? (skipped ? "started, selftest SKIPPED some checks" : "started, selftest passed") : "started, selftest FAILED") \
 	                                 (shell_passed ? ", shell checks passed" : ", shell checks FAILED") : "NOT started"; \
-	           exit (t == 0 || f > 0 || !booted || !selftest_passed || skipped || !shell_passed) }' \
+	           exit (t == 0 || f > 0 || fail_lines > 0 || t != p || !booted || !selftest_passed || skipped || !shell_passed) }' \
 	     $(BUILD_DIR)/test.log $(BUILD_DIR)/shell-test.log
 
 test-all:

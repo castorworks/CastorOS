@@ -509,7 +509,6 @@ TEST_SUITE(hal_addr_space_tests) {
  */
 void run_hal_tests(void) {
     // 初始化测试框架
-    unittest_init();
     
     // 打印架构诊断信息
     
@@ -526,7 +525,6 @@ void run_hal_tests(void) {
     RUN_SUITE(hal_addr_space_tests);
     
     // 打印测试摘要
-    unittest_print_summary();
     
     // 如果有失败，打印调试提示
     // (这里简化处理，实际可以检查 unittest 的失败计数)

@@ -550,7 +550,6 @@ TEST_SUITE(kprintf_special_values_tests) {
 
 void run_kprintf_tests(void) {
     // 初始化测试框架
-    unittest_init();
     
     // 运行所有测试套件
     RUN_SUITE(kprintf_basic_tests);
@@ -569,6 +568,5 @@ void run_kprintf_tests(void) {
     RUN_SUITE(kprintf_special_values_tests);
     
     // 打印测试摘要
-    unittest_print_summary();
 }
 

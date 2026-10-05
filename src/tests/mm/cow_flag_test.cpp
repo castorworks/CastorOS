@@ -574,7 +574,6 @@ TEST_SUITE(vmm_mapping_guard_tests) {
 
 void run_cow_flag_tests(void) {
     // 初始化测试框架
-    unittest_init();
     
     kprintf("\n");
     kprintf("==========================================================\n");
@@ -593,7 +592,6 @@ void run_cow_flag_tests(void) {
     RUN_SUITE(vmm_mapping_guard_tests);
     
     // 打印测试摘要
-    unittest_print_summary();
 }
 
 // ============================================================================
