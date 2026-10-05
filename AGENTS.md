@@ -8,7 +8,7 @@ CastorOS is an educational microkernel for learning and experimentation.
 
 - Targets i686, x86_64 and ARM64; all three build, boot and pass the kernel tests in QEMU
 - The kernel contains only CPU/interrupt setup, memory management, scheduling, sync
-  primitives and a 27-call syscall interface (process, memory, debug output, synchronous IPC,
+  primitives and a 28-call syscall interface (process, memory, debug output, synchronous IPC,
   shared memory, uptime/timer, and I/O port / device memory / DMA / IRQ access for privileged
   user-space drivers)
 - File systems, networking, device drivers and shells are **not** in the kernel; they are

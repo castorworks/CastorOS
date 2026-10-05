@@ -52,6 +52,7 @@ enum {
     // 时间
     SYS_UPTIME_MS       = 25,  // uptime_ms(ms*)：开机以来的毫秒数
     SYS_TIMER_SET       = 26,  // timer_set(ms)：ms 毫秒后收到一条 IPC_LABEL_TIMER 消息；0 取消
+    SYS_MEM_FREE        = 27,  // mem_free_pages()：还没有分配出去的物理页数
 
     SYS_MAX
 };

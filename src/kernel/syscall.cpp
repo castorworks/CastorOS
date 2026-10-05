@@ -18,6 +18,7 @@
 #include <kernel/task.h>
 #include <kernel/interrupt.h>
 #include <drivers/timer.h>
+#include <mm/pmm.h>
 #include <hal/hal.h>
 #include <lib/klog.h>
 #include <lib/kprintf.h>
@@ -334,6 +335,13 @@ static syscall_arg_t sys_timer_set_wrapper(syscall_arg_t *frame, syscall_arg_t m
     return 0;
 }
 
+/** 空闲物理页数：用来观察内存有没有被归还（自检据此检查进程退出后不泄漏） */
+static syscall_arg_t sys_mem_free_wrapper(syscall_arg_t *frame, syscall_arg_t p1, syscall_arg_t p2,
+                                          syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5;
+    return (syscall_arg_t)mm::Pmm::get_info().free_frames;
+}
+
 syscall_arg_t syscall_dispatcher(syscall_arg_t syscall_num, syscall_arg_t p1, syscall_arg_t p2, 
                                  syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5, 
                                  syscall_arg_t *frame) {
@@ -388,6 +396,7 @@ void syscall_init(void) {
     syscall_table[SYS_DMA_ALLOC]     = sys_dma_alloc_wrapper;
     syscall_table[SYS_UPTIME_MS]     = sys_uptime_ms_wrapper;
     syscall_table[SYS_TIMER_SET]     = sys_timer_set_wrapper;
+    syscall_table[SYS_MEM_FREE]      = sys_mem_free_wrapper;
     syscall_table[SYS_IRQ_CLAIM]     = sys_irq_claim_wrapper;
     syscall_table[SYS_IRQ_ACK]       = sys_irq_ack_wrapper;
     syscall_table[SYS_DROP_PRIVILEGE] = sys_drop_privilege_wrapper;

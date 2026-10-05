@@ -82,6 +82,10 @@ int usleep(unsigned int usec) {
 // 时间
 // ============================================================================
 
+long mem_free_pages(void) {
+    return (long)syscall0(SYS_MEM_FREE);
+}
+
 uint64_t uptime_ms(void) {
     uint64_t ms = 0;
     syscall1(SYS_UPTIME_MS, PTR_TO_ARG(&ms));

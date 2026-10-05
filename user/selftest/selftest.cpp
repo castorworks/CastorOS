@@ -681,12 +681,83 @@ static void test_tcp(const struct net_info *info) {
     ok = ok && memcmp(wtx, wrx, sizeof(wtx)) == 0 && net_tcp_close(conn) == 0;
     report("tcp receive window closes and reopens", ok, "ok");
 }
+// 反复创建并结束进程，走遍几条退出路径
+static bool churn_processes(int rounds, const void *image, size_t image_size) {
+    bool ok = true;
+    for (int r = 0; ok && r < rounds; r++) {
+        int status = 0;
+
+        // 1. 用掉一些内存（匿名映射、堆、写时复制的页）然后正常退出
+        int pid = fork();
+        if (pid == 0) {
+            char *mem = (char *)mmap(NULL, 64 * 4096, PROT_READ | PROT_WRITE,
+                                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            if (mem == MAP_FAILED) {
+                exit(1);
+            }
+            for (int i = 0; i < 64; i++) {
+                mem[i * 4096] = (char)i;
+            }
+            munmap(mem, 16 * 4096);         // 一部分自己还，其余留给退出时回收
+            exit(0);
+        }
+        ok = ok && pid > 0 && waitpid(pid, &status, 0) == pid && WEXITSTATUS(status) == 0;
+
+        // 2. 换成另一个程序再退出
+        pid = fork();
+        if (pid == 0) {
+            const char *argv[] = { "sleep", "0", NULL };
+            exec(image, image_size, argv);
+            exit(1);
+        }
+        ok = ok && pid > 0 && waitpid(pid, &status, 0) == pid && WEXITSTATUS(status) == 0;
+
+        // 3. 阻塞在 IPC 里时被杀掉
+        pid = fork();
+        if (pid == 0) {
+            struct ipc_msg m;
+            for (;;) {
+                ipc_recv(IPC_ANY, &m);
+            }
+        }
+        usleep(10000);
+        ok = ok && pid > 0 && kill(pid, 9) == 0 && waitpid(pid, &status, 0) == pid && WIFSIGNALED(status);
+    }
+    return ok;
+}
+
+// 进程结束后，它用过的物理内存（页、页表、内核栈）要全部归还
+static void test_memory_reclaimed(void) {
+    int fd = fs_open("sleep", 0);
+    long size = fd >= 0 ? fs_size(fd) : -1;
+    void *image = size > 0 ? mmap(NULL, (size_t)size, PROT_READ | PROT_WRITE,
+                                  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) : MAP_FAILED;
+    bool ok = image != MAP_FAILED && fs_read(fd, 0, image, (size_t)size) == size;
+    if (fd >= 0) {
+        fs_close(fd);
+    }
+
+    // 先跑两轮：内核堆之类只增不减的东西长到位，之后的数字才可比
+    ok = ok && churn_processes(2, image, (size_t)size);
+    long before = mem_free_pages();
+    ok = ok && churn_processes(10, image, (size_t)size);
+    long after = mem_free_pages();
+
+    if (ok && after != before) {
+        printf("selftest: (free pages %ld -> %ld after 30 processes)\n", before, after);
+    }
+    report("memory of exited processes is reclaimed", ok && after == before, "ok");
+    if (image != MAP_FAILED) {
+        munmap(image, (size_t)size);
+    }
+}
 
 int main(int argc, char **argv) {
     // 命令行（或 rc）是带着程序名启动我们的
     report("program arguments", argc >= 1 && strcmp(argv[0], "selftest") == 0 && argv[argc] == NULL, "ok");
 
     test_memory_and_fork();
+    test_memory_reclaimed();
     test_ipc();
     test_ipc_blocking();
     test_timer();

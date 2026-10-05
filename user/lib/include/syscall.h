@@ -35,6 +35,7 @@ enum {
     SYS_DMA_ALLOC       = 24,
     SYS_UPTIME_MS       = 25,
     SYS_TIMER_SET       = 26,
+    SYS_MEM_FREE        = 27,  // mem_free_pages()：还没有分配出去的物理页数
 };
 
 typedef uintptr_t syscall_arg_t;
@@ -78,6 +79,9 @@ int usleep(unsigned int usec);
 // ============================================================================
 // 时间
 // ============================================================================
+
+/** 还没有分配出去的物理页数（每页 4KB）。只是一个观察值：别的进程随时可能分配或释放 */
+long mem_free_pages(void);
 
 /** 开机以来的毫秒数（x86 上精度是一个时钟滴答，10ms） */
 uint64_t uptime_ms(void);
