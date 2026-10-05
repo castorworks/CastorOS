@@ -12,16 +12,12 @@
 #endif
 #include <kernel/interrupt.h>
 #include <hal/hal.h>
+#include <hal/pgtable.h>
 #include <mm/vmm.h>
 #include <mm/pmm.h>
 #include <mm/heap.h>
 #include <lib/klog.h>
 #include <lib/string.h>
-
-// 辅助函数：检查页目录项是否存在
-static inline bool is_present(uint32_t pde) { return pde & 0x1; }
-// 辅助函数：从页目录项中提取物理地址
-static inline uint32_t get_frame(uint32_t pde) { return pde & 0xFFFFF000; }
 
 /* 默认时间片（与 task.c 保持一致） */
 #define DEFAULT_TIME_SLICE 10
@@ -162,15 +158,17 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
 #endif
     
 #if !defined(ARCH_ARM64)
-    // 【安全检查】验证父进程页目录的完整性（仅检查前几个 PDE）
+    // 【安全检查】验证父进程顶层页表的完整性（仅检查前几项）：存在的项必须指向
+    // 一个由 PMM 管理的页帧。用架构自己的页表项格式和完整宽度的物理地址来判断
     // Note: This check is x86-specific (page directory structure)
     page_directory_t *parent_dir = parent->page_dir;
+    const paddr_t phys_end = (paddr_t)mm::Pmm::get_info().total_frames * PAGE_SIZE;
     for (uint32_t i = 0; i < 10; i++) {
-        if (is_present(parent_dir->entries[i])) {
-            uint32_t phys = get_frame(parent_dir->entries[i]);
-            if (phys == 0 || phys >= 0x80000000) {
-                LOG_ERROR_MSG("syscall::Process::fork: Parent PDE[%u] corrupted: 0x%llx (phys=0x%x)\n",
-                             i, (unsigned long long)parent_dir->entries[i], phys);
+        if (pgtable_is_present(parent_dir->entries[i])) {
+            paddr_t phys = pgtable_get_phys(parent_dir->entries[i]);
+            if (phys == 0 || phys >= phys_end) {
+                LOG_ERROR_MSG("syscall::Process::fork: Parent PDE[%u] corrupted: 0x%llx (phys=0x%llx)\n",
+                             i, (unsigned long long)parent_dir->entries[i], (unsigned long long)phys);
                 LOG_ERROR_MSG("  Parent: PID=%u, name=%s, page_dir=%p, page_dir_phys=0x%llx\n",
                              parent->pid, parent->name, parent_dir,
                              (unsigned long long)parent->page_dir_phys);
