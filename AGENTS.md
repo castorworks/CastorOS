@@ -101,7 +101,8 @@ from each client use `clients.h`. Other programs (`user/selftest`, `user/ls`, `u
 in `BOOT_PROGRAMS` (`user/ramfs/Makefile`), embedded in ramfs and unpacked at startup. sh
 runs them with fork + exec, and runs the `rc` file (which starts `selftest`) at boot.
 To add a program, create `user/<name>/` and add it to `BOOT_PROGRAMS`. Every user program's
-Makefile just sets `TARGET`/`SOURCES` and includes `user/program.mk`. The kernel Makefile
+Makefile just sets `TARGET`/`SOURCES` and includes `user/program.mk`. Compiler and flags for all
+of user space (library and programs) are in `user/arch.mk`; change them there, nowhere else. The kernel Makefile
 rebuilds all of it when `user/` changes.
 
 ### Testing
@@ -133,7 +134,7 @@ CastorOS/
 │   ├── drivers/            # Only serial (debug output) and timer (tick)
 │   │   ├── x86/            # COM1, PIT
 │   │   └── arm/            # PL011, ARM Generic Timer
-│   ├── kernel/             # task.cpp (scheduler), syscall.cpp, ipc.cpp, user_irq.cpp, hw_access.cpp, elf.cpp, ...
+│   ├── kernel/             # sched.cpp (scheduler), task.cpp (task table, process lifecycle), syscall.cpp, ipc.cpp, user_irq.cpp, hw_access.cpp, elf.cpp, ...
 │   │   ├── sync/           # The spinlock
 │   │   └── syscalls/       # process.cpp, mm.cpp
 │   ├── lib/                # Kernel library (kprintf, klog, string, cxxrt)
@@ -145,7 +146,7 @@ CastorOS/
 │   ├── init/               # First user process (the only privileged one): starts modules, assigns devices, name service
 │   ├── uart/               # Serial input driver (module, allowed the serial port)
 │   ├── blk/                # virtio-blk driver (module, allowed the disk): virtio-pci on x86, virtio-mmio on arm64
-│   ├── net/                # Network service (module, allowed the network card): virtio-net + ARP/IPv4/ICMP/UDP/TCP
+│   ├── net/                # Network service (module, allowed the network card): nic.cpp (virtio-net), ip.cpp (Ethernet/ARP/IPv4/ICMP), udp.cpp, tcp.cpp, dhcp.cpp, net.cpp (main loop)
 │   ├── diskfs/             # Persistent file service on the block device (module, no hardware)
 │   ├── ramfs/              # In-memory file service (module, no hardware), holds the boot image
 │   ├── sh/                 # Command line (module, no hardware): runs programs, background jobs, Ctrl-C
@@ -153,6 +154,7 @@ CastorOS/
 │   ├── ls/ cat/ cp/ rm/ echo/ write/ grep/ wc/ sleep/ disk/ ping/ ifconfig/ dns/ http/ echod/ hello/   # Programs in the boot image
 │   ├── bootfs/             # Static files for the boot image (rc, readme.txt)
 │   ├── program.mk          # Shared build rules for user programs
+│   ├── arch.mk             # Compiler and flags shared by the user library and all programs
 │   └── linker/             # User linker scripts
 ├── docs/                   # Documentation (Chinese)
 ├── scripts/                # cross-compiler-install.sh, shell-test.sh (used by make test)
@@ -174,9 +176,16 @@ CastorOS/
   `src/arch/<arch>/mm/*.cpp`). Do not add a per-architecture table walk; extend `pt.h` instead.
 - Register names and the layout of the saved syscall frame appear only in
   `src/arch/<arch>/task/user_context.cpp` (`hal::UserContext`: initial context of a task, the
-  child's context on fork, redirecting the syscall return on exec). `task.cpp`, `process.cpp` and
-  `loader.cpp` have no `#if ARCH_*`. An address space is always passed around as the physical
-  address of its top-level table (`uintptr_t`), never as a pointer to it.
+  child's context on fork, redirecting the syscall return on exec, the FP/SIMD state) and
+  `src/arch/<arch>/syscall/` (`hal::Syscall::arg6`). The types themselves (`cpu_context_t`,
+  `hal_fp_state_t`) and the user address-space limits are in `src/arch/<arch>/include/task_context.h`,
+  which `kernel/task.h` includes. `task.cpp`, `sched.cpp`, `process.cpp`, `loader.cpp`,
+  `syscall.cpp` and `kernel/task.h` have no `#if ARCH_*`. An address space is always passed around
+  as the physical address of its top-level table (`uintptr_t`), never as a pointer to it.
+- `kernel::Scheduler` is implemented in two files: `sched.cpp` (run queue, idle task, `schedule()`,
+  timer tick, yield/sleep/block/wakeup) and `task.cpp` (task table, creating and exiting processes,
+  kill, privilege queries). What they share is in `src/kernel/task_private.h`; nothing else
+  includes it.
 - `src/mm/vmm.cpp` has no `#if ARCH_*`: address-space creation, cloning (COW), teardown, extending
   the kernel's direct mapping and the i686 kernel-mapping sync are `hal::Mmu` functions implemented
   per architecture. New architecture-dependent memory code goes behind a `hal::Mmu` function, not

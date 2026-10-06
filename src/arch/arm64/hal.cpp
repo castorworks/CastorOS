@@ -280,3 +280,14 @@ bool hal::Platform::find_device(struct device_info *info) {
     }
     return false;
 }
+
+/* ARM64 has no I/O ports: device registers are memory (map_device) */
+bool hal::Platform::port_read(uint16_t port, uint32_t width, uint32_t *value) {
+    (void)port; (void)width; (void)value;
+    return false;
+}
+
+bool hal::Platform::port_write(uint16_t port, uint32_t width, uint32_t value) {
+    (void)port; (void)width; (void)value;
+    return false;
+}

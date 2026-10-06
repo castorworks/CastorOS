@@ -1,453 +1,290 @@
+// printf 一族：格式化输出
+//
+// 只有一个格式化函数（format）。它不知道字符最后去哪里，只管往一个有界的缓冲区里放；
+// printf / eprintf 用一块静态缓冲区，格式化完再写到标准输出或标准错误，snprintf 直接用
+// 调用者给的缓冲区。
+//
+// 支持的格式符: %s %c %d %i %u %x %X %o %p %f %%
+// 长度修饰:     l、ll（%ld %lu %lx %lld %llu %llx ...）
+// 标志:         -（左对齐）、0（用 0 填充）
+// 宽度:         %5d、%-10s
+// 精度:         只对 %f 有意义（%.2f；默认 6 位，最多 15 位）
+
 #include <stdio.h>
 #include <syscall.h>
 #include <types.h>
 #include <libgcc_stub.h>
 #include <string.h>
 
-// 辅助函数：将数字转换为字符串（十进制）
-void num_to_str_dec(unsigned long long val, int is_signed, char *tmp, int *len) {
-    int i = 0;
-    if (is_signed && (long long)val < 0) {
-        tmp[i++] = '-';
-        val = -(long long)val;
+// ============================================================================
+// 数字 -> 字符串。结果不含符号，以 '\0' 结尾，返回长度
+// ============================================================================
+
+/** 一个 64 位整数最多有多少位数字（八进制 22 位），加上结尾的 '\0' */
+#define INT_STR_MAX     24
+/** 最大的 double 有 309 位整数，加上小数点、15 位小数和结尾的 '\0' */
+#define FLOAT_STR_MAX   352
+
+/** base 是 8、10 或 16 */
+static int uint_to_str(unsigned long long val, unsigned base, bool uppercase, char *out) {
+    const char *digits = uppercase ? "0123456789ABCDEF" : "0123456789abcdef";
+    char rev[INT_STR_MAX];
+    int n = 0;
+    do {
+        // i686 上 64 位除法不是一条指令，要调用户库里的 __udivdi3 / __umoddi3
+        rev[n++] = digits[__umoddi3(val, base)];
+        val = __udivdi3(val, base);
+    } while (val > 0);
+
+    int len = 0;
+    while (n > 0) {
+        out[len++] = rev[--n];
     }
-    if (val == 0) {
-        tmp[i++] = '0';
-    } else {
-        char rev[32];
-        int j = 0;
-        while (val > 0) {
-            rev[j++] = '0' + (char)(__umoddi3(val, 10));
-            val = __udivdi3(val, 10);
-        }
-        while (j > 0) {
-            tmp[i++] = rev[--j];
-        }
-    }
-    tmp[i] = '\0';
-    *len = i;
+    out[len] = '\0';
+    return len;
 }
 
-// 辅助函数：将数字转换为字符串（十六进制）
-void num_to_str_hex(unsigned long long val, int uppercase, char *tmp, int *len) {
-    int i = 0;
-    if (val == 0) {
-        tmp[i++] = '0';
-    } else {
-        char rev[32];
-        int j = 0;
-        const char *digits = uppercase ? "0123456789ABCDEF" : "0123456789abcdef";
-        while (val > 0) {
-            rev[j++] = digits[val & 0xF];  // 使用位操作代替 % 16
-            val >>= 4;  // 使用位操作代替 / 16
-        }
-        while (j > 0) {
-            tmp[i++] = rev[--j];
-        }
-    }
-    tmp[i] = '\0';
-    *len = i;
-}
-
-// 辅助函数：将数字转换为字符串（八进制）
-void num_to_str_oct(unsigned long long val, char *tmp, int *len) {
-    int i = 0;
-    if (val == 0) {
-        tmp[i++] = '0';
-    } else {
-        char rev[32];
-        int j = 0;
-        while (val > 0) {
-            rev[j++] = '0' + (char)(val & 0x7);  // 使用位操作代替 % 8
-            val >>= 3;  // 使用位操作代替 / 8
-        }
-        while (j > 0) {
-            tmp[i++] = rev[--j];
-        }
-    }
-    tmp[i] = '\0';
-    *len = i;
-}
-
-// 辅助函数：把一个非负的浮点数转换成小数形式的字符串（符号由调用者输出）
-// precision 是小数点后的位数（最多 15）。tmp 至少要有 FLOAT_STR_MAX 字节：最大的 double 有 309 位整数
-#define FLOAT_STR_MAX 352
-void num_to_str_float(double mag, int precision, char *tmp, int *len) {
-    int i = 0;
+/** mag 是非负数（符号由调用者输出），precision 是小数点后的位数（最多 15） */
+static int float_to_str(double mag, int precision, char *out) {
+    int len = 0;
     if (mag != mag) {
-        tmp[i++] = 'n'; tmp[i++] = 'a'; tmp[i++] = 'n';
-    } else if (mag > 1.7976931348623157e308) {
-        tmp[i++] = 'i'; tmp[i++] = 'n'; tmp[i++] = 'f';
-    } else {
-        // 整数部分要放进 64 位整数里逐位取。太大的数先缩小，缩掉的位补 0：
-        // double 只有十六七位有效数字，那些位本来就不准
-        int scaled = 0;
-        while (mag >= 1e18) {
-            mag /= 10;
-            scaled++;
-        }
-        if (scaled == 0) {
-            // 四舍五入到要输出的最后一位
-            double half = 0.5;
-            for (int p = 0; p < precision; p++) {
-                half /= 10;
-            }
-            mag += half;
-        }
-        long long whole = (long long)mag;
-        double frac = mag - (double)whole;
+        memcpy(out, "nan", 4);
+        return 3;
+    }
+    if (mag > 1.7976931348623157e308) {
+        memcpy(out, "inf", 4);
+        return 3;
+    }
 
-        int whole_len;
-        num_to_str_dec((unsigned long long)whole, 0, tmp, &whole_len);
-        i = whole_len;
-        while (scaled-- > 0) {
-            tmp[i++] = '0';
-            frac = 0;
+    // 整数部分要放进 64 位整数里逐位取。太大的数先缩小，缩掉的位补 0：
+    // double 只有十六七位有效数字，那些位本来就不准
+    int scaled = 0;
+    while (mag >= 1e18) {
+        mag /= 10;
+        scaled++;
+    }
+    if (scaled == 0) {
+        // 四舍五入到要输出的最后一位
+        double half = 0.5;
+        for (int p = 0; p < precision; p++) {
+            half /= 10;
         }
-        if (precision > 0) {
-            tmp[i++] = '.';
-            for (int p = 0; p < precision; p++) {
-                frac *= 10;
-                int digit = (int)frac;
-                tmp[i++] = (char)('0' + digit);
-                frac -= digit;
-            }
+        mag += half;
+    }
+    long long whole = (long long)mag;
+    double frac = scaled == 0 ? mag - (double)whole : 0;
+
+    len = uint_to_str((unsigned long long)whole, 10, false, out);
+    while (scaled-- > 0) {
+        out[len++] = '0';
+    }
+    if (precision > 0) {
+        out[len++] = '.';
+        for (int p = 0; p < precision; p++) {
+            frac *= 10;
+            int digit = (int)frac;
+            out[len++] = (char)('0' + digit);
+            frac -= digit;
         }
     }
-    tmp[i] = '\0';
-    *len = i;
+    out[len] = '\0';
+    return len;
 }
 
-// 增强的 printf 实现
-// 支持格式符: %s, %d, %i, %u, %c, %x, %X, %o, %p, %f, %ld, %lu, %lld, %llu, %%
-// 支持标志: -, 0 (左对齐, 零填充)
-// 支持宽度: %5d, %-10s 等；精度只对 %f 有意义（%.2f，默认 6 位，最多 15 位）
-static void format_and_write(bool to_err, const char *format, __builtin_va_list args) {
-    static char buffer[8192];  // 足够大的静态缓冲区
-    size_t pos = 0;
-    
-    while (*format && pos < sizeof(buffer) - 1) {
-        if (*format == '%' && *(format + 1)) {
-            format++;
-            
-            // 解析标志和宽度
-            int left_align = 0;
-            int zero_pad = 0;
-            int width = 0;
-            int long_flag = 0;  // 1 for 'l', 2 for 'll'
-            
-            // 解析标志
-            while (*format == '-' || *format == '0') {
-                if (*format == '-') left_align = 1;
-                if (*format == '0') zero_pad = 1;
-                format++;
-            }
-            
-            // 解析宽度
-            while (*format >= '0' && *format <= '9') {
-                width = width * 10 + (*format - '0');
-                format++;
-            }
-            
-            // 解析精度
-            int precision = -1;
-            if (*format == '.') {
-                format++;
-                precision = 0;
-                while (*format >= '0' && *format <= '9') {
-                    precision = precision * 10 + (*format - '0');
-                    format++;
-                }
-            }
+// ============================================================================
+// 格式化
+// ============================================================================
 
-            // 解析长度修饰符
-            if (*format == 'l') {
-                long_flag = 1;
-                format++;
-                if (*format == 'l') {
-                    long_flag = 2;  // ll = long long
-                    format++;
-                }
-            }
-            
-            // 处理格式符
-            switch (*format) {
-                case 's': {
-                    const char *s = __builtin_va_arg(args, const char *);
-                    if (!s) s = "(null)";
-                    
-                    // 计算字符串长度
-                    size_t len = 0;
-                    const char *p = s;
-                    while (*p) {
-                        p++;
-                        len++;
-                    }
-                    
-                    int pad = (width > 0 && (int)width > (int)len) ? ((int)width - (int)len) : 0;
-                    
-                    // 左对齐：先输出字符串，再填充
-                    if (left_align) {
-                        p = s;
-                        while (*p && pos < sizeof(buffer) - 1) {
-                            buffer[pos++] = *p++;
-                        }
-                        while (pad-- > 0 && pos < sizeof(buffer) - 1) {
-                            buffer[pos++] = ' ';
-                        }
-                    } else {
-                        // 右对齐：先填充，再输出字符串
-                        while (pad-- > 0 && pos < sizeof(buffer) - 1) {
-                            buffer[pos++] = (zero_pad) ? '0' : ' ';
-                        }
-                        p = s;
-                        while (*p && pos < sizeof(buffer) - 1) {
-                            buffer[pos++] = *p++;
-                        }
-                    }
-                    break;
-                }
-                case 'd':
-                case 'i': {
-                    long long val;
-                    if (long_flag == 2) {
-                        val = __builtin_va_arg(args, long long);
-                    } else if (long_flag == 1) {
-                        val = __builtin_va_arg(args, long);
-                    } else {
-                        val = __builtin_va_arg(args, int);
-                    }
-                    
-                    // tmp 里只放绝对值的数字，符号由下面单独输出。
-                    // 用无符号运算取绝对值，LLONG_MIN 也不会溢出。
-                    int neg = (val < 0);
-                    unsigned long long mag = neg ? (0ULL - (unsigned long long)val)
-                                                 : (unsigned long long)val;
-                    char tmp[32];
-                    int len;
-                    num_to_str_dec(mag, 0, tmp, &len);
-                    
-                    int pad = (width > len + neg) ? (width - len - neg) : 0;
-                    
-                    // 右对齐且用空格填充时，填充在符号之前
-                    if (!left_align && !zero_pad) {
-                        while (pad-- > 0 && pos < sizeof(buffer) - 1) {
-                            buffer[pos++] = ' ';
-                        }
-                    }
-                    if (neg && pos < sizeof(buffer) - 1) {
-                        buffer[pos++] = '-';
-                    }
-                    // 用 0 填充时，填充在符号和数字之间
-                    if (!left_align && zero_pad) {
-                        while (pad-- > 0 && pos < sizeof(buffer) - 1) {
-                            buffer[pos++] = '0';
-                        }
-                    }
-                    for (int i = 0; i < len && pos < sizeof(buffer) - 1; i++) {
-                        buffer[pos++] = tmp[i];
-                    }
-                    // 左对齐时，填充在数字之后
-                    if (left_align) {
-                        while (pad-- > 0 && pos < sizeof(buffer) - 1) {
-                            buffer[pos++] = ' ';
-                        }
-                    }
-                    break;
-                }
-                case 'u': {
-                    unsigned long long val;
-                    if (long_flag == 2) {
-                        val = __builtin_va_arg(args, unsigned long long);
-                    } else if (long_flag == 1) {
-                        val = __builtin_va_arg(args, unsigned long);
-                    } else {
-                        val = __builtin_va_arg(args, unsigned int);
-                    }
-                    
-                    char tmp[32];
-                    int len;
-                    num_to_str_dec(val, 0, tmp, &len);
-                    
-                    int pad = (width > len) ? (width - len) : 0;
-                    
-                    if (left_align) {
-                        for (int i = 0; i < len && pos < sizeof(buffer) - 1; i++) {
-                            buffer[pos++] = tmp[i];
-                        }
-                        while (pad-- > 0 && pos < sizeof(buffer) - 1) {
-                            buffer[pos++] = ' ';
-                        }
-                    } else {
-                        while (pad-- > 0 && pos < sizeof(buffer) - 1) {
-                            buffer[pos++] = (zero_pad) ? '0' : ' ';
-                        }
-                        for (int i = 0; i < len && pos < sizeof(buffer) - 1; i++) {
-                            buffer[pos++] = tmp[i];
-                        }
-                    }
-                    break;
-                }
-                case 'x':
-                case 'X': {
-                    unsigned long long val;
-                    if (long_flag) {
-                        val = __builtin_va_arg(args, unsigned long);
-                    } else {
-                        val = __builtin_va_arg(args, unsigned int);
-                    }
-                    
-                    char tmp[32];
-                    int len;
-                    num_to_str_hex(val, (*format == 'X'), tmp, &len);
-                    
-                    int pad = (width > len) ? (width - len) : 0;
-                    
-                    if (left_align) {
-                        for (int i = 0; i < len && pos < sizeof(buffer) - 1; i++) {
-                            buffer[pos++] = tmp[i];
-                        }
-                        while (pad-- > 0 && pos < sizeof(buffer) - 1) {
-                            buffer[pos++] = ' ';
-                        }
-                    } else {
-                        while (pad-- > 0 && pos < sizeof(buffer) - 1) {
-                            buffer[pos++] = (zero_pad) ? '0' : ' ';
-                        }
-                        for (int i = 0; i < len && pos < sizeof(buffer) - 1; i++) {
-                            buffer[pos++] = tmp[i];
-                        }
-                    }
-                    break;
-                }
-                case 'o': {
-                    unsigned long long val;
-                    if (long_flag) {
-                        val = __builtin_va_arg(args, unsigned long);
-                    } else {
-                        val = __builtin_va_arg(args, unsigned int);
-                    }
-                    
-                    char tmp[32];
-                    int len;
-                    num_to_str_oct(val, tmp, &len);
-                    
-                    int pad = (width > len) ? (width - len) : 0;
-                    
-                    if (left_align) {
-                        for (int i = 0; i < len && pos < sizeof(buffer) - 1; i++) {
-                            buffer[pos++] = tmp[i];
-                        }
-                        while (pad-- > 0 && pos < sizeof(buffer) - 1) {
-                            buffer[pos++] = ' ';
-                        }
-                    } else {
-                        while (pad-- > 0 && pos < sizeof(buffer) - 1) {
-                            buffer[pos++] = (zero_pad) ? '0' : ' ';
-                        }
-                        for (int i = 0; i < len && pos < sizeof(buffer) - 1; i++) {
-                            buffer[pos++] = tmp[i];
-                        }
-                    }
-                    break;
-                }
-                case 'p': {
-                    void *ptr = __builtin_va_arg(args, void *);
-                    unsigned long val = (unsigned long)ptr;
-                    
-                    char tmp[32];
-                    int len;
-                    num_to_str_hex(val, 0, tmp, &len);
-                    
-                    // 指针格式：0x + 十六进制
-                    if (pos < sizeof(buffer) - 1) buffer[pos++] = '0';
-                    if (pos < sizeof(buffer) - 1) buffer[pos++] = 'x';
-                    
-                    int pad = (width > len + 2) ? (width - len - 2) : 0;
-                    while (pad-- > 0 && pos < sizeof(buffer) - 1) {
-                        buffer[pos++] = (zero_pad) ? '0' : ' ';
-                    }
-                    
-                    for (int i = 0; i < len && pos < sizeof(buffer) - 1; i++) {
-                        buffer[pos++] = tmp[i];
-                    }
-                    break;
-                }
-                case 'f': {
-                    // 变参里的 float 也是按 double 传的
-                    double val = __builtin_va_arg(args, double);
-                    int neg = (val < 0);
-                    if (precision < 0) precision = 6;
-                    if (precision > 15) precision = 15;
-                    char tmp[FLOAT_STR_MAX];
-                    int len;
-                    num_to_str_float(neg ? -val : val, precision, tmp, &len);
+/** 输出的去处：一块有界的缓冲区。放不下的字符丢掉，始终给结尾的 '\0' 留着位置 */
+struct sink {
+    char *buf;
+    size_t size;        // 至少是 1
+    size_t pos;
+};
 
-                    int pad = (width > len + neg) ? (width - len - neg) : 0;
-                    if (!left_align && !zero_pad) {
-                        while (pad-- > 0 && pos < sizeof(buffer) - 1) {
-                            buffer[pos++] = ' ';
-                        }
-                    }
-                    if (neg && pos < sizeof(buffer) - 1) {
-                        buffer[pos++] = '-';
-                    }
-                    if (!left_align && zero_pad) {
-                        while (pad-- > 0 && pos < sizeof(buffer) - 1) {
-                            buffer[pos++] = '0';
-                        }
-                    }
-                    for (int i = 0; i < len && pos < sizeof(buffer) - 1; i++) {
-                        buffer[pos++] = tmp[i];
-                    }
-                    if (left_align) {
-                        while (pad-- > 0 && pos < sizeof(buffer) - 1) {
-                            buffer[pos++] = ' ';
-                        }
-                    }
-                    break;
-                }
-                case 'c': {
-                    char c = (char)__builtin_va_arg(args, int);
-                    buffer[pos++] = c;
-                    break;
-                }
-                case '%': {
-                    buffer[pos++] = '%';
-                    break;
-                }
-                default:
-                    buffer[pos++] = '%';
-                    if (*format) {
-                        buffer[pos++] = *format;
-                    }
-                    break;
-            }
-        } else {
-            buffer[pos++] = *format;
-        }
-        format++;
+static void put(struct sink *out, char c) {
+    if (out->pos < out->size - 1) {
+        out->buf[out->pos++] = c;
     }
-    
-    buffer[pos] = '\0';
+}
+
+static void put_n(struct sink *out, const char *s, int len) {
+    for (int i = 0; i < len; i++) {
+        put(out, s[i]);
+    }
+}
+
+static void put_repeat(struct sink *out, char c, int count) {
+    while (count-- > 0) {
+        put(out, c);
+    }
+}
+
+/** 一个 % 说明里除了格式符本身之外的部分 */
+struct spec {
+    bool left_align;
+    bool zero_pad;
+    int width;
+    int precision;      // -1 表示没有给
+    int longs;          // 'l' 的个数：0、1 或 2
+};
+
+/**
+ * 输出一个字段：前缀（符号或 "0x"）加正文，不够宽度就填充。
+ * 填充的位置：右对齐用空格时在最前面，右对齐用 0 时在前缀和正文之间，左对齐时在最后面。
+ */
+static void put_field(struct sink *out, const struct spec *sp, const char *prefix, const char *body, int body_len) {
+    int prefix_len = (int)strlen(prefix);
+    int pad = sp->width - prefix_len - body_len;
+
+    if (!sp->left_align && !sp->zero_pad) {
+        put_repeat(out, ' ', pad);
+    }
+    put_n(out, prefix, prefix_len);
+    if (!sp->left_align && sp->zero_pad) {
+        put_repeat(out, '0', pad);
+    }
+    put_n(out, body, body_len);
+    if (sp->left_align) {
+        put_repeat(out, ' ', pad);
+    }
+}
+
+/** 解析 '%' 后面的标志、宽度、精度和长度修饰；返回指向格式符的指针 */
+static const char *parse_spec(const char *p, struct spec *sp) {
+    *sp = {};
+    sp->precision = -1;
+
+    for (; *p == '-' || *p == '0'; p++) {
+        if (*p == '-') sp->left_align = true;
+        if (*p == '0') sp->zero_pad = true;
+    }
+    for (; *p >= '0' && *p <= '9'; p++) {
+        sp->width = sp->width * 10 + (*p - '0');
+    }
+    if (*p == '.') {
+        sp->precision = 0;
+        for (p++; *p >= '0' && *p <= '9'; p++) {
+            sp->precision = sp->precision * 10 + (*p - '0');
+        }
+    }
+    for (; *p == 'l' && sp->longs < 2; p++) {
+        sp->longs++;
+    }
+    return p;
+}
+
+static void format(struct sink *out, const char *fmt, __builtin_va_list args) {
+    for (; *fmt; fmt++) {
+        // 末尾孤零零的一个 '%' 照原样输出
+        if (*fmt != '%' || fmt[1] == '\0') {
+            put(out, *fmt);
+            continue;
+        }
+
+        struct spec sp;
+        fmt = parse_spec(fmt + 1, &sp);
+
+        switch (*fmt) {
+            case 's': {
+                const char *s = __builtin_va_arg(args, const char *);
+                if (!s) s = "(null)";
+                put_field(out, &sp, "", s, (int)strlen(s));
+                break;
+            }
+            case 'c': {
+                char c = (char)__builtin_va_arg(args, int);
+                put(out, c);
+                break;
+            }
+            case 'd':
+            case 'i': {
+                long long val = sp.longs == 2 ? __builtin_va_arg(args, long long)
+                              : sp.longs == 1 ? __builtin_va_arg(args, long)
+                                              : __builtin_va_arg(args, int);
+                // 用无符号运算取绝对值，LLONG_MIN 也不会溢出
+                bool neg = val < 0;
+                unsigned long long mag = neg ? 0ULL - (unsigned long long)val : (unsigned long long)val;
+                char tmp[INT_STR_MAX];
+                int len = uint_to_str(mag, 10, false, tmp);
+                put_field(out, &sp, neg ? "-" : "", tmp, len);
+                break;
+            }
+            case 'u':
+            case 'x':
+            case 'X':
+            case 'o': {
+                unsigned long long val = sp.longs == 2 ? __builtin_va_arg(args, unsigned long long)
+                                       : sp.longs == 1 ? __builtin_va_arg(args, unsigned long)
+                                                       : __builtin_va_arg(args, unsigned int);
+                unsigned base = *fmt == 'u' ? 10 : *fmt == 'o' ? 8 : 16;
+                char tmp[INT_STR_MAX];
+                int len = uint_to_str(val, base, *fmt == 'X', tmp);
+                put_field(out, &sp, "", tmp, len);
+                break;
+            }
+            case 'p': {
+                unsigned long val = (unsigned long)__builtin_va_arg(args, void *);
+                char tmp[INT_STR_MAX];
+                int len = uint_to_str(val, 16, false, tmp);
+                put_field(out, &sp, "0x", tmp, len);
+                break;
+            }
+            case 'f': {
+                // 变参里的 float 也是按 double 传的
+                double val = __builtin_va_arg(args, double);
+                bool neg = val < 0;
+                int precision = sp.precision < 0 ? 6 : sp.precision > 15 ? 15 : sp.precision;
+                char tmp[FLOAT_STR_MAX];
+                int len = float_to_str(neg ? -val : val, precision, tmp);
+                put_field(out, &sp, neg ? "-" : "", tmp, len);
+                break;
+            }
+            case '%':
+                put(out, '%');
+                break;
+            default:
+                // 不认识的格式符照原样输出
+                put(out, '%');
+                if (*fmt) {
+                    put(out, *fmt);
+                }
+                break;
+        }
+        if (*fmt == '\0') {
+            break;      // 格式串在一个 % 说明的中间结束了
+        }
+    }
+    out->buf[out->pos] = '\0';
+}
+
+// ============================================================================
+// 对外的函数
+// ============================================================================
+
+/** 格式化到一块静态缓冲区，再整个写出去（一次 printf 最多输出这么多） */
+static void format_and_write(bool to_err, const char *fmt, __builtin_va_list args) {
+    static char buffer[8192];
+    struct sink out = { buffer, sizeof(buffer), 0 };
+    format(&out, fmt, args);
     if (to_err) {
-        write_err(buffer, pos);
+        write_err(buffer, out.pos);
     } else {
-        write_out(buffer, pos);
+        write_out(buffer, out.pos);
     }
 }
 
-void printf(const char *format, ...) {
+void printf(const char *fmt, ...) {
     __builtin_va_list args;
-    __builtin_va_start(args, format);
-    format_and_write(false, format, args);
+    __builtin_va_start(args, fmt);
+    format_and_write(false, fmt, args);
     __builtin_va_end(args);
 }
 
-void eprintf(const char *format, ...) {
+void eprintf(const char *fmt, ...) {
     __builtin_va_list args;
-    __builtin_va_start(args, format);
-    format_and_write(true, format, args);
+    __builtin_va_start(args, fmt);
+    format_and_write(true, fmt, args);
     __builtin_va_end(args);
 }
 
@@ -456,343 +293,15 @@ void print(const char *msg) {
     write_out(msg, strlen(msg));
 }
 
-// snprintf 实现
-// 支持格式符: %s, %d, %i, %u, %c, %x, %X, %o, %p, %f, %ld, %lu, %lld, %llu, %%
-// 支持标志: -, 0 (左对齐, 零填充)
-// 支持宽度: %5d, %-10s 等；精度只对 %f 有意义（%.2f，默认 6 位，最多 15 位）
-int snprintf(char *str, size_t size, const char *format, ...) {
+/** @return 写进 str 的字符数（不含结尾的 '\0'）；放不下的部分被截掉 */
+int snprintf(char *str, size_t size, const char *fmt, ...) {
     if (!str || size == 0) {
         return 0;
     }
-    
-    size_t pos = 0;
-    const char *fmt = format;
-    
-    // 使用内置的变参宏
+    struct sink out = { str, size, 0 };
     __builtin_va_list args;
-    __builtin_va_start(args, format);
-    
-    while (*fmt && pos < size - 1) {
-        if (*fmt == '%' && *(fmt + 1)) {
-            fmt++;
-            
-            // 解析标志和宽度
-            int left_align = 0;
-            int zero_pad = 0;
-            int width = 0;
-            int long_flag = 0;  // 1 for 'l', 2 for 'll'
-            
-            // 解析标志
-            while (*fmt == '-' || *fmt == '0') {
-                if (*fmt == '-') left_align = 1;
-                if (*fmt == '0') zero_pad = 1;
-                fmt++;
-            }
-            
-            // 解析宽度
-            while (*fmt >= '0' && *fmt <= '9') {
-                width = width * 10 + (*fmt - '0');
-                fmt++;
-            }
-            
-            // 解析精度
-            int precision = -1;
-            if (*fmt == '.') {
-                fmt++;
-                precision = 0;
-                while (*fmt >= '0' && *fmt <= '9') {
-                    precision = precision * 10 + (*fmt - '0');
-                    fmt++;
-                }
-            }
-
-            // 解析长度修饰符
-            if (*fmt == 'l') {
-                long_flag = 1;
-                fmt++;
-                if (*fmt == 'l') {
-                    long_flag = 2;  // ll = long long
-                    fmt++;
-                }
-            }
-            
-            // 处理格式符
-            switch (*fmt) {
-                case 's': {
-                    const char *s = __builtin_va_arg(args, const char *);
-                    if (!s) s = "(null)";
-                    
-                    // 计算字符串长度
-                    size_t len = 0;
-                    const char *p = s;
-                    while (*p) {
-                        p++;
-                        len++;
-                    }
-                    
-                    int pad = (width > 0 && (int)width > (int)len) ? ((int)width - (int)len) : 0;
-                    
-                    // 左对齐：先输出字符串，再填充
-                    if (left_align) {
-                        p = s;
-                        while (*p && pos < size - 1) {
-                            str[pos++] = *p++;
-                        }
-                        while (pad-- > 0 && pos < size - 1) {
-                            str[pos++] = ' ';
-                        }
-                    } else {
-                        // 右对齐：先填充，再输出字符串
-                        while (pad-- > 0 && pos < size - 1) {
-                            str[pos++] = (zero_pad) ? '0' : ' ';
-                        }
-                        p = s;
-                        while (*p && pos < size - 1) {
-                            str[pos++] = *p++;
-                        }
-                    }
-                    break;
-                }
-                case 'd':
-                case 'i': {
-                    long long val;
-                    if (long_flag == 2) {
-                        val = __builtin_va_arg(args, long long);
-                    } else if (long_flag == 1) {
-                        val = __builtin_va_arg(args, long);
-                    } else {
-                        val = __builtin_va_arg(args, int);
-                    }
-                    
-                    // tmp 里只放绝对值的数字，符号由下面单独输出。
-                    // 用无符号运算取绝对值，LLONG_MIN 也不会溢出。
-                    int neg = (val < 0);
-                    unsigned long long mag = neg ? (0ULL - (unsigned long long)val)
-                                                 : (unsigned long long)val;
-                    char tmp[32];
-                    int len;
-                    num_to_str_dec(mag, 0, tmp, &len);
-                    
-                    int pad = (width > len + neg) ? (width - len - neg) : 0;
-                    
-                    // 右对齐且用空格填充时，填充在符号之前
-                    if (!left_align && !zero_pad) {
-                        while (pad-- > 0 && pos < size - 1) {
-                            str[pos++] = ' ';
-                        }
-                    }
-                    if (neg && pos < size - 1) {
-                        str[pos++] = '-';
-                    }
-                    // 用 0 填充时，填充在符号和数字之间
-                    if (!left_align && zero_pad) {
-                        while (pad-- > 0 && pos < size - 1) {
-                            str[pos++] = '0';
-                        }
-                    }
-                    for (int i = 0; i < len && pos < size - 1; i++) {
-                        str[pos++] = tmp[i];
-                    }
-                    // 左对齐时，填充在数字之后
-                    if (left_align) {
-                        while (pad-- > 0 && pos < size - 1) {
-                            str[pos++] = ' ';
-                        }
-                    }
-                    break;
-                }
-                case 'u': {
-                    unsigned long long val;
-                    if (long_flag == 2) {
-                        val = __builtin_va_arg(args, unsigned long long);
-                    } else if (long_flag == 1) {
-                        val = __builtin_va_arg(args, unsigned long);
-                    } else {
-                        val = __builtin_va_arg(args, unsigned int);
-                    }
-                    
-                    char tmp[32];
-                    int len;
-                    num_to_str_dec(val, 0, tmp, &len);
-                    
-                    int pad = (width > len) ? (width - len) : 0;
-                    
-                    if (left_align) {
-                        for (int i = 0; i < len && pos < size - 1; i++) {
-                            str[pos++] = tmp[i];
-                        }
-                        while (pad-- > 0 && pos < size - 1) {
-                            str[pos++] = ' ';
-                        }
-                    } else {
-                        while (pad-- > 0 && pos < size - 1) {
-                            str[pos++] = (zero_pad) ? '0' : ' ';
-                        }
-                        for (int i = 0; i < len && pos < size - 1; i++) {
-                            str[pos++] = tmp[i];
-                        }
-                    }
-                    break;
-                }
-                case 'x':
-                case 'X': {
-                    unsigned long long val;
-                    if (long_flag) {
-                        val = __builtin_va_arg(args, unsigned long);
-                    } else {
-                        val = __builtin_va_arg(args, unsigned int);
-                    }
-                    
-                    char tmp[32];
-                    int len;
-                    num_to_str_hex(val, (*fmt == 'X'), tmp, &len);
-                    
-                    int pad = (width > len) ? (width - len) : 0;
-                    
-                    if (left_align) {
-                        for (int i = 0; i < len && pos < size - 1; i++) {
-                            str[pos++] = tmp[i];
-                        }
-                        while (pad-- > 0 && pos < size - 1) {
-                            str[pos++] = ' ';
-                        }
-                    } else {
-                        while (pad-- > 0 && pos < size - 1) {
-                            str[pos++] = (zero_pad) ? '0' : ' ';
-                        }
-                        for (int i = 0; i < len && pos < size - 1; i++) {
-                            str[pos++] = tmp[i];
-                        }
-                    }
-                    break;
-                }
-                case 'o': {
-                    unsigned long long val;
-                    if (long_flag) {
-                        val = __builtin_va_arg(args, unsigned long);
-                    } else {
-                        val = __builtin_va_arg(args, unsigned int);
-                    }
-                    
-                    char tmp[32];
-                    int len;
-                    num_to_str_oct(val, tmp, &len);
-                    
-                    int pad = (width > len) ? (width - len) : 0;
-                    
-                    if (left_align) {
-                        for (int i = 0; i < len && pos < size - 1; i++) {
-                            str[pos++] = tmp[i];
-                        }
-                        while (pad-- > 0 && pos < size - 1) {
-                            str[pos++] = ' ';
-                        }
-                    } else {
-                        while (pad-- > 0 && pos < size - 1) {
-                            str[pos++] = (zero_pad) ? '0' : ' ';
-                        }
-                        for (int i = 0; i < len && pos < size - 1; i++) {
-                            str[pos++] = tmp[i];
-                        }
-                    }
-                    break;
-                }
-                case 'p': {
-                    void *ptr = __builtin_va_arg(args, void *);
-                    unsigned long val = (unsigned long)ptr;
-                    
-                    char tmp[32];
-                    int len;
-                    num_to_str_hex(val, 0, tmp, &len);
-                    
-                    // 指针格式：0x + 十六进制
-                    if (pos < size - 1) str[pos++] = '0';
-                    if (pos < size - 1) str[pos++] = 'x';
-                    
-                    int pad = (width > len + 2) ? (width - len - 2) : 0;
-                    while (pad-- > 0 && pos < size - 1) {
-                        str[pos++] = (zero_pad) ? '0' : ' ';
-                    }
-                    
-                    for (int i = 0; i < len && pos < size - 1; i++) {
-                        str[pos++] = tmp[i];
-                    }
-                    break;
-                }
-                case 'f': {
-                    // 变参里的 float 也是按 double 传的
-                    double val = __builtin_va_arg(args, double);
-                    int neg = (val < 0);
-                    if (precision < 0) precision = 6;
-                    if (precision > 15) precision = 15;
-                    char tmp[FLOAT_STR_MAX];
-                    int len;
-                    num_to_str_float(neg ? -val : val, precision, tmp, &len);
-
-                    int pad = (width > len + neg) ? (width - len - neg) : 0;
-                    if (!left_align && !zero_pad) {
-                        while (pad-- > 0 && pos < size - 1) {
-                            str[pos++] = ' ';
-                        }
-                    }
-                    if (neg && pos < size - 1) {
-                        str[pos++] = '-';
-                    }
-                    if (!left_align && zero_pad) {
-                        while (pad-- > 0 && pos < size - 1) {
-                            str[pos++] = '0';
-                        }
-                    }
-                    for (int i = 0; i < len && pos < size - 1; i++) {
-                        str[pos++] = tmp[i];
-                    }
-                    if (left_align) {
-                        while (pad-- > 0 && pos < size - 1) {
-                            str[pos++] = ' ';
-                        }
-                    }
-                    break;
-                }
-                case 'c': {
-                    char c = (char)__builtin_va_arg(args, int);
-                    if (pos < size - 1) {
-                        str[pos++] = c;
-                    }
-                    break;
-                }
-                case '%': {
-                    if (pos < size - 1) {
-                        str[pos++] = '%';
-                    }
-                    break;
-                }
-                default:
-                    if (pos < size - 1) {
-                        str[pos++] = '%';
-                    }
-                    if (*fmt && pos < size - 1) {
-                        str[pos++] = *fmt;
-                    }
-                    break;
-            }
-        } else {
-            if (pos < size - 1) {
-                str[pos++] = *fmt;
-            }
-        }
-        fmt++;
-    }
-    
+    __builtin_va_start(args, fmt);
+    format(&out, fmt, args);
     __builtin_va_end(args);
-    
-    // 确保字符串以 null 结尾
-    if (pos < size) {
-        str[pos] = '\0';
-    } else if (size > 0) {
-        str[size - 1] = '\0';
-    }
-    
-    // 返回应该写入的字符数（不包括 null 终止符）
-    return (int)pos;
+    return (int)out.pos;
 }
-

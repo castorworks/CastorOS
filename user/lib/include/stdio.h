@@ -5,11 +5,6 @@
 #include <types.h>
 #include <libgcc_stub.h>
 
-// 辅助函数声明（内部使用）
-void num_to_str_dec(unsigned long long val, int is_signed, char *tmp, int *len);
-void num_to_str_hex(unsigned long long val, int uppercase, char *tmp, int *len);
-void num_to_str_oct(unsigned long long val, char *tmp, int *len);
-
 // 标准输入和标准输出
 //
 // 默认是控制台（输出走内核的 console_write，输入来自 uart 驱动）。命令行可以把它们
@@ -50,14 +45,17 @@ long read_line(char *buf, size_t size);
 /** 写标准错误。@return 写出的字节数，失败返回 -1 */
 long write_err(const void *buf, size_t len);
 
-/** 格式化后写到标准输出 */
+/**
+ * 格式化后写到标准输出。格式符: %s %c %d %i %u %x %X %o %p %f %%，可以带 l / ll；
+ * 标志 -（左对齐）和 0（用 0 填充），宽度（%5d），%f 的精度（%.2f，默认 6 位）
+ */
 void printf(const char *format, ...);
 /** 格式化后写到标准错误：用法说明和报错用这个 */
 void eprintf(const char *format, ...);
 /** 把字符串写到标准输出 */
 void print(const char *msg);
 
-// snprintf 函数声明
+/** 格式化进 str（最多 size 字节，含结尾的 '\0'）。@return 写进去的字符数，放不下的部分被截掉 */
 int snprintf(char *str, size_t size, const char *format, ...);
 
 #endif /* _USERLAND_LIB_STDIO_H_ */

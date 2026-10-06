@@ -1,53 +1,10 @@
 # CastorOS User Library - Makefile
 # 支持多架构编译: i686, x86_64, arm64
 
-# ============================================================================
-# 架构配置
-# ============================================================================
+# 编译器和编译选项和用户程序共用一份（../arch.mk）
+include ../arch.mk
 
-# 默认架构
-ARCH ?= i686
-
-# 架构特定配置
-ifeq ($(ARCH),i686)
-    CC = i686-elf-gcc
-    CXX = i686-elf-g++
-    AR = i686-elf-ar
-    AS = i686-elf-gcc
-    ARCH_CFLAGS = -m32 -DARCH_I686
-    ARCH_ASFLAGS = -m32
-    ARCH_DIR = i686
-else ifeq ($(ARCH),x86_64)
-    CC = x86_64-elf-gcc
-    CXX = x86_64-elf-g++
-    AR = x86_64-elf-ar
-    AS = x86_64-elf-gcc
-    ARCH_CFLAGS = -m64 -DARCH_X86_64 -mcmodel=large -mno-red-zone
-    ARCH_ASFLAGS = -m64
-    ARCH_DIR = x86_64
-else ifeq ($(ARCH),arm64)
-    CC = aarch64-elf-gcc
-    CXX = aarch64-elf-g++
-    AR = aarch64-elf-ar
-    AS = aarch64-elf-gcc
-    ARCH_CFLAGS = -DARCH_ARM64
-    ARCH_ASFLAGS =
-    ARCH_DIR = arm64
-else
-    $(error Unsupported architecture: $(ARCH). Use i686, x86_64, or arm64)
-endif
-
-# ============================================================================
-# 编译标志
-# ============================================================================
-
-CXXFLAGS = -std=gnu++20 -ffreestanding -nostdlib -nostartfiles \
-         -fno-builtin -fno-stack-protector -O0 -g -Wall -Wextra \
-         -Iinclude $(ARCH_CFLAGS) \
-           -fno-exceptions -fno-rtti -fno-threadsafe-statics \
-           -fno-asynchronous-unwind-tables -fno-unwind-tables
-
-ASFLAGS = $(ARCH_ASFLAGS)
+CXXFLAGS = $(USER_CXXFLAGS) -Iinclude
 
 # ============================================================================
 # 目录
@@ -56,7 +13,7 @@ ASFLAGS = $(ARCH_ASFLAGS)
 SRC_DIR = src
 INCLUDE_DIR = include
 BUILD_DIR = build/$(ARCH)
-ARCH_SRC_DIR = $(SRC_DIR)/arch/$(ARCH_DIR)
+ARCH_SRC_DIR = $(SRC_DIR)/arch/$(ARCH)
 
 # ============================================================================
 # 源文件
@@ -105,7 +62,7 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
 $(BUILD_DIR)/arch/%.o: $(ARCH_SRC_DIR)/%.S
 	@mkdir -p $(dir $@)
 	@echo "[AS] $< -> $@"
-	$(AS) $(ASFLAGS) -c $< -o $@
+	$(CC) $(ARCH_CFLAGS) -c $< -o $@
 
 -include $(OBJECTS:.o=.d)
 
@@ -124,9 +81,7 @@ info:
 	@echo "Architecture: $(ARCH)"
 	@echo "Compiler:     $(CXX)"
 	@echo "Archiver:     $(AR)"
-	@echo "Assembler:    $(AS)"
 	@echo "CXXFLAGS:     $(CXXFLAGS)"
-	@echo "ASFLAGS:      $(ASFLAGS)"
 	@echo "C Sources:    $(C_SOURCES)"
 	@echo "ASM Sources:  $(ASM_SOURCES)"
 	@echo "Objects:      $(OBJECTS)"

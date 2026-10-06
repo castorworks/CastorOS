@@ -13,6 +13,10 @@
 #include <kernel/ipc.h>
 #include <kernel/hw_access.h>
 
+/* cpu_context_t、hal_fp_state_t、USER_SPACE_END 和 USER_STACK_TOP 因架构而异：
+ * 每个架构在 src/arch/<arch>/include/task_context.h 里各有一份 */
+#include <task_context.h>
+
 /* ============================================================================
  * 常量定义
  * ========================================================================== */
@@ -26,28 +30,11 @@
 /** @brief 用户栈大小（1MB） */
 #define USER_STACK_SIZE (1 * 1024 * 1024)
 
-/** @brief 用户空间结束地址（内核空间起始地址） */
-#if defined(ARCH_ARM64)
-/* ARM64: User space is in TTBR0 region (0x0000_0000_0000_0000 - 0x0000_FFFF_FFFF_FFFF)
- * We use a more conservative limit for user stack placement */
-#define USER_SPACE_END          0x0000800000000000ULL  /* 128TB - reasonable user space limit */
-#define ARM64_USER_STACK_TOP    0x00007FFFFF000000ULL  /* User stack top (below 128TB) */
-#else
-#define USER_SPACE_END 0x80000000
-#endif
-
 /**
  * @brief init 的 PID。用户态把它当作名字服务的固定地址，所以必须是确定的值：
  * 普通任务的 PID 从 2 开始分配，这个号留给内核加载的第一个用户进程。
  */
 #define INIT_PID 1
-
-/** @brief 用户栈区域的顶端（不含） */
-#if defined(ARCH_ARM64)
-#define USER_STACK_TOP  ARM64_USER_STACK_TOP
-#else
-#define USER_STACK_TOP  USER_SPACE_END
-#endif
 
 /**
  * @brief 参数页：用户栈区域最顶上的一页不当栈用，exec 把程序参数放在这里
@@ -86,151 +73,6 @@ typedef enum {
     TASK_TERMINATED       ///< 终止状态（已退出）
 } task_state_t;
 
-/**
- * @brief CPU 上下文结构
- * 
- * 保存任务切换时需要保存/恢复的所有 CPU 寄存器
- * 架构相关：i686 使用 32 位寄存器，x86_64 使用 64 位寄存器，ARM64 使用 64 位寄存器
- */
-#if defined(ARCH_X86_64)
-/* x86_64: 64-bit context structure */
-typedef struct {
-    /* General purpose registers */
-    uint64_t r15;
-    uint64_t r14;
-    uint64_t r13;
-    uint64_t r12;
-    uint64_t r11;
-    uint64_t r10;
-    uint64_t r9;
-    uint64_t r8;
-    uint64_t rbp;
-    uint64_t rdi;
-    uint64_t rsi;
-    uint64_t rdx;
-    uint64_t rcx;
-    uint64_t rbx;
-    uint64_t rax;
-
-    /* Instruction pointer */
-    uint64_t rip;        ///< 指令指针
-
-    /* Code segment */
-    uint64_t cs;
-
-    /* Flags register */
-    uint64_t rflags;     ///< 标志寄存器
-
-    /* Stack pointer */
-    uint64_t rsp;        ///< 栈指针
-
-    /* Stack segment */
-    uint64_t ss;
-
-    /* Page table base register */
-    uint64_t cr3;        ///< 页目录物理地址
-} __attribute__((packed)) cpu_context_t;
-
-/* Compatibility aliases for x86_64 */
-#define eip rip
-#define esp rsp
-#define eflags rflags
-#define eax rax
-#define ebx rbx
-#define ecx rcx
-#define edx rdx
-#define esi rsi
-#define edi rdi
-#define ebp rbp
-
-#elif defined(ARCH_ARM64)
-/* ARM64: 64-bit context structure */
-typedef struct {
-    /* General purpose registers X0-X30 */
-    uint64_t x[31];              /* X0-X30 */
-
-    /* Stack pointer */
-    uint64_t sp;
-
-    /* Program counter - stored in ELR_EL1 */
-    uint64_t pc;
-
-    /* Processor state - stored in SPSR_EL1 */
-    uint64_t pstate;
-
-    /* User page table base register (TTBR0_EL1) */
-    uint64_t ttbr0;
-
-    /* Kernel stack top loaded into SP_EL1 before returning to EL0.
-     * Layout must match arm64_context_t (arch/arm64/include/context.h). */
-    uint64_t kernel_sp;
-} __attribute__((packed, aligned(16))) cpu_context_t;
-
-static_assert(sizeof(cpu_context_t) == 288, "cpu_context_t must match arm64_context_t");
-static_assert(__builtin_offsetof(cpu_context_t, kernel_sp) == 280, "kernel_sp offset mismatch");
-
-/* Compatibility aliases for ARM64 */
-#define eip pc
-#define esp sp
-#define cr3 ttbr0
-
-/* ARM64 PSTATE bits */
-#define ARM64_PSTATE_EL0t   0x00    /* EL0 with SP_EL0 */
-#define ARM64_PSTATE_EL1t   0x04    /* EL1 with SP_EL0 */
-#define ARM64_PSTATE_EL1h   0x05    /* EL1 with SP_EL1 */
-
-#else
-/* i686: 32-bit context structure */
-typedef struct {
-    /* 段寄存器 */
-    uint16_t gs, _gs_padding;
-    uint16_t fs, _fs_padding;
-    uint16_t es, _es_padding;
-    uint16_t ds, _ds_padding;
-
-    /* 通用寄存器（按 PUSHA 顺序） */
-    uint32_t edi;
-    uint32_t esi;
-    uint32_t ebp;
-    uint32_t esp_dummy;  // PUSHA 会压入 ESP，但我们不使用它
-    uint32_t ebx;
-    uint32_t edx;
-    uint32_t ecx;
-    uint32_t eax;
-
-    /* 特殊寄存器 */
-    uint32_t eip;        ///< 指令指针
-    uint16_t cs, _cs_padding;
-    uint32_t eflags;     ///< 标志寄存器
-
-    /* 用户态栈指针（Ring 3 时使用） */
-    uint32_t esp;        ///< 栈指针
-    uint16_t ss, _ss_padding;
-
-    /* 页目录基址寄存器 */
-    uint32_t cr3;        ///< 页目录物理地址
-} __attribute__((packed)) cpu_context_t;
-#endif
-
-/**
- * 一个用户任务的浮点/SIMD 寄存器。不在 cpu_context_t 里：内核自己不用这些寄存器，
- * 所以只在换一个用户任务上 CPU 时保存和恢复（hal::UserContext::fp_save / fp_restore）。
- */
-#if defined(ARCH_ARM64)
-/* V0-V31（各 128 位）、FPSR、FPCR；布局和 arch/arm64/task/fp.S 里的偏移一致 */
-typedef struct {
-    uint64_t v[64];
-    uint64_t fpsr;
-    uint64_t fpcr;
-} __attribute__((aligned(16))) hal_fp_state_t;
-
-static_assert(__builtin_offsetof(hal_fp_state_t, fpsr) == 512, "fpsr offset must match fp.S");
-#else
-/* x87、MMX、XMM、MXCSR，FXSAVE 的格式；FXSAVE/FXRSTOR 要求 16 字节对齐 */
-typedef struct {
-    uint8_t data[512];
-} __attribute__((aligned(16))) hal_fp_state_t;
-#endif
 
 /**
  * @brief 任务控制块（TCB/PCB）

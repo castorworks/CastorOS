@@ -797,6 +797,17 @@ public:
      * @return true if there is such a device
      */
     static bool find_device(struct device_info *info);
+
+    /**
+     * @brief Read or write an I/O port on behalf of a user-space driver
+     *
+     * width is 1, 2 or 4 bytes; the caller has checked the range and the permission.
+     * Only x86 has I/O ports.
+     *
+     * @return false if this architecture has no I/O ports
+     */
+    static bool port_read(uint16_t port, uint32_t width, uint32_t *value);
+    static bool port_write(uint16_t port, uint32_t width, uint32_t value);
 };
 
 } // namespace hal

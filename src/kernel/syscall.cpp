@@ -30,40 +30,6 @@ typedef syscall_arg_t (*syscall_handler_t)(syscall_arg_t*, syscall_arg_t, syscal
 
 static syscall_handler_t syscall_table[SYS_MAX];
 
-/* 栈帧布局（架构相关）：
- * i686 (syscall_handler 中 "mov ebp, esp" 后)：
- *   frame[0]  = DS
- *   frame[1]  = EAX (syscall_num)
- *   frame[2]  = EBX (arg1)
- *   ...
- *   frame[12] = SS (IRET)
- * 
- * x86_64 (syscall_entry 中保存的寄存器)：
- *   frame[0]  = r15
- *   frame[1]  = r14
- *   ...
- *   frame[15] = user_rsp
- */
-
-/**
- * @brief 取第 6 个系统调用参数
- *
- * syscall_dispatcher 只通过寄存器传递前 5 个参数，第 6 个要从保存的寄存器帧里取，
- * 它所在的寄存器由各架构用户库的 syscall6 约定决定：
- *   - i686:   EBP -> frame[7]
- *   - x86_64: R9  -> frame[6]（frame[7] 是 R8，即第 5 个参数）
- *   - arm64:  X5  -> frame[5]
- */
-static inline syscall_arg_t syscall_arg6(const syscall_arg_t *frame) {
-#if defined(ARCH_X86_64)
-    return frame[6];
-#elif defined(ARCH_ARM64)
-    return frame[5];
-#else
-    return frame[7];
-#endif
-}
-
 /* ============================================================================
  * 用户指针校验辅助
  * 包装器拿到的地址/长度全部来自用户态，传给实现函数之前先在这里校验，
@@ -174,8 +140,8 @@ static syscall_arg_t sys_brk_wrapper(syscall_arg_t *frame, syscall_arg_t addr, s
 
 static syscall_arg_t sys_mmap_wrapper(syscall_arg_t *frame, syscall_arg_t addr, syscall_arg_t length,
                                       syscall_arg_t prot, syscall_arg_t flags, syscall_arg_t fd) {
-    // 第 6 个参数 (offset) 不在寄存器参数里，从保存的寄存器帧中取
-    syscall_arg_t offset = syscall_arg6(frame);
+    // 第 6 个参数 (offset) 不在分发器传进来的 5 个里：它在保存的寄存器帧中，位置由架构决定
+    syscall_arg_t offset = hal::Syscall::arg6(frame);
     return syscall::Mm::mmap((uintptr_t)addr, (size_t)length, (uint32_t)prot, (uint32_t)flags, 
                     (int32_t)fd, (uint32_t)offset);
 }
@@ -235,41 +201,27 @@ static syscall_arg_t sys_ipc_call_wrapper(syscall_arg_t *frame, syscall_arg_t de
  * 硬件访问：对特权进程开放，没有特权的进程只碰得到许可给它的设备（kernel/hw_access.h）
  * ============================================================================ */
 
-/** port/width 是否是一次合法的端口访问（只有 x86 有 I/O 端口；设备内存用 map_device） */
+/** port/width 是否是一次合法的、当前进程可以做的端口访问（设备内存用 map_device） */
 static bool io_access_ok(syscall_arg_t port, syscall_arg_t width) {
-#if defined(ARCH_I686) || defined(ARCH_X86_64)
     if (width != 1 && width != 2 && width != 4) return false;
     if (port > 0xFFFF || port + width > 0x10000) return false;
     return kernel::HwAccess::current_may(HW_PORTS, port, width);
-#else
-    (void)port; (void)width;
-    return false;
-#endif
 }
 
+/* 只有 x86 有 I/O 端口：别的架构上 hal::Platform::port_read / port_write 恒失败 */
 static syscall_arg_t sys_io_read_wrapper(syscall_arg_t *frame, syscall_arg_t port, syscall_arg_t width,
                                          syscall_arg_t value_ptr, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p4; (void)p5;
     if (!io_access_ok(port, width) || !user_wr(value_ptr, sizeof(uint32_t))) return SYSCALL_FAIL;
-#if defined(ARCH_I686) || defined(ARCH_X86_64)
-    uint16_t p = (uint16_t)port;
-    *(uint32_t *)(uintptr_t)value_ptr =
-        width == 1 ? hal::Port::read8(p) : width == 2 ? hal::Port::read16(p) : hal::Port::read32(p);
-#endif
-    return 0;
+    return hal::Platform::port_read((uint16_t)port, (uint32_t)width, (uint32_t *)(uintptr_t)value_ptr)
+               ? 0 : SYSCALL_FAIL;
 }
 
 static syscall_arg_t sys_io_write_wrapper(syscall_arg_t *frame, syscall_arg_t port, syscall_arg_t width,
                                           syscall_arg_t value, syscall_arg_t p4, syscall_arg_t p5) {
-    (void)frame; (void)value; (void)p4; (void)p5;
+    (void)frame; (void)p4; (void)p5;
     if (!io_access_ok(port, width)) return SYSCALL_FAIL;
-#if defined(ARCH_I686) || defined(ARCH_X86_64)
-    uint16_t p = (uint16_t)port;
-    if (width == 1) hal::Port::write8(p, (uint8_t)value);
-    else if (width == 2) hal::Port::write16(p, (uint16_t)value);
-    else hal::Port::write32(p, (uint32_t)value);
-#endif
-    return 0;
+    return hal::Platform::port_write((uint16_t)port, (uint32_t)width, (uint32_t)value) ? 0 : SYSCALL_FAIL;
 }
 
 static syscall_arg_t sys_map_device_wrapper(syscall_arg_t *frame, syscall_arg_t phys, syscall_arg_t length,

@@ -52,3 +52,8 @@ void hal::Syscall::init(hal_syscall_handler_t handler) {
     LOG_INFO_MSG("i686 system call mechanism initialized\n");
 }
 
+/* EBP. The frame the entry stub saves starts with DS, then EAX (the syscall number),
+ * EBX, ECX, EDX, ESI, EDI (arguments 1-5) and EBP at frame[7] */
+uintptr_t hal::Syscall::arg6(const uintptr_t *frame) {
+    return frame[7];
+}

@@ -1,7 +1,7 @@
 #ifndef _NET_INTERNAL_H_
 #define _NET_INTERNAL_H_
 
-// 网络服务内部：协议栈（net.cpp）和 TCP（tcp.cpp）之间共用的东西
+// 网络服务内部：各个文件（net / nic / ip / udp / tcp / dhcp）之间的接口
 
 #include <syscall.h>
 #include <net.h>
@@ -17,22 +17,88 @@ static inline uint32_t swap32(uint32_t v) {
     return (v << 24) | ((v << 8) & 0x00FF0000) | ((v >> 8) & 0x0000FF00) | (v >> 24);
 }
 
-// ---- net.cpp 提供 ----
+#define IP_PROTO_UDP    17
+#define IP_BROADCAST    0xFFFFFFFFu
+#define DHCP_CLIENT_PORT 68
 
-/** 本机地址（主机字节序）；0 表示还没配置好 */
+/** 以太网帧的最大长度（不含 FCS） */
+#define FRAME_MAX       1514
+
+// ---- net.cpp：地址配置、应答客户 ----
+
+/** 本机地址（主机字节序）；DHCP 完成（或放弃）之前是 0 */
 extern uint32_t my_ip;
+extern uint32_t netmask, gateway, dns_server;
+/** 地址是不是 DHCP 给的（否则是退回的固定配置） */
+extern bool from_dhcp;
+/** 网卡的 MAC 地址，驱动初始化时填 */
+extern uint8_t my_mac[6];
+
+/** 应答一个阻塞在请求里的客户：data[0] = result, data[1] = d1, data[2] = d2 */
+void reply_client(int pid, uint32_t label, int64_t result, uint64_t d1, uint64_t d2);
+
+// ---- nic.cpp：网卡驱动 ----
+
+/** 打开许可给本进程的网卡，读出 MAC，建好收发队列。@return 没有可用的网卡返回 false */
+bool nic_init(void);
+/** 网卡的中断号（只用来打印） */
+int nic_irq_line(void);
+/** 收到了网卡的中断消息：撤销中断，把收到的帧交给 eth_input，重新打开中断线 */
+void nic_interrupt(void);
+/** 发一个以太网帧。发送缓冲区用完时丢弃 */
+void nic_send(const uint8_t *frame, size_t len);
+/** 调试用：丢掉接下来发出的 tx 个、收到的 rx 个 TCP 帧（NET_DEBUG_DROP），用来验证重传 */
+void nic_debug_drop(uint32_t tx, uint32_t rx);
+
+// ---- ip.cpp：以太网、ARP、IPv4、ICMP ----
+
+/** 网卡收到一个以太网帧 */
+void eth_input(uint8_t *frame, size_t len);
 
 /** 互联网校验和：16 位反码求和。start 用来接着前一段（伪首部）的和算 */
 uint16_t checksum(const void *data, size_t len, uint32_t start);
 
-/** TCP/UDP 伪首部（源、目的地址，协议，长度）的校验和部分 */
-uint32_t pseudo_sum(uint32_t src, uint32_t dst, uint8_t protocol, size_t len);
-
 /** 发一个 IP 包。payload 在返回之前就被拷走了 */
 void ip_send(uint32_t dst, uint8_t protocol, const uint8_t *payload, size_t len);
 
-/** 应答一个阻塞在请求里的客户：data[0] = result, data[1] = d1, data[2] = d2 */
-void reply_client(int pid, uint32_t label, int64_t result, uint64_t d1, uint64_t d2);
+/** 把发给自己的包（回环队列里的）交给协议栈。主循环每处理完一件事调用一次 */
+void loopback_drain(void);
+
+/** 替客户 pid 发一个回显请求；应答在收到回显或者超时的时候发 */
+void ping_start(int pid, uint32_t ip, uint32_t timeout_ms);
+
+/** 定时器：重发 ARP 请求 / 让超时的 ping 失败。@return 是否还有东西在等 */
+bool arp_tick(uint64_t now);
+bool ping_tick(uint64_t now);
+
+// ---- udp.cpp ----
+
+/** TCP/UDP 伪首部（源、目的地址，协议，长度）的校验和部分 */
+uint32_t pseudo_sum(uint32_t src, uint32_t dst, uint8_t protocol, size_t len);
+
+/** 收到一个 UDP 数据报 */
+void udp_input(uint32_t src, uint32_t dst, const uint8_t *data, size_t len);
+
+/** 不经过套接字直接发一个数据报（DHCP 用：那时还没有地址） */
+void udp_send_raw(uint16_t src_port, uint32_t dst, uint16_t dst_port, const uint8_t *data, size_t len);
+
+/** 处理一个 NET_UDP_* 请求（自己负责应答，recv 可能是之后才应答） */
+void udp_request(const struct ipc_msg *m);
+
+/** 定时器：让等得太久的 recv 失败。@return 是否还有 recv 在等 */
+bool udp_tick(uint64_t now);
+
+/** 客户退出了：收回它的套接字 */
+void udp_drop_owner(int pid);
+
+// ---- dhcp.cpp ----
+
+/** 开始获取地址 */
+void dhcp_start(void);
+/** DHCP 客户端端口上收到一个数据报 */
+void dhcp_input(const uint8_t *data, size_t len);
+/** 定时器：重发、放弃。@return 是否还在等应答 */
+bool dhcp_tick(uint64_t now);
 
 // ---- tcp.cpp 提供 ----
 

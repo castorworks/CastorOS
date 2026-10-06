@@ -7,32 +7,12 @@
 #   MODULES     = 汇编里 .incbin 进来的文件（可选）
 #   include ../program.mk
 
-ARCH ?= i686
+include $(dir $(lastword $(MAKEFILE_LIST)))arch.mk
 
-ifeq ($(ARCH),i686)
-    CROSS = i686-elf-
-    ARCH_CFLAGS = -m32 -DARCH_I686
-else ifeq ($(ARCH),x86_64)
-    CROSS = x86_64-elf-
-    ARCH_CFLAGS = -m64 -DARCH_X86_64 -mcmodel=large -mno-red-zone
-else ifeq ($(ARCH),arm64)
-    CROSS = aarch64-elf-
-    ARCH_CFLAGS = -DARCH_ARM64
-else
-    $(error Unsupported architecture: $(ARCH). Use i686, x86_64, or arm64)
-endif
-
-CC = $(CROSS)gcc
-CXX = $(CROSS)g++
-LD = $(CROSS)ld
 LDSCRIPT = ../linker/user_$(ARCH).ld
 # max-page-size: aarch64 的链接器默认按 64KB 对齐段在文件里的位置，每个程序白占 60 多 KB
 
-CXXFLAGS = -std=gnu++20 -ffreestanding -nostdlib -nostartfiles \
-           -fno-builtin -fno-stack-protector -O0 -g -Wall -Wextra \
-           -I../lib/include $(INCLUDES) $(ARCH_CFLAGS) \
-           -fno-exceptions -fno-rtti -fno-threadsafe-statics \
-           -fno-asynchronous-unwind-tables -fno-unwind-tables
+CXXFLAGS = $(USER_CXXFLAGS) -I../lib/include $(INCLUDES)
 
 BUILD_DIR = build/$(ARCH)
 LIB_DIR = ../lib

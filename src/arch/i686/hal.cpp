@@ -154,3 +154,15 @@ bool hal::Platform::find_device(struct device_info *info) {
     (void)info;
     return false;
 }
+
+bool hal::Platform::port_read(uint16_t port, uint32_t width, uint32_t *value) {
+    *value = width == 1 ? hal::Port::read8(port) : width == 2 ? hal::Port::read16(port) : hal::Port::read32(port);
+    return true;
+}
+
+bool hal::Platform::port_write(uint16_t port, uint32_t width, uint32_t value) {
+    if (width == 1) hal::Port::write8(port, (uint8_t)value);
+    else if (width == 2) hal::Port::write16(port, (uint16_t)value);
+    else hal::Port::write32(port, value);
+    return true;
+}

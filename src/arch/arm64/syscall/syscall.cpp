@@ -71,3 +71,7 @@ void hal::Syscall::init(hal_syscall_handler_t handler) {
 /* External assembly function for entering user mode */
 extern "C" void enter_usermode_arm64(uint64_t entry_point, uint64_t user_stack);
 
+/* X5: the frame starts with X0 */
+uintptr_t hal::Syscall::arg6(const uintptr_t *frame) {
+    return frame[5];
+}

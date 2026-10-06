@@ -82,3 +82,8 @@ void hal::Syscall::init(hal_syscall_handler_t handler) {
 void hal_syscall_set_kernel_stack(uint64_t stack_ptr) {
     set_kernel_stack(stack_ptr);
 }
+
+/* R9 is at frame[6]; frame[7] is R8, the fifth argument */
+uintptr_t hal::Syscall::arg6(const uintptr_t *frame) {
+    return frame[6];
+}

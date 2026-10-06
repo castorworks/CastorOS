@@ -42,9 +42,14 @@ public:
      */
     static void init(hal_syscall_handler_t handler);
 
-    /* ============================================================================
-     * System Call Parameter Functions
-     * ========================================================================== */
+    /**
+     * @brief The sixth argument of the system call whose saved registers are at frame
+     *
+     * The dispatcher receives the first five arguments in registers. The sixth stays in
+     * the register frame saved by the entry stub, in the register the user library's
+     * syscall6 puts it in: EBP on i686, R9 on x86_64, X5 on arm64.
+     */
+    static uintptr_t arg6(const uintptr_t *frame);
 
 };
 

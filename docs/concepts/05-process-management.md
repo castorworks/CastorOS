@@ -4,6 +4,11 @@
 
 CastorOS 实现了抢占式多任务，支持用户态和内核态任务。每个任务有独立的地址空间和内核栈。
 
+代码在 `src/kernel/` 的两个文件里，一起实现 `kernel::Scheduler`：`task.cpp` 是任务表和进程的
+一生（PCB 的分配和释放、创建第一个进程、退出、kill），`sched.cpp` 是调度（就绪队列、idle、
+`schedule()`、时钟滴答、让出/睡眠/阻塞/唤醒）。`fork`、`exec`、`waitpid` 在
+`src/kernel/syscalls/process.cpp`。
+
 ## 任务状态
 
 ```
@@ -80,8 +85,9 @@ PCB 里没有文件描述符表和工作目录：内核不认识文件，这些�
 ## CPU 上下文
 
 任务不在 CPU 上运行的时候，它的寄存器内容存在 PCB 里的 `cpu_context_t` 中。这个结构
-每个架构都不一样（寄存器不同），在 i686 上是通用寄存器、段寄存器、指令指针、标志寄存器、
-栈指针，再加上 `cr3`——这个任务的地址空间。
+每个架构都不一样（寄存器不同），所以定义不在通用的 `kernel/task.h` 里，而是每个架构各有
+一份 `src/arch/<arch>/include/task_context.h`。在 i686 上它是通用寄存器、段寄存器、指令指针、
+标志寄存器、栈指针，再加上 `cr3`——这个任务的地址空间。
 
 通用的调度和进程代码不直接读写里面的字段。需要构造或改写现场的地方只有几处，
 都通过 `hal::UserContext`（`src/arch/<arch>/task/user_context.cpp`）：
