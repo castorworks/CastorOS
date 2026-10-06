@@ -54,7 +54,8 @@ in one place) are listed at the end of `docs/README.md`.
 
 ```
 CXXFLAGS = -std=gnu++20 -ffreestanding -O0 -g -Wall -Wextra \
-           -fno-exceptions -fno-rtti -fno-threadsafe-statics
+           -fno-exceptions -fno-rtti -fno-threadsafe-statics \
+           -fno-asynchronous-unwind-tables -fno-unwind-tables
 ```
 
 - Freestanding environment (no standard library; minimal C++ runtime in `src/lib/cxxrt.cpp`)
@@ -276,7 +277,7 @@ nowhere else. The kernel Makefile rebuilds all of it when `user/` changes.
   Test cases are `test_<name>` with the `TEST_CASE()` macro. A test module only runs its cases;
   the runner (`run_all_tests`) resets the counters before each module and prints its summary
   afterwards. Do not call `unittest_init()` / `unittest_print_summary()` in a module, and register
-  every new module in `test_runner.cpp` — a module that is not listed there never runs.
+  every new module in `src/tests/framework/test_runner.cpp` — a module that is not listed there never runs.
 - **`user/selftest`** runs inside the system from `rc`; add checks there for anything a program
   can observe.
 - **`scripts/shell-test.sh`** drives the command line over the serial port from the host; add
@@ -305,7 +306,7 @@ The kernel does not power off by itself: `make test` starts QEMU through
 `scripts/shell-test.sh`, waits for `sh: ready` in the log (at most `TEST_TIMEOUT`), then types a
 series of commands into the serial port to check the command line (running programs, background
 jobs, Ctrl-C, `kill`, whether the port of a killed service can be reused, programs reading
-keyboard input, redirection and pipes, quoting, standard error, scripts). Each step waits until
+keyboard input, redirection and pipes, directories, quoting, standard error, scripts). Each step waits until
 the expected output appears (at most `STEP_TIMEOUT` seconds per step, default 30), and QEMU is
 stopped when the steps are done.
 

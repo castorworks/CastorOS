@@ -8,7 +8,7 @@
  * @file user_irq.h
  * @brief 把设备中断交给用户态驱动
  *
- * 特权进程用 irq_claim 认领一条中断线。中断到来时内核屏蔽这条线，
+ * 驱动用 irq_claim 认领一条中断线（要有特权，或者这条线在它的许可表里）。中断到来时内核屏蔽这条线，
  * 并给属主投递一条 sender == IPC_KERNEL、label == IPC_LABEL_IRQ 的消息
  * （data[0] 是中断号）；属主处理完设备后用 irq_ack 重新打开这条线。
  * 属主没在 recv 时中断记为待处理，下一次 recv(IPC_ANY) 先收到它。

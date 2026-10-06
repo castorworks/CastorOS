@@ -108,7 +108,7 @@ PCB 里没有文件描述符表和工作目录：内核不认识文件，这些�
 2. 从队首取下一个任务；队列空了就运行 idle 任务。
 3. 如果下一个是用户任务，`hal::UserContext::set_kernel_stack()` 换好它的内核栈。
 4. 换浮点/SIMD 寄存器：当前任务是用户任务就 `fp_save` 存进它的 PCB，下一个是用户任务就 `fp_restore` 装回它的。内核线程（idle）不用这些寄存器，轮到它时什么都不做：用户任务 A 换下去时已经存好了，之后不管中间隔了几次 idle，换上来的用户任务都从自己的 PCB 里装。
-5. `task_switch_context(&prev->context, &next->context)` 切换。
+5. `task_switch_context(&old_ctx_ptr, &next->context)` 切换（第一个参数是“旧任务的现场存到哪里”，是指向指针的指针）。
 
 idle 任务只做一件事：关着中断检查有没有任务可运行，没有就开中断并停机，等下一次中断。检查和停机必须是一个不可分的动作，否则可能在两者之间错过一次唤醒。
 
@@ -175,12 +175,12 @@ uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size
     kernel::Elf::load(elf_data, size, new_dir, &entry_point, &program_end);
     Scheduler::setup_user_stack(current);
 
-    // 3. 切到新地址空间，释放旧的
+    // 3. 切到新地址空间
     mm::Vmm::switch_page_directory(new_dir);
-    mm::Vmm::free_page_directory(old_dir);
 
-    // 4. 把参数写进参数页（用户栈区域最顶上的一页，地址固定）
+    // 4. 把参数写进参数页（用户栈区域最顶上的一页，地址固定），然后释放旧的地址空间
     memcpy(((user_args_t *)USER_ARGS_ADDR)->data, kargs, args_size);
+    mm::Vmm::free_page_directory(old_dir);
 
     // 5. 这次系统调用不回到原来的程序，而是“返回”到新程序的入口
     hal::UserContext::init(&current->context, entry_point, current->user_stack,
@@ -276,7 +276,7 @@ bool Scheduler::request_kill(task_t *target, uint32_t signal) {
     return true;
 }
 
-// 系统调用返回用户态之前、以及时钟中断即将返回用户态时调用
+// 系统调用返回用户态之前、以及任何中断即将返回用户态时调用
 void Scheduler::deliver_pending_kill() {
     if (current_task->kill_pending) {
         exit_current(128 + signal, true, signal);

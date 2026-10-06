@@ -12,6 +12,8 @@
 | x86_64 | `syscall` | RAX | RDI, RSI, RDX, R10, R8, R9 | RAX |
 | arm64 | `svc #0` | X8 | X0–X5 | X0 |
 
+x86_64 的内核另外保留了一个 `int 0x80` 入口，用户态库不用它。
+
 用户态库把这层差异包在 `syscall0` … `syscall6` 里（`user/lib/src/arch/<arch>/syscall.S`），其上的 C 包装（`user/lib/src/syscall.cpp`）对三个架构是同一份代码：
 
 ```cpp
@@ -101,7 +103,7 @@ static syscall_arg_t sys_irq_claim_wrapper(syscall_arg_t *frame, syscall_arg_t i
 
 ## 返回值
 
-没有 `errno`。约定很简单：失败返回 -1（指针类的调用返回 `MAP_FAILED`），成功返回 0 或有意义的值。实现函数用 32 位值表示结果，分发层统一做符号扩展，保证 64 位架构上用户态看到的也是负数：
+没有 `errno`。约定很简单：失败返回负数（指针类的调用返回 `MAP_FAILED`），成功返回 0 或有意义的值。负数几乎都是 -1，唯一的例外是 `fork` 在内存或任务表不够时返回 -12。实现函数用 32 位值表示结果，分发层统一做符号扩展，保证 64 位架构上用户态看到的也是负数：
 
 ```cpp
 static inline syscall_arg_t sys_ret32(uint32_t value) {
@@ -111,7 +113,7 @@ static inline syscall_arg_t sys_ret32(uint32_t value) {
 
 ## 会阻塞的系统调用
 
-`ipc_send` / `ipc_recv` / `ipc_call`、`waitpid`、`nanosleep` 会让当前任务阻塞。内核不可抢占，所以阻塞总是发生在明确的点上（`Scheduler::block` / `Scheduler::sleep`）：任务把自己标成 BLOCKED 并切换出去，等别的任务或中断处理函数把它唤醒。被 `kill` 的任务如果正阻塞在这些调用里，会被提前唤醒，调用返回 -1，然后在系统调用出口处退出。
+`ipc_send` / `ipc_recv` / `ipc_call`、`mem_grant`（它要等对方收下授予通知）、`waitpid`、`nanosleep` 会让当前任务阻塞。内核不可抢占，所以阻塞总是发生在明确的点上（`Scheduler::block` / `Scheduler::sleep`）：任务把自己标成 BLOCKED 并切换出去，等别的任务或中断处理函数把它唤醒。被 `kill` 的任务如果正阻塞在这些调用里，会被提前唤醒，然后在系统调用出口处退出，不会再回到用户态。
 
 ## 加一个系统调用
 

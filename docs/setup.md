@@ -33,13 +33,14 @@ brew install nasm qemu
 bash scripts/cross-compiler-install.sh          # 三个架构都装
 bash scripts/cross-compiler-install.sh i686-elf # 只装一个（i686-elf / x86_64-elf / aarch64-elf）
 bash scripts/cross-compiler-install.sh -y       # 不提问，已经装好的跳过
+bash scripts/cross-compiler-install.sh -f       # 已经装好的也重新编译
 ```
 
 它编译的是 binutils 2.45.1 和 GCC 15.2.0（只要 C/C++ 编译器和 libgcc，不要 C 库），和 macOS 上 Homebrew 装的版本一样。
 
 - 默认装到 `/usr/local/cross`，并把 `/usr/local/cross/bin` 加进 `~/.bashrc` 的 `PATH`；用 `PREFIX=...` 换地方。
 - 源码默认从中科大的镜像下载；在国外用 `GNU_MIRROR=https://ftpmirror.gnu.org/gnu`。
-- 每个目标要编译 15-40 分钟，三个加起来临时占 5GB 左右（`~/cross-compiler`，装完可以删）。
+- 每个目标要编译 15-40 分钟，三个加起来临时占 5GB 左右（`~/cross-compiler`，装完可以删；用 `WORKDIR=...` 换地方）。并行编译的任务数默认是 CPU 的个数，用 `JOBS=...` 改。
 
 脚本做的事就是对每个目标重复这两步，想手动来可以照着做：
 

@@ -158,9 +158,9 @@ higher_half:
     ; 设置栈指针
     mov esp, stack_top
 
-    ; 调用 C 内核入口
-    push ebx  ; Multiboot 信息结构
-    push eax  ; 魔数
+    ; 调用 C++ 内核入口，参数是 Multiboot 信息结构的地址
+    add ebx, KERNEL_VIRTUAL_BASE  ; 引导加载器给的是物理地址，换成虚拟地址
+    push ebx
     call kernel_main
 ```
 

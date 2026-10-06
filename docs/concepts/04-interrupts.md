@@ -38,15 +38,15 @@ x86 处理器通过中断和异常机制处理硬件事件和错误情况。Cast
 ### IDT 条目 (Gate Descriptor)
 
 ```c
-typedef struct {
-    uint16_t offset_low;   // 处理程序地址低 16 位
+struct idt_entry {
+    uint16_t base_low;     // 处理程序地址低 16 位
     uint16_t selector;     // 代码段选择子
     uint8_t  zero;         // 保留
-    uint8_t  type_attr;    // 类型和属性
-    uint16_t offset_high;  // 处理程序地址高 16 位
-} __attribute__((packed)) idt_entry_t;
+    uint8_t  flags;        // 类型和属性
+    uint16_t base_high;    // 处理程序地址高 16 位
+} __attribute__((packed));
 
-// type_attr 格式:
+// flags 格式:
 // +---+---+---+---+---+---+---+---+
 // | P |  DPL  | S |    Type       |
 // +---+---+---+---+---+---+---+---+
@@ -61,13 +61,13 @@ typedef struct {
 ### IDT 寄存器
 
 ```c
-typedef struct {
+struct idt_ptr {
     uint16_t limit;    // IDT 大小 - 1
     uint32_t base;     // IDT 基地址
-} __attribute__((packed)) idt_ptr_t;
+} __attribute__((packed));
 
-// 告诉 CPU 这张表在哪里：lidt 指令（idt_init() 的最后一步）
-__asm__ volatile ("lidt %0" : : "m"(idt_ptr));
+// 告诉 CPU 这张表在哪里：idt_init() 的最后一步，idt_flush 是一小段汇编，执行 lidt 指令
+idt_flush((uint32_t)&idt_pointer);
 ```
 
 ## 中断处理流程
@@ -84,24 +84,27 @@ __asm__ volatile ("lidt %0" : : "m"(idt_ptr));
 
 ```asm
 ; 无错误码的中断
-isr_stub_0:
+isr0:
+    cli
     push 0          ; 压入伪错误码（保持栈一致）
     push 0          ; 中断号
-    jmp isr_common
+    jmp isr_common_stub
 
 ; 有错误码的中断
-isr_stub_14:
+isr14:
+    cli
     ; 错误码已由 CPU 压入
     push 14         ; 中断号
-    jmp isr_common
+    jmp isr_common_stub
 
-isr_common:
-    ; 保存所有寄存器
+isr_common_stub:
+    ; 保存所有通用寄存器
     pusha           ; EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI
-    push ds
-    push es
-    push fs
-    push gs
+
+    ; 保存数据段选择子（只存 DS：四个数据段寄存器的值总是一样的）
+    xor eax, eax
+    mov ax, ds
+    push eax
 
     ; 切换到内核数据段
     mov ax, 0x10
@@ -110,16 +113,17 @@ isr_common:
     mov fs, ax
     mov gs, ax
 
-    ; 调用 C 处理程序
+    ; 调用 C++ 处理程序（前后各有一次调用记下“正在中断里”，这里略去）
     push esp        ; 传递 registers_t 指针
     call isr_handler
     add esp, 4
 
-    ; 恢复寄存器
-    pop gs
-    pop fs
-    pop es
-    pop ds
+    ; 恢复数据段选择子和通用寄存器
+    pop eax
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
     popa
 
     add esp, 8      ; 跳过错误码和中断号
@@ -130,19 +134,10 @@ isr_common:
 
 ```c
 typedef struct {
-    // 段寄存器（手动保存）
-    uint32_t gs, fs, es, ds;
-
-    // 通用寄存器（pusha 保存）
-    uint32_t edi, esi, ebp, esp;
-    uint32_t ebx, edx, ecx, eax;
-
-    // 中断信息
-    uint32_t int_no, err_code;
-
-    // CPU 自动保存
-    uint32_t eip, cs, eflags;
-    uint32_t user_esp, user_ss;  // 仅特权级变化时
+    uint32_t ds;                                      // 数据段选择子（手动保存）
+    uint32_t edi, esi, ebp, esp, ebx, edx, ecx, eax;  // 通用寄存器（pusha 保存）
+    uint32_t int_no, err_code;                        // 中断号和错误码
+    uint32_t eip, cs, eflags, useresp, ss;            // CPU 自动保存；后两个仅在特权级变化时有
 } registers_t;
 ```
 
@@ -233,6 +228,10 @@ Master PIC (0x20-0x21)    Slave PIC (0xA0-0xA1)
 
 ```c
 static void pic_remap(void) {
+    // 记下现在的屏蔽字，初始化完再写回去
+    uint8_t mask1 = inb(0x21);
+    uint8_t mask2 = inb(0xA1);
+
     // ICW1: 开始初始化
     outb(0x20, 0x11);
     outb(0xA0, 0x11);
@@ -249,28 +248,29 @@ static void pic_remap(void) {
     outb(0x21, 0x01);
     outb(0xA1, 0x01);
 
-    // 屏蔽所有中断
-    outb(0x21, 0xFF);
-    outb(0xA1, 0xFF);
+    // 恢复屏蔽字
+    outb(0x21, mask1);
+    outb(0xA1, mask2);
 }
 ```
 
 ### IRQ 处理
 
 ```c
-// IRQ 处理程序表
-static irq_handler_t irq_handlers[16];
+// IRQ 处理程序表：内核自己处理的中断线（只有定时器）
+static isr_handler_t irq_handlers[16];
 
-void irq_register_handler(int irq, irq_handler_t handler) {
+void irq_register_handler(uint8_t irq, isr_handler_t handler) {
     irq_handlers[irq] = handler;
 }
 
 void irq_handler(registers_t *regs) {
-    int irq = regs->int_no - 32;
+    uint8_t irq = regs->int_no - 32;
 
-    // 调用注册的处理程序
     if (irq_handlers[irq]) {
-        irq_handlers[irq](regs);
+        irq_handlers[irq](regs);            // 内核登记了处理程序
+    } else {
+        kernel::UserIrq::raise(irq);        // 没有：交给认领了这条线的用户态驱动（见下文）
     }
 
     // 发送 EOI (End of Interrupt)
@@ -278,20 +278,23 @@ void irq_handler(registers_t *regs) {
         outb(0xA0, 0x20);  // Slave PIC
     }
     outb(0x20, 0x20);      // Master PIC
+
+    // 打断的是用户态的话，在返回之前看看要不要换任务、有没有待处理的 kill
+    schedule_from_irq((regs->cs & 0x3) == 3);
 }
 ```
 
 ### 启用/禁用 IRQ
 
 ```c
-void irq_enable_line(int irq) {
+void irq_enable_line(uint8_t irq) {
     uint16_t port = (irq < 8) ? 0x21 : 0xA1;
     uint8_t irq_bit = (irq < 8) ? irq : (irq - 8);
     uint8_t mask = inb(port) & ~(1 << irq_bit);
     outb(port, mask);
 }
 
-void irq_disable_line(int irq) {
+void irq_disable_line(uint8_t irq) {
     uint16_t port = (irq < 8) ? 0x21 : 0xA1;
     uint8_t irq_bit = (irq < 8) ? irq : (irq - 8);
     uint8_t mask = inb(port) | (1 << irq_bit);
