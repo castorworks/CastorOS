@@ -76,7 +76,7 @@ static void kill_faulting_user_task(registers_t *regs, const char *what) {
     LOG_ERROR_MSG("%s in user process %u (%s) at RIP=0x%llx, terminating\n", what,
                   task ? task->pid : 0, task ? task->name : "?",
                   (unsigned long long)regs->rip);
-    task_exit(128 + 11);  /* SIGSEGV */
+    kernel::Scheduler::exit_current(128 + 11, true, 11);  /* SIGSEGV */
 }
 
 /**

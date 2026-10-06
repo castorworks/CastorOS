@@ -67,6 +67,18 @@ static void test_memory_and_fork(void) {
     report("mmap, fork, copy-on-write, waitpid",
            reaped == pid && WEXITSTATUS(status) == 7 && page[0] == 42, "ok");
     munmap(page, 4096);
+
+    // 访问没有映射的地址：进程被终止，父进程看到的是“被信号 11 终止”（三个架构一样）
+    pid = fork();
+    if (pid == 0) {
+        volatile int *volatile nowhere = (volatile int *)0;
+        *nowhere = 1;
+        exit(0);        // 写成功了才会走到这里
+    }
+    status = 0;
+    reaped = waitpid(pid, &status, 0);
+    report("fault kills the process with signal 11",
+           reaped == pid && WIFSIGNALED(status) && WTERMSIG(status) == 11, "ok");
 }
 
 static void test_ipc(void) {

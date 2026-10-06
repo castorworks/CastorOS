@@ -297,12 +297,8 @@ uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entr
  * @brief 任务退出
  */
 void task_exit(uint32_t exit_code) {
-    // 异常处理路径（arm64）可能在调用前已经写好 exit_signaled/exit_signal，
-    // 这里原样保留；PCB 分配时清零，普通退出时它们就是 false/0
-    task_t *task = kernel::Scheduler::get_current();
-    kernel::Scheduler::exit_current(exit_code,
-                                    task ? task->exit_signaled : false,
-                                    task ? task->exit_signal : 0);
+    // 普通退出。被信号终止（kill、用户态异常）的路径直接调用 exit_current
+    kernel::Scheduler::exit_current(exit_code, false, 0);
 }
 
 void kernel::Scheduler::exit_current(uint32_t exit_code, bool signaled, uint32_t signal) {

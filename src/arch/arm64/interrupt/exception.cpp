@@ -551,14 +551,8 @@ void arm64_terminate_user_process(arm64_regs_t *regs, uint32_t signal, uint64_t 
      * Exit code = 128 + signal_number
      */
     if (current) {
-        /* Mark the process as terminated by signal */
-        current->exit_signaled = true;
-        current->exit_signal = signal;
-        
-        /* Call task_exit with signal-based exit code */
-        task_exit(128 + signal);
-        
-        /* task_exit should not return, but just in case... */
+        /* Exit as "terminated by signal": the parent's waitpid reports it */
+        kernel::Scheduler::exit_current(128 + signal, true, signal);
     }
     
     /* If no current task or task_exit returned, halt */

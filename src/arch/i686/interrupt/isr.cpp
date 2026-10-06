@@ -69,7 +69,7 @@ static void kill_faulting_user_task(registers_t *regs, const char *what) {
     task_t *task = kernel::Scheduler::get_current();
     LOG_ERROR_MSG("%s in user process %u (%s) at EIP=0x%x, terminating\n", what,
                   task ? task->pid : 0, task ? task->name : "?", regs->eip);
-    task_exit(128 + 11);  /* SIGSEGV */
+    kernel::Scheduler::exit_current(128 + 11, true, 11);  /* SIGSEGV */
 }
 
 /**
