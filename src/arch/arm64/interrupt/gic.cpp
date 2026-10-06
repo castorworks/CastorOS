@@ -196,7 +196,26 @@ void gic_init(void) {
 }
 
 /**
+ * @brief Set up the GIC for a CPU other than the boot CPU
+ *
+ * The distributor is shared and already running. What is per CPU: the registers
+ * for interrupts 0-31 (SGIs and PPIs; each CPU sees its own copy at the same
+ * address) and the CPU interface.
+ */
+void gic_init_secondary(void) {
+    gicd_write(GICD_ICENABLER(0), 0xFFFFFFFF);
+    gicd_write(GICD_ICPENDR(0), 0xFFFFFFFF);
+    gicd_write(GICD_IGROUPR(0), 0x00000000);
+    for (uint32_t i = 0; i < GIC_SPI_BASE / 4; i++) {
+        gicd_write(GICD_IPRIORITYR(i), 0x80808080);
+    }
+    gicc_init();
+}
+
+/**
  * @brief Enable an interrupt
+ *
+ * For a PPI this enables it on the calling CPU only.
  */
 void gic_enable_irq(uint32_t irq) {
     if (irq >= gic_num_interrupts) {

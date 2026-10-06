@@ -9,7 +9,7 @@ CastorOS is an educational microkernel for learning and experimentation.
 
 - Targets i686, x86_64 and ARM64; all three build, boot and pass the kernel tests in QEMU
 - The kernel contains only CPU/interrupt setup, memory management, scheduling, sync
-  primitives and a 31-call syscall interface (process, memory, debug output, synchronous IPC,
+  primitives and a 32-call syscall interface (process, memory, debug output, synchronous IPC,
   shared memory, uptime/timer, and I/O port / device memory / DMA / IRQ access, platform
   device lookup and per-device hardware permissions for user-space drivers)
 - File systems, networking, device drivers and shells are **not** in the kernel; they are
@@ -115,7 +115,7 @@ CastorOS/
 │   ├── drivers/            # Only serial (debug output) and timer (tick)
 │   │   ├── x86/            # COM1, PIT
 │   │   └── arm/            # PL011, ARM Generic Timer
-│   ├── kernel/             # sched.cpp (scheduler), task.cpp (task table, process lifecycle), syscall.cpp, ipc.cpp, user_irq.cpp, hw_access.cpp, elf.cpp, ...
+│   ├── kernel/             # sched.cpp (scheduler), task.cpp (task table, process lifecycle), smp.cpp (kernel lock, starting the other CPUs), syscall.cpp, ipc.cpp, user_irq.cpp, hw_access.cpp, elf.cpp, ...
 │   │   ├── sync/           # The spinlock
 │   │   └── syscalls/       # process.cpp, mm.cpp
 │   ├── lib/                # Kernel library (kprintf, klog, string, cxxrt)
@@ -237,6 +237,16 @@ nowhere else. The kernel Makefile rebuilds all of it when `user/` changes.
 
 ### Kernel
 
+- Several CPUs (`docs/reference/smp.md`; only arm64 starts the others so far, x86 runs the same
+  code on CPU 0). The rule that keeps the rest of the kernel unchanged: a CPU holds the kernel lock
+  (`kernel::KernelLock`, `src/kernel/smp.cpp`) whenever it executes kernel code — taken on entry
+  from user mode, released before returning to it and while the idle task waits. So kernel data
+  needs no locks of its own, and "interrupts off" still means "nobody else". The lock belongs to
+  the CPU, not the task: it is held across a context switch. Anything that is "the current X"
+  (task, idle task, interrupt depth, page table) is per CPU, indexed by `hal::Cpu::id()`; do not
+  add a global for such state. An architecture's entry code must call `KernelLock::enter()` on
+  every kernel entry and `release()` on every path back to user mode, including the one a new
+  task takes straight out of the context switch.
 - `kernel::Scheduler` is implemented in two files: `sched.cpp` (run queue, idle task, `schedule()`,
   timer tick, yield/sleep/block/wakeup) and `task.cpp` (task table, creating and exiting processes,
   kill, privilege queries). What they share is in `src/kernel/task_private.h`; nothing else
@@ -298,6 +308,7 @@ make test ARCH=x86_64
 make test ARCH=arm64
 make test-all                  # all three architectures; non-zero if any of them fails
 make test TEST_TIMEOUT=300     # raise the limit on a busy machine (default 180 seconds)
+make test ARCH=arm64 SMP=4     # give the VM 4 CPUs (default 1; only arm64 starts the others)
 make test ARCH=x86_64 QEMU_MEMORY=3G   # more memory for the VM (default is QEMU's 128MB); the
                                # "high physical memory" kernel tests only have content above 1GB
 ```

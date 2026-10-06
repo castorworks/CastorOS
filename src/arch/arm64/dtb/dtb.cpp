@@ -65,6 +65,7 @@ struct node {
     struct prop device_type;
     struct prop reg;
     struct prop interrupts;
+    struct prop method;         /* PSCI 节点：怎么调用固件 */
     uint32_t address_cells;     /* 子节点的 reg 里，地址占几个 32 位单元 */
     uint32_t size_cells;        /* 长度占几个 */
 };
@@ -172,8 +173,21 @@ static void classify_node(const struct node *n, const struct node *parent) {
         }
         return;
     }
+    // CPU：/cpus 下 device_type = "cpu" 的节点，reg 是它的 MPIDR 亲和值（没有长度）
+    if (prop_is(&n->device_type, "cpu")) {
+        uint32_t cells = parent->address_cells;
+        if (g_info.num_cpus < DTB_MAX_CPUS && cells >= 1 && n->reg.len >= 4 * cells) {
+            g_info.cpu_mpidr[g_info.num_cpus++] = read_cells(n->reg.data, cells);
+        }
+    }
     if (n->compatible.len == 0) {
         return;         // 没有 compatible 的节点不是设备（/chosen、/cpus、/aliases 之类）
+    }
+
+    // PSCI：启动其余 CPU 的固件接口。method 说明用哪条指令进固件
+    if (compatible_with(&n->compatible, "arm,psci-0.2") || compatible_with(&n->compatible, "arm,psci-1.0")) {
+        g_info.psci_method = prop_is(&n->method, "hvc") ? DTB_PSCI_HVC
+                           : prop_is(&n->method, "smc") ? DTB_PSCI_SMC : DTB_PSCI_NONE;
     }
 
     // 每个设备都进设备列表（驱动按型号来查）
@@ -298,6 +312,8 @@ static bool walk(const uint8_t *p, const uint8_t *end, const char *strings, uint
                 n->reg = value;
             } else if (strcmp(name, "interrupts") == 0) {
                 n->interrupts = value;
+            } else if (strcmp(name, "method") == 0) {
+                n->method = value;
             } else if (strcmp(name, "#address-cells") == 0 && len == 4) {
                 n->address_cells = be32(value.data);
             } else if (strcmp(name, "#size-cells") == 0 && len == 4) {

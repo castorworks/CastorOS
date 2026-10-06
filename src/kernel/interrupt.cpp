@@ -1,8 +1,12 @@
 #include <kernel/interrupt.h>
 #include <kernel/panic.h>
+#include <kernel/smp.h>
+#include <hal/hal.h>
 #include <lib/klog.h>
 
-static volatile uint32_t interrupt_depth = 0;
+/* 中断嵌套了几层：每个 CPU 各算各的 */
+static volatile uint32_t depth_per_cpu[MAX_CPUS];
+#define interrupt_depth (depth_per_cpu[hal::Cpu::id()])
 
 void interrupt_enter(void) {
     interrupt_depth = interrupt_depth + 1;

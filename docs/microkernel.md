@@ -15,7 +15,7 @@ CastorOS 的内核只保留五件事：CPU/中断、内存管理、任务调度�
 | `src/lib/` | `kprintf`/`klog`、字符串库、最小 C++ 运行时 |
 | `src/tests/` | 内核测试，只在 `KTEST=1`（`make test`）时编入 |
 
-内核对用户态提供 31 个系统调用：进程、内存、调试输出、同步 IPC、共享内存、时间和定时器，以及给用户态驱动用的硬件访问。完整的表见 [系统调用表](reference/syscalls.md)。
+内核对用户态提供 32 个系统调用：进程、内存、调试输出、同步 IPC、共享内存、时间和定时器，以及给用户态驱动用的硬件访问。完整的表见 [系统调用表](reference/syscalls.md)。
 
 ## 启动流程
 
@@ -65,7 +65,7 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 
 | 文档 | 内容 |
 |------|------|
-| [系统调用表](reference/syscalls.md) | 31 个系统调用的编号、参数和权限要求 |
+| [系统调用表](reference/syscalls.md) | 32 个系统调用的编号、参数和权限要求 |
 | [进程间通信](reference/ipc.md) | 同步消息传递、超时、共享内存、名字服务 |
 | [特权与硬件访问](reference/hardware.md) | 特权、许可表、I/O 端口、设备内存、DMA、设备中断 |
 | [用户态驱动](reference/drivers.md) | 串口驱动 uart、virtio 的公共部分、块设备驱动 blk |
@@ -73,5 +73,6 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 | [网络](reference/net.md) | 客户端接口、协议栈、DHCP、TCP、在 QEMU 里使用 |
 | [启动映像和命令行](reference/shell.md) | 运行程序、后台任务、键盘输入、重定向和管道、脚本、程序参数 |
 | [浮点数](reference/floating-point.md) | 用户程序的浮点/SIMD 状态、`printf` 的 `%f`、数学函数 |
+| [多个 CPU](reference/smp.md) | 内核锁、每个 CPU 的状态、其余的 CPU 怎么启动（目前只有 arm64） |
 
 这些机制背后的原理（引导、分页、中断、调度、同步）见 [concepts/](concepts/README.md)。

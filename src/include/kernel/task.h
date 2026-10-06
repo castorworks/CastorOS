@@ -223,6 +223,15 @@ public:
     static void init();
 
     /**
+     * 为 cpu 号 CPU 准备好 idle 任务（多 CPU，见 kernel/smp.h）。
+     * @return 它的内核栈顶：那个 CPU 启动时就用这个栈；失败返回 0
+     */
+    static uintptr_t prepare_idle(uint32_t cpu);
+
+    /** 当前 CPU 成为它自己的 idle 任务（刚启动的 CPU 调用，不返回） */
+    static void run_idle() __attribute__((noreturn));
+
+    /**
      * @brief 创建用户进程
      * 
      * @param name 进程名称

@@ -16,6 +16,12 @@
 #define DTB_MAX_DEVICES         64
 #define DTB_MAX_NAME_LEN        32
 #define DTB_MAX_COMPATIBLE_LEN  96
+#define DTB_MAX_CPUS            8
+
+/** PSCI（启动其余 CPU 用的固件接口）怎么调用 */
+#define DTB_PSCI_NONE           0       /**< 设备树里没有 PSCI */
+#define DTB_PSCI_HVC            1       /**< 用 hvc 指令 */
+#define DTB_PSCI_SMC            2       /**< 用 smc 指令 */
 
 /** 一段物理内存 */
 typedef struct {
@@ -59,6 +65,10 @@ typedef struct {
     bool     uart_found;            /**< 第一个 PL011 */
     uint64_t uart_base;
     uint32_t uart_irq;
+
+    uint32_t num_cpus;              /**< device_type = "cpu" 的节点个数 */
+    uint64_t cpu_mpidr[DTB_MAX_CPUS];   /**< 各个 CPU 的 reg：它的 MPIDR 亲和值，PSCI 用它指明启动哪一个 */
+    uint32_t psci_method;           /**< DTB_PSCI_* */
 
     uint32_t num_devices;           /**< 所有带 compatible 的节点（包括上面单独记了一份的那几个） */
     dtb_device_t devices[DTB_MAX_DEVICES];

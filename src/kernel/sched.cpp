@@ -18,23 +18,37 @@
 #include <lib/string.h>
 #include <drivers/timer.h>
 
+#include <kernel/smp.h>
+
 #include "task_private.h"
 
 /* ============================================================================
  * 调度器的状态
  * ========================================================================== */
 
-/** @brief 当前正在运行的任务 */
-static task_t *current_task = NULL;
+/**
+ * 每个 CPU 自己的那一份：它正在运行哪个任务、它的 idle 任务、它的时间片计数。
+ * 下面的代码里 current_task、idle_task、need_resched、tick_count 指的都是"这个 CPU 的"。
+ * 其余的状态（就绪队列、任务表、待清理链表）所有 CPU 共用，由内核锁保护：
+ * 能执行到这里的 CPU 同一时刻只有一个（见 kernel/smp.h）。
+ */
+static struct {
+    task_t *current;                // 正在运行的任务
+    task_t *idle;                   // 没有任务可运行时运行它
+    volatile bool need_resched;     // 当前任务的时间片用完了，等在返回用户态的抢占点切换
+    uint32_t tick_count;            // 当前任务已经用掉的时钟滴答数
+} per_cpu[MAX_CPUS];
+
+#define current_task    (per_cpu[hal::Cpu::id()].current)
+#define idle_task       (per_cpu[hal::Cpu::id()].idle)
+#define need_resched    (per_cpu[hal::Cpu::id()].need_resched)
+#define tick_count      (per_cpu[hal::Cpu::id()].tick_count)
 
 /** @brief 就绪队列头指针 */
 static task_t *ready_queue_head = NULL;
 
 /** @brief 就绪队列尾指针 */
 static task_t *ready_queue_tail = NULL;
-
-/** @brief idle 任务指针 */
-static task_t *idle_task = NULL;
 
 /** @brief 调度器是否已初始化 */
 static bool scheduler_initialized = false;
@@ -132,7 +146,13 @@ static void idle_task_loop(void) {
         // 如果“检查”和“停机”之间有空档，刚被唤醒的任务就要白等到下一次时钟中断
         kernel::Interrupts::disable();
         if (ready_queue_head == NULL) {
+            // 没事可做。停下来之前把内核锁放掉，别的 CPU 才进得了内核；等待期间到来的
+            // 中断，处理函数自己拿锁、自己放。醒来之后再拿回来。
+            // 别的 CPU 在我们检查之后才把任务放进就绪队列的话，这里看不到，也没有人来叫：
+            // 那个任务要等到这个 CPU 的下一次时钟中断（最多一个滴答）才会被发现。
+            kernel::KernelLock::release();
             hal::Cpu::idle();       // 原子地开中断并等待；返回时中断已打开
+            kernel::KernelLock::enter();
         } else {
             kernel::Interrupts::enable();
         }
@@ -143,39 +163,49 @@ static void idle_task_loop(void) {
 }
 
 /**
- * @brief 创建 idle 任务
+ * @brief 创建 cpu 号 CPU 的 idle 任务
+ *
+ * 任务表最前面的 MAX_CPUS 个 PCB 留给各个 CPU 的 idle 任务（PID 都是 0，它们不是进程）。
+ * 这个 CPU 真的启动时才分配内核栈。
  */
-static bool task_create_idle(void) {
-    // 分配 idle PCB（使用 PID 0）
-    idle_task = &task_pool[0];
-    memset(idle_task, 0, sizeof(task_t));
-    
-    idle_task->pid = 0;
-    strcpy(idle_task->name, "idle");
-    idle_task->state = TASK_READY;
-    idle_task->priority = UINT32_MAX;  // 最低优先级
-    idle_task->time_slice = DEFAULT_TIME_SLICE;
-    idle_task->is_user_process = false;
-    
-    // 分配内核栈
-    idle_task->kernel_stack_base = (uintptr_t)kmalloc(KERNEL_STACK_SIZE);
-    if (!idle_task->kernel_stack_base) {
+static bool task_create_idle(uint32_t cpu) {
+    task_t *idle = &task_pool[cpu];
+    idle->kernel_stack_base = (uintptr_t)kmalloc(KERNEL_STACK_SIZE);
+    if (!idle->kernel_stack_base) {
         LOG_ERROR_MSG("task_create_idle: Failed to allocate kernel stack\n");
         return false;
     }
-    
-    idle_task->kernel_stack = idle_task->kernel_stack_base + KERNEL_STACK_SIZE;
-    
+    idle->kernel_stack = idle->kernel_stack_base + KERNEL_STACK_SIZE;
+
     // 使用内核页目录
-    idle_task->page_dir_phys = mm::Vmm::get_page_directory();
+    idle->page_dir_phys = mm::Vmm::kernel_page_directory();
 
     // idle 必须开着中断执行停机指令：否则所有任务都阻塞时定时器中断得不到处理，
     // 睡眠的任务永远不会被唤醒
-    hal::UserContext::init_kernel(&idle_task->context, idle_task_loop,
-                                  idle_task->kernel_stack, idle_task->page_dir_phys);
+    hal::UserContext::init_kernel(&idle->context, idle_task_loop,
+                                  idle->kernel_stack, idle->page_dir_phys);
 
-    LOG_DEBUG_MSG("Idle task created (PID 0)\n");
+    per_cpu[cpu].idle = idle;
+    LOG_DEBUG_MSG("Idle task created for CPU %u\n", cpu);
     return true;
+}
+
+uintptr_t kernel::Scheduler::prepare_idle(uint32_t cpu) {
+    if (cpu >= MAX_CPUS || (!per_cpu[cpu].idle && !task_create_idle(cpu))) {
+        return 0;
+    }
+    return per_cpu[cpu].idle->kernel_stack;
+}
+
+void kernel::Scheduler::run_idle() {
+    // 这个 CPU 正在自己的 idle 任务的栈上（启动代码用的就是 prepare_idle 给的那个栈）：
+    // 从现在起它就是那个 idle 任务
+    idle_task->state = TASK_RUNNING;
+    current_task = idle_task;
+    idle_task_loop();
+    while (1) {
+        hal::Cpu::halt();
+    }
 }
 
 /* ============================================================================
@@ -305,9 +335,6 @@ void kernel::Scheduler::schedule() {
     kernel::Interrupts::restore(prev_state);
 }
 
-/* 当前任务的时间片已用完，等待在返回用户态的抢占点切换 */
-static volatile bool need_resched = false;
-
 /**
  * @brief 定时器中断处理
  */
@@ -364,7 +391,6 @@ void kernel::Scheduler::timer_tick() {
     
     // 时间片轮转调度
     // 注意：这个函数在 IRQ 中调用，调度将在 IRQ 返回时由 schedule_from_irq 处理
-    static uint32_t tick_count = 0;
     tick_count++;
     
     if (tick_count >= current_task->time_slice) {
@@ -509,12 +535,24 @@ void kernel::Scheduler::init() {
     // 任务表（锁、PCB 池、PID 分配）在 task.cpp 里
     task_table_init();
 
-    current_task = NULL;
+    memset(per_cpu, 0, sizeof(per_cpu));
     ready_queue_head = NULL;
     ready_queue_tail = NULL;
 
-    // 创建 idle 任务
-    if (!task_create_idle()) {
+    // 任务表最前面的几个 PCB 留给各个 CPU 的 idle 任务，免得被分给进程
+    for (uint32_t cpu = 0; cpu < MAX_CPUS; cpu++) {
+        task_t *idle = &task_pool[cpu];
+        memset(idle, 0, sizeof(task_t));
+        idle->pid = 0;
+        strcpy(idle->name, "idle");
+        idle->state = TASK_READY;
+        idle->priority = UINT32_MAX;  // 最低优先级
+        idle->time_slice = DEFAULT_TIME_SLICE;
+        idle->is_user_process = false;
+    }
+
+    // 启动 CPU 的 idle 任务现在就建好；其余的等那个 CPU 启动时再建（prepare_idle）
+    if (!task_create_idle(0)) {
         LOG_ERROR_MSG("Failed to create idle task\n");
         return;
     }

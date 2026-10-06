@@ -132,7 +132,9 @@ check "typed-ahead input" typed_ahead
 background_input() {
     send 'write nothing &\n'; expect '\[[0-9]+\] done  write$' || return 1
     send 'write nothing\n'; expect '^\(type lines' || return 1
-    send 'abc\003'; expect '^write: killed by signal 2$'
+    # 不要求这一行从行首开始：程序可能已经读走并回显了 Ctrl-C 之前敲的字符
+    # （几个 CPU 的时候它和串口驱动同时在跑，赶得上），它们就在这一行的前面
+    send 'abc\003'; expect 'write: killed by signal 2$'
 }
 check "input goes to the foreground only" background_input
 

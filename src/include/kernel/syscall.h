@@ -60,6 +60,9 @@ enum {
     SYS_HW_ALLOW        = 29,  // hw_allow(kind, start, count)：往自己的许可表里加一条（需要特权）
     SYS_HW_ALLOWED      = 30,  // hw_allowed(index, range*)：自己许可表里的第 index 条
 
+    // 多个 CPU
+    SYS_CPU_INFO        = 31,  // cpu_info(count*)：返回调用者此刻在哪个 CPU 上运行，*count 得到正在运行的 CPU 个数
+
     SYS_MAX
 };
 

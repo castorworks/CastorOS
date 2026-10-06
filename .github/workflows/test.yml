@@ -33,7 +33,7 @@ jobs:
         run: make lib-test
 
   test:
-    name: ${{ matrix.arch }}
+    name: ${{ matrix.arch }}${{ matrix.smp && format(' ({0} CPUs)', matrix.smp) || '' }}
     runs-on: macos-latest
     timeout-minutes: 30
     strategy:
@@ -46,6 +46,10 @@ jobs:
             packages: x86_64-elf-gcc nasm
           - arch: arm64
             packages: aarch64-elf-gcc
+          # 同样的测试再带着两个 CPU 跑一遍（目前只有 arm64 会把其余的 CPU 启动起来）
+          - arch: arm64
+            packages: aarch64-elf-gcc
+            smp: 2
     env:
       HOMEBREW_NO_AUTO_UPDATE: 1
       HOMEBREW_NO_INSTALL_CLEANUP: 1
@@ -62,7 +66,7 @@ jobs:
       # runner 比开发机慢，而且 QEMU 在上面是纯软件模拟：把等待的上限放宽。
       # 这些只是上限，检查一做完就结束，不会多等。
       - name: Build and test
-        run: make test ARCH=${{ matrix.arch }} TEST_TIMEOUT=600
+        run: make test ARCH=${{ matrix.arch }} TEST_TIMEOUT=600 ${{ matrix.smp && format('SMP={0}', matrix.smp) || '' }}
         env:
           STEP_TIMEOUT: 120
 
@@ -71,6 +75,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-logs-${{ matrix.arch }}
+          name: test-logs-${{ matrix.arch }}${{ matrix.smp && format('-smp{0}', matrix.smp) || '' }}
           path: build/${{ matrix.arch }}-ktest/*.log
           if-no-files-found: ignore

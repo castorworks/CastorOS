@@ -31,6 +31,7 @@
 | 28 | `device_find(info*)` | 按型号（设备树的 `compatible`）查平台设备的寄存器地址和中断号，仅特权进程 |
 | 29 | `hw_allow(kind, start, count)` | 往自己的许可表里加一条：一段 I/O 端口、一段设备内存或者几条中断线。仅特权进程 |
 | 30 | `hw_allowed(index, range*)` | 读自己许可表里的第 `index` 条；驱动据此得知自己的设备在哪里 |
+| 31 | `cpu_info(count*)` | 返回调用者此刻在哪个 CPU 上运行（从 0 开始），`*count` 得到正在运行的 CPU 个数。见 [多个 CPU](smp.md) |
 
 各组调用的详细说明：
 

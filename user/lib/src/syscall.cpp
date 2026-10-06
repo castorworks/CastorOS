@@ -89,6 +89,10 @@ int device_find(const char *compatible, uint32_t index, struct device_info *info
     return (int)syscall1(SYS_DEVICE_FIND, PTR_TO_ARG(info));
 }
 
+int cpu_info(uint32_t *count) {
+    return (int)syscall1(SYS_CPU_INFO, PTR_TO_ARG(count));
+}
+
 long mem_free_pages(void) {
     return (long)syscall0(SYS_MEM_FREE);
 }

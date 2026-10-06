@@ -6,6 +6,7 @@
  * 核心逻辑保持架构无关，通过 HAL 接口和 pgtable 抽象层调用架构特定操作
  */
 
+#include <kernel/smp.h>
 #include <mm/vmm.h>
 #include <mm/pmm.h>
 #include <lib/klog.h>
@@ -16,7 +17,13 @@
 #include <hal/hal.h>
 #include <hal/hal_error.h>
 
-static uintptr_t current_dir_phys = 0;         ///< 当前页目录物理地址
+/**
+ * 每个 CPU 现在用的是哪张页表（顶层表的物理地址）。下面的 current_dir_phys 指"这个 CPU 的"。
+ * 所有 CPU 都从内核自己的页表（kernel_dir_phys）开始。
+ */
+static uintptr_t current_dir_per_cpu[MAX_CPUS];
+#define current_dir_phys (current_dir_per_cpu[hal::Cpu::id()])
+static uintptr_t kernel_dir_phys = 0;           ///< 内核自己的页表：idle 任务用它
 
 
 static sync::Spinlock vmm_lock;                    ///< VMM 自旋锁，保护页表操作
@@ -33,7 +40,10 @@ void mm::Vmm::init() {
     // 引导页表只映射了一部分物理内存：让各架构把内核的直接映射扩展到全部
     hal::Mmu::map_physical_memory();
 
-    current_dir_phys = hal::Mmu::get_current_page_table();
+    kernel_dir_phys = hal::Mmu::get_current_page_table();
+    for (uint32_t cpu = 0; cpu < MAX_CPUS; cpu++) {
+        current_dir_per_cpu[cpu] = kernel_dir_phys;
+    }
     LOG_INFO_MSG("VMM: kernel page table at phys 0x%llx\n", (unsigned long long)current_dir_phys);
 }
 
@@ -247,6 +257,10 @@ uintptr_t mm::Vmm::get_page_directory() {
     return current_dir_phys;
 }
 
+uintptr_t mm::Vmm::kernel_page_directory() {
+    return kernel_dir_phys;
+}
+
 /**
  * @brief 创建新的页目录（用于新进程）
  * @return 成功返回页目录的物理地址，失败返回 0
@@ -311,11 +325,13 @@ uintptr_t mm::Vmm::clone_page_directory(uintptr_t src_dir_phys) {
 void mm::Vmm::free_page_directory(uintptr_t dir_phys) {
     if (!dir_phys) return;
 
-    // 【安全检查】防止释放当前正在使用的页目录
-    if (dir_phys == current_dir_phys) {
-        LOG_ERROR_MSG("mm::Vmm::free_page_directory: BLOCKED! Attempting to free current page directory 0x%llx!\n", 
-                     (unsigned long long)dir_phys);
-        return;
+    // 【安全检查】防止释放正在使用的页目录（任何一个 CPU 上）
+    for (uint32_t cpu = 0; cpu < MAX_CPUS; cpu++) {
+        if (dir_phys == current_dir_per_cpu[cpu]) {
+            LOG_ERROR_MSG("mm::Vmm::free_page_directory: BLOCKED! Page directory 0x%llx is in use on CPU %u!\n",
+                         (unsigned long long)dir_phys, cpu);
+            return;
+        }
     }
     
     {

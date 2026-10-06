@@ -7,6 +7,9 @@
  * specific subsystems.
  */
 
+#include <mm/vmm.h>
+#include <kernel/task.h>
+#include <kernel/smp.h>
 #include <hal/hal.h>
 #include <drivers/timer.h>
 #include <types.h>
@@ -294,4 +297,124 @@ bool hal::Platform::port_write(uint16_t port, uint32_t width, uint32_t value) {
 
 void hal::Platform::set_user_ports(const struct hw_range *allowed, uint32_t count, bool allow) {
     (void)allowed; (void)count; (void)allow;
+}
+
+/* ============================================================================
+ * Multiple CPUs
+ * ========================================================================== */
+
+/* The CPU index lives in TPIDR_EL1: start.S sets it to 0 on the boot CPU,
+ * secondary_entry to the index start_secondaries() chose */
+uint32_t hal::Cpu::id() {
+    uint64_t id;
+    __asm__ volatile("mrs %0, tpidr_el1" : "=r"(id));
+    return (uint32_t)id;
+}
+
+/* Parameters for the CPU being started; layout shared with secondary_entry in start.S */
+struct secondary_boot_args {
+    uint64_t mair, tcr, ttbr0, ttbr1, sctlr;
+    uint64_t stack_top;
+    uint64_t cpu;
+};
+extern "C" struct secondary_boot_args secondary_boot;
+extern "C" uint64_t secondary_entry_address;    /* physical: the boot code is linked there */
+extern "C" void arm64_secondary_start(void);
+
+#define PSCI_CPU_ON     0xC4000003ULL       /* SMC64 function id */
+
+/** Call the firmware (PSCI). The device tree says which instruction traps into it */
+static int64_t psci_call(uint32_t method, uint64_t function, uint64_t arg1, uint64_t arg2, uint64_t arg3) {
+    register uint64_t x0 __asm__("x0") = function;
+    register uint64_t x1 __asm__("x1") = arg1;
+    register uint64_t x2 __asm__("x2") = arg2;
+    register uint64_t x3 __asm__("x3") = arg3;
+    if (method == DTB_PSCI_SMC) {
+        __asm__ volatile("smc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3) : :
+                         "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
+    } else {
+        __asm__ volatile("hvc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3) : :
+                         "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
+    }
+    return (int64_t)x0;
+}
+
+uint32_t hal::Cpu::start_secondaries() {
+    const dtb_info_t *dtb = dtb_get_info();
+    if (!dtb || dtb->psci_method == DTB_PSCI_NONE || dtb->num_cpus < 2) {
+        return 0;
+    }
+
+    uint64_t self;
+    __asm__ volatile("mrs %0, mpidr_el1" : "=r"(self));
+    self &= 0xFF00FFFFFFULL;            /* the affinity fields */
+
+    /* Every CPU runs with the same translation setup as this one. TTBR0 is the
+     * kernel's own table: it still has the identity mapping the boot code needs
+     * for the instant between turning the MMU on and jumping to the high half. */
+    __asm__ volatile("mrs %0, mair_el1" : "=r"(secondary_boot.mair));
+    __asm__ volatile("mrs %0, tcr_el1" : "=r"(secondary_boot.tcr));
+    __asm__ volatile("mrs %0, ttbr1_el1" : "=r"(secondary_boot.ttbr1));
+    __asm__ volatile("mrs %0, sctlr_el1" : "=r"(secondary_boot.sctlr));
+    secondary_boot.ttbr0 = mm::Vmm::kernel_page_directory();
+
+    uint32_t started = 0;
+    uint32_t next_index = 1;
+    for (uint32_t i = 0; i < dtb->num_cpus && next_index < MAX_CPUS; i++) {
+        if (dtb->cpu_mpidr[i] == self) {
+            continue;
+        }
+        uint32_t cpu = next_index;
+        uintptr_t stack = kernel::Scheduler::prepare_idle(cpu);
+        if (!stack) {
+            break;
+        }
+        secondary_boot.stack_top = stack;
+        secondary_boot.cpu = cpu;
+        __asm__ volatile("dsb sy" ::: "memory");    /* the new CPU reads this with its caches off */
+
+        uint32_t before = kernel::Smp::cpu_count();
+        int64_t result = psci_call(dtb->psci_method, PSCI_CPU_ON, dtb->cpu_mpidr[i],
+                                   secondary_entry_address, 0);
+        if (result != 0) {
+            LOG_WARN_MSG("SMP: firmware refused to start CPU %u (PSCI error %lld)\n", cpu, (long long)result);
+            continue;
+        }
+
+        /* One at a time (there is one secondary_boot). The new CPU needs the kernel
+         * lock to announce itself, and we hold it: let go while we wait. */
+        uint64_t deadline = drivers::Timer::get_uptime_ms() + 1000;
+        kernel::KernelLock::leave();
+        while (kernel::Smp::cpu_count() == before && drivers::Timer::get_uptime_ms() < deadline) {
+            __asm__ volatile("yield");
+        }
+        kernel::KernelLock::enter();
+        if (kernel::Smp::cpu_count() == before) {
+            LOG_WARN_MSG("SMP: CPU %u did not come up\n", cpu);
+            continue;
+        }
+        started++;
+        next_index++;
+    }
+    return started;
+}
+
+/* First C code on a CPU that secondary_entry has brought into the high half */
+void arm64_secondary_start(void) {
+    kernel::Smp::secondary_main();
+}
+
+void hal::Cpu::init_secondary() {
+    /* The same per-CPU setup the boot CPU went through in Cpu::init,
+     * Interrupt::init and Timer::init */
+    uint64_t cpacr;
+    __asm__ volatile("mrs %0, cpacr_el1" : "=r"(cpacr));
+    cpacr |= (3ULL << 20);              /* FP/SIMD for EL0 and EL1 */
+    __asm__ volatile("msr cpacr_el1, %0" : : "r"(cpacr));
+    __asm__ volatile("isb");
+
+    arm64_exception_init();             /* exception vectors */
+    gic_init_secondary();
+    gic_enable_irq(g_timer_irq);        /* the timer interrupt is per CPU */
+    drivers::Timer::start_on_this_cpu();
 }

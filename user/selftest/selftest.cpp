@@ -314,6 +314,56 @@ static void test_floating_point(void) {
     report("math functions", ok, "ok");
 }
 
+static void test_cpus(void) {
+    uint32_t count = 0;
+    int here = cpu_info(&count);
+    bool ok = count >= 1 && here >= 0 && (uint32_t)here < count;
+    printf("selftest: %u cpu%s\n", count, count == 1 ? "" : "s");
+    if (count < 2) {
+        report("cpu count", ok, "ok");
+        return;
+    }
+
+    // 几个 CPU：每个 CPU 一个进程，各自埋头算 300 毫秒，记下自己都在哪些 CPU 上待过。
+    // 合起来要不止一个 CPU 运行过用户进程，而且它们是同时在算：全部算完用的时间
+    // 远少于一个接一个算的时间（count * 300 毫秒）
+    int children[8];
+    uint32_t n = count > 8 ? 8 : count;
+    uint64_t start = uptime_ms();
+    for (uint32_t i = 0; i < n; i++) {
+        children[i] = fork();
+        if (children[i] == 0) {
+            uint32_t seen = 0;
+            uint64_t began = uptime_ms();
+            volatile uint64_t work = 0;
+            while (uptime_ms() - began < 300) {
+                for (int k = 0; k < 10000; k++) {
+                    work = work + (uint64_t)k;
+                }
+                seen |= 1u << cpu_info(NULL);
+            }
+            exit((int)(seen & 0xFF));
+        }
+    }
+    uint32_t seen = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        int status = 0;
+        waitpid(children[i], &status, 0);
+        seen |= (uint32_t)WEXITSTATUS(status);
+    }
+    uint64_t elapsed = uptime_ms() - start;
+    uint32_t used = 0;
+    for (uint32_t cpu = 0; cpu < 8; cpu++) {
+        used += (seen >> cpu) & 1;
+    }
+    ok = ok && used >= 2 && elapsed < (uint64_t)n * 300 * 3 / 4;
+    if (!ok) {
+        printf("selftest: (%u cpus, user code ran on %u of them, %u ms for %u x 300 ms of work)\n",
+               count, used, (unsigned)elapsed, n);
+    }
+    report("processes run on several cpus at once", ok, "ok");
+}
+
 static void test_shared_memory(void) {
     // 父进程把一页内存共享给子进程；内核用一条 IPC_LABEL_GRANT 消息告诉子进程映射在哪。
     // 子进程经由共享映射写入，父进程能看到（fork 得到的那份只是写时复制的副本）
@@ -995,6 +1045,7 @@ int main(int argc, char **argv) {
     test_timer();
     test_privilege();
     test_floating_point();
+    test_cpus();
     test_shared_memory();
     test_names();
     test_fs();

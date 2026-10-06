@@ -43,7 +43,13 @@ void drivers::Timer::init(uint32_t frequency) {
     timer_frequency = frequency;
     ticks_per_interrupt = counter_frequency / frequency;
     boot_counter_value = read_cntpct_el0();
+    start_on_this_cpu();
+}
 
+void drivers::Timer::start_on_this_cpu() {
+    if (ticks_per_interrupt == 0) {
+        return;
+    }
     write_cntp_ctl_el0(0);
     write_cntp_tval_el0(ticks_per_interrupt);
     write_cntp_ctl_el0(CNTP_CTL_ENABLE);

@@ -199,6 +199,36 @@ public:
     static void idle();
 
     /* ============================================================================
+     * Multiple CPUs (see kernel/smp.h)
+     * ========================================================================== */
+
+    /**
+     * @brief Index of the CPU this code is running on (0 = the boot CPU)
+     *
+     * Cheap, and usable from the very first instruction of kernel_main.
+     */
+    static uint32_t id();
+
+    /**
+     * @brief Start every other CPU the machine has
+     *
+     * Each one enters kernel::Smp::secondary_main() on the stack
+     * kernel::Scheduler::prepare_idle() returns for it. Called once on the boot CPU,
+     * with memory management and the scheduler initialised.
+     *
+     * @return How many were started (0 on a single-CPU machine)
+     */
+    static uint32_t start_secondaries();
+
+    /**
+     * @brief Per-CPU hardware setup on a CPU that has just been started
+     *
+     * Whatever init() and the interrupt/timer setup did for the boot CPU that is
+     * per-CPU state: its interrupt controller interface, its timer.
+     */
+    static void init_secondary();
+
+    /* ============================================================================
      * Interrupt Management
      * ========================================================================== */
 

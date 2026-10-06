@@ -150,6 +150,9 @@ public:
      */
     static uintptr_t get_page_directory();
 
+    /** 内核自己的页表（顶层表的物理地址）：不属于任何进程，idle 任务用它 */
+    static uintptr_t kernel_page_directory();
+
     /**
      * @brief 创建新的页目录（用于新进程）
      * @return 成功返回页目录的物理地址，失败返回 0

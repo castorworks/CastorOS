@@ -90,6 +90,9 @@
  */
 void gic_init(void);
 
+/** Per-CPU part of the GIC setup, on a CPU other than the boot CPU (after gic_init) */
+void gic_init_secondary(void);
+
 /**
  * @brief Tell the driver where the GIC is (physical addresses from the device tree)
  *

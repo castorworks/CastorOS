@@ -191,6 +191,10 @@ el2_entry:
  * 在 EL1 中执行内核初始化
  */
 el1_entry:
+    /* 这个 CPU 的编号放在 TPIDR_EL1 里（hal::Cpu::id() 读它）。启动 CPU 是 0 号；
+     * 复位之后这个寄存器的值不确定，内核的第一行 C++ 代码就要用它，所以在这里先定下来 */
+    msr     tpidr_el1, xzr
+
     /* 设置栈指针 (使用物理地址，MMU 尚未启用) */
     /* 引导代码运行在物理地址，而 .bss/.data 里的符号链接在高半区：
      * MMU 打开之前一律用“符号地址 - KERNEL_VMA”得到物理地址 */
@@ -292,6 +296,62 @@ halt:
     b       halt
 
     /* 上面 ldr = 用到的字面量放在引导段内（物理地址可达） */
+    .ltorg
+
+/* ============================================================================
+ * 其余 CPU 的入口
+ *
+ * 启动 CPU 用 PSCI 的 CPU_ON 让固件把一个 CPU 放到这里（hal::Cpu::start_secondaries）。
+ * 它和启动 CPU 刚上电时一样：在物理地址上运行，MMU 关着，中断关着。不一样的是页表、
+ * 栈都已经有人准备好了，放在 secondary_boot 里：
+ *   +0   MAIR_EL1     +8   TCR_EL1     +16  TTBR0_EL1    +24  TTBR1_EL1
+ *   +32  SCTLR_EL1    +40  栈顶（高半区的地址）          +48  这个 CPU 的编号
+ * 这里把这些装上，换到高半区，然后调用 arm64_secondary_start（不返回）。
+ * 一次只启动一个 CPU：secondary_boot 只有一份。
+ * ========================================================================== */
+.global secondary_entry
+secondary_entry:
+    msr     daifset, #0xf
+
+    /* 固件可能把我们放在 EL2（和启动 CPU 一样处理）：先降到 EL1 */
+    mrs     x0, CurrentEL
+    and     x0, x0, #CURRENTEL_EL_MASK
+    cmp     x0, #CURRENTEL_EL2
+    b.ne    1f
+    mov     x0, #(1 << 31)              /* RW=1: EL1 is AArch64 */
+    msr     hcr_el2, x0
+    mov     x0, #3                      /* EL1PCTEN | EL1PCEN */
+    msr     cnthctl_el2, x0
+    msr     cntvoff_el2, xzr
+    mov     x0, #0x3c5                  /* D=1, A=1, I=1, F=1, M=EL1h */
+    msr     spsr_el2, x0
+    adr     x0, 1f
+    msr     elr_el2, x0
+    eret
+1:
+    /* secondary_boot 链接在高半区，现在还在物理地址上：减去偏移去访问 */
+    ldr     x9, =(secondary_boot - KERNEL_VMA)
+    ldp     x0, x1, [x9, #0]
+    msr     mair_el1, x0
+    msr     tcr_el1, x1
+    ldp     x0, x1, [x9, #16]
+    msr     ttbr0_el1, x0               /* 内核自己的页表：低半区里有恒等映射 */
+    msr     ttbr1_el1, x1
+    isb
+    ldp     x0, x10, [x9, #32]          /* x10 = 栈顶 */
+    ldr     x11, [x9, #48]              /* x11 = CPU 编号 */
+    msr     sctlr_el1, x0               /* 打开 MMU：和启动 CPU 现在用的值一样 */
+    isb
+
+    /* MMU 开着了：换到高半区的栈和代码 */
+    mov     sp, x10
+    msr     tpidr_el1, x11
+    ldr     x1, =arm64_secondary_start
+    blr     x1
+2:
+    wfi
+    b       2b
+
     .ltorg
 
 /* ============================================================================
@@ -409,6 +469,18 @@ zero_memory:
  * ========================================================================== */
 
 .section .data
+
+/* 给下一个要启动的 CPU 的参数，见 secondary_entry */
+.balign 8
+.global secondary_boot
+secondary_boot:
+    .space  56
+
+/* secondary_entry 的地址。启动代码链接在物理地址上，离高半区的内核代码太远，
+ * C++ 代码没法直接取它的地址，从这里读 */
+.global secondary_entry_address
+secondary_entry_address:
+    .quad   secondary_entry
 
 /* 导出页表地址供 C 代码使用 */
 .global boot_page_directory

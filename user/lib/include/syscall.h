@@ -39,6 +39,7 @@ enum {
     SYS_DEVICE_FIND     = 28,  // device_find(info*)：按型号查平台设备的地址和中断号（需要特权）
     SYS_HW_ALLOW        = 29,
     SYS_HW_ALLOWED      = 30,
+    SYS_CPU_INFO        = 31,
 };
 
 typedef uintptr_t syscall_arg_t;
@@ -110,6 +111,12 @@ struct device_info {
  * @return 0 找到了，结果在 info 里；-1 没有这个设备（或者没有特权）
  */
 int device_find(const char *compatible, uint32_t index, struct device_info *info);
+
+/**
+ * 调用者此刻在哪个 CPU 上运行（编号从 0 开始）；count 不是 NULL 的话得到正在运行的 CPU 个数。
+ * 只是一个观察值：返回之后进程随时可能被换到别的 CPU 上去。
+ */
+int cpu_info(uint32_t *count);
 
 /** 还没有分配出去的物理页数（每页 4KB）。只是一个观察值：别的进程随时可能分配或释放 */
 long mem_free_pages(void);

@@ -226,6 +226,17 @@ hal_context_switch_asm:
     add     x2, x2, :lo12:stack_top
     mov     sp, x2
 .do_eret_setup:
+    /*
+     * This CPU holds the kernel lock and is about to leave the kernel without
+     * going through the exception return path (a task running for the first
+     * time): release the lock here. We are on the new task's kernel stack and
+     * the old task's state is fully saved, so another CPU may now pick it up.
+     * x19 is free to use: it is reloaded from the context below.
+     */
+    mov     x19, x1
+    bl      kernel_lock_release
+    mov     x1, x19
+
     /* Set up ELR_EL1 (return address) */
     ldr     x2, [x1, #CTX_PC]
     msr     elr_el1, x2

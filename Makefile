@@ -201,7 +201,8 @@ check: $(BOOT_IMAGE)
 # ============================================================================
 
 # QEMU_MEMORY=4G 之类：给虚拟机的内存（不写就是 QEMU 的默认值 128MB），run 和 test 都认
-QEMU_BASE = $(QEMU) $(QEMU_MACHINE) $(if $(QEMU_MEMORY),-m $(QEMU_MEMORY)) -kernel $(BOOT_IMAGE) -serial stdio -display none
+# SMP=2 之类：给虚拟机几个 CPU（不写就是 1 个）。只有 arm64 会把其余的 CPU 启动起来
+QEMU_BASE = $(QEMU) $(QEMU_MACHINE) $(if $(QEMU_MEMORY),-m $(QEMU_MEMORY)) $(if $(SMP),-smp $(SMP)) -kernel $(BOOT_IMAGE) -serial stdio -display none
 
 # virtio 设备：x86 挂在 PCI 上，arm64 挂在 virtio-mmio 上
 ifeq ($(ARCH),arm64)

@@ -6,6 +6,7 @@
  * Called from the assembly vectors after register state is saved.
  */
 
+#include <kernel/smp.h>
 #include <kernel/interrupt.h>
 #include "exception.h"
 #include <hal/hal.h>
@@ -439,6 +440,11 @@ static void handle_serror(arm64_regs_t *regs, uint32_t source) {
  * @param source Exception source (EXCEPTION_FROM_EL1_SPX, etc.)
  */
 void arm64_exception_handler(arm64_regs_t *regs, uint32_t type, uint32_t source) {
+    /* Kernel code runs with the kernel lock held (kernel/smp.h). Coming from user
+     * mode, or from the idle task's wait, this CPU does not hold it yet and waits
+     * here; interrupting kernel code that already holds it only nests. */
+    kernel::KernelLock::enter();
+
     switch (type) {
         case EXCEPTION_SYNC:
             handle_sync_exception(regs, source);
@@ -461,6 +467,15 @@ void arm64_exception_handler(arm64_regs_t *regs, uint32_t type, uint32_t source)
             while (1) {
                 __asm__ volatile("wfi");
             }
+    }
+
+    /* Going back to user mode: let go of the lock whatever the nesting says (the
+     * task returning here may have entered the kernel on another path, see
+     * KernelLock::release). Going back into the kernel: undo our own enter(). */
+    if (source == EXCEPTION_FROM_EL0_64) {
+        kernel::KernelLock::release();
+    } else {
+        kernel::KernelLock::leave();
     }
 }
 

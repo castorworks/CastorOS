@@ -14,6 +14,8 @@ class Timer {
 public:
     /** Program the timer to fire at `frequency` Hz */
     static void init(uint32_t frequency);
+    /** Start the timer of the calling CPU (each CPU has its own); after init() */
+    static void start_on_this_cpu();
 
     /** Milliseconds since init() */
     static uint64_t get_uptime_ms();

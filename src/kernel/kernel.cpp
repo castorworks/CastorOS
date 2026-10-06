@@ -13,6 +13,7 @@
 
 #include <kernel/version.h>
 #include <kernel/task.h>
+#include <kernel/smp.h>
 #include <kernel/syscall.h>
 #include <kernel/loader.h>
 
@@ -64,6 +65,10 @@ static void kernel_start(void) {
     kprintf("\n");
 #endif
 
+    // 其余的 CPU 在这里启动：内存管理和调度器都就绪了，内核测试也跑完了（测试只在一个
+    // CPU 上跑）。它们各自进入 idle，等第一个进程出现
+    kernel::Smp::start_secondaries();
+
     if (!load_init()) {
         LOG_WARN_MSG("No init process; kernel idles\n");
     }
@@ -84,6 +89,7 @@ bool arm64_configure_from_device_tree(const dtb_info_t *dtb);
 extern "C" void kernel_main(void *dtb_addr);
 void kernel_main(void *dtb_addr) {
     cxx_global_ctors_init();  // 运行 C++ 全局构造函数（必须最先执行）
+    kernel::KernelLock::enter();    // 执行内核代码的 CPU 都拿着内核锁，启动 CPU 从头就拿着
 
     drivers::Serial::init();  // 早期控制台：PL011，地址先用 QEMU virt 的
     print_banner();
@@ -192,6 +198,7 @@ static uint32_t multiboot_memory_regions(const multiboot_info_t *mbi, mm::MemReg
 extern "C" void kernel_main(multiboot_info_t *mbi);
 void kernel_main(multiboot_info_t *mbi) {
     cxx_global_ctors_init();  // 运行 C++ 全局构造函数（必须最先执行）
+    kernel::KernelLock::enter();    // 执行内核代码的 CPU 都拿着内核锁，启动 CPU 从头就拿着
 
     drivers::Serial::init();  // COM1
     print_banner();

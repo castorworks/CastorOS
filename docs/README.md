@@ -22,6 +22,7 @@
 | [网络](reference/net.md) | 客户端接口、协议栈、DHCP、TCP、在 QEMU 里使用 |
 | [启动映像和命令行](reference/shell.md) | 运行程序、后台任务、键盘输入、重定向和管道、脚本、程序参数 |
 | [浮点数](reference/floating-point.md) | 用户程序的浮点/SIMD 状态、`printf` 的 `%f`、数学函数 |
+| [多个 CPU](reference/smp.md) | 内核锁、每个 CPU 的状态、其余的 CPU 怎么启动（目前只有 arm64） |
 
 ## concepts：概念讲解
 

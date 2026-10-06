@@ -16,6 +16,7 @@
 #include <kernel/ipc.h>
 #include <kernel/user_irq.h>
 #include <kernel/hw_access.h>
+#include <kernel/smp.h>
 #include <kernel/task.h>
 #include <kernel/interrupt.h>
 #include <drivers/timer.h>
@@ -333,6 +334,17 @@ static syscall_arg_t sys_device_find_wrapper(syscall_arg_t *frame, syscall_arg_t
     return hal::Platform::find_device(info) ? 0 : SYSCALL_FAIL;
 }
 
+/** 调用者在哪个 CPU 上，一共有几个 CPU 在运行（自检用它确认进程真的在几个 CPU 上跑） */
+static syscall_arg_t sys_cpu_info_wrapper(syscall_arg_t *frame, syscall_arg_t count_ptr, syscall_arg_t p2,
+                                          syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
+    if (!user_wr_opt(count_ptr, sizeof(uint32_t))) return SYSCALL_FAIL;
+    if (count_ptr) {
+        *(uint32_t *)(uintptr_t)count_ptr = kernel::Smp::cpu_count();
+    }
+    return hal::Cpu::id();
+}
+
 syscall_arg_t syscall_dispatcher(syscall_arg_t syscall_num, syscall_arg_t p1, syscall_arg_t p2, 
                                  syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5, 
                                  syscall_arg_t *frame) {
@@ -394,6 +406,7 @@ void syscall_init(void) {
     syscall_table[SYS_DROP_PRIVILEGE] = sys_drop_privilege_wrapper;
     syscall_table[SYS_HW_ALLOW]      = sys_hw_allow_wrapper;
     syscall_table[SYS_HW_ALLOWED]    = sys_hw_allowed_wrapper;
+    syscall_table[SYS_CPU_INFO]      = sys_cpu_info_wrapper;
 
     /* 架构相关的系统调用入口（INT 0x80 / SYSCALL / SVC） */
     hal::Syscall::init(NULL);
