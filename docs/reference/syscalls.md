@@ -17,10 +17,10 @@
 | 9 | `brk(addr)` | ⚡ |
 | 10 / 11 | `mmap(...)` / `munmap(addr, len)` | ⚡ 只支持匿名映射 |
 | 12 | `console_write(buf, len)` | 写内核串口控制台（调试输出）；一次最多 4096 字节，多出来的不写，返回实际写的字节数 |
-| 13 | `ipc_send(dest, msg)` | 把消息发给 PID `dest`，阻塞到对方收下 |
-| 14 | `ipc_recv(from, msg)` | 接收消息；`from` 为 `IPC_ANY`、指定 PID，或 `IPC_FROM_KERNEL`（只收内核发来的消息：设备中断和定时器到期） |
-| 15 | `ipc_call(dest, msg)` | 发送请求并等待 `dest` 的应答，应答写回 `msg` |
-| 16 | `ipc_reply(dest, msg)` | 应答正在 `call` 自己的进程，从不阻塞 |
+| 13 | `ipc_send(dest, msg)` | ⚡ 把消息发给 PID `dest`，阻塞到对方收下 |
+| 14 | `ipc_recv(from, msg)` | ⚡ 接收消息；`from` 为 `IPC_ANY`、指定 PID，或 `IPC_FROM_KERNEL`（只收内核发来的消息：设备中断和定时器到期） |
+| 15 | `ipc_call(dest, msg)` | ⚡ 发送请求并等待 `dest` 的应答，应答写回 `msg` |
+| 16 | `ipc_reply(dest, msg)` | ⚡ 应答正在 `call` 自己的进程，从不阻塞 |
 | 17 | `mem_grant(pid, addr, len)` | 把自己的一段内存共享给 `pid`，对方收到内核发来的授予通知 |
 | 18 / 19 | `io_read(port, width, value*)` / `io_write(port, width, value)` | x86 的 I/O 端口；需要特权，或者端口在许可表里。许可表里的端口用户库直接用指令访问，不经过这两个调用 |
 | 20 | `map_device(phys, len)` | 把设备内存映射进自己的地址空间；需要特权，或者这段内存在许可表里 |

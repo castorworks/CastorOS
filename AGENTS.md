@@ -244,29 +244,41 @@ nowhere else. The kernel Makefile rebuilds all of it when `user/` changes.
 - Several CPUs (`docs/reference/smp.md`), on all three architectures. The rule that keeps the rest
   of the kernel unchanged: a CPU holds the kernel lock (`kernel::KernelLock`, `src/kernel/smp.cpp`)
   whenever it executes kernel code — taken on entry from user mode, released before returning to
-  it and while the idle task waits. So kernel data needs no locks of its own, and "interrupts off"
-  still means "nobody else". The lock belongs to the CPU, not the task: it is held across a context
-  switch. Anything that is "the current X" (task, idle task, interrupt depth, page table; on x86
+  it. So code under it needs no locks of its own, and "interrupts off" still means "nobody else".
+  The lock follows the task: `schedule()` records how many levels the outgoing task holds
+  (`task_t::lock_depth`) and the incoming task restores its own count (`KernelLock::adopt` in
+  `finish_switch`), so a task may sleep while "holding" it without blocking other CPUs. The idle
+  tasks never hold it. Anything that is "the current X" (task, idle task, interrupt depth, page table; on x86
   also the GDT, TSS and system-call stack) is per CPU, indexed by `hal::Cpu::id()`; do not add a
   global for such state. The lock is taken in C: `syscall_dispatcher`, the x86 `irq*_handler` /
   `isr*_handler` wrappers and `arm64_exception_handler`. A new entry path into the kernel must
   do the same, and anything it touches before that (the x86_64 `syscall_entry` stub) must be
   per CPU. A new user task does not leave the kernel through those paths the first time: it
-  starts in `user_task_start` (`sched.cpp`), which releases the lock.
+  starts in `user_task_start` (`sched.cpp`), which calls `finish_switch` like any other task that
+  has just been switched in.
+- The scheduler does not rely on the kernel lock. Its own lock (`task_lock`, `task_private.h`,
+  always taken with interrupts off) protects the run queue and, for every task, `state`, `on_cpu`,
+  the wait fields, the IPC fields and the pending kernel messages (`irq_pending`,
+  `timer_pending`). Change a task's state only under it, and make a task runnable only with
+  `sched_make_ready_locked`: a task whose kernel stack is still in use (`on_cpu`) must not enter
+  the run queue — the CPU switching it out enqueues it in `finish_switch`. To wait: under the
+  lock check the condition and mark yourself `BLOCKED`, unlock, then `schedule()`. Never touch
+  user memory or call anything that takes another lock (kmalloc, VMM, kprintf) while holding it.
 - Some system calls run without the kernel lock (`syscall_unlocked` in `src/kernel/syscall.cpp`;
-  today `mmap`, `munmap`, `brk` and a few read-only ones). Locked is the default and the safe
-  choice. To move a call out, its whole path may touch only: the caller's own state that nobody
+  today `mmap`, `munmap`, `brk`, the four IPC calls and a few read-only ones). Locked is the
+  default and the safe choice. To move a call out, its whole path may touch only: the caller's own state that nobody
   else reads or writes concurrently; subsystems with a lock of their own (PMM, VMM page-table
-  operations, the kernel heap, console output); and globals where a stale read is harmless. It
-  must not sleep or schedule. Think about what other processes, holding the kernel lock, can do
+  operations, the kernel heap, console output, the scheduler); and globals where a stale read is
+  harmless. Think about what other processes, holding the kernel lock, can do
   to the caller meanwhile (that is why `mem_grant` maps into a separate address range from the
   target's own `mmap`). Conversely, code on those paths — everything under `src/mm/`,
   `kprintf`/`klog` — can no longer assume the kernel lock is held: protect new shared state
   there with its own lock.
 - `kernel::Scheduler` is implemented in two files: `sched.cpp` (run queue, idle task, `schedule()`,
   timer tick, yield/sleep/block/wakeup) and `task.cpp` (task table, creating and exiting processes,
-  kill, privilege queries). What they share is in `src/kernel/task_private.h`; nothing else
-  includes it.
+  kill, privilege queries). What they share is in `src/kernel/task_private.h`; besides them only
+  `ipc.cpp` and `user_irq.cpp` include it, because they change task states under the scheduler
+  lock.
 - Prefer the RAII guard `sync::SpinlockIrqGuard` over manual lock/unlock pairs. The spinlock is the
   only lock in the kernel: nothing needed a mutex or a semaphore, so they were removed.
 - Kernel code that nothing calls gets deleted together with its tests, not kept "for later". To

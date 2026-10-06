@@ -4,10 +4,15 @@
 
 #include <kernel/user_irq.h>
 #include <kernel/task.h>
-#include <kernel/interrupt.h>
+#include <kernel/sync/spinlock.h>
 #include <hal/hal.h>
 
+#include "task_private.h"
+
 namespace kernel {
+
+/* 认领表和每个任务的 irq_pending 由调度锁（task_lock）保护：中断到来时要在同一把锁里
+ * 记下"有中断待处理"并叫醒等它的驱动，而驱动的 recv 不拿内核锁。 */
 
 /* 认领表：槽位下标同时是 task_t::irq_pending 里的位号。owner == 0 表示空闲。
  * 一条中断线可以被多个进程认领（PCI 设备共享中断线是常态），每个进程占一个槽位。 */
@@ -40,7 +45,7 @@ int UserIrq::claim(uint32_t irq) {
         return -1;
     }
 
-    InterruptGuard guard;
+    sync::SpinlockIrqGuard guard(task_lock);
 
     int free_slot = -1;
     for (int i = 0; i < USER_IRQ_MAX; i++) {
@@ -71,7 +76,7 @@ int UserIrq::ack(uint32_t irq) {
         return -1;
     }
 
-    InterruptGuard guard;
+    sync::SpinlockIrqGuard guard(task_lock);
 
     for (int i = 0; i < USER_IRQ_MAX; i++) {
         if (claims[i].owner == current->pid && claims[i].irq == irq) {
@@ -87,6 +92,8 @@ int UserIrq::ack(uint32_t irq) {
 }
 
 bool UserIrq::raise(uint32_t irq) {
+    sync::SpinlockIrqGuard guard(task_lock);
+
     bool claimed = false;
     for (int i = 0; i < USER_IRQ_MAX; i++) {
         if (claims[i].owner == 0 || claims[i].irq != irq) {
@@ -99,16 +106,17 @@ bool UserIrq::raise(uint32_t irq) {
         }
 
         // 内核不知道是这条线上的哪个设备发的中断：每个属主都通知，由驱动自己看设备状态
-        task_t *owner = Scheduler::get_by_pid(claims[i].owner);
+        task_t *owner = sched_find_locked(claims[i].owner);
         if (owner) {
             claims[i].awaiting_ack = true;
             owner->irq_pending |= (1u << i);
-            Ipc::notify(owner);
+            ipc_notify_locked(owner);
         }
     }
     return claimed;
 }
 
+/** 调用者（ipc.cpp）拿着调度锁 */
 bool UserIrq::take_pending(task_t *task, ipc_msg *msg) {
     if (task->irq_pending == 0) {
         return false;
@@ -124,7 +132,7 @@ bool UserIrq::take_pending(task_t *task, ipc_msg *msg) {
 }
 
 void UserIrq::on_exit(task_t *task) {
-    InterruptGuard guard;
+    sync::SpinlockIrqGuard guard(task_lock);
 
     for (int i = 0; i < USER_IRQ_MAX; i++) {
         if (claims[i].owner != task->pid) {

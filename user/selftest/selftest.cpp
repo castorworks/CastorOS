@@ -565,6 +565,133 @@ static void test_parallel_memory(void) {
     report("memory system calls from several processes at once", ok && after == before, "ok");
 }
 
+#define PIPC_ROUNDS  1500
+#define PIPC_QUIT    99
+
+/**
+ * 并行 IPC 检查里的一个客户：三种通信混着做。
+ *   - 向大家共用的服务 call（服务那边几个 CPU 上的客户同时排着队）
+ *   - 和自己专属的伙伴 send / recv 一来一回（两个进程各在一个 CPU 上互相等、互相叫醒）
+ *   - 每隔一阵等一次定时器（内核从时钟中断里叫醒一个正在 recv 的进程）
+ * @return 每个回答都是对的、都是给自己的
+ */
+static bool ipc_client(int server, uint32_t seed) {
+    int self = getpid();
+    int partner = fork();
+    if (partner == 0) {
+        // 伙伴：收到 v 就回 v + 1，收到 PIPC_QUIT 结束
+        for (;;) {
+            struct ipc_msg m;
+            if (ipc_recv(self, &m) != 0 || m.label == PIPC_QUIT) {
+                exit(0);
+            }
+            m.data[0] += 1;
+            if (ipc_send(self, &m) != 0) {
+                exit(1);
+            }
+        }
+    }
+    if (partner < 0) {
+        return false;
+    }
+
+    bool ok = true;
+    uint32_t v = seed;
+    for (int i = 0; i < PIPC_ROUNDS && ok; i++) {
+        v = v * 1664525u + 1013904223u;
+
+        struct ipc_msg m = {};
+        m.label = 1;
+        m.data[0] = v;
+        m.data[1] = (uint64_t)self;
+        ok = ipc_call(server, &m) == 0 && m.data[0] == (uint64_t)v * 3 + 1 &&
+             m.data[1] == (uint64_t)self && m.sender == (uint32_t)server;
+
+        m = {};
+        m.label = 2;
+        m.data[0] = v;
+        ok = ok && ipc_send(partner, &m) == 0 && ipc_recv(partner, &m) == 0 &&
+             m.data[0] == (uint64_t)v + 1 && m.sender == (uint32_t)partner;
+
+        if (i % 300 == 299) {
+            timer_set(1);
+            ok = ok && ipc_recv(IPC_FROM_KERNEL, &m) == 0 && m.label == IPC_LABEL_TIMER;
+        }
+    }
+
+    struct ipc_msg quit = {};
+    quit.label = PIPC_QUIT;
+    ipc_send(partner, &quit);
+    int status = -1;
+    waitpid(partner, &status, 0);
+    return ok && status == 0;
+}
+
+static void test_parallel_ipc(void) {
+    // send / recv / call / reply 不拿内核锁：几个 CPU 上的进程可以同时在里面，互相交消息、
+    // 互相叫醒。让几个客户同时围着一个服务转，各自还带一个伙伴来回传球。任何一次"刚决定
+    // 要睡，对方已经叫过了"都会让某个进程永远醒不过来（这项检查就做不完）；任何一条消息
+    // 交错了人，回答就对不上
+    uint32_t cpus = 1;
+    cpu_info(&cpus);
+    int clients = cpus < 2 ? 2 : cpus > 6 ? 6 : (int)cpus;
+
+    int server = fork();
+    if (server == 0) {
+        for (;;) {
+            struct ipc_msg m;
+            if (ipc_recv(IPC_ANY, &m) != 0) {
+                continue;
+            }
+            if (m.label == PIPC_QUIT) {
+                exit(0);
+            }
+            // 回答里带着问的人自己报的 PID：服务把回答交错了人的话对不上
+            m.data[0] = m.data[0] * 3 + 1;
+            ipc_reply(m.sender, &m);
+        }
+    }
+
+    int pids[6];
+    for (int i = 0; i < clients; i++) {
+        pids[i] = fork();
+        if (pids[i] == 0) {
+            exit(ipc_client(server, 0x9E3779B9u * (uint32_t)(i + 1)) ? 0 : 1);
+        }
+    }
+    bool ok = server > 0;
+    for (int i = 0; i < clients; i++) {
+        int status = -1;
+        ok = pids[i] > 0 && waitpid(pids[i], &status, 0) == pids[i] && status == 0 && ok;
+    }
+
+    // 一个进程正等着服务的回答时服务退出了：它得被叫醒并得到失败，而不是一直等下去。
+    // 这里的服务故意收了不回
+    int silent = fork();
+    if (silent == 0) {
+        struct ipc_msg m;
+        ipc_recv(IPC_ANY, &m);
+        usleep(20000);
+        exit(0);
+    }
+    struct ipc_msg m = {};
+    m.label = 1;
+    ok = ok && silent > 0 && ipc_call(silent, &m) == -1;
+    waitpid(silent, NULL, 0);
+
+    struct ipc_msg quit = {};
+    quit.label = PIPC_QUIT;
+    ipc_send(server, &quit);
+    waitpid(server, NULL, 0);
+    // 退出了的进程收不到消息
+    ok = ok && ipc_send(server, &quit) == -1;
+
+    if (!ok) {
+        printf("selftest: (%d clients)\n", clients);
+    }
+    report("messages between several processes at once", ok, "ok");
+}
+
 static void test_shared_memory(void) {
     // 父进程把一页内存共享给子进程；内核用一条 IPC_LABEL_GRANT 消息告诉子进程映射在哪。
     // 子进程经由共享映射写入，父进程能看到（fork 得到的那份只是写时复制的副本）
@@ -1308,6 +1435,7 @@ int main(int argc, char **argv) {
     test_cpus();
     test_shared_memory();
     test_parallel_memory();
+    test_parallel_ipc();
     test_names();
     test_fs();
     // 启动映像里的子目录（user/bootfs/docs）装载出来也是目录

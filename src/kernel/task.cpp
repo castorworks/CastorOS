@@ -89,7 +89,10 @@ void kernel::Scheduler::free(task_t *task) {
     // 被释放的任务不再算作其地址空间的使用者。fork 失败路径上的子进程
     // 还处于 READY 状态，不改的话 i686 的 free_page_directory 会认为页目录
     // “仍被任务使用”而拒绝释放（泄漏整个克隆出来的地址空间）。
-    task->state = TASK_TERMINATED;
+    {
+        sync::SpinlockIrqGuard guard(task_lock);
+        task->state = TASK_TERMINATED;
+    }
 
     // 释放内核栈（在锁外执行）
     if (kernel_stack_base) {
@@ -113,13 +116,15 @@ void kernel::Scheduler::free(task_t *task) {
  */
 task_t* kernel::Scheduler::get_by_pid(uint32_t pid) {
     sync::SpinlockIrqGuard guard(task_lock);
-    
+    return sched_find_locked(pid);
+}
+
+task_t *sched_find_locked(uint32_t pid) {
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         if (task_pool[i].state != TASK_UNUSED && task_pool[i].pid == pid) {
             return &task_pool[i];
         }
     }
-    
     return NULL;
 }
 
@@ -378,14 +383,19 @@ void kernel::Scheduler::exit_current(uint32_t exit_code, bool signaled, uint32_t
     // 如果有父进程，变成僵尸进程等待父进程回收
     // 否则直接终止（孤儿进程）
     if (current_task->parent && current_task->parent->state != TASK_UNUSED) {
-        current_task->state = TASK_ZOMBIE;
-        // 父进程可能正阻塞在 waitpid 里等我们
+        {
+            sync::SpinlockIrqGuard guard(task_lock);
+            current_task->state = TASK_ZOMBIE;
+        }
+        // 父进程可能正阻塞在 waitpid 里等我们。它醒来就会回收我们，包括我们现在脚下的
+        // 内核栈；它是在内核锁里做这件事的，而内核锁要等我们切换走之后才放得出来
+        // （我们拿着它退出的），所以来得及
         kernel::Scheduler::wakeup(current_task->parent);
         LOG_DEBUG_MSG("Task %u becomes zombie, waiting for parent %u\n", 
                      current_task->pid, current_task->parent->pid);
     } else {
+        sync::SpinlockIrqGuard guard(task_lock);
         current_task->state = TASK_TERMINATED;
-        LOG_DEBUG_MSG("Task %u has no parent, terminating directly\n", current_task->pid);
     }
     
     // 释放资源
@@ -411,7 +421,7 @@ bool kernel::Scheduler::request_kill(task_t *target, uint32_t signal) {
         return false;
     }
 
-    bool wake = false;
+    bool running_elsewhere;
     {
         sync::SpinlockIrqGuard guard(task_lock);
 
@@ -427,23 +437,16 @@ bool kernel::Scheduler::request_kill(task_t *target, uint32_t signal) {
         }
 
         // 正在 sleep、等待 IPC 或等待子进程的任务提前唤醒，让它尽快走到系统调用出口
-        // （这些等待循环看到 kill_pending 都会放弃）。
-        // 阻塞在 Mutex/Semaphore 上的任务不能唤醒：它们醒来后会重新检查条件
-        // 并再次阻塞，要等到被正常唤醒后才会走到出口。
+        // （这些等待循环看到 kill_pending 都会放弃）
         if (target->state == TASK_BLOCKED &&
             (target->sleep_until_ms > 0 || target->ipc_state != IPC_IDLE ||
              target->wait_object == target /* 在 waitpid 里等子进程 */)) {
-            target->sleep_until_ms = 0;
-            target->wait_object = NULL;
-            target->state = TASK_READY;
-            wake = true;
+            sched_make_ready_locked(target);
         }
+        running_elsewhere = target->state == TASK_RUNNING && target != kernel::Scheduler::get_current();
     }
 
-    // 在锁外添加到就绪队列
-    if (wake) {
-        kernel::Scheduler::ready_queue_add(target);
-    } else if (target->state == TASK_RUNNING && target != kernel::Scheduler::get_current()) {
+    if (running_elsewhere) {
         // 目标正在别的 CPU 上运行。它要进了内核、走到返回用户态的出口才会看到这个请求；
         // 埋头在用户态算东西的进程自己不会进来，发个中断让它进来一趟
         hal::Cpu::kick_others();

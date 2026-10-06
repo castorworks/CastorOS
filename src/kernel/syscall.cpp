@@ -179,37 +179,58 @@ static syscall_arg_t sys_console_write_wrapper(syscall_arg_t *frame, syscall_arg
     return len;
 }
 
+/*
+ * IPC 的四个调用不拿内核锁（见 kernel/ipc.cpp）。消息在这里拷进、拷出内核栈上的副本：
+ * IPC 的代码在调度锁里搬消息，那里面不能碰用户内存（可能缺页）；检查过的 label 也因此
+ * 不会在检查之后被共享这页内存的别的进程改掉。
+ */
+
 /** 用户进程不能发 label 落在内核保留区的消息 */
-static inline bool user_label_ok(syscall_arg_t msg) {
-    return !(((const ipc_msg *)(uintptr_t)msg)->label & IPC_LABEL_RESERVED);
+static inline bool user_label_ok(const ipc_msg &msg) {
+    return !(msg.label & IPC_LABEL_RESERVED);
 }
 
 static syscall_arg_t sys_ipc_send_wrapper(syscall_arg_t *frame, syscall_arg_t dest, syscall_arg_t msg,
                                           syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    if (!user_rd(msg, sizeof(ipc_msg)) || !user_label_ok(msg)) return SYSCALL_FAIL;
-    return sys_ret32((uint32_t)kernel::Ipc::send((uint32_t)dest, (const ipc_msg *)(uintptr_t)msg));
+    if (!user_rd(msg, sizeof(ipc_msg))) return SYSCALL_FAIL;
+    ipc_msg kmsg = *(const ipc_msg *)(uintptr_t)msg;
+    if (!user_label_ok(kmsg)) return SYSCALL_FAIL;
+    return sys_ret32((uint32_t)kernel::Ipc::send((uint32_t)dest, &kmsg));
 }
 
 static syscall_arg_t sys_ipc_recv_wrapper(syscall_arg_t *frame, syscall_arg_t from, syscall_arg_t msg,
                                           syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
     if (!user_wr(msg, sizeof(ipc_msg))) return SYSCALL_FAIL;
-    return sys_ret32((uint32_t)kernel::Ipc::recv((uint32_t)from, (ipc_msg *)(uintptr_t)msg));
+    ipc_msg kmsg;
+    int result = kernel::Ipc::recv((uint32_t)from, &kmsg);
+    if (result == 0) {
+        *(ipc_msg *)(uintptr_t)msg = kmsg;
+    }
+    return sys_ret32((uint32_t)result);
 }
 
 static syscall_arg_t sys_ipc_reply_wrapper(syscall_arg_t *frame, syscall_arg_t dest, syscall_arg_t msg,
                                            syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    if (!user_rd(msg, sizeof(ipc_msg)) || !user_label_ok(msg)) return SYSCALL_FAIL;
-    return sys_ret32((uint32_t)kernel::Ipc::reply((uint32_t)dest, (const ipc_msg *)(uintptr_t)msg));
+    if (!user_rd(msg, sizeof(ipc_msg))) return SYSCALL_FAIL;
+    ipc_msg kmsg = *(const ipc_msg *)(uintptr_t)msg;
+    if (!user_label_ok(kmsg)) return SYSCALL_FAIL;
+    return sys_ret32((uint32_t)kernel::Ipc::reply((uint32_t)dest, &kmsg));
 }
 
 static syscall_arg_t sys_ipc_call_wrapper(syscall_arg_t *frame, syscall_arg_t dest, syscall_arg_t msg,
                                           syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    if (!user_wr(msg, sizeof(ipc_msg)) || !user_label_ok(msg)) return SYSCALL_FAIL;
-    return sys_ret32((uint32_t)kernel::Ipc::call((uint32_t)dest, (ipc_msg *)(uintptr_t)msg));
+    if (!user_wr(msg, sizeof(ipc_msg))) return SYSCALL_FAIL;
+    ipc_msg kmsg = *(const ipc_msg *)(uintptr_t)msg;
+    if (!user_label_ok(kmsg)) return SYSCALL_FAIL;
+    int result = kernel::Ipc::call((uint32_t)dest, &kmsg);
+    if (result == 0) {
+        *(ipc_msg *)(uintptr_t)msg = kmsg;
+    }
+    return sys_ret32((uint32_t)result);
 }
 
 /* ============================================================================
@@ -322,11 +343,8 @@ static syscall_arg_t sys_uptime_ms_wrapper(syscall_arg_t *frame, syscall_arg_t m
 static syscall_arg_t sys_timer_set_wrapper(syscall_arg_t *frame, syscall_arg_t ms, syscall_arg_t p2,
                                            syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
-    task_t *current = kernel::Scheduler::get_current();
-    if (!current) return SYSCALL_FAIL;
-    kernel::InterruptGuard guard;
-    current->timer_pending = false;
-    current->timer_deadline_ms = ms ? drivers::Timer::get_uptime_ms() + ms : 0;
+    if (!kernel::Scheduler::get_current()) return SYSCALL_FAIL;
+    kernel::Scheduler::set_timer(ms);
     return 0;
 }
 
@@ -451,6 +469,11 @@ void syscall_init(void) {
     syscall_unlocked[SYS_HW_ALLOWED] = true;
     syscall_unlocked[SYS_CPU_INFO]   = true;
     syscall_unlocked[SYS_MEM_FREE]   = true;
+    /* IPC：消息、等待状态和唤醒都在调度锁里（kernel/ipc.cpp） */
+    syscall_unlocked[SYS_IPC_SEND]   = true;
+    syscall_unlocked[SYS_IPC_RECV]   = true;
+    syscall_unlocked[SYS_IPC_CALL]   = true;
+    syscall_unlocked[SYS_IPC_REPLY]  = true;
 
     /* 架构相关的系统调用入口（INT 0x80 / SYSCALL / SVC） */
     hal::Syscall::init(NULL);

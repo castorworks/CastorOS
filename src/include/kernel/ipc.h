@@ -54,7 +54,8 @@ struct ipc_msg {
 typedef enum {
     IPC_IDLE = 0,
     IPC_SENDING,        ///< 阻塞在 send：消息存放在自己的 ipc_buf 里，等对方来取
-    IPC_RECEIVING       ///< 阻塞在 recv：等别人把消息放进自己的 ipc_buf
+    IPC_RECEIVING,      ///< 阻塞在 recv：等别人把消息放进自己的 ipc_buf
+    IPC_CLOSED          ///< 正在退出：不再收发消息，发给它的都立刻失败
 } ipc_state_t;
 
 struct task;

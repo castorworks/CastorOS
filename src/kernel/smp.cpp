@@ -23,7 +23,7 @@ static sync::Spinlock lock_word;
  * 启动 CPU 在 kernel_main 一开头就 enter() 一次：它启动内核的那段时间里别的 CPU 还没
  * 起来，但规矩从头就立着，后面的代码不用分情况。
  */
-static uint32_t depth[MAX_CPUS];
+static uint32_t depth_of[MAX_CPUS];
 
 static void spin_acquire(void) {
     // 别人拿着就空转着等。等的时候中断是关着的；拿着锁的 CPU 不会等我们做任何事
@@ -37,19 +37,19 @@ static void spin_release(void) {
 void KernelLock::enter() {
     InterruptGuard guard;
     uint32_t cpu = hal::Cpu::id();
-    if (depth[cpu] == 0) {
+    if (depth_of[cpu] == 0) {
         spin_acquire();
     }
-    depth[cpu]++;
+    depth_of[cpu]++;
 }
 
 void KernelLock::leave() {
     InterruptGuard guard;
     uint32_t cpu = hal::Cpu::id();
-    if (depth[cpu] == 0) {
+    if (depth_of[cpu] == 0) {
         return;
     }
-    if (--depth[cpu] == 0) {
+    if (--depth_of[cpu] == 0) {
         spin_release();
     }
 }
@@ -57,15 +57,26 @@ void KernelLock::leave() {
 void KernelLock::release() {
     InterruptGuard guard;
     uint32_t cpu = hal::Cpu::id();
-    if (depth[cpu] != 0) {
-        depth[cpu] = 0;
+    if (depth_of[cpu] != 0) {
+        depth_of[cpu] = 0;
         spin_release();
     }
 }
 
-bool KernelLock::held() {
+uint32_t KernelLock::depth() {
     InterruptGuard guard;
-    return depth[hal::Cpu::id()] != 0;
+    return depth_of[hal::Cpu::id()];
+}
+
+void KernelLock::adopt(uint32_t wanted) {
+    InterruptGuard guard;
+    uint32_t cpu = hal::Cpu::id();
+    if (depth_of[cpu] == 0 && wanted != 0) {
+        spin_acquire();
+    } else if (depth_of[cpu] != 0 && wanted == 0) {
+        spin_release();
+    }
+    depth_of[cpu] = wanted;
 }
 
 /* ============================================================================

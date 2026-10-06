@@ -29,14 +29,24 @@
 /**
  * 每个 CPU 自己的那一份：它正在运行哪个任务、它的 idle 任务、它的时间片计数。
  * 下面的代码里 current_task、idle_task、need_resched、tick_count 指的都是"这个 CPU 的"。
- * 其余的状态（就绪队列、任务表、待清理链表）所有 CPU 共用，由内核锁保护：
- * 能执行到这里的 CPU 同一时刻只有一个（见 kernel/smp.h）。
+ * 其余的状态所有 CPU 共用，由调度锁（task_lock）保护：就绪队列、待清理链表，以及每个
+ * 任务的 state、on_cpu 和它在等什么（wait_object、sleep_until_ms、IPC 的那几个字段）。
+ * 调度器不靠内核锁：不拿内核锁的系统调用（IPC）也会阻塞、唤醒别的任务、切换任务。
+ *
+ * 两条规矩让几个 CPU 能同时调度：
+ *   1. 改任务的状态、动就绪队列，都在调度锁里。"看一眼条件，不满足就睡"和"让条件成立，
+ *      叫醒等它的任务"因此不会交错：睡的一方在锁里把自己标成 BLOCKED，放了锁才去切换。
+ *   2. 内核栈上还有 CPU 在执行的任务（on_cpu）不进就绪队列。任务被换下去是分两步的：
+ *      先在锁里决定换谁，再放了锁去切换寄存器和栈；这中间它可能已经被叫醒了。叫醒它的
+ *      一方只把状态改成 READY；等切换真的完成了（finish_switch），换它下去的那个 CPU
+ *      再把它放进队列。所以从队列里取出来的任务，它的栈一定没人在用。
  */
 static struct {
     task_t *current;                // 正在运行的任务
     task_t *idle;                   // 没有任务可运行时运行它
     volatile bool need_resched;     // 当前任务的时间片用完了，等在返回用户态的抢占点切换
     bool idle_waiting;              // 它的 idle 任务正停着等中断（或者马上就要停）
+    task_t *leaving;                // 正在被这个 CPU 换下去的任务：换完之后由 finish_switch 收尾
     uint32_t tick_count;            // 当前任务已经用掉的时钟滴答数
 } per_cpu[MAX_CPUS];
 
@@ -44,6 +54,8 @@ static struct {
 #define idle_task       (per_cpu[hal::Cpu::id()].idle)
 #define need_resched    (per_cpu[hal::Cpu::id()].need_resched)
 #define tick_count      (per_cpu[hal::Cpu::id()].tick_count)
+
+static void finish_switch(void);
 
 /** @brief 就绪队列头指针 */
 static task_t *ready_queue_head = NULL;
@@ -54,54 +66,26 @@ static task_t *ready_queue_tail = NULL;
 /** @brief 调度器是否已初始化 */
 static bool scheduler_initialized = false;
 
-/**
- * @brief 待清理的 terminated 任务链表（延迟清理，通过 task->next 串联）
- *
- * 任务不能在自己的内核栈上释放自己，所以退出时只挂到这里，
- * 由之后调用 schedule() 的任务在它自己的栈上回收。
- * 只在关中断的 schedule() 中访问。
- */
-static task_t *pending_cleanup_head = NULL;
 
 /* ============================================================================
- * 辅助函数：就绪队列操作
+ * 就绪队列（调用者拿着调度锁）
  * ========================================================================== */
 
-/**
- * @brief 将任务添加到就绪队列尾部
- */
-void kernel::Scheduler::ready_queue_add(task_t *task) {
-    if (!task) {
-        return;
-    }
-    
-    // 不添加 UNUSED、ZOMBIE 或 TERMINATED 状态的任务
-    if (task->state == TASK_UNUSED || task->state == TASK_ZOMBIE || task->state == TASK_TERMINATED) {
-        return;
-    }
-    
-    // 确保任务处于 READY 状态
-    if (task->state != TASK_READY) {
-        return;
-    }
-    
-    sync::SpinlockIrqGuard guard(task_lock);
-    
+/** 放到队尾，并叫醒闲着的 CPU */
+static void enqueue_locked(task_t *task) {
     task->next = NULL;
     task->prev = ready_queue_tail;
-    
     if (ready_queue_tail) {
         ready_queue_tail->next = task;
     } else {
         ready_queue_head = task;
     }
-    
     ready_queue_tail = task;
 
     // 有 CPU 正闲着等中断的话叫醒它们：不叫的话，这个任务要等到某个闲着的 CPU 自己的
-    // 下一次时钟中断才会被发现。idle 是先标记"我要停了"、放掉内核锁、再停的，而我们是
-    // 拿着锁看标记的，所以不会漏：它要么还没标记（那它接下来检查队列时会看到这个任务），
-    // 要么已经标记了（那我们的中断会把它从等待里叫出来，哪怕它还没来得及停下）
+    // 下一次时钟中断才会被发现。idle 是在调度锁里看队列、标记"我要停了"，放了锁再停的，
+    // 所以不会漏：它要么还没标记（那它拿到锁时会看到这个任务），要么已经标记了（那我们的
+    // 中断会把它从等待里叫出来，哪怕它还没来得及停下）
     uint32_t self = hal::Cpu::id();
     for (uint32_t cpu = 0; cpu < MAX_CPUS; cpu++) {
         if (cpu != self && per_cpu[cpu].idle_waiting) {
@@ -111,14 +95,8 @@ void kernel::Scheduler::ready_queue_add(task_t *task) {
     }
 }
 
-/**
- * @brief 从就绪队列获取下一个任务
- * 
- * @return 下一个就绪任务，如果队列为空返回 NULL
- */
-static task_t* ready_queue_pop(void) {
-    sync::SpinlockIrqGuard guard(task_lock);
-    
+/** 取队首；队列空返回 NULL */
+static task_t *dequeue_locked(void) {
     task_t *task = ready_queue_head;
     if (task) {
         ready_queue_head = task->next;
@@ -127,12 +105,34 @@ static task_t* ready_queue_pop(void) {
         } else {
             ready_queue_tail = NULL;
         }
-        
         task->next = NULL;
         task->prev = NULL;
     }
-    
     return task;
+}
+
+void sched_make_ready_locked(task_t *task) {
+    task->wait_object = NULL;
+    task->sleep_until_ms = 0;
+    task->state = TASK_READY;
+    // 它的栈上还有 CPU 在执行（刚把自己标成 BLOCKED，还没切换走）：先不进队列，
+    // 那个 CPU 切换完会看到它已经 READY，由它来放（finish_switch）
+    if (!task->on_cpu) {
+        enqueue_locked(task);
+    }
+}
+
+/**
+ * @brief 把一个新建的、状态是 READY 的任务放进就绪队列
+ */
+void kernel::Scheduler::ready_queue_add(task_t *task) {
+    if (!task) {
+        return;
+    }
+    sync::SpinlockIrqGuard guard(task_lock);
+    if (task->state == TASK_READY && !task->on_cpu) {
+        enqueue_locked(task);
+    }
 }
 
 /**
@@ -152,21 +152,20 @@ task_t* kernel::Scheduler::get_current() {
  * 当没有其他任务可运行时，运行此任务
  */
 static void idle_task_loop(void) {
+    finish_switch();        // 第一次被换上来时走到这里：给换下去的那个任务收尾
     LOG_DEBUG_MSG("Idle task started\n");
-    
+
     while (1) {
-        // 先关中断再看有没有就绪任务：中断处理函数（设备中断、时钟）随时可能唤醒任务，
-        // 如果“检查”和“停机”之间有空档，刚被唤醒的任务就要白等到下一次时钟中断
-        kernel::Interrupts::disable();
-        if (ready_queue_head == NULL) {
-            // 没事可做。停下来之前把内核锁放掉，别的 CPU 才进得了内核；等待期间到来的
-            // 中断，处理函数自己拿锁、自己放。醒来之后再拿回来。
-            // 先标记"我要停了"：这之后别的 CPU 把任务放进就绪队列时会发一个中断来叫
-            // （ready_queue_add），中断是在停下的那一刻才放进来的，所以叫得醒。
-            per_cpu[hal::Cpu::id()].idle_waiting = true;
-            kernel::KernelLock::release();
-            hal::Cpu::idle();       // 原子地开中断并等待；返回时中断已打开
-            kernel::KernelLock::enter();
+        // 在调度锁里看有没有就绪任务，没有就标记"我要停了"，放了锁再停。别的 CPU 把任务
+        // 放进队列时会看这个标记来叫我们（enqueue_locked）；停下和开中断是一个原子动作，
+        // 所以标记之后来的中断一定叫得醒
+        bool irq_state;
+        task_lock.lock_irqsave(irq_state);
+        bool nothing_to_do = ready_queue_head == NULL;
+        per_cpu[hal::Cpu::id()].idle_waiting = nothing_to_do;
+        task_lock.unlock();                     // 中断还关着
+        if (nothing_to_do) {
+            hal::Cpu::idle();                   // 原子地开中断并等待；返回时中断已打开
             per_cpu[hal::Cpu::id()].idle_waiting = false;
         } else {
             kernel::Interrupts::enable();
@@ -216,11 +215,52 @@ void kernel::Scheduler::run_idle() {
     // 这个 CPU 正在自己的 idle 任务的栈上（启动代码用的就是 prepare_idle 给的那个栈）：
     // 从现在起它就是那个 idle 任务
     idle_task->state = TASK_RUNNING;
+    idle_task->on_cpu = true;
     current_task = idle_task;
+    // idle 不在内核锁里运行（它只碰调度器，调度器有自己的锁）：把启动时拿的那一层放掉
+    kernel::KernelLock::release();
     idle_task_loop();
     while (1) {
         hal::Cpu::halt();
     }
+}
+
+/* ============================================================================
+ * 切换完成之后的收尾
+ * ========================================================================== */
+
+/**
+ * 待清理的任务（已终止、没有父进程来回收的）。任务不能在自己的内核栈上释放自己，所以
+ * 退出时先留着；等它被换下 CPU（finish_switch 把它挂到这里），再由之后进 schedule()
+ * 的 CPU 释放。通过 task->next 串联，由调度锁保护。
+ */
+static task_t *pending_cleanup_head = NULL;
+
+/**
+ * 一次任务切换的后半段：在换上来的任务的栈上执行。
+ *
+ * 换上来的任务可能是从 schedule() 里的 task_switch_context 返回的（它以前被换下去过），
+ * 也可能是第一次运行（user_task_start、idle_task_loop 的开头）；三处都要调用它。
+ */
+static void finish_switch(void) {
+    uint32_t cpu = hal::Cpu::id();
+    task_t *prev = per_cpu[cpu].leaving;
+    per_cpu[cpu].leaving = NULL;
+    if (prev) {
+        sync::SpinlockIrqGuard guard(task_lock);
+        // 从这一刻起 prev 的栈没人在用了，可以让别的 CPU 运行它或者释放它
+        prev->on_cpu = false;
+        if (prev->state == TASK_READY && prev != per_cpu[cpu].idle) {
+            // 时间片用完被换下的，或者换下去的途中被叫醒了的
+            enqueue_locked(prev);
+        } else if (prev->state == TASK_TERMINATED) {
+            prev->next = pending_cleanup_head;
+            prev->prev = NULL;
+            pending_cleanup_head = prev;
+        }
+    }
+    // 内核锁跟着任务走：换上来的任务被换下去时拿着几层，现在恢复成几层
+    kernel::KernelLock::adopt(per_cpu[cpu].current->lock_depth);
 }
 
 /* ============================================================================
@@ -229,17 +269,12 @@ void kernel::Scheduler::run_idle() {
 
 /**
  * 一个用户进程第一次被换上 CPU 时从这里开始：在内核态，在它自己的内核栈上。
- *
- * 换它上来的那个 CPU 拿着内核锁（见 kernel/smp.h），而进入用户态之前锁必须放掉。
- * 已经运行过的任务是从系统调用或中断的返回路径回用户态的，锁在那里放；新进程没有
- * 那条路可走，所以由这一小段代码来放。放锁的时候已经不在上一个任务的栈上了：
- * 锁一放，别的 CPU 就可能把上一个任务取走运行。
+ * 它给上一个任务收尾（finish_switch，新任务不拿内核锁），然后装上用户态的现场。
  */
 static void user_task_start(void) {
-    task_t *self = current_task;
     kernel::Interrupts::disable();
-    kernel::KernelLock::release();
-    task_switch_context(NULL, &self->user_context);     // 装上用户态的现场，不返回
+    finish_switch();
+    task_switch_context(NULL, &current_task->user_context);     // 不返回
     while (1) {
         hal::Cpu::halt();
     }
@@ -260,95 +295,62 @@ void kernel::Scheduler::schedule() {
     if (!scheduler_initialized) {
         return;
     }
-    
+
     bool prev_state = kernel::Interrupts::disable();
-    
-    // 【关键修复】先清理上一次延迟的 terminated 任务
-    // 现在我们已经在新任务的栈上了，可以安全地释放旧任务的资源
-    // 调用者不是这些任务中的任何一个（它们退出后不会再运行），
-    // 这里只剩内核栈、地址空间和 PCB，释放过程不会睡眠
-    while (pending_cleanup_head) {
-        task_t *task_to_cleanup = pending_cleanup_head;
-        pending_cleanup_head = task_to_cleanup->next;
-        task_to_cleanup->next = NULL;
+    uint32_t cpu = hal::Cpu::id();
 
-        LOG_DEBUG_MSG("Cleaning up terminated task %u (%s)\n",
-                     task_to_cleanup->pid, task_to_cleanup->name);
-
-        kernel::Scheduler::free(task_to_cleanup);
-    }
-
-    // 保存当前任务
     task_t *prev_task = current_task;
-    
-    // 检查是否需要清理 prev_task（但不要立即清理，避免时序问题）
-    bool should_free_prev_task = false;
-    if (prev_task && prev_task != idle_task && prev_task->state == TASK_TERMINATED) {
-        should_free_prev_task = true;
-        LOG_DEBUG_MSG("Marking terminated task %u (%s) for cleanup\n", 
-                     prev_task->pid, prev_task->name);
-    }
-    
-    // 处理当前任务（除了 TERMINATED，已经标记延迟清理）
-    if (prev_task && prev_task != idle_task) {
-        if (prev_task->state == TASK_ZOMBIE) {
-            // 僵尸进程：不调度，也不清理，等待父进程回收
-            LOG_DEBUG_MSG("Task %u (%s) is zombie, waiting for parent\n", 
-                         prev_task->pid, prev_task->name);
-        } else if (prev_task->state == TASK_RUNNING) {
-            // 将还在运行的任务加回就绪队列
+    task_t *next_task;
+    task_t *to_free;
+    {
+        task_lock.lock();
+
+        // 已终止、已经换下 CPU 的任务：摘下来，放了锁再释放（释放要拿别的锁）
+        to_free = pending_cleanup_head;
+        pending_cleanup_head = NULL;
+
+        // 还能运行的当前任务变回就绪。这时不放进队列：它的栈我们还在用，
+        // 切换完了由 finish_switch 放
+        if (prev_task && prev_task != idle_task && prev_task->state == TASK_RUNNING) {
             prev_task->state = TASK_READY;
-            kernel::Scheduler::ready_queue_add(prev_task);
         }
+
+        // 取下一个。队列空了：当前任务还能运行就接着运行它，否则运行 idle
+        next_task = dequeue_locked();
+        if (!next_task) {
+            bool prev_runnable = prev_task && prev_task != idle_task && prev_task->state == TASK_READY;
+            next_task = prev_runnable ? prev_task : idle_task;
+        }
+        next_task->state = TASK_RUNNING;
+        next_task->on_cpu = true;
+        current_task = next_task;
+        if (prev_task != next_task) {
+            per_cpu[cpu].leaving = prev_task;
+        }
+
+        task_lock.unlock();
     }
-    
-    // 从就绪队列选择下一个任务
-    task_t *next_task = ready_queue_pop();
-    
-    // 如果没有就绪任务，运行 idle
-    if (!next_task) {
-        next_task = idle_task;
+
+    while (to_free) {
+        task_t *task = to_free;
+        to_free = task->next;
+        task->next = NULL;
+        LOG_DEBUG_MSG("Cleaning up terminated task %u (%s)\n", task->pid, task->name);
+        kernel::Scheduler::free(task);
     }
-    
-    
-    // 更新任务状态
-    next_task->state = TASK_RUNNING;
-    current_task = next_task;
-    
-    // 更新内核栈（架构相关）
-    if (next_task->is_user_process) {
-        hal::UserContext::set_kernel_stack(next_task->kernel_stack);
-    }
-    
-    // 关键修复：在上下文切换前，先同步 VMM 的 current_dir_phys
-    // task_switch_context 会直接修改 CR3，但不会更新 current_dir_phys
-    // 我们必须在切换前就更新，因为切换后不能再调用任何函数
-    // 内核线程也要同步：切换代码会装入它 context 里保存的 CR3/TTBR0（内核
-    // 页目录）。不同步的话 VMM 仍以为刚退出的用户进程的页目录是“当前页目录”，
-    // 延迟清理时 free_page_directory 会拒绝释放它。
+
     if (prev_task != next_task) {
+        // 内核栈（架构相关）
+        if (next_task->is_user_process) {
+            hal::UserContext::set_kernel_stack(next_task->kernel_stack);
+        }
+
+        // 切换代码会直接装入新任务的页表（CR3 / TTBR0），但不会告诉 VMM：先在这里记下。
+        // 内核线程也要记：它的 context 里是内核的页表。不记的话 VMM 仍以为刚退出的进程的
+        // 页表是"当前页表"，清理时会拒绝释放它
         mm::Vmm::sync_current_dir(next_task->is_user_process ? next_task->page_dir_phys
                                                              : (uintptr_t)next_task->context.cr3);
-    }
-    
-    // 执行上下文切换
-    // 注意：切换后不能调用任何函数，因为栈已经切换了
-    if (prev_task != next_task) {
-        cpu_context_t *old_ctx_ptr = prev_task ? &prev_task->context : NULL;
-        
-        // 如果需要释放 prev_task，必须在切换前处理
-        // 但我们不能在切换前释放，因为还在使用 prev_task 的栈和上下文
-        // 解决方案：标记为待清理，下次调度时清理（那时已在新栈上）
-        if (should_free_prev_task) {
-            // ✅ 将任务挂到待清理链表，下次调度时会在新栈上安全清理。
-            // 用链表而不是单个指针：连续退出的任务不能互相覆盖。
-            prev_task->next = pending_cleanup_head;
-            prev_task->prev = NULL;
-            pending_cleanup_head = prev_task;
-            LOG_DEBUG_MSG("Task %u (%s) marked for deferred cleanup\n",
-                        prev_task->pid, prev_task->name);
-        }
-        
+
         // 浮点/SIMD 寄存器不在 task_switch_context 换的那一组里。内核自己不用它们，
         // 所以只在用户任务之间换：换下去的存起来，换上来的装回去（中间隔着 idle 也一样）
         if (prev_task && prev_task->is_user_process) {
@@ -358,7 +360,7 @@ void kernel::Scheduler::schedule() {
             hal::UserContext::fp_restore(&next_task->fp_state);
         }
 
-        // 许可给用户任务的 I/O 端口它可以直接访问（x86 的 I/O 许可位图）：位图只有一份，
+        // 许可给用户任务的 I/O 端口它可以直接访问（x86 的 I/O 许可位图）：每个 CPU 一份，
         // 换下去的任务的端口关上，换上来的打开
         if (prev_task && prev_task->is_user_process) {
             hal::Platform::set_user_ports(prev_task->hw_allowed, prev_task->hw_allowed_count, false);
@@ -367,18 +369,31 @@ void kernel::Scheduler::schedule() {
             hal::Platform::set_user_ports(next_task->hw_allowed, next_task->hw_allowed_count, true);
         }
 
+        // 内核锁跟着任务走：记下换下去的任务拿着几层，它被换回来时恢复（finish_switch）
+        if (prev_task) {
+            prev_task->lock_depth = kernel::KernelLock::depth();
+        }
+
+        cpu_context_t *old_ctx_ptr = prev_task ? &prev_task->context : NULL;
         task_switch_context(&old_ctx_ptr, &next_task->context);
-        
-        // 注意：永远不会执行到这里（task_switch_context 不会返回到这里）
-        // 下一次进入这个函数时，已经是在新任务的上下文中了
+
+        // 回到这里时，我们是一个以前被换下去的任务，刚被某个 CPU 换上来（不一定是原来
+        // 那个）：给那个 CPU 刚换下去的任务收尾
+        finish_switch();
     }
-    
+
     kernel::Interrupts::restore(prev_state);
 }
 
 /**
  * @brief 定时器中断处理
  */
+void kernel::Scheduler::set_timer(uint64_t ms) {
+    sync::SpinlockIrqGuard guard(task_lock);
+    current_task->timer_pending = false;
+    current_task->timer_deadline_ms = ms ? drivers::Timer::get_uptime_ms() + ms : 0;
+}
+
 void kernel::Scheduler::timer_tick() {
     if (!scheduler_initialized || !current_task) {
         return;
@@ -391,43 +406,26 @@ void kernel::Scheduler::timer_tick() {
     // 检查睡眠任务是否应该唤醒
     uint64_t current_time_ms = drivers::Timer::get_uptime_ms();
     
-    // 收集需要唤醒的任务（避免在持有锁时调用 kernel::Scheduler::ready_queue_add）
-    task_t *tasks_to_wake[MAX_TASKS];
-    uint32_t wake_count = 0;
-    task_t *tasks_to_notify[MAX_TASKS];
-    uint32_t notify_count = 0;
-    
     {
         sync::SpinlockIrqGuard guard(task_lock);
         for (uint32_t i = 0; i < MAX_TASKS; i++) {
             task_t *task = &task_pool[i];
-        
-            if (task->state == TASK_BLOCKED && task->sleep_until_ms > 0) {
-                if (current_time_ms >= task->sleep_until_ms) {
-                    task->sleep_until_ms = 0;
-                    task->state = TASK_READY;
-                    tasks_to_wake[wake_count++] = task;
-                }
+
+            // 睡够了的任务
+            if (task->state == TASK_BLOCKED && task->sleep_until_ms > 0 &&
+                current_time_ms >= task->sleep_until_ms) {
+                sched_make_ready_locked(task);
             }
 
-            // 用户态定时器（timer_set）到期：记成待处理的内核消息
+            // 用户态定时器（timer_set）到期：记成待处理的内核消息；它正在 recv 上等
+            // 内核消息的话直接交给它
             if (task->state != TASK_UNUSED && task->timer_deadline_ms != 0 &&
                 current_time_ms >= task->timer_deadline_ms) {
                 task->timer_deadline_ms = 0;
                 task->timer_pending = true;
-                tasks_to_notify[notify_count++] = task;
+                kernel::ipc_notify_locked(task);
             }
         }
-    }
-    
-    // 在锁外将任务添加到就绪队列
-    for (uint32_t i = 0; i < wake_count; i++) {
-        kernel::Scheduler::ready_queue_add(tasks_to_wake[i]);
-    }
-
-    // 正在 recv 上等内核消息的任务：把定时器消息交给它
-    for (uint32_t i = 0; i < notify_count; i++) {
-        kernel::Ipc::notify(tasks_to_notify[i]);
     }
     
     // 时间片轮转调度
@@ -459,16 +457,16 @@ void kernel::Scheduler::sleep(uint32_t ms) {
     assert_may_sleep("Scheduler::sleep");
     
     bool prev_state = kernel::Interrupts::disable();
-    
-    // 计算唤醒时间
-    uint64_t wake_time = drivers::Timer::get_uptime_ms() + ms;
-    current_task->sleep_until_ms = wake_time;
-    current_task->wait_object = NULL;
-    current_task->state = TASK_BLOCKED;
-    
-    // 切换到其他任务
+    {
+        sync::SpinlockIrqGuard guard(task_lock);
+        current_task->sleep_until_ms = drivers::Timer::get_uptime_ms() + ms;
+        current_task->wait_object = NULL;
+        current_task->state = TASK_BLOCKED;
+    }
+
+    // 切换到其他任务；时钟中断发现睡够了会把我们放回就绪队列
     kernel::Scheduler::schedule();
-    
+
     kernel::Interrupts::restore(prev_state);
 }
 
@@ -485,16 +483,16 @@ void kernel::Scheduler::block(void *wait_object) {
     }
     
     bool prev_state = kernel::Interrupts::disable();
-    
-    current_task->wait_object = wait_object;
-    current_task->state = TASK_BLOCKED;
-    
-    LOG_DEBUG_MSG("Task %u (%s) blocked on %p\n", 
-                 current_task->pid, current_task->name, wait_object);
-    
-    // 触发调度，切换到其他任务
+    {
+        sync::SpinlockIrqGuard guard(task_lock);
+        current_task->wait_object = wait_object;
+        current_task->state = TASK_BLOCKED;
+    }
+
+    // 切换到其他任务。如果放了锁之后、切换之前就有人 wakeup 了我们，状态已经是 READY，
+    // schedule() 会照"让出"来处理，不会睡过头
     kernel::Scheduler::schedule();
-    
+
     kernel::Interrupts::restore(prev_state);
 }
 
@@ -503,31 +501,17 @@ void kernel::Scheduler::block(void *wait_object) {
  * 
  * @param wait_object 等待对象指针，只唤醒阻塞在同一对象上的任务
  */
-void kernel::Scheduler::wakeup(void *wait_object) {    
-    task_t *task_to_wake = NULL;
-    
-    bool irq_state;
-    task_lock.lock_irqsave(irq_state);
-    
+void kernel::Scheduler::wakeup(void *wait_object) {
+    sync::SpinlockIrqGuard guard(task_lock);
+
     // 唤醒一个阻塞在该对象上的任务（睡眠中的任务由定时器唤醒，不在此列）
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         task_t *task = &task_pool[i];
-        
         if (task->state == TASK_BLOCKED && task->sleep_until_ms == 0 &&
             task->wait_object == wait_object) {
-            task->wait_object = NULL;
-            task->state = TASK_READY;
-            task_to_wake = task;
-            LOG_DEBUG_MSG("Task %u (%s) woken up\n", task->pid, task->name);
+            sched_make_ready_locked(task);
             break;  // 只唤醒一个任务
         }
-    }
-    
-    task_lock.unlock_irqrestore(irq_state);
-    
-    // 在锁外添加到就绪队列
-    if (task_to_wake) {
-        kernel::Scheduler::ready_queue_add(task_to_wake);
     }
 }
 

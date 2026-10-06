@@ -8,16 +8,29 @@
 //   - 接收者先到：状态 IPC_RECEIVING；发送者到来时把消息写进接收者的
 //     ipc_buf 并唤醒它，接收者醒来后再拷回自己的用户缓冲区。
 //
-// 并发：内核不可抢占，任务之间不会交错；但设备中断会从中断上下文调用
-// notify() 来唤醒接收者，所以“检查条件 + 进入阻塞”必须全程关中断。
+// 并发：send / recv / call / reply 不拿内核锁，几个 CPU 上的进程可以同时通信。保护
+// 这里的是调度锁（task_lock）：每个任务的 ipc_state / ipc_peer / ipc_buf / ipc_result /
+// ipc_calling、待处理的内核消息（irq_pending、timer_pending）都只在这把锁里读写，和
+// 任务的 state 在同一把锁里。所以"看对方在不在等 → 把消息交给它 → 叫醒它"和"看有没有
+// 消息 → 没有就睡"各是一个不可分的动作，不会一边刚决定要睡、另一边已经叫过了。
+//
+// 锁里不碰用户内存（那可能缺页，缺页处理要拿别的锁）：系统调用的入口先把消息拷到
+// 内核栈上，这里的 msg 都是内核里的地址。
+//
+// 设备中断和时钟中断也会进来（notify），所以拿锁时要关中断。
 // ============================================================================
 
 #include <kernel/ipc.h>
 #include <kernel/task.h>
 #include <kernel/user_irq.h>
-#include <kernel/interrupt.h>
+#include <kernel/sync/spinlock.h>
+
+#include "task_private.h"
 
 namespace kernel {
+
+// 下面的 static 函数都要求调用者拿着调度锁
+
 
 /** task 有待处理的内核消息（设备中断、到期的定时器）时取出一条填进 *msg */
 static bool take_kernel_msg(task_t *task, ipc_msg *msg) {
@@ -39,23 +52,28 @@ static task_t *live_task(uint32_t pid) {
     if (pid == 0) {
         return NULL;  // idle
     }
-    task_t *task = Scheduler::get_by_pid(pid);
-    if (!task || task->state == TASK_ZOMBIE || task->state == TASK_TERMINATED) {
+    task_t *task = sched_find_locked(pid);
+    if (!task || task->state == TASK_ZOMBIE || task->state == TASK_TERMINATED ||
+        task->ipc_state == IPC_CLOSED /* 正在退出，on_exit 已经清过等它的任务 */) {
         return NULL;
     }
     return task;
 }
 
-/** 结束 task 的等待：记下结果并唤醒它（它阻塞在自己的 ipc_state 上） */
+/** 结束 task 的等待：记下结果并唤醒它 */
 static void finish_wait(task_t *task, int result) {
     task->ipc_state = IPC_IDLE;
     task->ipc_result = result;
-    Scheduler::wakeup(&task->ipc_state);
+    sched_make_ready_locked(task);
 }
 
 /**
  * 阻塞当前任务，直到对方（或 on_exit）把 ipc_state 改回 IPC_IDLE。
- * 调用前已关中断并设置好 ipc_state。等待期间被 kill 则放弃。
+ * 调用前已经拿着调度锁并设置好 ipc_state；返回时仍然拿着。等待期间被 kill 则放弃。
+ *
+ * 睡下去的过程：在锁里把自己标成 BLOCKED，放了锁再切换。放锁之后别的 CPU 随时可能
+ * 把消息交过来并叫醒我们，那时我们可能还没切换走——这没关系，调度器会发现我们已经
+ * 又是 READY 了，直接接着运行（见 sched.cpp 开头的第 2 条）。
  */
 static int wait_for_peer(task_t *current) {
     while (current->ipc_state != IPC_IDLE) {
@@ -63,7 +81,12 @@ static int wait_for_peer(task_t *current) {
             current->ipc_state = IPC_IDLE;
             return -1;
         }
-        Scheduler::block(&current->ipc_state);
+        current->wait_object = &current->ipc_state;
+        current->sleep_until_ms = 0;
+        current->state = TASK_BLOCKED;
+        task_lock.unlock();         // 中断还关着
+        Scheduler::schedule();
+        task_lock.lock();
     }
     return current->ipc_result;
 }
@@ -93,7 +116,7 @@ static int send_common(uint32_t dest, ipc_msg *msg, bool is_call) {
         return -1;
     }
 
-    InterruptGuard guard;
+    sync::SpinlockIrqGuard guard(task_lock);
 
     task_t *target = live_task(dest);
     if (!target) {
@@ -139,7 +162,7 @@ int Ipc::reply(uint32_t dest, const ipc_msg *msg) {
         return -1;
     }
 
-    InterruptGuard guard;
+    sync::SpinlockIrqGuard guard(task_lock);
 
     // 只投递给正在专门等当前任务的接收者（call 的后半段）；否则立刻失败，绝不阻塞
     task_t *target = live_task(dest);
@@ -156,7 +179,7 @@ int Ipc::recv(uint32_t from, ipc_msg *msg) {
         return -1;
     }
 
-    InterruptGuard guard;
+    sync::SpinlockIrqGuard guard(task_lock);
 
     // 待处理的内核消息（设备中断、定时器）优先于普通消息
     if ((from == IPC_ANY || from == IPC_FROM_KERNEL) && take_kernel_msg(current, msg)) {
@@ -208,8 +231,11 @@ int Ipc::recv(uint32_t from, ipc_msg *msg) {
 }
 
 void Ipc::notify(task_t *task) {
-    InterruptGuard guard;
+    sync::SpinlockIrqGuard guard(task_lock);
+    ipc_notify_locked(task);
+}
 
+void ipc_notify_locked(task_t *task) {
     if (task->state == TASK_BLOCKED && task->ipc_state == IPC_RECEIVING &&
         (task->ipc_peer == IPC_ANY || task->ipc_peer == IPC_FROM_KERNEL) &&
         take_kernel_msg(task, &task->ipc_buf)) {
@@ -218,7 +244,7 @@ void Ipc::notify(task_t *task) {
 }
 
 void Ipc::on_exit(task_t *task) {
-    InterruptGuard guard;
+    sync::SpinlockIrqGuard guard(task_lock);
 
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         task_t *other = &task_pool[i];
@@ -230,7 +256,8 @@ void Ipc::on_exit(task_t *task) {
             finish_wait(other, -1);
         }
     }
-    task->ipc_state = IPC_IDLE;
+    // 从这里到它变成僵尸还有一小段：这期间别的 CPU 上的进程不能再开始等它
+    task->ipc_state = IPC_CLOSED;
 }
 
 } // namespace kernel
