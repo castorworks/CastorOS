@@ -110,6 +110,9 @@ uint64_t gic_cpu_interface_base(void);
  */
 void gic_enable_irq(uint32_t irq);
 
+/** Send software-generated interrupt `sgi` (0-15) to every CPU except the calling one */
+void gic_send_sgi_to_others(uint32_t sgi);
+
 /**
  * @brief Disable an interrupt
  * @param irq Interrupt number

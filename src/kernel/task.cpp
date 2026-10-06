@@ -443,6 +443,10 @@ bool kernel::Scheduler::request_kill(task_t *target, uint32_t signal) {
     // 在锁外添加到就绪队列
     if (wake) {
         kernel::Scheduler::ready_queue_add(target);
+    } else if (target->state == TASK_RUNNING && target != kernel::Scheduler::get_current()) {
+        // 目标正在别的 CPU 上运行。它要进了内核、走到返回用户态的出口才会看到这个请求；
+        // 埋头在用户态算东西的进程自己不会进来，发个中断让它进来一趟
+        hal::Cpu::kick_others();
     }
     return true;
 }

@@ -213,9 +213,17 @@ void gic_init_secondary(void) {
 }
 
 /**
+ * @brief Interrupt every other CPU with a software-generated interrupt (SGI 0-15)
+ */
+void gic_send_sgi_to_others(uint32_t sgi) {
+    /* GICD_SGIR: bits [25:24] = 1 means "all CPUs except the requesting one" */
+    gicd_write(0xF00, (1u << 24) | (sgi & 0xF));
+}
+
+/**
  * @brief Enable an interrupt
  *
- * For a PPI this enables it on the calling CPU only.
+ * For an SGI or a PPI this enables it on the calling CPU only.
  */
 void gic_enable_irq(uint32_t irq) {
     if (irq >= gic_num_interrupts) {
@@ -291,10 +299,10 @@ void gic_end_irq(uint32_t irq) {
  * @brief Handle IRQ (called from exception handler)
  */
 void gic_handle_irq(void) {
-    uint32_t irq;
-    
-    /* Acknowledge interrupt */
-    irq = gic_acknowledge_irq();
+    /* Acknowledge interrupt. For an SGI the value also names the CPU that sent it,
+     * and the end-of-interrupt write has to give the whole value back. */
+    uint32_t iar = gicc_read(GICC_IAR);
+    uint32_t irq = iar & GICC_IAR_INTID_MASK;
     
     /* Check for spurious interrupt (1022 or 1023) */
     if (irq >= 1020) {
@@ -313,7 +321,7 @@ void gic_handle_irq(void) {
     }
     
     /* Signal end of interrupt */
-    gic_end_irq(irq);
+    gicc_write(GICC_EOIR, iar);
 }
 
 /**

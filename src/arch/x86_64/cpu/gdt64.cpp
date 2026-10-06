@@ -49,7 +49,8 @@
  * user task is switched in, the ports it is allowed are opened (tss64_io_allow). */
 #define IOMAP_BYTES (65536 / 8)
 static struct cpu_tables {
-    gdt64_entry_t gdt[7];               /* 5 normal entries + 2 for the TSS descriptor (16 bytes) */
+    gdt64_entry_t gdt[5 + 2 * MAX_CPUS];    /* 5 normal entries, then room for a TSS descriptor
+                                             * (16 bytes = 2 entries) at a different place per CPU */
     gdt64_ptr_t pointer;                /* for LGDT */
     struct {
         tss64_entry_t tss;
@@ -57,10 +58,28 @@ static struct cpu_tables {
     } __attribute__((packed)) tss_area;
 } __attribute__((aligned(16))) tables[MAX_CPUS];
 
+/* Each CPU puts its TSS descriptor at its own index (5 + 2 * cpu), so the selector in
+ * its task register is different on every CPU. That is how a CPU finds out which one it
+ * is (gdt64_current_cpu): reading the task register is one cheap instruction. */
+#define TSS_INDEX(cpu)      (5 + 2 * (cpu))
+#define TSS_SELECTOR(cpu)   ((uint16_t)(TSS_INDEX(cpu) << 3))
+
+uint32_t gdt64_current_cpu(void) {
+    uint16_t selector;
+    __asm__ volatile("str %0" : "=r"(selector));
+    /* Nothing loaded yet (early boot): that is the boot CPU */
+    return selector < TSS_SELECTOR(0) ? 0 : (uint32_t)(selector - TSS_SELECTOR(0)) / 16;
+}
+
+/* The CPU whose tables gdt64_init_cpu is building: until its task register is loaded
+ * the CPU cannot tell which one it is. -1 the rest of the time. */
+static int init_cpu = -1;
+
 /* The tables of the CPU this code runs on */
-#define gdt64_entries   (tables[hal::Cpu::id()].gdt)
-#define gdt64_pointer   (tables[hal::Cpu::id()].pointer)
-#define tss64_area      (tables[hal::Cpu::id()].tss_area)
+#define this_cpu_tables (tables[init_cpu >= 0 ? (uint32_t)init_cpu : gdt64_current_cpu()])
+#define gdt64_entries   (this_cpu_tables.gdt)
+#define gdt64_pointer   (this_cpu_tables.pointer)
+#define tss64_area      (this_cpu_tables.tss_area)
 #define tss64           (tss64_area.tss)
 
 /* ============================================================================
@@ -113,8 +132,9 @@ static void gdt64_set_tss_descriptor(uint8_t index, uint64_t base, uint32_t limi
  * @brief Initialize GDT with TSS for x86_64
  * @param kernel_stack Kernel stack pointer (RSP0 in TSS)
  */
-void gdt64_init_with_tss(uint64_t kernel_stack) {
-    LOG_INFO_MSG("Initializing x86_64 GDT with TSS for CPU %u...\n", hal::Cpu::id());
+void gdt64_init_cpu(uint32_t cpu, uint64_t kernel_stack) {
+    LOG_INFO_MSG("Initializing x86_64 GDT with TSS for CPU %u...\n", cpu);
+    init_cpu = (int)cpu;
     
     /* Clear GDT entries */
     memset(gdt64_entries, 0, sizeof(gdt64_entries));
@@ -175,7 +195,7 @@ void gdt64_init_with_tss(uint64_t kernel_stack) {
     LOG_DEBUG_MSG("  TSS addr=0x%llx size=%u\n", (unsigned long long)&tss64, (uint32_t)sizeof(tss64));
     
     /* Entry 5-6: TSS Descriptor (16 bytes) */
-    gdt64_set_tss_descriptor(5, (uint64_t)&tss64, sizeof(tss64_area) - 1);     /* includes the bitmap */
+    gdt64_set_tss_descriptor(TSS_INDEX(cpu), (uint64_t)&tss64, sizeof(tss64_area) - 1);     /* includes the bitmap */
     
     /* Set up GDT pointer */
     gdt64_pointer.limit = sizeof(gdt64_entries) - 1;
@@ -187,7 +207,8 @@ void gdt64_init_with_tss(uint64_t kernel_stack) {
     gdt64_flush((uint64_t)&gdt64_pointer);
     
     /* Load TSS (selector = index 5 << 3 = 0x28) */
-    tss64_load(GDT64_TSS_SEGMENT);
+    tss64_load(TSS_SELECTOR(cpu));
+    init_cpu = -1;      /* from here on the task register says who we are */
     
     LOG_INFO_MSG("x86_64 GDT+TSS installed and loaded\n");
 }

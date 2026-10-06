@@ -36,6 +36,7 @@ static struct {
     task_t *current;                // 正在运行的任务
     task_t *idle;                   // 没有任务可运行时运行它
     volatile bool need_resched;     // 当前任务的时间片用完了，等在返回用户态的抢占点切换
+    bool idle_waiting;              // 它的 idle 任务正停着等中断（或者马上就要停）
     uint32_t tick_count;            // 当前任务已经用掉的时钟滴答数
 } per_cpu[MAX_CPUS];
 
@@ -96,6 +97,18 @@ void kernel::Scheduler::ready_queue_add(task_t *task) {
     }
     
     ready_queue_tail = task;
+
+    // 有 CPU 正闲着等中断的话叫醒它们：不叫的话，这个任务要等到某个闲着的 CPU 自己的
+    // 下一次时钟中断才会被发现。idle 是先标记"我要停了"、放掉内核锁、再停的，而我们是
+    // 拿着锁看标记的，所以不会漏：它要么还没标记（那它接下来检查队列时会看到这个任务），
+    // 要么已经标记了（那我们的中断会把它从等待里叫出来，哪怕它还没来得及停下）
+    uint32_t self = hal::Cpu::id();
+    for (uint32_t cpu = 0; cpu < MAX_CPUS; cpu++) {
+        if (cpu != self && per_cpu[cpu].idle_waiting) {
+            hal::Cpu::kick_others();
+            break;
+        }
+    }
 }
 
 /**
@@ -148,11 +161,13 @@ static void idle_task_loop(void) {
         if (ready_queue_head == NULL) {
             // 没事可做。停下来之前把内核锁放掉，别的 CPU 才进得了内核；等待期间到来的
             // 中断，处理函数自己拿锁、自己放。醒来之后再拿回来。
-            // 别的 CPU 在我们检查之后才把任务放进就绪队列的话，这里看不到，也没有人来叫：
-            // 那个任务要等到这个 CPU 的下一次时钟中断（最多一个滴答）才会被发现。
+            // 先标记"我要停了"：这之后别的 CPU 把任务放进就绪队列时会发一个中断来叫
+            // （ready_queue_add），中断是在停下的那一刻才放进来的，所以叫得醒。
+            per_cpu[hal::Cpu::id()].idle_waiting = true;
             kernel::KernelLock::release();
             hal::Cpu::idle();       // 原子地开中断并等待；返回时中断已打开
             kernel::KernelLock::enter();
+            per_cpu[hal::Cpu::id()].idle_waiting = false;
         } else {
             kernel::Interrupts::enable();
         }

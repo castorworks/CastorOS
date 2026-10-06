@@ -36,7 +36,7 @@
 #define GDT64_KERNEL_DATA_SEGMENT   0x10    /* Index 2 */
 #define GDT64_USER_DATA_SEGMENT     0x18    /* Index 3, RPL=3 -> 0x1B (for SYSRET SS) */
 #define GDT64_USER_CODE_SEGMENT     0x20    /* Index 4, RPL=3 -> 0x23 (for SYSRET CS) */
-#define GDT64_TSS_SEGMENT           0x28    /* Index 5 (16 bytes, spans 5-6) */
+#define GDT64_TSS_SEGMENT           0x28    /* Index 5 on CPU 0 (16 bytes); CPU n uses index 5 + 2n */
 
 
 /* Compatibility macros for generic kernel code */
@@ -175,7 +175,15 @@ typedef struct gdt64_ptr {
  *   - User data segment
  *   - TSS descriptor (16 bytes)
  */
-void gdt64_init_with_tss(uint64_t kernel_stack);
+void gdt64_init_cpu(uint32_t cpu, uint64_t kernel_stack);
+
+/**
+ * @brief Index of the CPU this code runs on, read from its task register
+ *
+ * Each CPU's TSS descriptor sits at a different index in its GDT; 0 before any GDT of
+ * ours is loaded.
+ */
+uint32_t gdt64_current_cpu(void);
 
 /**
  * @brief Update TSS kernel stack pointer (RSP0)

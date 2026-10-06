@@ -54,6 +54,13 @@ irq_lapic_timer:
     push 64
     jmp irq_common_stub
 
+global irq_lapic_kick
+irq_lapic_kick:
+    cli
+    push 0
+    push 65
+    jmp irq_common_stub
+
 irq_lapic_spurious:
     iret
 

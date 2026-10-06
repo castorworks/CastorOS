@@ -339,11 +339,27 @@ static int64_t psci_call(uint32_t method, uint64_t function, uint64_t arg1, uint
     return (int64_t)x0;
 }
 
+/* The software-generated interrupt kick_others() sends. Nothing to do when it
+ * arrives: taking the interrupt is what wakes an idle CPU, or brings a CPU in user
+ * mode through the preemption point (handle_irq in exception.cpp) */
+#define KICK_SGI    0
+
+static void kick_handler(void *data) {
+    (void)data;
+}
+
+void hal::Cpu::kick_others() {
+    if (kernel::Smp::cpu_count() > 1) {
+        gic_send_sgi_to_others(KICK_SGI);
+    }
+}
+
 uint32_t hal::Cpu::start_secondaries() {
     const dtb_info_t *dtb = dtb_get_info();
     if (!dtb || dtb->psci_method == DTB_PSCI_NONE || dtb->num_cpus < 2) {
         return 0;
     }
+    hal::Interrupt::register_handler(KICK_SGI, kick_handler, NULL);    /* also enables it on this CPU */
 
     uint64_t self;
     __asm__ volatile("mrs %0, mpidr_el1" : "=r"(self));
@@ -416,5 +432,6 @@ void hal::Cpu::init_secondary() {
     arm64_exception_init();             /* exception vectors */
     gic_init_secondary();
     gic_enable_irq(g_timer_irq);        /* the timer interrupt is per CPU */
+    gic_enable_irq(KICK_SGI);
     drivers::Timer::start_on_this_cpu();
 }

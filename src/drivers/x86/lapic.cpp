@@ -132,6 +132,14 @@ void Lapic::timer_start(uint32_t hz) {
     write(REG_TIMER_INIT, timer_ticks_per_ms * (1000 / hz));
 }
 
+void Lapic::kick_others() {
+    if (!regs) {
+        return;         // 只有一个 CPU：没有启用过
+    }
+    // 目标写成"除自己以外的所有 CPU"（ICR 的 18-19 位是 3），固定向量
+    write(REG_ICR_LOW, (3u << 18) | LAPIC_KICK_VECTOR);
+}
+
 void Lapic::eoi() {
     write(REG_EOI, 0);
 }

@@ -91,7 +91,12 @@ typedef struct tss_entry {
 // ---------------------------------------------------------------------------
 
 /* 一次性初始化 GDT 和 TSS */
-void gdt_init_all_with_tss(uint32_t kernel_stack, uint16_t kernel_ss);
+/* 给 cpu 号 CPU 建好并装上它自己的 GDT 和 TSS（在那个 CPU 上调用） */
+void gdt_init_cpu(uint32_t cpu, uint32_t kernel_stack, uint16_t kernel_ss);
+
+/* 这段代码正在哪个 CPU 上运行：从任务寄存器读出来（每个 CPU 的 TSS 描述符在 GDT 里的位置
+ * 不一样）。还没装过我们的 GDT 时是 0 */
+uint32_t gdt_current_cpu(void);
 
 // TSS 相关
 void tss_init(uint32_t kernel_stack, uint32_t kernel_ss);

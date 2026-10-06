@@ -142,6 +142,7 @@ extern void schedule_from_irq(bool from_user);
  * the kernel (which already held it) only our own enter() is undone. */
 extern "C" void irq_lapic_timer(void);
 extern "C" void irq_lapic_spurious(void);
+extern "C" void irq_lapic_kick(void);
 
 static void irq64_handler_locked(registers_t *regs);
 
@@ -161,6 +162,15 @@ static void irq64_handler_locked(registers_t *regs) {
     /* The timer of a CPU other than the boot CPU: its own Local APIC, not the PIC */
     if (regs->int_no == LAPIC_TIMER_VECTOR) {
         kernel::Scheduler::timer_tick();
+        drivers::Lapic::eoi();
+        schedule_from_irq((regs->cs & 0x3) == 3);
+        return;
+    }
+
+    /* Another CPU asked us to come by (hal::Cpu::kick_others). Arriving is all there
+     * is to do: an idle CPU is awake now, and a CPU that was in user mode passes the
+     * preemption point below, where a pending kill takes effect */
+    if (regs->int_no == LAPIC_KICK_VECTOR) {
         drivers::Lapic::eoi();
         schedule_from_irq((regs->cs & 0x3) == 3);
         return;
@@ -298,6 +308,7 @@ void irq64_init(void) {
 
     /* Local APIC vectors; only used once other CPUs are running */
     idt64_set_interrupt_gate(LAPIC_TIMER_VECTOR, (uint64_t)irq_lapic_timer);
+    idt64_set_interrupt_gate(LAPIC_KICK_VECTOR, (uint64_t)irq_lapic_kick);
     idt64_set_interrupt_gate(LAPIC_SPURIOUS_VECTOR, (uint64_t)irq_lapic_spurious);
 
     /* Register timer handler (IRQ 0) */

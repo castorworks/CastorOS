@@ -221,6 +221,16 @@ public:
     static uint32_t start_secondaries();
 
     /**
+     * @brief Interrupt every other running CPU
+     *
+     * The interrupt carries no message; arriving is the message. A CPU waiting in its
+     * idle task wakes up and looks at the run queue again; a CPU in user mode enters
+     * the kernel and passes the preemption point, where a pending kill is delivered.
+     * Harmless with one CPU.
+     */
+    static void kick_others();
+
+    /**
      * @brief Per-CPU hardware setup on a CPU that has just been started
      *
      * Whatever init() and the interrupt/timer setup did for the boot CPU that is

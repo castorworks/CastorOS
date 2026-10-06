@@ -42,7 +42,7 @@ void hal::Cpu::init() {
      * - Configures TSS64 for privilege level transitions
      * - Default kernel stack at 0x90000, will be updated per-task
      */
-    gdt64_init_with_tss(0x90000);
+    gdt64_init_cpu(0, 0x90000);
     
     g_hal_cpu_initialized = true;
     LOG_INFO_MSG("HAL: x86_64 CPU initialization complete\n");

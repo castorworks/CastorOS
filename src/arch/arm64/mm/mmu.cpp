@@ -206,9 +206,11 @@ void hal::Mmu::switch_space(paddr_t space) {
     isb();
     /* ASIDs are not used, so every address space shares ASID 0: entries cached
      * from the previous TTBR0 must be dropped here or the new space would keep
-     * executing the old one's pages (x86 gets this for free from the CR3 load). */
-    tlbi_vmalle1is();
-    dsb_ish();
+     * executing the old one's pages (x86 gets this for free from the CR3 load).
+     * Only on this CPU: every CPU flushes its own TLB when it changes address space,
+     * so no other CPU holds entries of the space this one is leaving. */
+    __asm__ volatile("tlbi vmalle1");
+    __asm__ volatile("dsb nsh" ::: "memory");
     isb();
 }
 

@@ -43,7 +43,7 @@ void hal::Cpu::init() {
      * - Configures TSS for privilege level transitions
      * - Default kernel stack at 0x90000, kernel data segment 0x10
      */
-    gdt_init_all_with_tss(0x90000, 0x10);
+    gdt_init_cpu(0, 0x90000, 0x10);
 
     /* Floating point and SSE for user programs. The kernel saves and restores
      * these registers with FXSAVE/FXRSTOR when it switches user tasks, so the

@@ -14,6 +14,7 @@
 #include <kernel/idt.h>
 #include <drivers/timer.h>
 #include <drivers/x86/lapic.h>
+#include <drivers/x86/acpi.h>
 #include <mm/pmm.h>
 #include <mm/vmm.h>
 #include <mm/mm_types.h>
@@ -24,12 +25,16 @@
  * 我是哪个 CPU
  * ========================================================================== */
 
-/* APIC ID -> CPU 编号。其余的 CPU 启动之前全是 0，所以在那之前问的（整个单 CPU 的启动
- * 过程）都是 0 号 */
-static uint8_t cpu_of_apic[256];
-
+/* 每个 CPU 的任务寄存器里的选择子不一样（见 gdt.cpp），读一下就知道 */
 uint32_t hal::Cpu::id() {
-    return cpu_of_apic[drivers::Lapic::id() & 0xFF];
+    return gdt_current_cpu();
+}
+
+/* 正在启动的那个 CPU 的编号：它的 GDT 装好之前，它自己读不出来（一次只启动一个） */
+static uint32_t starting_cpu;
+
+void hal::Cpu::kick_others() {
+    drivers::Lapic::kick_others();
 }
 
 /* ============================================================================
@@ -87,6 +92,25 @@ uint32_t hal::Cpu::start_secondaries() {
     if (!drivers::Lapic::available()) {
         return 0;
     }
+
+    // 机器上有哪些 CPU？固件的 ACPI 表里写着。读不到（没找到，或者表所在的内存内核没有
+    // 映射）就退回去按顺序试 APIC ID，代价是要白等第一个不存在的
+    uint8_t apic_ids[MAX_CPUS];
+    uint32_t listed = drivers::Acpi::cpu_apic_ids(apic_ids, MAX_CPUS);
+    if (listed == 1) {
+        return 0;       // 只有一个 CPU：中断的设置原样不动
+    }
+    if (listed > 1) {
+        LOG_INFO_MSG("SMP: the ACPI table lists %u CPUs\n", listed);
+    } else {
+        LOG_INFO_MSG("SMP: no ACPI CPU table, probing for other CPUs\n");
+    }
+    uint32_t candidates = listed;
+    if (listed == 0) {
+        for (candidates = 0; candidates < MAX_CPUS; candidates++) {
+            apic_ids[candidates] = (uint8_t)candidates;
+        }
+    }
     uintptr_t lapic = map_lapic();
     paddr_t startup_directory = make_startup_directory();
     if (!lapic || !startup_directory) {
@@ -111,11 +135,10 @@ uint32_t hal::Cpu::start_secondaries() {
     params->cr0 = cr0;
     params->entry = (uint32_t)i686_ap_entry;
 
-    // 这里没有"机器上有哪些 CPU"的表可查（那是 ACPI 的事）：APIC ID 是连着编的，
-    // 一个一个试，试到没人应为止
     uint32_t self = drivers::Lapic::id();
     uint32_t started = 0;
-    for (uint32_t apic = 0; apic < MAX_CPUS && started + 1 < MAX_CPUS; apic++) {
+    for (uint32_t i = 0; i < candidates && started + 1 < MAX_CPUS; i++) {
+        uint32_t apic = apic_ids[i];
         if (apic == self) {
             continue;
         }
@@ -125,7 +148,7 @@ uint32_t hal::Cpu::start_secondaries() {
             break;
         }
         params->stack = (uint32_t)stack;
-        cpu_of_apic[apic] = (uint8_t)cpu;
+        starting_cpu = cpu;
 
         uint32_t before = kernel::Smp::cpu_count();
         drivers::Lapic::start_cpu(apic, AP_TRAMPOLINE_BASE);
@@ -139,8 +162,11 @@ uint32_t hal::Cpu::start_secondaries() {
         }
         kernel::KernelLock::enter();
         if (kernel::Smp::cpu_count() == before) {
-            cpu_of_apic[apic] = 0;      // 没人应：上一个就是最后一个
-            break;
+            if (listed == 0) {
+                break;      // 是猜的：没人应，上一个就是最后一个
+            }
+            LOG_WARN_MSG("SMP: CPU with APIC ID %u did not come up\n", apic);
+            continue;
         }
         started++;
     }
@@ -155,7 +181,7 @@ uint32_t hal::Cpu::start_secondaries() {
  * 任务的栈上，用着启动用的页目录和启动代码里的那张 GDT */
 void i686_ap_entry(void) {
     // 换成自己的 GDT 和 TSS、大家共用的 IDT，离开启动用的页目录
-    gdt_init_all_with_tss((uint32_t)kernel::Scheduler::prepare_idle(hal::Cpu::id()), 0x10);
+    gdt_init_cpu(starting_cpu, (uint32_t)kernel::Scheduler::prepare_idle(starting_cpu), 0x10);
     idt_load();
     hal::Mmu::switch_space(mm::Vmm::kernel_page_directory());
 

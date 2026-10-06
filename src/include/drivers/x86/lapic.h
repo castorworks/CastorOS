@@ -18,6 +18,8 @@
 
 /** Local APIC 定时器用的中断向量（紧跟在 PIC 的 32-47 后面） */
 #define LAPIC_TIMER_VECTOR      64
+/** "过来一趟"：一个 CPU 发给其余所有 CPU 的中断，不带内容（hal::Cpu::kick_others） */
+#define LAPIC_KICK_VECTOR       65
 /** 伪中断向量：硬件规定要给一个，处理函数什么都不做 */
 #define LAPIC_SPURIOUS_VECTOR   255
 /** 寄存器的物理地址 */
@@ -53,6 +55,9 @@ public:
 
     /** 当前 CPU 的定时器开始以 hz 的频率发 LAPIC_TIMER_VECTOR 号中断 */
     static void timer_start(uint32_t hz);
+
+    /** 给其余所有 CPU 发一个 LAPIC_KICK_VECTOR 号中断。Local APIC 还没启用时什么都不做 */
+    static void kick_others();
 
     /** 应答当前 CPU 正在处理的 Local APIC 中断 */
     static void eoi();

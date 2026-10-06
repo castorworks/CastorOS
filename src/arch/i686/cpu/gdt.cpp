@@ -17,7 +17,8 @@
  * 平时全是 1；换一个用户任务上 CPU 时，把许可给它的端口打开（tss_io_allow）。 */
 #define IOMAP_BYTES (65536 / 8)
 static struct cpu_tables {
-    struct gdt_entry gdt[6];            /* 空 + 内核代码/数据 + 用户代码/数据 + TSS */
+    struct gdt_entry gdt[5 + MAX_CPUS]; /* 空 + 内核代码/数据 + 用户代码/数据，后面是 TSS：
+                                         * 每个 CPU 的 TSS 描述符放在不同的位置上 */
     struct gdt_ptr pointer;
     struct {
         tss_entry_t tss;
@@ -25,10 +26,28 @@ static struct cpu_tables {
     } __attribute__((packed)) tss_area;
 } tables[MAX_CPUS];
 
+/* 每个 CPU 把自己的 TSS 描述符放在自己的位置上（第 5 + cpu 项），所以每个 CPU 的任务
+ * 寄存器里的选择子都不一样。CPU 就靠它知道自己是哪一个（gdt_current_cpu）：读任务寄存器
+ * 只是一条很便宜的指令 */
+#define TSS_INDEX(cpu)      (5 + (cpu))
+#define TSS_SELECTOR(cpu)   ((uint16_t)(TSS_INDEX(cpu) << 3))
+
+uint32_t gdt_current_cpu(void) {
+    uint16_t selector;
+    __asm__ volatile("str %0" : "=r"(selector));
+    // 还什么都没装（刚启动）：那就是启动 CPU
+    return selector < TSS_SELECTOR(0) ? 0 : (uint32_t)(selector - TSS_SELECTOR(0)) / 8;
+}
+
+/* gdt_init_cpu 正在给哪个 CPU 建表：它的任务寄存器装好之前，这个 CPU 分不清自己是谁。
+ * 其余时候是 -1 */
+static int init_cpu = -1;
+
 /* 下面这些名字指的都是"当前这个 CPU 的" */
-#define gdt_entries (tables[hal::Cpu::id()].gdt)
-#define gdt_pointer (tables[hal::Cpu::id()].pointer)
-#define tss_area    (tables[hal::Cpu::id()].tss_area)
+#define this_cpu_tables (tables[init_cpu >= 0 ? (uint32_t)init_cpu : gdt_current_cpu()])
+#define gdt_entries (this_cpu_tables.gdt)
+#define gdt_pointer (this_cpu_tables.pointer)
+#define tss_area    (this_cpu_tables.tss_area)
 #define tss         (tss_area.tss)
 
 /* 声明汇编函数 */
@@ -77,7 +96,6 @@ static void gdt_build_with_tss(void) {
 
     /* TSS descriptor 在索引 5 - 这里暂用 base=0 limit=0，实际在 tss_init 时写入 */
     /* 为安全起见，这里先写一个空 TSS descriptor（会被 write_tss 覆盖） */
-    gdt_set_gate(5, 0, 0, GDT_ACCESS_TSS, 0x00);
 
     /* 准备 gdt_pointer（还未 lgdt）*/
     gdt_pointer.limit = sizeof(gdt_entries) - 1;
@@ -90,8 +108,8 @@ void gdt_install(void) {
 }
 
 /* 写入 TSS 描述符（覆盖 GDT[5]）*/
-void gdt_write_tss_descriptor(uint32_t base, uint32_t limit) {
-    gdt_set_gate(5, base, limit, GDT_ACCESS_TSS, 0x00);
+static void gdt_write_tss_descriptor(uint32_t cpu, uint32_t base, uint32_t limit) {
+    gdt_set_gate(TSS_INDEX(cpu), base, limit, GDT_ACCESS_TSS, 0x00);
 }
 
 /* TSS 初始化（在调用 gdt_build_with_tss 之后） */
@@ -131,12 +149,13 @@ void tss_io_allow(uint32_t first, uint32_t count, bool allow) {
 }
 
 /* 一次性初始化接口（推荐） */
-void gdt_init_all_with_tss(uint32_t kernel_stack, uint16_t kernel_ss) {
+void gdt_init_cpu(uint32_t cpu, uint32_t kernel_stack, uint16_t kernel_ss) {
+    init_cpu = (int)cpu;
     gdt_build_with_tss();
     tss_init(kernel_stack, kernel_ss);
-    gdt_write_tss_descriptor(tss_get_address(), tss_get_size() - 1);
+    gdt_write_tss_descriptor(cpu, tss_get_address(), tss_get_size() - 1);
     gdt_install(); /* lgdt & reload segments */
-    /* TSS selector = index 5 << 3 = 0x28 */
-    tss_load( (5 << 3) );
-    LOG_INFO_MSG("GDT+TSS installed and loaded\n");
+    tss_load(TSS_SELECTOR(cpu));
+    init_cpu = -1;      // 从这里起，任务寄存器说明了我们是谁
+    LOG_INFO_MSG("GDT+TSS installed and loaded for CPU %u\n", cpu);
 }

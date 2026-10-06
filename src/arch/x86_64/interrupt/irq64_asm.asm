@@ -62,6 +62,12 @@ irq_lapic_timer:
     push qword 64
     jmp irq_common_stub
 
+global irq_lapic_kick
+irq_lapic_kick:
+    push qword 0
+    push qword 65
+    jmp irq_common_stub
+
 irq_lapic_spurious:
     iretq
 

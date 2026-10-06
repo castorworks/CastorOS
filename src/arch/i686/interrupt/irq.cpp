@@ -121,6 +121,7 @@ static void pic_send_eoi(uint8_t irq) {
  * the kernel (which already held it) only our own enter() is undone. */
 extern "C" void irq_lapic_timer(void);
 extern "C" void irq_lapic_spurious(void);
+extern "C" void irq_lapic_kick(void);
 
 static void irq_handler_locked(registers_t *regs);
 
@@ -140,6 +141,14 @@ static void irq_handler_locked(registers_t *regs) {
     /* 启动 CPU 之外的 CPU 的时钟：来自它自己的 Local APIC，不是 PIC */
     if (regs->int_no == LAPIC_TIMER_VECTOR) {
         kernel::Scheduler::timer_tick();
+        drivers::Lapic::eoi();
+        schedule_from_irq((regs->cs & 0x3) == 3);
+        return;
+    }
+
+    /* 别的 CPU 叫我们"过来一趟"（hal::Cpu::kick_others）。到了就行，没有别的事要做：
+     * 闲着的 CPU 已经被叫醒；在用户态的 CPU 经过下面的抢占点，待处理的 kill 在那里生效 */
+    if (regs->int_no == LAPIC_KICK_VECTOR) {
         drivers::Lapic::eoi();
         schedule_from_irq((regs->cs & 0x3) == 3);
         return;
@@ -283,6 +292,8 @@ void irq_init(void) {
 
     /* Local APIC 的两个向量：有别的 CPU 在运行时才用得上 */
     idt_set_gate(LAPIC_TIMER_VECTOR, (uint32_t)irq_lapic_timer, GDT_KERNEL_CODE_SEGMENT, 
+                 IDT_FLAG_PRESENT | IDT_FLAG_RING0 | IDT_FLAG_GATE_32BIT);
+    idt_set_gate(LAPIC_KICK_VECTOR, (uint32_t)irq_lapic_kick, GDT_KERNEL_CODE_SEGMENT, 
                  IDT_FLAG_PRESENT | IDT_FLAG_RING0 | IDT_FLAG_GATE_32BIT);
     idt_set_gate(LAPIC_SPURIOUS_VECTOR, (uint32_t)irq_lapic_spurious, GDT_KERNEL_CODE_SEGMENT, 
                  IDT_FLAG_PRESENT | IDT_FLAG_RING0 | IDT_FLAG_GATE_32BIT);

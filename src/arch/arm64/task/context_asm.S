@@ -149,17 +149,22 @@ hal_context_switch_asm:
      * ARM ARM recommends: DSB, write TTBR, ISB for TTBR changes.
      * We also invalidate TLB to ensure no stale entries.
      */
-    dsb     ish                         /* Ensure all prior memory accesses complete */
-    tlbi    vmalle1is                   /* Invalidate all TLB entries (inner shareable) */
-    dsb     ish                         /* Wait for TLB invalidation to complete */
+    /*
+     * Only this CPU's TLB (vmalle1, not the broadcast vmalle1is): what has to go
+     * are the entries this CPU cached from the address space it is leaving. Other
+     * CPUs are running other address spaces; their entries are theirs and valid.
+     */
+    dsb     nsh                         /* Ensure all prior memory accesses complete */
+    tlbi    vmalle1                     /* Invalidate this CPU's TLB entries */
+    dsb     nsh                         /* Wait for TLB invalidation to complete */
     isb                                 /* Synchronize context */
     
     msr     ttbr0_el1, x2               /* Switch to new page tables */
     isb                                 /* Ensure TTBR change takes effect */
     /* No ASIDs: flush again so nothing cached from the old tables between
      * the invalidation above and the TTBR write survives the switch. */
-    tlbi    vmalle1is
-    dsb     ish
+    tlbi    vmalle1
+    dsb     nsh
     isb
 
 .skip_ttbr_switch:

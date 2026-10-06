@@ -13,6 +13,7 @@
 #include <kernel/task.h>
 #include <drivers/timer.h>
 #include <drivers/x86/lapic.h>
+#include <drivers/x86/acpi.h>
 #include <mm/vmm.h>
 #include <lib/klog.h>
 #include <lib/string.h>
@@ -24,12 +25,18 @@
  * Which CPU is this
  * ========================================================================== */
 
-/* APIC ID -> CPU index. All zero until the other CPUs are started, so everything
- * that asks before then (the whole single-CPU boot) is CPU 0. */
-static uint8_t cpu_of_apic[256];
-
+/* The selector in the task register is different on every CPU (see gdt64.cpp):
+ * reading it tells us */
 uint32_t hal::Cpu::id() {
-    return cpu_of_apic[drivers::Lapic::id() & 0xFF];
+    return gdt64_current_cpu();
+}
+
+/* Index of the CPU being started: until its GDT is loaded it cannot read its own
+ * (one is started at a time) */
+static uint32_t starting_cpu;
+
+void hal::Cpu::kick_others() {
+    drivers::Lapic::kick_others();
 }
 
 /* ============================================================================
@@ -64,6 +71,26 @@ uint32_t hal::Cpu::start_secondaries() {
     if (!drivers::Lapic::available()) {
         return 0;
     }
+
+    /* Which CPUs are there? The firmware's ACPI table says. Without it (not found, or
+     * not in memory the kernel has mapped) fall back to trying APIC IDs in order,
+     * which costs a wait for the first one that is not there. */
+    uint8_t apic_ids[MAX_CPUS];
+    uint32_t listed = drivers::Acpi::cpu_apic_ids(apic_ids, MAX_CPUS);
+    if (listed == 1) {
+        return 0;       /* one CPU: leave the interrupt setup as it is */
+    }
+    if (listed > 1) {
+        LOG_INFO_MSG("SMP: the ACPI table lists %u CPUs\n", listed);
+    } else {
+        LOG_INFO_MSG("SMP: no ACPI CPU table, probing for other CPUs\n");
+    }
+    uint32_t candidates = listed;
+    if (listed == 0) {
+        for (candidates = 0; candidates < MAX_CPUS; candidates++) {
+            apic_ids[candidates] = (uint8_t)candidates;
+        }
+    }
     uintptr_t lapic = paging64_map_device(LAPIC_PHYS_BASE);
     paddr_t startup_table = paging64_make_startup_table();
     if (!lapic || !startup_table) {
@@ -89,11 +116,10 @@ uint32_t hal::Cpu::start_secondaries() {
     params->efer = (uint32_t)rdmsr(MSR_EFER) & ~EFER_LMA;
     params->entry = (uint64_t)x86_64_ap_entry;
 
-    /* There is no table of CPUs to consult here (that would be ACPI): APIC IDs are
-     * handed out consecutively, so try them in order until one does not answer. */
     uint32_t self = drivers::Lapic::id();
     uint32_t started = 0;
-    for (uint32_t apic = 0; apic < MAX_CPUS && started + 1 < MAX_CPUS; apic++) {
+    for (uint32_t i = 0; i < candidates && started + 1 < MAX_CPUS; i++) {
+        uint32_t apic = apic_ids[i];
         if (apic == self) {
             continue;
         }
@@ -103,7 +129,7 @@ uint32_t hal::Cpu::start_secondaries() {
             break;
         }
         params->stack = stack;
-        cpu_of_apic[apic] = (uint8_t)cpu;
+        starting_cpu = cpu;
 
         uint32_t before = kernel::Smp::cpu_count();
         drivers::Lapic::start_cpu(apic, AP_TRAMPOLINE_BASE);
@@ -117,8 +143,11 @@ uint32_t hal::Cpu::start_secondaries() {
         }
         kernel::KernelLock::enter();
         if (kernel::Smp::cpu_count() == before) {
-            cpu_of_apic[apic] = 0;      /* nobody there: that was the last one */
-            break;
+            if (listed == 0) {
+                break;      /* guessing: nobody there, so that was the last one */
+            }
+            LOG_WARN_MSG("SMP: CPU with APIC ID %u did not come up\n", apic);
+            continue;
         }
         started++;
     }
@@ -133,7 +162,7 @@ uint32_t hal::Cpu::start_secondaries() {
  * idle task's stack, on the start-up page table, with the trampoline's GDT. */
 void x86_64_ap_entry(void) {
     /* Our own GDT and TSS, the shared IDT, and off the start-up page table */
-    gdt64_init_with_tss(kernel::Scheduler::prepare_idle(hal::Cpu::id()));
+    gdt64_init_cpu(starting_cpu, kernel::Scheduler::prepare_idle(starting_cpu));
     idt64_load();
     hal::Mmu::switch_space(mm::Vmm::kernel_page_directory());
 
