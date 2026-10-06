@@ -345,10 +345,9 @@ static syscall_arg_t sys_cpu_info_wrapper(syscall_arg_t *frame, syscall_arg_t co
     return hal::Cpu::id();
 }
 
-syscall_arg_t syscall_dispatcher(syscall_arg_t syscall_num, syscall_arg_t p1, syscall_arg_t p2, 
-                                 syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5, 
-                                 syscall_arg_t *frame) {
-    
+static syscall_arg_t dispatch(syscall_arg_t syscall_num, syscall_arg_t p1, syscall_arg_t p2,
+                              syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5,
+                              syscall_arg_t *frame) {
     /* 检查系统调用号是否在有效范围内 */
     if (syscall_num >= SYS_MAX) {
         LOG_WARN_MSG("Invalid syscall number: %lu (out of range)\n", (unsigned long)syscall_num);
@@ -367,6 +366,17 @@ syscall_arg_t syscall_dispatcher(syscall_arg_t syscall_num, syscall_arg_t p1, sy
      * 可以安全地自行退出（有待处理的 kill 时不返回） */
     kernel::Scheduler::deliver_pending_kill();
 
+    return ret;
+}
+
+syscall_arg_t syscall_dispatcher(syscall_arg_t syscall_num, syscall_arg_t p1, syscall_arg_t p2,
+                                 syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5,
+                                 syscall_arg_t *frame) {
+    /* 内核代码都在内核锁里执行（kernel/smp.h）。x86 上系统调用的汇编入口直接来到这里：
+     * 锁在这里拿，返回用户态之前在这里放。arm64 的异常入口已经拿过一次，这里只是嵌套一层 */
+    kernel::KernelLock::enter();
+    syscall_arg_t ret = dispatch(syscall_num, p1, p2, p3, p4, p5, frame);
+    kernel::KernelLock::leave();
     return ret;
 }
 

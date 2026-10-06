@@ -44,3 +44,8 @@ void idt_init(void) {
     LOG_DEBUG_MSG("  IDT base: 0x%x\n", idt_pointer.base);
     LOG_DEBUG_MSG("  IDT limit: %u bytes\n", idt_pointer.limit + 1);
 }
+
+/* 在调用它的 CPU 上装入（唯一的、大家共用的）IDT：启动 CPU 之外的 CPU 用 */
+void idt_load(void) {
+    idt_flush((uint32_t)&idt_pointer);
+}

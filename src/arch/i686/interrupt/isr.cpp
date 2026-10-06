@@ -2,6 +2,7 @@
 // isr.c - 中断服务例程实现 (i686)
 // ============================================================================
 
+#include <kernel/smp.h>
 #include <kernel/isr.h>
 #include <kernel/idt.h>
 #include <kernel/gdt.h>
@@ -76,8 +77,24 @@ static void kill_faulting_user_task(registers_t *regs, const char *what) {
  * 通用中断处理程序
  * 由汇编 ISR 存根调用
  */
+/* Kernel code runs with the kernel lock held (kernel/smp.h): taken here on the way in.
+ * Going back to user mode it is released whatever the nesting says; going back into
+ * the kernel (which already held it) only our own enter() is undone. */
+static void isr_handler_locked(registers_t *regs);
+
 extern "C" void isr_handler(registers_t *regs);
 void isr_handler(registers_t *regs) {
+    bool from_user = (regs->cs & 0x3) == 3;
+    kernel::KernelLock::enter();
+    isr_handler_locked(regs);
+    if (from_user) {
+        kernel::KernelLock::release();
+    } else {
+        kernel::KernelLock::leave();
+    }
+}
+
+static void isr_handler_locked(registers_t *regs) {
     /* 统计中断次数 */
     interrupt_counts[regs->int_no]++;
 

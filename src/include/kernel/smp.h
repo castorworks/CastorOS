@@ -63,7 +63,4 @@ public:
 
 } // namespace kernel
 
-/** 给汇编用：任务切换的代码直接回用户态之前调用（新进程第一次运行时走这条路） */
-extern "C" void kernel_lock_release(void);
-
 #endif // _KERNEL_SMP_H_

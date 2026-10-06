@@ -18,6 +18,8 @@
  * Requirements: 3.3 - Configure 64-bit GDT with appropriate code and data segments
  */
 
+#include <hal/hal.h>
+#include <kernel/smp.h>
 #include "gdt64.h"
 #include <types.h>
 #include <lib/string.h>
@@ -36,23 +38,30 @@
  * Total: 7 entries worth of space (56 bytes for entries + 16 for TSS desc)
  */
 
-/* GDT entries: 5 normal entries + 2 entries for TSS (16 bytes) */
-static gdt64_entry_t gdt64_entries[7] __attribute__((aligned(16)));
-
-/* GDT pointer for LGDT instruction */
-static gdt64_ptr_t gdt64_pointer;
-
-/* Task State Segment, followed by the I/O permission bitmap: one bit per port, 0 means
- * user mode may access the port directly with in/out, 1 means #GP. The CPU may look at
- * bits spanning two bytes, so one extra all-ones byte follows the bitmap. Normally all
- * ones; when a user task is switched in, the ports it is allowed are opened
- * (tss64_io_allow). */
+/* Every CPU has its own GDT and TSS (kernel/smp.h): the TSS holds the kernel stack the
+ * CPU switches to when it enters the kernel from user mode, and the I/O permission
+ * bitmap of the task it is running; both differ from CPU to CPU. The GDT differs only
+ * in the TSS descriptor.
+ *
+ * The I/O permission bitmap follows the TSS: one bit per port, 0 means user mode may
+ * access the port directly with in/out, 1 means #GP. The CPU may look at bits spanning
+ * two bytes, so one extra all-ones byte follows the bitmap. Normally all ones; when a
+ * user task is switched in, the ports it is allowed are opened (tss64_io_allow). */
 #define IOMAP_BYTES (65536 / 8)
-static struct {
-    tss64_entry_t tss;
-    uint8_t iomap[IOMAP_BYTES + 1];
-} __attribute__((packed, aligned(16))) tss64_area;
-#define tss64 (tss64_area.tss)
+static struct cpu_tables {
+    gdt64_entry_t gdt[7];               /* 5 normal entries + 2 for the TSS descriptor (16 bytes) */
+    gdt64_ptr_t pointer;                /* for LGDT */
+    struct {
+        tss64_entry_t tss;
+        uint8_t iomap[IOMAP_BYTES + 1];
+    } __attribute__((packed)) tss_area;
+} __attribute__((aligned(16))) tables[MAX_CPUS];
+
+/* The tables of the CPU this code runs on */
+#define gdt64_entries   (tables[hal::Cpu::id()].gdt)
+#define gdt64_pointer   (tables[hal::Cpu::id()].pointer)
+#define tss64_area      (tables[hal::Cpu::id()].tss_area)
+#define tss64           (tss64_area.tss)
 
 /* ============================================================================
  * Internal Helper Functions
@@ -105,7 +114,7 @@ static void gdt64_set_tss_descriptor(uint8_t index, uint64_t base, uint32_t limi
  * @param kernel_stack Kernel stack pointer (RSP0 in TSS)
  */
 void gdt64_init_with_tss(uint64_t kernel_stack) {
-    LOG_INFO_MSG("Initializing x86_64 GDT with TSS...\n");
+    LOG_INFO_MSG("Initializing x86_64 GDT with TSS for CPU %u...\n", hal::Cpu::id());
     
     /* Clear GDT entries */
     memset(gdt64_entries, 0, sizeof(gdt64_entries));

@@ -131,3 +131,8 @@ void idt64_init(void) {
                   (unsigned int)(idt64_pointer.limit + 1), 
                   (unsigned int)((idt64_pointer.limit + 1) / sizeof(idt64_entry_t)));
 }
+
+/* Load the (one, shared) IDT on the calling CPU: every CPU other than the boot CPU */
+void idt64_load(void) {
+    idt64_flush((uint64_t)&idt64_pointer);
+}

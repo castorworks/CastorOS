@@ -44,6 +44,20 @@ IRQ 13, 45    ; IRQ 13: 协处理器
 IRQ 14, 46    ; IRQ 14: 主 IDE
 IRQ 15, 47    ; IRQ 15: 副 IDE
 
+; Local APIC 的中断（见 drivers/x86/lapic.h）。启动 CPU 之外的 CPU 的时钟和 PIC 的中断走
+; 同一个公共入口，irq_handler 按中断号把它认出来。伪中断什么都不用做。
+global irq_lapic_timer
+global irq_lapic_spurious
+irq_lapic_timer:
+    cli
+    push 0
+    push 64
+    jmp irq_common_stub
+
+irq_lapic_spurious:
+    iret
+
+
 ; 通用 IRQ 处理存根
 ; 与 ISR 类似，但调用 irq_handler
 irq_common_stub:

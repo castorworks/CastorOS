@@ -51,19 +51,6 @@
 
 [BITS 64]
 
-section .data
-
-; Per-CPU kernel stack pointer (for swapgs)
-; In a real SMP system, this would be per-CPU data
-global kernel_stack_ptr
-kernel_stack_ptr:
-    dq 0
-
-; Saved user stack pointer during syscall
-global user_stack_ptr
-user_stack_ptr:
-    dq 0
-
 section .text
 
 ; ============================================================================
@@ -96,15 +83,21 @@ syscall_entry:
     ;   - RSP = user stack (we need to switch to kernel stack)
     ;   - Interrupts are disabled (RFLAGS.IF cleared by SYSCALL)
     
-    ; Save user RSP and load kernel RSP using absolute addresses
-    ; (We don't use swapgs here because GS base MSRs aren't set up)
-    mov [rel user_stack_ptr], rsp
-    mov rsp, [rel kernel_stack_ptr]
+    ; Each CPU has its own pair of slots for this (struct syscall_cpu in
+    ; syscall64.cpp: +0 kernel stack of the task it runs, +8 scratch for the user
+    ; RSP), found through the GS base: MSR_KERNEL_GS_BASE points at this CPU's
+    ; pair and SWAPGS brings it in. Two CPUs can be right here at the same time
+    ; (the kernel lock is only taken later, in syscall_dispatcher), so a single
+    ; global pair would not do. GS is swapped back at once: the kernel does not
+    ; use it otherwise, and user mode gets its own GS base back untouched.
+    swapgs
+    mov [gs:8], rsp
+    mov rsp, [gs:0]
     
     ; Check if kernel stack is valid (non-zero)
     test rsp, rsp
     jnz .stack_ok
-    ; If kernel stack is 0, we have a problem - use a fallback
+    ; If kernel stack is 0, we have a problem
     ; This should never happen if hal_syscall_set_kernel_stack was called
     hlt
 .stack_ok:
@@ -114,8 +107,9 @@ syscall_entry:
     ; ========================================================================
     ; Build a stack frame for the syscall
     
-    ; Save user RSP
-    push qword [rel user_stack_ptr]
+    ; Save user RSP, then give user mode its GS base back
+    push qword [gs:8]
+    swapgs
     
     ; Save general purpose registers
     push rax                ; syscall number
@@ -470,17 +464,6 @@ syscall_init_msr:
 
 ; ============================================================================
 ; set_kernel_stack - Set the kernel stack for syscall entry
-; ============================================================================
-; void set_kernel_stack(uint64_t stack_ptr)
-;
-; Parameters:
-;   rdi = kernel stack pointer
-; ============================================================================
-
-global set_kernel_stack
-set_kernel_stack:
-    mov [rel kernel_stack_ptr], rdi
-    ret
 
 
 ; ============================================================================

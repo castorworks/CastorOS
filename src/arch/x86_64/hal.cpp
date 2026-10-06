@@ -152,19 +152,3 @@ void hal::Platform::set_user_ports(const struct hw_range *allowed, uint32_t coun
         }
     }
 }
-
-/* ============================================================================
- * Multiple CPUs: not brought up on this architecture yet. Everything runs on the
- * boot CPU; the generic code (kernel lock, per-CPU state) works unchanged with one.
- * ========================================================================== */
-
-uint32_t hal::Cpu::id() {
-    return 0;
-}
-
-uint32_t hal::Cpu::start_secondaries() {
-    return 0;
-}
-
-void hal::Cpu::init_secondary() {
-}

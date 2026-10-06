@@ -133,7 +133,8 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
     child->heap_max = parent->heap_max;
     
     // 子进程的寄存器和父进程进入这次系统调用时一样，只是 fork() 在它那里返回 0
-    hal::UserContext::fork(&child->context, frame, child->page_dir_phys, child->kernel_stack);
+    hal::UserContext::fork(&child->user_context, frame, child->page_dir_phys, child->kernel_stack);
+    kernel::Scheduler::start_in_user_mode(child);
     
     // 设置父子关系
     child->parent = parent;

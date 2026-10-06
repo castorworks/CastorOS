@@ -21,7 +21,7 @@ make test-all                  # 三个架构都跑完，有任何一个失败�
 make lib-test                  # 用户库的宿主机测试
 
 make test TEST_TIMEOUT=300     # 机器很忙时放宽上限（默认 180 秒）
-make test ARCH=arm64 SMP=4     # 给虚拟机 4 个 CPU（默认 1 个；目前只有 arm64 会把其余的启动起来）
+make test ARCH=arm64 SMP=4     # 给虚拟机 4 个 CPU（默认 1 个，最多 8 个；三个架构都认）
 make test ARCH=x86_64 QEMU_MEMORY=3G   # 给虚拟机更多内存（默认是 QEMU 的 128MB）；
                                # 超过 1GB 时“高处的物理内存”那组内核测试才有内容
 ```
@@ -57,7 +57,7 @@ make test ARCH=x86_64 QEMU_MEMORY=3G   # 给虚拟机更多内存（默认是 QE
 
 ## 持续集成
 
-每次推送到 `main`、每个 PR，GitHub Actions 都会对三个架构各跑一遍 `make test ARCH=<arch>`（`.github/workflows/test.yml`），arm64 再带着两个 CPU 跑一遍（`SMP=2`），另外还有一个只跑 `make lib-test` 的任务。
+每次推送到 `main`、每个 PR，GitHub Actions 都会对三个架构各跑一遍 `make test ARCH=<arch>`（`.github/workflows/test.yml`），每个架构再带着两个 CPU 跑一遍（`SMP=2`），另外还有一个只跑 `make lib-test` 的任务。
 
 - 用的是 macOS 的 runner 和 Homebrew 的交叉编译器（见 [开发环境搭建](setup.md) 的方法一），所以和在 macOS 上本地开发是同一套工具。加了构建依赖的话，workflow 的 `brew install` 一行也要加。
 - 三个架构各是一个独立的任务，一个失败不影响另外两个跑完。

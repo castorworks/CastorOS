@@ -18,6 +18,7 @@
  * Additionally, INT 0x80 is supported for compatibility with legacy code.
  */
 
+#include <kernel/smp.h>
 #include <hal/hal.h>
 #include <hal/hal_syscall.h>
 #include <kernel/syscall.h>
@@ -29,7 +30,25 @@
 extern "C" void syscall_entry(void);
 extern "C" void syscall_entry_compat(void);
 extern "C" void syscall_init_msr(void);
-extern "C" void set_kernel_stack(uint64_t stack_ptr);
+
+/* What syscall_entry needs before it has a stack to stand on, one pair per CPU. It finds
+ * its CPU's pair through the GS base (MSR_KERNEL_GS_BASE + SWAPGS); layout shared with
+ * syscall64_asm.asm. */
+struct syscall_cpu {
+    uint64_t kernel_rsp;        /* +0: kernel stack of the task this CPU is running */
+    uint64_t user_rsp;          /* +8: where the entry code parks the user RSP */
+};
+static struct syscall_cpu syscall_cpus[MAX_CPUS];
+
+#define MSR_KERNEL_GS_BASE  0xC0000102u
+
+/** Per-CPU part of the SYSCALL setup: the MSRs, and where this CPU's pair is */
+extern "C" void syscall_init_cpu(void);
+void syscall_init_cpu(void) {
+    syscall_init_msr();
+    uint64_t base = (uint64_t)&syscall_cpus[hal::Cpu::id()];
+    __asm__ volatile("wrmsr" : : "c"(MSR_KERNEL_GS_BASE), "a"((uint32_t)base), "d"((uint32_t)(base >> 32)));
+}
 
 /* Global syscall handler (set by hal::Syscall::init) */
 static hal_syscall_handler_t g_syscall_handler = NULL;
@@ -50,7 +69,7 @@ void hal::Syscall::init(hal_syscall_handler_t handler) {
     g_syscall_handler = handler;
     
     /* Initialize MSRs for SYSCALL/SYSRET */
-    syscall_init_msr();
+    syscall_init_cpu();
     
     LOG_DEBUG_MSG("  SYSCALL MSRs configured\n");
     LOG_DEBUG_MSG("  LSTAR = syscall_entry\n");
@@ -80,7 +99,7 @@ void hal::Syscall::init(hal_syscall_handler_t handler) {
  * update the kernel stack for the current task.
  */
 void hal_syscall_set_kernel_stack(uint64_t stack_ptr) {
-    set_kernel_stack(stack_ptr);
+    syscall_cpus[hal::Cpu::id()].kernel_rsp = stack_ptr;
 }
 
 /* R9 is at frame[6]; frame[7] is R8, the fifth argument */

@@ -7,6 +7,7 @@
  * Requirements: 6.1 - Handle 64-bit exceptions with proper register save/restore
  */
 
+#include <kernel/smp.h>
 #include "isr64.h"
 #include "idt64.h"
 #include "gdt64.h"
@@ -82,8 +83,24 @@ static void kill_faulting_user_task(registers_t *regs, const char *what) {
 /**
  * @brief Common interrupt handler (called from assembly)
  */
+/* Kernel code runs with the kernel lock held (kernel/smp.h): taken here on the way in.
+ * Going back to user mode it is released whatever the nesting says; going back into
+ * the kernel (which already held it) only our own enter() is undone. */
+static void isr64_handler_locked(registers_t *regs);
+
 extern "C" void isr64_handler(registers_t *regs);
 void isr64_handler(registers_t *regs) {
+    bool from_user = (regs->cs & 0x3) == 3;
+    kernel::KernelLock::enter();
+    isr64_handler_locked(regs);
+    if (from_user) {
+        kernel::KernelLock::release();
+    } else {
+        kernel::KernelLock::leave();
+    }
+}
+
+static void isr64_handler_locked(registers_t *regs) {
     /* Update statistics */
     interrupt_counts[regs->int_no]++;
 

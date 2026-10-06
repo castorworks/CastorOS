@@ -46,7 +46,13 @@ jobs:
             packages: x86_64-elf-gcc nasm
           - arch: arm64
             packages: aarch64-elf-gcc
-          # 同样的测试再带着两个 CPU 跑一遍（目前只有 arm64 会把其余的 CPU 启动起来）
+          # 同样的测试，每个架构再带着两个 CPU 跑一遍
+          - arch: i686
+            packages: i686-elf-gcc nasm
+            smp: 2
+          - arch: x86_64
+            packages: x86_64-elf-gcc nasm
+            smp: 2
           - arch: arm64
             packages: aarch64-elf-gcc
             smp: 2

@@ -48,6 +48,9 @@ struct idt_ptr {
  */
 void idt_init(void);
 
+/* 在调用它的 CPU 上装入 idt_init 建好的 IDT（其余的 CPU 和启动 CPU 共用一张） */
+void idt_load(void);
+
 /**
  * 设置 IDT 表项
  * @param num 中断向量号

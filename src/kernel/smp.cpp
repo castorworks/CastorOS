@@ -99,7 +99,3 @@ void Smp::start_secondaries() {
 }
 
 } // namespace kernel
-
-void kernel_lock_release(void) {
-    kernel::KernelLock::release();
-}

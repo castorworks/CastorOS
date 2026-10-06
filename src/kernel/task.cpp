@@ -264,8 +264,9 @@ uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entr
         return 0;
     }
     
-    hal::UserContext::init(&task->context, entry_point, task->user_stack,
+    hal::UserContext::init(&task->user_context, entry_point, task->user_stack,
                            task->page_dir_phys, task->kernel_stack);
+    kernel::Scheduler::start_in_user_mode(task);
 
     // 设置堆管理
     // 堆从程序结束后的下一页开始

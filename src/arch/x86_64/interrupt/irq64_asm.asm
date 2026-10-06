@@ -52,6 +52,20 @@ IRQ 13, 45    ; IRQ 13: FPU
 IRQ 14, 46    ; IRQ 14: Primary ATA
 IRQ 15, 47    ; IRQ 15: Secondary ATA
 
+; Local APIC interrupts (see drivers/x86/lapic.h). The timer of a CPU other than the
+; boot CPU goes through the same common stub as the PIC's interrupts; irq64_handler
+; tells it apart by its vector number. The spurious vector needs no handling at all.
+global irq_lapic_timer
+global irq_lapic_spurious
+irq_lapic_timer:
+    push qword 0
+    push qword 64
+    jmp irq_common_stub
+
+irq_lapic_spurious:
+    iretq
+
+
 ; ============================================================================
 ; Common IRQ Stub
 ; ============================================================================

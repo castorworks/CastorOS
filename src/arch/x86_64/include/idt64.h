@@ -116,6 +116,9 @@ typedef struct idt64_ptr {
  */
 void idt64_init(void);
 
+/** Load the IDT idt64_init() built on the calling CPU (the other CPUs share it) */
+void idt64_load(void);
+
 /**
  * @brief Set an IDT gate entry
  * @param vector Interrupt vector number (0-255)

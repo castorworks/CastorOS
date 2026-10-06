@@ -93,7 +93,13 @@ typedef struct task {
     uint64_t sleep_until_ms;         ///< 睡眠截止时间（0 表示不睡眠）
 
     /* CPU 上下文 */
-    cpu_context_t context;           ///< CPU 寄存器状态
+    cpu_context_t context;           ///< CPU 寄存器状态（任务不在 CPU 上时）
+    /**
+     * 用户进程第一次运行时要装上的用户态现场。新进程不是直接从任务切换跳进用户态的：
+     * context 让它先在内核态、自己的内核栈上运行一小段（Scheduler::start_in_user_mode），
+     * 放掉内核锁，再装上这里的现场进入用户态。之后这个字段不再使用。
+     */
+    cpu_context_t user_context;
 
     /* 内核栈 */
     uintptr_t kernel_stack_base;     ///< 内核栈基址（低地址）
@@ -227,6 +233,12 @@ public:
      * @return 它的内核栈顶：那个 CPU 启动时就用这个栈；失败返回 0
      */
     static uintptr_t prepare_idle(uint32_t cpu);
+
+    /**
+     * task 的 user_context 已经填好（入口、栈、地址空间）：让它被换上 CPU 时从那里开始运行。
+     * 新进程和 fork 出来的子进程用。
+     */
+    static void start_in_user_mode(task_t *task);
 
     /** 当前 CPU 成为它自己的 idle 任务（刚启动的 CPU 调用，不返回） */
     static void run_idle() __attribute__((noreturn));

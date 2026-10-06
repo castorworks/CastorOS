@@ -2,22 +2,34 @@
 // gdt.c - Global Descriptor Table 实现 (i686)
 // ============================================================================
 
+#include <hal/hal.h>
+#include <kernel/smp.h>
 #include <kernel/gdt.h>
 #include <lib/string.h>
 #include <lib/klog.h>
 
-/* GDT 表（6个表项：空 + 内核代码/数据 + 用户代码/数据 + TSS） */
-static struct gdt_entry gdt_entries[6];
-static struct gdt_ptr gdt_pointer;
-/* TSS 后面紧跟 I/O 许可位图：每个端口一位，0 表示用户态可以直接用 in/out 访问这个端口，
+/* 每个 CPU 有自己的 GDT 和 TSS（kernel/smp.h）：TSS 里记着这个 CPU 从用户态进内核时换到
+ * 哪个内核栈，后面跟着它正在运行的任务的 I/O 许可位图，这两样每个 CPU 都不一样。
+ * GDT 里只有 TSS 那一项因此不同。
+ *
+ * I/O 许可位图紧跟在 TSS 后面：每个端口一位，0 表示用户态可以直接用 in/out 访问这个端口，
  * 1 表示不行（#GP）。CPU 一次最多查跨两个字节的位，所以位图后面还要多一个全 1 的字节。
  * 平时全是 1；换一个用户任务上 CPU 时，把许可给它的端口打开（tss_io_allow）。 */
 #define IOMAP_BYTES (65536 / 8)
-static struct {
-    tss_entry_t tss;
-    uint8_t iomap[IOMAP_BYTES + 1];
-} __attribute__((packed)) tss_area;
-#define tss (tss_area.tss)
+static struct cpu_tables {
+    struct gdt_entry gdt[6];            /* 空 + 内核代码/数据 + 用户代码/数据 + TSS */
+    struct gdt_ptr pointer;
+    struct {
+        tss_entry_t tss;
+        uint8_t iomap[IOMAP_BYTES + 1];
+    } __attribute__((packed)) tss_area;
+} tables[MAX_CPUS];
+
+/* 下面这些名字指的都是"当前这个 CPU 的" */
+#define gdt_entries (tables[hal::Cpu::id()].gdt)
+#define gdt_pointer (tables[hal::Cpu::id()].pointer)
+#define tss_area    (tables[hal::Cpu::id()].tss_area)
+#define tss         (tss_area.tss)
 
 /* 声明汇编函数 */
 extern "C" void gdt_flush(uint32_t gdt_ptr_addr);

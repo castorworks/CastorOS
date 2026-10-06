@@ -237,16 +237,18 @@ nowhere else. The kernel Makefile rebuilds all of it when `user/` changes.
 
 ### Kernel
 
-- Several CPUs (`docs/reference/smp.md`; only arm64 starts the others so far, x86 runs the same
-  code on CPU 0). The rule that keeps the rest of the kernel unchanged: a CPU holds the kernel lock
-  (`kernel::KernelLock`, `src/kernel/smp.cpp`) whenever it executes kernel code — taken on entry
-  from user mode, released before returning to it and while the idle task waits. So kernel data
-  needs no locks of its own, and "interrupts off" still means "nobody else". The lock belongs to
-  the CPU, not the task: it is held across a context switch. Anything that is "the current X"
-  (task, idle task, interrupt depth, page table) is per CPU, indexed by `hal::Cpu::id()`; do not
-  add a global for such state. An architecture's entry code must call `KernelLock::enter()` on
-  every kernel entry and `release()` on every path back to user mode, including the one a new
-  task takes straight out of the context switch.
+- Several CPUs (`docs/reference/smp.md`), on all three architectures. The rule that keeps the rest
+  of the kernel unchanged: a CPU holds the kernel lock (`kernel::KernelLock`, `src/kernel/smp.cpp`)
+  whenever it executes kernel code — taken on entry from user mode, released before returning to
+  it and while the idle task waits. So kernel data needs no locks of its own, and "interrupts off"
+  still means "nobody else". The lock belongs to the CPU, not the task: it is held across a context
+  switch. Anything that is "the current X" (task, idle task, interrupt depth, page table; on x86
+  also the GDT, TSS and system-call stack) is per CPU, indexed by `hal::Cpu::id()`; do not add a
+  global for such state. The lock is taken in C: `syscall_dispatcher`, the x86 `irq*_handler` /
+  `isr*_handler` wrappers and `arm64_exception_handler`. A new entry path into the kernel must
+  do the same, and anything it touches before that (the x86_64 `syscall_entry` stub) must be
+  per CPU. A new user task does not leave the kernel through those paths the first time: it
+  starts in `user_task_start` (`sched.cpp`), which releases the lock.
 - `kernel::Scheduler` is implemented in two files: `sched.cpp` (run queue, idle task, `schedule()`,
   timer tick, yield/sleep/block/wakeup) and `task.cpp` (task table, creating and exiting processes,
   kill, privilege queries). What they share is in `src/kernel/task_private.h`; nothing else
@@ -308,7 +310,7 @@ make test ARCH=x86_64
 make test ARCH=arm64
 make test-all                  # all three architectures; non-zero if any of them fails
 make test TEST_TIMEOUT=300     # raise the limit on a busy machine (default 180 seconds)
-make test ARCH=arm64 SMP=4     # give the VM 4 CPUs (default 1; only arm64 starts the others)
+make test ARCH=arm64 SMP=4     # give the VM 4 CPUs (default 1, at most 8; all three architectures)
 make test ARCH=x86_64 QEMU_MEMORY=3G   # more memory for the VM (default is QEMU's 128MB); the
                                # "high physical memory" kernel tests only have content above 1GB
 ```

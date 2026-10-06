@@ -209,6 +209,32 @@ void kernel::Scheduler::run_idle() {
 }
 
 /* ============================================================================
+ * 新进程的第一步
+ * ========================================================================== */
+
+/**
+ * 一个用户进程第一次被换上 CPU 时从这里开始：在内核态，在它自己的内核栈上。
+ *
+ * 换它上来的那个 CPU 拿着内核锁（见 kernel/smp.h），而进入用户态之前锁必须放掉。
+ * 已经运行过的任务是从系统调用或中断的返回路径回用户态的，锁在那里放；新进程没有
+ * 那条路可走，所以由这一小段代码来放。放锁的时候已经不在上一个任务的栈上了：
+ * 锁一放，别的 CPU 就可能把上一个任务取走运行。
+ */
+static void user_task_start(void) {
+    task_t *self = current_task;
+    kernel::Interrupts::disable();
+    kernel::KernelLock::release();
+    task_switch_context(NULL, &self->user_context);     // 装上用户态的现场，不返回
+    while (1) {
+        hal::Cpu::halt();
+    }
+}
+
+void kernel::Scheduler::start_in_user_mode(task_t *task) {
+    hal::UserContext::init_kernel(&task->context, user_task_start, task->kernel_stack, task->page_dir_phys);
+}
+
+/* ============================================================================
  * 任务调度
  * ========================================================================== */
 

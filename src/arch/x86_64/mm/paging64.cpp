@@ -20,6 +20,7 @@
  *   [11:0]  - 页内偏移 (12 bits, 4KB page)
  */
 
+#include <smp64.h>
 #include <types.h>
 #include <hal/hal.h>
 #include <hal/pt.h>
@@ -394,4 +395,59 @@ void pt::init_root(pte_t *new_root) {
 void pt::top_entry_created(pte_t *root, uint32_t index) {
     (void)root;
     (void)index;
+}
+
+/* ============================================================================
+ * 多个 CPU 要用到的两样页表上的事（见 cpu/smp64.cpp）
+ * ========================================================================== */
+
+/**
+ * 把一个设备寄存器所在的 2MB 映射进内核的直接映射区（不缓存），返回 phys 对应的虚拟地址。
+ * 直接映射区平时只盖住内存；Local APIC 的寄存器在 4GB 以下的设备空洞里。
+ */
+uintptr_t paging64_map_device(paddr_t phys) {
+    const uint64_t GB = 1ULL << 30;
+    const uint64_t huge = 2ULL << 20;
+    pte64_t *pml4 = (pte64_t *)PADDR_TO_KVADDR(mm::Vmm::kernel_page_directory());
+    pte64_t *pdpt = (pte64_t *)PADDR_TO_KVADDR(pte64_get_frame(pml4[(KERNEL_VIRTUAL_BASE >> 39) & 0x1FF]));
+    uint64_t slot = phys / GB;
+    if (slot >= 512) {
+        return 0;
+    }
+
+    // 这 1GB 还没有页目录的话给它一个
+    if (!pte64_is_present(pdpt[slot])) {
+        paddr_t pd_phys = mm::Pmm::alloc_frame();
+        if (pd_phys == PADDR_INVALID) {
+            return 0;
+        }
+        memset((void *)PADDR_TO_KVADDR(pd_phys), 0, PAGE_SIZE);
+        pdpt[slot] = pd_phys | PTE64_PRESENT | PTE64_WRITE;
+    }
+    pte64_t *pd = (pte64_t *)PADDR_TO_KVADDR(pte64_get_frame(pdpt[slot]));
+    uint64_t index = (phys % GB) / huge;
+    if (!pte64_is_present(pd[index])) {
+        pd[index] = (phys & ~(huge - 1)) | PTE64_PRESENT | PTE64_WRITE | PTE64_HUGE |
+                    PTE64_CACHE_DISABLE | (1ULL << 3) /* write-through */;
+    }
+    hal::Mmu::flush_tlb_all();
+    return (uintptr_t)PADDR_TO_KVADDR(phys);
+}
+
+/**
+ * 一个 CPU 刚启动时用的页表：内核自己的那张，再把低半区映射得和内核半区一样。
+ * 启动代码（boot/ap_trampoline.asm）打开分页的那一刻还在物理地址上运行，而内核自己的
+ * 页表里那里没有映射（boot64.asm 早就把恒等映射撤掉了）。
+ * @return 顶层表的物理地址（4GB 以下：那个 CPU 装它的时候还在 32 位模式）；失败返回 0
+ */
+paddr_t paging64_make_startup_table(void) {
+    paddr_t phys = mm::Pmm::alloc_frame();
+    if (phys == PADDR_INVALID || phys >= 0x100000000ULL) {
+        return 0;
+    }
+    pte64_t *startup = (pte64_t *)PADDR_TO_KVADDR(phys);
+    pte64_t *kernel = (pte64_t *)PADDR_TO_KVADDR(mm::Vmm::kernel_page_directory());
+    memcpy(startup, kernel, PAGE_SIZE);
+    startup[0] = kernel[(KERNEL_VIRTUAL_BASE >> 39) & 0x1FF];
+    return phys;
 }

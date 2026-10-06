@@ -8,6 +8,9 @@
  * Requirements: 6.3 - Configure PIC/APIC on x86
  */
 
+#include <drivers/x86/lapic.h>
+#include <kernel/task.h>
+#include <kernel/smp.h>
 #include "irq64.h"
 #include <kernel/task.h>
 #include "isr64.h"
@@ -134,8 +137,35 @@ extern void schedule_from_irq(bool from_user);
 /**
  * @brief Common IRQ handler (called from assembly)
  */
+/* Kernel code runs with the kernel lock held (kernel/smp.h): taken here on the way in.
+ * Going back to user mode it is released whatever the nesting says; going back into
+ * the kernel (which already held it) only our own enter() is undone. */
+extern "C" void irq_lapic_timer(void);
+extern "C" void irq_lapic_spurious(void);
+
+static void irq64_handler_locked(registers_t *regs);
+
 extern "C" void irq64_handler(registers_t *regs);
 void irq64_handler(registers_t *regs) {
+    bool from_user = (regs->cs & 0x3) == 3;
+    kernel::KernelLock::enter();
+    irq64_handler_locked(regs);
+    if (from_user) {
+        kernel::KernelLock::release();
+    } else {
+        kernel::KernelLock::leave();
+    }
+}
+
+static void irq64_handler_locked(registers_t *regs) {
+    /* The timer of a CPU other than the boot CPU: its own Local APIC, not the PIC */
+    if (regs->int_no == LAPIC_TIMER_VECTOR) {
+        kernel::Scheduler::timer_tick();
+        drivers::Lapic::eoi();
+        schedule_from_irq((regs->cs & 0x3) == 3);
+        return;
+    }
+
     /* Calculate IRQ number (interrupt number - 32) */
     uint8_t irq = (uint8_t)(regs->int_no - 32);
 
@@ -265,6 +295,10 @@ void irq64_init(void) {
     idt64_set_interrupt_gate(45, (uint64_t)irq13);
     idt64_set_interrupt_gate(46, (uint64_t)irq14);
     idt64_set_interrupt_gate(47, (uint64_t)irq15);
+
+    /* Local APIC vectors; only used once other CPUs are running */
+    idt64_set_interrupt_gate(LAPIC_TIMER_VECTOR, (uint64_t)irq_lapic_timer);
+    idt64_set_interrupt_gate(LAPIC_SPURIOUS_VECTOR, (uint64_t)irq_lapic_spurious);
 
     /* Register timer handler (IRQ 0) */
     irq64_register_handler(0, timer_handler);
