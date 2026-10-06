@@ -68,6 +68,7 @@ make debug              # Same, waiting for GDB on :1234
 
 make test               # Build with in-kernel tests (KTEST=1), boot, and check kernel tests + selftest + shell checks
 make test-all
+make lib-test           # Host-side tests of the user library (no cross compiler or QEMU)
 
 make clean              # Current arch only
 make clean-all          # Everything, including user/ builds
@@ -77,7 +78,7 @@ make info
 
 ### User Space
 
-`user/lib` is the user library (syscall wrappers, printf, string). `user/init` is the first
+`user/lib` is the user library (syscall wrappers, printf, string, math). `user/init` is the first
 process; its ELF is embedded into the kernel image by `src/kernel/init_image.S` (`.incbin`),
 so there is no disk image. init starts the modules and is the name server (`names.h` in
 `user/lib`). Resident modules are embedded into init the same way (`user/init/modules.S`):
@@ -97,10 +98,11 @@ allowed with `hw_find` (`virtio_open` for virtio devices) and can touch nothing 
 ports a process is allowed are opened in the TSS I/O permission bitmap while it runs, so
 `io_read`/`io_write` in the user library execute `in`/`out` directly for those ports and only
 fall back to the system call for the rest. Both file services share the protocol in `fs.h` and the server
-skeleton in `fs_server.h`; virtio drivers share `virtio.h`; servers that take a shared buffer
+skeleton in `fs_server.h`, which also owns the directory rules (paths are written from the root with
+`/`, there is no current directory; a backend only stores a flat table of full paths); virtio drivers share `virtio.h`; servers that take a shared buffer
 from each client use `clients.h`. Other programs (`user/selftest`, `user/ls`, `user/cat`,
-`user/cp`, `user/rm`, `user/echo`, `user/write`, `user/grep`, `user/wc`, `user/disk`, `user/ping`, `user/ifconfig`, `user/dns`,
-`user/http`, `user/echod`, `user/sleep`, `user/hello`) go into the boot image: a ustar archive of `user/bootfs/*` plus the programs
+`user/cp`, `user/rm`, `user/mkdir`, `user/echo`, `user/write`, `user/grep`, `user/wc`, `user/disk`, `user/ping`, `user/ifconfig`, `user/dns`,
+`user/http`, `user/echod`, `user/sleep`, `user/hello`) go into the boot image: a ustar archive of `user/bootfs/` (subdirectories become directories) plus the programs
 in `BOOT_PROGRAMS` (`user/ramfs/Makefile`), embedded in ramfs and unpacked at startup. sh
 runs them with fork + exec, and runs the `rc` file (which starts `selftest`) at boot.
 To add a program, create `user/<name>/` and add it to `BOOT_PROGRAMS`. Every user program's
@@ -118,15 +120,21 @@ the serial port from the host; add checks there for anything that needs typed in
 job control). Patterns in shell-test.sh must not assume a line starts at column 0 unless the
 shell is known to be idle: output of background programs follows the `> ` prompt.
 
+The parts of `user/lib` that do not need the kernel (printf family, string and math functions)
+also have host-side tests: `make lib-test` compiles them with the host compiler and runs
+`user/lib/tests/lib_test.cpp` in a couple of seconds, with no cross compiler and no QEMU. Add
+checks there for pure library code; it is the fastest loop there is.
+
 Every push to `main` and every pull request runs `make test` for each architecture on GitHub
 Actions (`.github/workflows/test.yml`, three jobs on macOS runners with the Homebrew cross
-compilers). The logs of each run (`test.log`, `shell-test.log`) are uploaded as artifacts. If
+compilers), plus `make lib-test`. The logs of each run (`test.log`, `shell-test.log`) are uploaded as artifacts. If
 you add a build dependency, add it to the workflow's `brew install` line too.
 
 ### Dependencies
 
 - QEMU for emulation
-- Cross-compiler toolchain (see `scripts/cross-compiler-install.sh`)
+- Cross-compiler toolchain, GCC 10 or newer for `-std=gnu++20`: Homebrew on macOS,
+  `scripts/cross-compiler-install.sh` (builds all three targets from source) on Ubuntu/Debian
 
 ## Project Structure
 
@@ -159,8 +167,8 @@ CastorOS/
 │   ├── ramfs/              # In-memory file service (module, no hardware), holds the boot image
 │   ├── sh/                 # Command line (module, no hardware): runs programs, background jobs, Ctrl-C
 │   ├── selftest/           # User-space self-checks, in the boot image, run from rc at boot
-│   ├── ls/ cat/ cp/ rm/ echo/ write/ grep/ wc/ sleep/ disk/ ping/ ifconfig/ dns/ http/ echod/ hello/   # Programs in the boot image
-│   ├── bootfs/             # Static files for the boot image (rc, readme.txt)
+│   ├── ls/ cat/ cp/ rm/ mkdir/ echo/ write/ grep/ wc/ sleep/ disk/ ping/ ifconfig/ dns/ http/ echod/ hello/   # Programs in the boot image
+│   ├── bootfs/             # Static files for the boot image (rc, readme.txt, docs/)
 │   ├── program.mk          # Shared build rules for user programs
 │   ├── arch.mk             # Compiler and flags shared by the user library and all programs
 │   └── linker/             # User linker scripts
@@ -305,6 +313,6 @@ make sources                   # 列出源文件
 ### 常见问题
 
 1. **手动运行用的 timeout 未找到**: `brew install coreutils` (macOS；`make test` 本身不需要)
-2. **交叉编译器未找到**: 运行 `scripts/cross-compiler-install.sh`
+2. **交叉编译器未找到**: macOS 用 `brew install i686-elf-gcc x86_64-elf-gcc aarch64-elf-gcc`，Ubuntu/Debian 运行 `scripts/cross-compiler-install.sh`
 3. **QEMU 未找到**: `brew install qemu`
 4. **QEMU 无输出或卡住**: 先看主机负载（`uptime`），不要并行跑构建和测试

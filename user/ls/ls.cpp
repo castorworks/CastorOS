@@ -1,21 +1,33 @@
-// ls - 列出文件服务里的文件
+// ls - 列出一个目录里有什么
 //
-//   ls          内存文件系统
-//   ls disk:    磁盘文件系统
+//   ls              内存文件系统的根目录
+//   ls docs         内存文件系统里的 docs 目录
+//   ls disk:        磁盘文件系统的根目录
+//   ls disk:notes   磁盘文件系统里的 notes 目录
+//
+// 每行一项：大小和名字；目录的名字后面带一个 '/'。
 
 #include <stdio.h>
+#include <string.h>
 #include <fs.h>
 
 int main(int argc, char **argv) {
-    const char *where = argc > 1 ? argv[1] : "";
+    const char *dir = argc > 1 ? argv[1] : "";
     char name[FS_NAME_MAX];
     uint32_t size;
+    bool is_dir;
     int i = 0;
-    for (; fs_list(where, i, name, &size) == 0; i++) {
-        printf("%8u  %s%s\n", size, where, name);
+    for (; fs_list(dir, i, name, &size, &is_dir) == 0; i++) {
+        if (is_dir) {
+            printf("%8s  %s/\n", "", name);
+        } else {
+            printf("%8u  %s\n", size, name);
+        }
     }
     if (i == 0 && argc > 1) {
-        printf("(nothing in %s)\n", where);
+        // 空目录和"没有这个目录"在 fs_list 那里都是"没有第 0 项"：再问一下它上一级才分得清，
+        // 这里只说看到的事实
+        printf("(nothing in %s)\n", dir);
     }
     return 0;
 }

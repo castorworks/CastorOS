@@ -48,10 +48,10 @@ static void eth_send(const uint8_t *dst_mac, uint16_t ethertype, const uint8_t *
     nic_send(frame, total);
 }
 
-// ARP 表：每一项可以挂一个等地址解析的 IP 包
 #define ARP_ENTRIES     8
 #define ARP_RETRY_MS    500
 #define ARP_TRIES       3
+#define ARP_PENDING     8           // 所有表项合起来最多挂这么多个等地址解析的 IP 包
 
 static struct arp_entry {
     uint32_t ip;                    // 0 表示空闲
@@ -59,9 +59,51 @@ static struct arp_entry {
     uint8_t mac[6];
     uint64_t asked_at;              // 上次发请求的时间
     int tries;
-    size_t pending_len;             // 等解析结果的 IP 包（0 表示没有）
-    uint8_t pending[FRAME_MAX - ETH_HDR];
 } arp_table[ARP_ENTRIES];
+
+// 等地址解析的 IP 包。一个池子所有表项共用：往同一个还没解析的地址连着发几个包
+// （比如一个大包的几个分片）时都能留住，解析完成后按原来的顺序发出去。满了就丢新来的
+static struct {
+    uint32_t next_hop;              // 等的是谁的 MAC；0 表示空闲
+    uint32_t seq;                   // 先来后到
+    size_t len;
+    uint8_t data[FRAME_MAX - ETH_HDR];
+} arp_pending[ARP_PENDING];
+static uint32_t arp_pending_seq;
+
+static void pending_add(uint32_t next_hop, const uint8_t *packet, size_t len) {
+    for (int i = 0; i < ARP_PENDING; i++) {
+        if (arp_pending[i].next_hop == 0) {
+            arp_pending[i].next_hop = next_hop;
+            arp_pending[i].seq = arp_pending_seq++;
+            arp_pending[i].len = len;
+            memcpy(arp_pending[i].data, packet, len);
+            return;
+        }
+    }
+}
+
+static void eth_send(const uint8_t *dst_mac, uint16_t ethertype, const uint8_t *payload, size_t len);
+
+/** 等 next_hop 的包：mac 不为 NULL 就按先后顺序发出去，否则（解析失败）丢掉 */
+static void pending_flush(uint32_t next_hop, const uint8_t *mac) {
+    for (;;) {
+        int first = -1;
+        for (int i = 0; i < ARP_PENDING; i++) {
+            if (arp_pending[i].next_hop == next_hop &&
+                (first < 0 || (int32_t)(arp_pending[i].seq - arp_pending[first].seq) < 0)) {
+                first = i;
+            }
+        }
+        if (first < 0) {
+            return;
+        }
+        if (mac) {
+            eth_send(mac, ETHERTYPE_IP, arp_pending[first].data, arp_pending[first].len);
+        }
+        arp_pending[first].next_hop = 0;
+    }
+}
 
 static struct arp_entry *arp_find(uint32_t ip) {
     for (int i = 0; i < ARP_ENTRIES; i++) {
@@ -108,8 +150,7 @@ static void arp_send_ip(uint32_t next_hop, const uint8_t *packet, size_t len) {
         memset(e, 0, sizeof(*e));
         e->ip = next_hop;
     }
-    memcpy(e->pending, packet, len);
-    e->pending_len = len;
+    pending_add(next_hop, packet, len);
     if (e->tries == 0) {
         arp_request(e);
     }
@@ -132,10 +173,7 @@ static void arp_input(const uint8_t *data, size_t len) {
         memcpy(e->mac, p.sha, 6);
         e->resolved = true;
         e->tries = 0;
-        if (e->pending_len > 0) {
-            eth_send(e->mac, ETHERTYPE_IP, e->pending, e->pending_len);
-            e->pending_len = 0;
-        }
+        pending_flush(e->ip, e->mac);
     }
 
     // 有人问我们的地址：回答
@@ -160,7 +198,8 @@ bool arp_tick(uint64_t now) {
         }
         if (now - e->asked_at >= ARP_RETRY_MS) {
             if (e->tries >= ARP_TRIES) {
-                e->ip = 0;          // 不可达：丢掉挂起的包
+                pending_flush(e->ip, NULL);     // 不可达：丢掉挂起的包
+                e->ip = 0;
                 continue;
             }
             arp_request(e);

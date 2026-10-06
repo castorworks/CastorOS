@@ -7,10 +7,12 @@
 // 磁盘格式（块大小 4096 字节）：
 //   块 0            超级块
 //   块 1..          FAT：每个块一个 32 位表项，记录文件的块链
-//   之后 DIR_BLOCKS 块   目录：定长表项，命名空间是平的
+//   之后 DIR_BLOCKS 块   目录表：定长表项，每一项是一个文件或一个目录，名字是完整的路径
+//                   （"docs/notes.txt"）。目录的规则在 fs_server 里，这里只是一张平的表
 //   其余            数据块
 // FAT 和目录在内存里各有一份完整的副本；每次修改立刻把涉及的块写回磁盘，
-// 没有延迟写，所以不需要 sync。磁盘上没有有效的超级块时自动格式化。
+// 没有延迟写，所以不需要 sync。最近用过的数据块也留在内存里（缓存），读的时候不用再去
+// 找驱动；写仍然立刻落盘。磁盘上没有有效的超级块时自动格式化。
 
 #include <syscall.h>
 #include <stdio.h>
@@ -44,11 +46,13 @@ struct superblock {
 };
 
 struct dir_entry {
-    char name[FS_NAME_MAX];     // name[0] == 0 表示空闲
+    char name[FS_NAME_MAX];     // 完整的路径；name[0] == 0 表示空闲
     uint32_t size;
     uint32_t first_block;       // FAT_END 表示还没有数据块
-    uint32_t reserved[14];      // 凑成 128 字节
+    uint32_t flags;             // ENTRY_DIR：这一项是目录（没有数据块）
+    uint32_t reserved[13];      // 凑成 128 字节
 };
+#define ENTRY_DIR   0x1
 
 #define ENTRIES_PER_BLOCK   (BLOCK_SIZE / sizeof(struct dir_entry))
 #define MAX_FILES           (DIR_BLOCKS * ENTRIES_PER_BLOCK)
@@ -62,24 +66,83 @@ static char block_buf[BLOCK_SIZE];          // 读改写数据块用
 // 块读写
 // ============================================================================
 
-static bool block_read(uint32_t block, void *buf) {
+/** 直接读写磁盘上的一块。元数据（超级块、FAT、目录）用这两个：它们在内存里本来就有完整的副本 */
+static bool disk_read(uint32_t block, void *buf) {
     return blk_read((uint64_t)block * SECTORS_PER_BLOCK, buf, SECTORS_PER_BLOCK) == 0;
 }
 
-static bool block_write(uint32_t block, const void *buf) {
+static bool disk_write(uint32_t block, const void *buf) {
     return blk_write((uint64_t)block * SECTORS_PER_BLOCK, buf, SECTORS_PER_BLOCK) == 0;
+}
+
+// 数据块的缓存：最近用过的几块留在内存里，再读就不用去找块设备驱动了（每次去都是一次
+// IPC 加一次磁盘请求）。写的时候同时写磁盘和缓存（write-through），磁盘上的内容从不落后，
+// 所以仍然不需要 sync，断电也不会比没有缓存时多丢东西。
+#define CACHE_BLOCKS 16
+
+static struct {
+    uint32_t block;                 // 0 表示空（块 0 是超级块，不会进缓存）
+    uint32_t used;                  // 上次用到的时刻（cache_clock 的值），用来挑最久没用的
+    char data[BLOCK_SIZE];
+} cache[CACHE_BLOCKS];
+static uint32_t cache_clock;
+
+/** block 在缓存里的位置；不在的话返回一个可以拿来用的位置（空的，或者最久没用的），*hit 说明是哪种 */
+static int cache_slot(uint32_t block, bool *hit) {
+    int victim = 0;
+    for (int i = 0; i < CACHE_BLOCKS; i++) {
+        if (cache[i].block == block) {
+            *hit = true;
+            return i;
+        }
+        if (cache[i].block == 0 || (cache[victim].block != 0 && cache[i].used < cache[victim].used)) {
+            victim = i;
+        }
+    }
+    *hit = false;
+    return victim;
+}
+
+static bool block_read(uint32_t block, void *buf) {
+    bool hit;
+    int i = cache_slot(block, &hit);
+    if (!hit) {
+        cache[i].block = 0;         // 读失败的话这个位置里是半截内容：先作废
+        if (!disk_read(block, cache[i].data)) {
+            return false;
+        }
+        cache[i].block = block;
+    }
+    cache[i].used = ++cache_clock;
+    memcpy(buf, cache[i].data, BLOCK_SIZE);
+    return true;
+}
+
+static bool block_write(uint32_t block, const void *buf) {
+    bool hit;
+    int i = cache_slot(block, &hit);
+    if (!disk_write(block, buf)) {
+        if (hit) {
+            cache[i].block = 0;     // 不知道磁盘上现在是什么：别再相信缓存里的
+        }
+        return false;
+    }
+    cache[i].block = block;
+    cache[i].used = ++cache_clock;
+    memcpy(cache[i].data, buf, BLOCK_SIZE);
+    return true;
 }
 
 /** 把 FAT 里包含第 block 项的那一块写回磁盘 */
 static bool fat_flush(uint32_t block) {
     uint32_t index = block / (BLOCK_SIZE / sizeof(uint32_t));
-    return block_write(sb.fat_start + index, (char *)fat + (size_t)index * BLOCK_SIZE);
+    return disk_write(sb.fat_start + index, (char *)fat + (size_t)index * BLOCK_SIZE);
 }
 
 /** 把目录里包含第 file 项的那一块写回磁盘 */
 static bool dir_flush(int file) {
     uint32_t index = (uint32_t)file / ENTRIES_PER_BLOCK;
-    return block_write(sb.dir_start + index, (char *)dir + (size_t)index * BLOCK_SIZE);
+    return disk_write(sb.dir_start + index, (char *)dir + (size_t)index * BLOCK_SIZE);
 }
 
 // ============================================================================
@@ -167,16 +230,25 @@ static int diskfs_find(const char *name) {
     return -1;
 }
 
-static int diskfs_create(const char *name) {
+static int diskfs_create(const char *name, bool directory) {
     for (int i = 0; i < (int)MAX_FILES; i++) {
         if (dir[i].name[0] == '\0') {
             memset(&dir[i], 0, sizeof(dir[i]));
             strcpy(dir[i].name, name);
             dir[i].first_block = FAT_END;
+            dir[i].flags = directory ? ENTRY_DIR : 0;
             return dir_flush(i) ? i : -1;
         }
     }
     return -1;
+}
+
+static bool diskfs_is_dir(int file) {
+    return (dir[file].flags & ENTRY_DIR) != 0;
+}
+
+static const char *diskfs_path(int file) {
+    return dir[file].name;
 }
 
 static long diskfs_size(int file) {
@@ -257,24 +329,18 @@ static int diskfs_remove(int file) {
     return dir_flush(file) && chain_free(first) ? 0 : -1;
 }
 
-static int diskfs_list(int index, char *name, uint32_t *size) {
+static int diskfs_entry(int index) {
     for (int i = 0; i < (int)MAX_FILES; i++) {
-        if (dir[i].name[0] == '\0') {
-            continue;
+        if (dir[i].name[0] != '\0' && index-- == 0) {
+            return i;
         }
-        if (index == 0) {
-            strcpy(name, dir[i].name);
-            *size = dir[i].size;
-            return 0;
-        }
-        index--;
     }
     return -1;
 }
 
 static const struct fs_backend diskfs_backend = {
-    diskfs_find, diskfs_create, diskfs_size, diskfs_read, diskfs_write,
-    diskfs_truncate, diskfs_remove, diskfs_list,
+    diskfs_find, diskfs_create, diskfs_is_dir, diskfs_path, diskfs_size, diskfs_read, diskfs_write,
+    diskfs_truncate, diskfs_remove, diskfs_entry,
 };
 
 // ============================================================================
@@ -299,18 +365,18 @@ static bool format(uint32_t total_blocks) {
     }
     memset(dir, 0, sizeof(dir));
     for (uint32_t i = 0; i < sb.fat_blocks; i++) {
-        if (!block_write(sb.fat_start + i, (char *)fat + (size_t)i * BLOCK_SIZE)) {
+        if (!disk_write(sb.fat_start + i, (char *)fat + (size_t)i * BLOCK_SIZE)) {
             return false;
         }
     }
     for (uint32_t i = 0; i < sb.dir_blocks; i++) {
-        if (!block_write(sb.dir_start + i, (char *)dir + (size_t)i * BLOCK_SIZE)) {
+        if (!disk_write(sb.dir_start + i, (char *)dir + (size_t)i * BLOCK_SIZE)) {
             return false;
         }
     }
     memset(block_buf, 0, BLOCK_SIZE);
     memcpy(block_buf, &sb, sizeof(sb));
-    return block_write(0, block_buf);
+    return disk_write(0, block_buf);
 }
 
 /** @return 1 挂载了已有的文件系统，2 新格式化的，0 失败 */
@@ -324,7 +390,7 @@ static int mount(void) {
 
     size_t fat_bytes = (((size_t)total_blocks * sizeof(uint32_t)) + BLOCK_SIZE - 1) & ~(size_t)(BLOCK_SIZE - 1);
     fat = (uint32_t *)mmap(NULL, fat_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (fat == MAP_FAILED || !block_read(0, block_buf)) {
+    if (fat == MAP_FAILED || !disk_read(0, block_buf)) {
         return 0;
     }
 
@@ -339,12 +405,12 @@ static int mount(void) {
     }
 
     for (uint32_t i = 0; i < sb.fat_blocks; i++) {
-        if (!block_read(sb.fat_start + i, (char *)fat + (size_t)i * BLOCK_SIZE)) {
+        if (!disk_read(sb.fat_start + i, (char *)fat + (size_t)i * BLOCK_SIZE)) {
             return 0;
         }
     }
     for (uint32_t i = 0; i < sb.dir_blocks; i++) {
-        if (!block_read(sb.dir_start + i, (char *)dir + (size_t)i * BLOCK_SIZE)) {
+        if (!disk_read(sb.dir_start + i, (char *)dir + (size_t)i * BLOCK_SIZE)) {
             return 0;
         }
     }

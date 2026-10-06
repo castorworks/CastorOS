@@ -195,12 +195,24 @@ int fs_unlink(const char *name) {
     return (int)fs_request(c, &m);
 }
 
-int fs_list(const char *where, int index, char *name, uint32_t *size) {
-    const char *rest = where ? where : "";
-    struct conn *c = fs_connect(route(&rest));
+int fs_mkdir(const char *path) {
+    int index;
+    struct conn *c = put_name(path, &index);
     if (!c) {
         return -1;
     }
+    struct ipc_msg m = {};
+    m.label = FS_MKDIR;
+    return (int)fs_request(c, &m);
+}
+
+int fs_list(const char *dir, int index, char *name, uint32_t *size, bool *is_dir) {
+    const char *rest = dir ? dir : "";
+    struct conn *c = fs_connect(route(&rest));
+    if (!c || strlen(rest) >= FS_NAME_MAX) {
+        return -1;
+    }
+    strcpy(c->buf, rest);       // 空串是根目录
     struct ipc_msg m = {};
     m.label = FS_LIST;
     m.data[0] = (uint64_t)index;
@@ -211,6 +223,9 @@ int fs_list(const char *where, int index, char *name, uint32_t *size) {
     strcpy(name, c->buf);
     if (size) {
         *size = (uint32_t)m.data[1];
+    }
+    if (is_dir) {
+        *is_dir = m.data[2] != 0;
     }
     return 0;
 }

@@ -5,13 +5,17 @@
 //   1. 启动模块（映像带在自己身上，见 modules.S）
 //   2. 分配设备：只有 init 有特权。模块启动前都先放弃特权；驱动在放弃之前由 init 把
 //      它的设备（端口或设备内存、中断线）记进许可表，之后它只碰得到这一个设备
-//   3. 充当名字服务：服务进程把名字登记到这里，客户按名字查到它的 PID（协议见 names.h）
+//   3. 充当名字服务：服务进程把名字登记到这里，客户按名字查到它的 PID（协议见 names.h）。
+//      模块的服务名是留给它的：只有 init 启动的那个进程能登记，别的进程冒充不了
 
 #include <syscall.h>
 #include <stdio.h>
 #include <string.h>
 #include <names.h>
 #include <virtio.h>
+#include <blk.h>
+#include <net.h>
+#include <fs.h>
 
 extern "C" const char uart_image_start[], uart_image_end[];
 extern "C" const char blk_image_start[], blk_image_end[];
@@ -54,9 +58,31 @@ static void allow_net(void) {
 // 模块启动
 // ============================================================================
 
-// fork 之后用模块的 ELF 映像替换子进程。allow 不为 NULL 表示这个模块是驱动：
-// 子进程放弃特权之前先调用它，把驱动的设备许可给自己
-static int start_module(const char *name, const char *image, const char *image_end, void (*allow)(void)) {
+// 留给模块的服务名：只有 pid 这个进程能登记。模块退出之后名字仍然留着（init 不重启模块），
+// 别人顶替不了：客户按这个名字找到的要么是 init 启动的那个服务，要么谁也找不到
+#define MAX_RESERVED 8
+
+static struct {
+    const char *name;
+    int pid;
+} reserved[MAX_RESERVED];
+static int reserved_count;
+
+/** name 是留给某个模块的话返回那个模块的 PID，否则返回 0 */
+static int reserved_for(const char *name) {
+    for (int i = 0; i < reserved_count; i++) {
+        if (strcmp(reserved[i].name, name) == 0) {
+            return reserved[i].pid;
+        }
+    }
+    return 0;
+}
+
+// fork 之后用模块的 ELF 映像替换子进程。service 是这个模块要登记的服务名（没有就是 NULL），
+// 留给它一个人用。allow 不为 NULL 表示这个模块是驱动：子进程放弃特权之前先调用它，
+// 把驱动的设备许可给自己
+static int start_module(const char *name, const char *service, const char *image, const char *image_end,
+                        void (*allow)(void)) {
     int parent = getpid();
     int pid = fork();
     if (pid == 0) {
@@ -76,6 +102,12 @@ static int start_module(const char *name, const char *image, const char *image_e
         // 两个进程同时找会互相打断（子进程中途退出时这里返回 -1，不会一直等）
         struct ipc_msg done;
         ipc_recv(pid, &done);
+    }
+    // 这时还没有任何登记请求被处理过（init 要回到主循环才收请求），所以不会被人抢先
+    if (service && pid > 0 && reserved_count < MAX_RESERVED) {
+        reserved[reserved_count].name = service;
+        reserved[reserved_count].pid = pid;
+        reserved_count++;
     }
     printf("init: started %s (pid %d%s)\n", name, pid, allow ? ", driver" : "");
     return pid;
@@ -124,6 +156,10 @@ static bool register_name(const char *name, int pid) {
     if (name[0] == '\0' || find_name(name) >= 0) {
         return false;
     }
+    int owner = reserved_for(name);
+    if (owner != 0 && owner != pid) {
+        return false;       // 留给模块的名字：别的进程不能登记
+    }
     for (int i = 0; i < MAX_NAMES; i++) {
         if (names[i].pid == 0) {
             strcpy(names[i].name, name);
@@ -137,12 +173,12 @@ static bool register_name(const char *name, int pid) {
 int main() {
     printf("init: started, pid=%d\n", getpid());
 
-    start_module("uart", uart_image_start, uart_image_end, allow_uart);
-    start_module("blk", blk_image_start, blk_image_end, allow_blk);
-    start_module("net", net_image_start, net_image_end, allow_net);
-    start_module("ramfs", ramfs_image_start, ramfs_image_end, NULL);
-    start_module("diskfs", diskfs_image_start, diskfs_image_end, NULL);
-    start_module("sh", sh_image_start, sh_image_end, NULL);
+    start_module("uart", "uart", uart_image_start, uart_image_end, allow_uart);
+    start_module("blk", BLK_SERVICE_NAME, blk_image_start, blk_image_end, allow_blk);
+    start_module("net", NET_SERVICE_NAME, net_image_start, net_image_end, allow_net);
+    start_module("ramfs", FS_SERVICE_NAME, ramfs_image_start, ramfs_image_end, NULL);
+    start_module("diskfs", FS_DISK_SERVICE_NAME, diskfs_image_start, diskfs_image_end, NULL);
+    start_module("sh", NULL, sh_image_start, sh_image_end, NULL);
 
     struct ipc_msg m;
     for (;;) {

@@ -28,7 +28,7 @@
 
 + Cursor IDE 或者其他你喜欢的 IDE
 
-+ 编译环境安装脚本，参考 `scripts/cross-compiler-install.sh`
++ 编译环境：macOS 用 Homebrew，Ubuntu/Debian 用 `scripts/cross-compiler-install.sh`（见下文）
 
 ## 多架构交叉编译器安装
 
@@ -67,101 +67,41 @@ aarch64-elf-gcc --version
 nasm -v
 ```
 
-### 方法二：从源码编译 (Ubuntu/Linux)
+### 方法二：从源码编译 (Ubuntu/Debian)
 
-#### i686 交叉编译器
-
-运行项目提供的安装脚本：
+发行版的仓库里没有这三个裸机目标的 GCC，要自己编译。项目里的脚本把三个都装好，
+同时用 apt 装上 NASM 和 QEMU：
 
 ```bash
-bash scripts/cross-compiler-install.sh
+bash scripts/cross-compiler-install.sh          # 三个架构都装
+bash scripts/cross-compiler-install.sh i686-elf # 只装一个（i686-elf / x86_64-elf / aarch64-elf）
+bash scripts/cross-compiler-install.sh -y       # 不提问，已经装好的跳过
 ```
 
-或手动安装：
+它编译的是 binutils 2.45.1 和 GCC 15.2.0（只要 C/C++ 编译器和 libgcc，不要 C 库），和
+macOS 上 Homebrew 装的版本一样。内核是用 `-std=gnu++20` 编译的，所以 GCC 至少要 10；
+更早的版本（比如 Ubuntu 20.04 自带年代的 9.x）不认识这个选项。
+
+- 默认装到 `/usr/local/cross`，并把 `/usr/local/cross/bin` 加进 `~/.bashrc` 的 `PATH`；
+  用 `PREFIX=...` 换地方。
+- 源码默认从中科大的镜像下载；在国外用 `GNU_MIRROR=https://ftpmirror.gnu.org/gnu`。
+- 每个目标要编译 15-40 分钟，三个加起来临时占 5GB 左右（`~/cross-compiler`，装完可以删）。
+
+脚本做的事就是对每个目标重复这两步，想手动来可以照着做：
 
 ```bash
-# 安装依赖
-sudo apt update
-sudo apt install -y build-essential bison flex libgmp3-dev libmpc-dev \
-                    libmpfr-dev texinfo libisl-dev nasm wget
-
-# 配置
-export PREFIX="/usr/local/cross"
-export TARGET=i686-elf
+export PREFIX=/usr/local/cross TARGET=i686-elf      # 或 x86_64-elf、aarch64-elf
 export PATH="$PREFIX/bin:$PATH"
 
-# 下载并编译 binutils
-wget https://mirrors.ustc.edu.cn/gnu/binutils/binutils-2.34.tar.gz
-tar -xzf binutils-2.34.tar.gz
 mkdir build-binutils && cd build-binutils
-../binutils-2.34/configure --target=$TARGET --prefix="$PREFIX" --with-sysroot --disable-nls --disable-werror
-make -j$(nproc)
-sudo make install
+../binutils-2.45.1/configure --target=$TARGET --prefix="$PREFIX" --with-sysroot --disable-nls --disable-werror
+make -j$(nproc) && sudo make install
 cd ..
 
-# 下载并编译 GCC
-wget https://mirrors.ustc.edu.cn/gnu/gcc/gcc-9.3.0/gcc-9.3.0.tar.gz
-tar -xzf gcc-9.3.0.tar.gz
 mkdir build-gcc && cd build-gcc
-../gcc-9.3.0/configure --target=$TARGET --prefix="$PREFIX" --disable-nls --enable-languages=c,c++ --without-headers
+../gcc-15.2.0/configure --target=$TARGET --prefix="$PREFIX" --disable-nls --enable-languages=c,c++ --without-headers
 make -j$(nproc) all-gcc all-target-libgcc
 sudo make install-gcc install-target-libgcc
-
-# 添加到 PATH
-echo 'export PATH="/usr/local/cross/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
-```
-
-#### x86_64 交叉编译器
-
-```bash
-export PREFIX="/usr/local/cross"
-export TARGET=x86_64-elf
-export PATH="$PREFIX/bin:$PATH"
-
-# 编译 binutils
-mkdir build-binutils-x64 && cd build-binutils-x64
-../binutils-2.34/configure --target=$TARGET --prefix="$PREFIX" --with-sysroot --disable-nls --disable-werror
-make -j$(nproc)
-sudo make install
-cd ..
-
-# 编译 GCC
-mkdir build-gcc-x64 && cd build-gcc-x64
-../gcc-9.3.0/configure --target=$TARGET --prefix="$PREFIX" --disable-nls --enable-languages=c,c++ --without-headers
-make -j$(nproc) all-gcc all-target-libgcc
-sudo make install-gcc install-target-libgcc
-```
-
-#### ARM64 交叉编译器
-
-```bash
-export PREFIX="/usr/local/cross"
-export TARGET=aarch64-elf
-export PATH="$PREFIX/bin:$PATH"
-
-# 编译 binutils
-mkdir build-binutils-arm64 && cd build-binutils-arm64
-../binutils-2.34/configure --target=$TARGET --prefix="$PREFIX" --with-sysroot --disable-nls --disable-werror
-make -j$(nproc)
-sudo make install
-cd ..
-
-# 编译 GCC
-mkdir build-gcc-arm64 && cd build-gcc-arm64
-../gcc-9.3.0/configure --target=$TARGET --prefix="$PREFIX" --disable-nls --enable-languages=c,c++ --without-headers
-make -j$(nproc) all-gcc all-target-libgcc
-sudo make install-gcc install-target-libgcc
-```
-
-### 安装 QEMU 模拟器
-
-```bash
-# Ubuntu/Debian
-sudo apt install -y qemu-system-i386 qemu-system-x86 qemu-system-arm
-
-# macOS
-brew install qemu
 ```
 
 ### 验证安装
@@ -194,12 +134,13 @@ qemu-system-aarch64 --version
 make build-all          # 构建三个架构
 make run                # 在 QEMU 里运行 i686，串口控制台接到当前终端
 make test-all           # 三个架构各跑一遍内核测试、用户态自检和命令行检查
+make lib-test           # 用户库的宿主机测试：几秒钟，不需要交叉编译器和 QEMU
 ```
 
 ### 持续集成
 
 每次推送到 `main`、每个 PR，GitHub Actions 都会对三个架构各跑一遍 `make test ARCH=<arch>`
-（`.github/workflows/test.yml`）。它用 macOS 的 runner 和上面“方法一”里的 Homebrew 包，
+（`.github/workflows/test.yml`），另外还有一个只跑 `make lib-test` 的任务。它用 macOS 的 runner 和上面“方法一”里的 Homebrew 包，
 所以和在 macOS 上本地开发是同一套工具。三个架构各是一个独立的任务，一个失败不影响另外两个跑完。
 每次运行的日志（`test.log` 是 QEMU 的全部输出，`shell-test.log` 是命令行检查逐项的结果）作为
 artifact 上传，失败时先下载它们来看。runner 比开发机慢，所以那里把等待的上限放宽了

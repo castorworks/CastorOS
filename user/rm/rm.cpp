@@ -11,7 +11,7 @@ int main(int argc, char **argv) {
     int status = 0;
     for (int i = 1; i < argc; i++) {
         if (fs_unlink(argv[i]) != 0) {
-            eprintf("rm: %s: no such file\n", argv[i]);
+            eprintf("rm: cannot remove %s (no such file, or a directory that is not empty)\n", argv[i]);
             status = 1;
         }
     }

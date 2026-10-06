@@ -12,13 +12,17 @@
 //
 // 文件名、读写的数据都不放在消息里，而是放在客户与服务之间的一块共享缓冲区：
 // 客户第一次使用时用 mem_grant 把缓冲区共享给服务，之后每个请求只在消息里
-// 带参数，内容在缓冲区里。命名空间是平的，没有目录。
+// 带参数，内容在缓冲区里。
+//
+// 文件用路径来指：各段之间用 '/' 隔开，总是从根写起（"docs/notes.txt"、"disk:a/b/c"）。
+// 没有"当前目录"，也没有 "." 和 ".."；开头和结尾多写的 '/' 不算数。文件只能建在已经
+// 存在的目录里（根目录总是存在），目录用 fs_mkdir 建，空了才能删。
 
 #define FS_SERVICE_NAME         "fs"
 #define FS_DISK_SERVICE_NAME    "diskfs"
 #define FS_DISK_PREFIX          "disk:"
 
-/** 文件名最大长度（含结尾 NUL） */
+/** 路径的最大长度（整条路径，含结尾 NUL） */
 #define FS_NAME_MAX     64
 
 /** 共享缓冲区大小，也是单次请求能传输的最大字节数 */
@@ -26,14 +30,16 @@
 
 // 请求的 label。应答的 data[0] 是结果（负数表示失败，按 int64_t 解释）
 enum {
-    FS_OPEN   = 1,  // 缓冲区: 文件名；data[0]: FS_O_* 标志。应答 data[0]: 文件句柄
+    FS_OPEN   = 1,  // 缓冲区: 路径；data[0]: FS_O_* 标志。应答 data[0]: 文件句柄
     FS_CLOSE  = 2,  // data[0]: 句柄
     FS_READ   = 3,  // data[0]: 句柄, data[1]: 偏移, data[2]: 长度。应答 data[0]: 读到的字节数，内容在缓冲区
     FS_WRITE  = 4,  // data[0]: 句柄, data[1]: 偏移, data[2]: 长度；缓冲区: 内容。应答 data[0]: 写入的字节数
-    FS_UNLINK = 5,  // 缓冲区: 文件名
+    FS_UNLINK = 5,  // 缓冲区: 路径。删除一个文件，或者一个空目录
     FS_SIZE   = 7,  // data[0]: 句柄。应答 data[0]: 文件大小
-    FS_LIST   = 6,  // data[0]: 序号（从 0 开始）。应答 data[0]: 0 有这一项 / -1 没有了，
-                    //   data[1]: 文件大小，文件名在缓冲区
+    FS_LIST   = 6,  // 缓冲区: 目录的路径（空串 = 根目录）；data[0]: 序号（从 0 开始）。
+                    //   应答 data[0]: 0 有这一项 / -1 没有了（或者那不是一个目录），
+                    //   data[1]: 文件大小，data[2]: 是不是目录，这一项的名字（不含目录部分）在缓冲区
+    FS_MKDIR  = 8,  // 缓冲区: 路径。创建一个目录（它的上一级必须已经存在）
 };
 
 // FS_OPEN 的标志
@@ -53,14 +59,20 @@ long fs_write(int fd, uint32_t offset, const void *buf, size_t len);
 /** 文件大小（字节），失败返回 -1 */
 long fs_size(int fd);
 
+/** 删除一个文件，或者一个空目录 */
 int fs_unlink(const char *name);
 
+/** 创建目录；它的上一级必须已经存在。@return 0 成功，-1 失败（已经有同名的东西、上一级不存在…） */
+int fs_mkdir(const char *path);
+
 /**
- * 列出第 index 个文件
- * @param where "" 列内存文件系统，FS_DISK_PREFIX 列磁盘文件系统
- * @param name 至少 FS_NAME_MAX 字节，得到不带前缀的文件名
- * @return 0 成功，-1 没有这一项（或那个文件系统不存在）
+ * 列出目录 dir 的第 index 个成员
+ * @param dir "" 是内存文件系统的根目录，"docs" 是它下面的一个目录；
+ *            FS_DISK_PREFIX、"disk:docs" 是磁盘文件系统的
+ * @param name 至少 FS_NAME_MAX 字节，得到这一项的名字（不含目录部分和前缀）
+ * @param size、is_dir 可以是 NULL
+ * @return 0 成功，-1 没有这一项（或者 dir 不是一个目录，或者那个文件系统不存在）
  */
-int fs_list(const char *where, int index, char *name, uint32_t *size);
+int fs_list(const char *dir, int index, char *name, uint32_t *size, bool *is_dir);
 
 #endif // _USERLAND_LIB_FS_H_

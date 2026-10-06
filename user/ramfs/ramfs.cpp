@@ -1,7 +1,8 @@
 // ramfs - 内存文件系统服务
 //
 // 非特权的用户态服务，以 "fs" 登记。协议的处理在 user/lib 的 fs_server 里，
-// 这里只是存储后端：文件内容放在自己 mmap 来的内存里，命名空间是平的。
+// 这里只是存储后端：一张平的表，每一项是一个文件或者一个目录，名字是完整的路径
+// （目录的规则在 fs_server 里）；文件内容放在自己 mmap 来的内存里。
 // 启动时装载构建时嵌进来的启动映像（user/bootfs 里的文件加上 Makefile 里列出的程序）。
 
 #include <syscall.h>
@@ -15,7 +16,8 @@
 
 struct file {
     bool used;
-    char name[FS_NAME_MAX];
+    bool dir;               // 是目录（没有内容）
+    char name[FS_NAME_MAX]; // 完整的路径
     char *data;             // mmap 来的，capacity 字节
     uint32_t size;
     uint32_t capacity;
@@ -36,16 +38,25 @@ static int ramfs_find(const char *name) {
     return -1;
 }
 
-static int ramfs_create(const char *name) {
+static int ramfs_create(const char *name, bool directory) {
     for (int i = 0; i < MAX_FILES; i++) {
         if (!files[i].used) {
             memset(&files[i], 0, sizeof(files[i]));
             files[i].used = true;
+            files[i].dir = directory;
             strcpy(files[i].name, name);
             return i;
         }
     }
     return -1;
+}
+
+static bool ramfs_is_dir(int file) {
+    return files[file].dir;
+}
+
+static const char *ramfs_path(int file) {
+    return files[file].name;
 }
 
 // 保证文件至少能放下 size 字节
@@ -115,24 +126,18 @@ static int ramfs_remove(int file) {
     return 0;
 }
 
-static int ramfs_list(int index, char *name, uint32_t *size) {
+static int ramfs_entry(int index) {
     for (int i = 0; i < MAX_FILES; i++) {
-        if (!files[i].used) {
-            continue;
+        if (files[i].used && index-- == 0) {
+            return i;
         }
-        if (index == 0) {
-            strcpy(name, files[i].name);
-            *size = files[i].size;
-            return 0;
-        }
-        index--;
     }
     return -1;
 }
 
 static const struct fs_backend ramfs_backend = {
-    ramfs_find, ramfs_create, ramfs_size, ramfs_read, ramfs_write,
-    ramfs_truncate, ramfs_remove, ramfs_list,
+    ramfs_find, ramfs_create, ramfs_is_dir, ramfs_path, ramfs_size, ramfs_read, ramfs_write,
+    ramfs_truncate, ramfs_remove, ramfs_entry,
 };
 
 // ============================================================================
@@ -162,16 +167,29 @@ static int load_bootfs(void) {
             break;
         }
 
-        const char *name = p;
-        if (name[0] == '.' && name[1] == '/') {
-            name += 2;
+        // 名字是完整的路径；目录成员（类型 '5'）的名字以 '/' 结尾。归档里目录排在它里面的
+        // 文件前面，所以照顺序建就行
+        char name[FS_NAME_MAX];
+        const char *raw = p;
+        if (raw[0] == '.' && raw[1] == '/') {
+            raw += 2;
         }
-        if ((type == '0' || type == '\0') && name[0] != '\0' && strlen(name) < FS_NAME_MAX) {
-            int index = ramfs_create(name);
-            if (index >= 0 && reserve(&files[index], size ? size : 1)) {
-                memcpy(files[index].data, content, size);
-                files[index].size = size;
-                count++;
+        size_t len = strlen(raw) < 100 ? strlen(raw) : 100;     // 头里的名字字段是 100 字节
+        while (len > 0 && raw[len - 1] == '/') {
+            len--;
+        }
+        if (len > 0 && len < FS_NAME_MAX) {
+            memcpy(name, raw, len);
+            name[len] = '\0';
+            if (type == '5' && ramfs_find(name) < 0) {
+                ramfs_create(name, true);
+            } else if (type == '0' || type == '\0') {
+                int index = ramfs_create(name, false);
+                if (index >= 0 && reserve(&files[index], size ? size : 1)) {
+                    memcpy(files[index].data, content, size);
+                    files[index].size = size;
+                    count++;
+                }
             }
         }
         p = content + ((size + 511) & ~511u);

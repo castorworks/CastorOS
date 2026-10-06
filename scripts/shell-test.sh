@@ -156,6 +156,22 @@ pipes() {
 }
 check "pipes" pipes
 
+# ---- 目录：启动映像里带来的，和现建的 ----
+directories() {
+    send 'ls docs\n'; expect '^ *[0-9]+  paths.txt$' || return 1
+    send 'cat docs/paths.txt | grep current\n'; expect '^There is no current directory' || return 1
+    send 'mkdir box\n'; expect '> $' || return 1
+    send 'write box/note hello\n'; expect '> $' || return 1
+    send 'ls | grep box\n'; expect '^ +box/$' || return 1
+    send 'ls box\n'; expect '^ *6  note$' || return 1
+    send 'rm box\n'; expect 'rm: ' || return 1                # 目录里还有东西：删不掉
+    send 'rm box/note\n'; expect '> $' || return 1
+    send 'rm box\n'; expect '> $' || return 1
+    send 'ls box\n'; expect '^\(nothing in box\)$' || return 1
+    send 'mkdir nowhere/inside\n'; expect '^mkdir: cannot create nowhere/inside$'
+}
+check "directories" directories
+
 # ---- 键盘输入进管道的第一段；Ctrl-C 终止管道里的每一段 ----
 pipe_keyboard() {
     send 'cat | grep keep > kept\n'; sleep 0.5

@@ -7,6 +7,7 @@
 #include <syscall.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include <names.h>
 #include <fs.h>
 #include <blk.h>
@@ -288,6 +289,17 @@ static void test_floating_point(void) {
     snprintf(text, sizeof(text), "%.2f|%f|%8.3f|%.0f", pi, -a / 4, -a, a + 1.1);
     report("floating-point arithmetic and %f",
            a * b == 4.125 && (int)(a * b * 8) == 33 && strcmp(text, "3.14|-0.375000|  -1.500|3") == 0, "ok");
+
+    // 用户库的数学函数（详细的检查在宿主机上跑：make lib-test；这里确认它们在真的目标上也对）
+    volatile double two = 2.0, x = 0.7;
+    double root = sqrt(two);
+    double near[] = { root * root - 2.0, sin(M_PI / 6) - 0.5, sin(x) * sin(x) + cos(x) * cos(x) - 1.0,
+                      log(exp(x)) - x, pow(two, 0.5) - root };
+    ok = pow(two, 10) == 1024 && floor(-x) == -1 && ceil(x) == 1;
+    for (size_t i = 0; i < sizeof(near) / sizeof(near[0]); i++) {
+        ok = ok && fabs(near[i]) < 1e-12;
+    }
+    report("math functions", ok, "ok");
 }
 
 static void test_shared_memory(void) {
@@ -353,6 +365,13 @@ static void test_names(void) {
     }
     waitpid(child, &status, 0);
     report("names of exited processes are released", ok && WEXITSTATUS(status) == 0, "ok");
+
+    // 模块的服务名是留给 init 启动的那个进程的：别人登记不了，不管那个服务现在在不在
+    // （没有磁盘时 blk 和 diskfs 已经退出了，名字也不让给别人）
+    ok = name_register("uart") == -1 && name_register(BLK_SERVICE_NAME) == -1 &&
+         name_register(NET_SERVICE_NAME) == -1 && name_register(FS_SERVICE_NAME) == -1 &&
+         name_register(FS_DISK_SERVICE_NAME) == -1 && name_lookup("uart") > 0 && name_lookup(FS_SERVICE_NAME) > 0;
+    report("service names of modules cannot be taken", ok, "refused");
 }
 
 static void test_fs(void) {
@@ -374,7 +393,7 @@ static void test_fs(void) {
     char name[FS_NAME_MAX];
     uint32_t size = 0;
     int listed = 0;
-    for (int i = 0; fs_list("", i, name, &size) == 0; i++) {
+    for (int i = 0; fs_list("", i, name, &size, NULL) == 0; i++) {
         if (strcmp(name, "selftest.dat") == 0 && size == sizeof(out)) {
             listed = 1;
         }
@@ -395,6 +414,79 @@ static void test_fs(void) {
          fs_close(fd) == 0 && fs_read(fd, 0, in, 1) == -1 &&
          fs_unlink("selftest.dat") == 0 && fs_open("selftest.dat", 0) == -1;
     report("file service", ok, "ok");
+}
+
+/** 目录 dir 里有没有叫 name 的一项，并且它是/不是目录 */
+static bool dir_has(const char *dir, const char *name, bool want_dir) {
+    char found[FS_NAME_MAX];
+    bool is_dir;
+    for (int i = 0; fs_list(dir, i, found, NULL, &is_dir) == 0; i++) {
+        if (strcmp(found, name) == 0) {
+            return is_dir == want_dir;
+        }
+    }
+    return false;
+}
+
+/** 目录 dir 里有几项；不是目录时是 0 */
+static int dir_count(const char *dir) {
+    char found[FS_NAME_MAX];
+    int n = 0;
+    while (fs_list(dir, n, found, NULL, NULL) == 0) {
+        n++;
+    }
+    return n;
+}
+
+// 目录：两个文件服务的规则一样（都在 fs_server 里），root 是 "" 或者 "disk:"
+static bool check_directories(const char *root) {
+    char d[FS_NAME_MAX], sub[FS_NAME_MAX], f1[FS_NAME_MAX], f2[FS_NAME_MAX], deep[FS_NAME_MAX];
+    snprintf(d, sizeof(d), "%sstdir", root);
+    snprintf(sub, sizeof(sub), "%sstdir/sub", root);
+    snprintf(f1, sizeof(f1), "%sstdir/one.txt", root);
+    snprintf(f2, sizeof(f2), "%sstdir/sub/two.txt", root);
+    snprintf(deep, sizeof(deep), "%sstdir/missing/three.txt", root);
+    char in[16];
+
+    // 建目录：上一级得先有；同名的东西已经在了就不行
+    bool ok = fs_mkdir(sub) == -1 && fs_mkdir(d) == 0 && fs_mkdir(d) == -1 && fs_mkdir(sub) == 0;
+    ok = ok && dir_has(root, "stdir", true) && dir_has(d, "sub", true) && dir_count(d) == 1;
+
+    // 文件只能建在已经存在的目录里；目录不能当文件打开
+    int fd = fs_open(f1, FS_O_CREATE);
+    ok = ok && fd >= 0 && fs_write(fd, 0, "one", 3) == 3 && fs_close(fd) == 0;
+    fd = fs_open(f2, FS_O_CREATE);
+    ok = ok && fd >= 0 && fs_write(fd, 0, "second", 6) == 6 && fs_close(fd) == 0;
+    ok = ok && fs_open(deep, FS_O_CREATE) == -1 && fs_open(d, 0) == -1 && fs_open(d, FS_O_CREATE) == -1;
+
+    // 一个目录只列出它直接的成员，名字不带目录部分；别的目录里同名的文件是另一个文件
+    uint32_t size = 0;
+    char found[FS_NAME_MAX];
+    ok = ok && dir_count(d) == 2 && dir_has(d, "one.txt", false) && dir_has(d, "sub", true) &&
+         dir_count(sub) == 1 && fs_list(sub, 0, found, &size, NULL) == 0 &&
+         strcmp(found, "two.txt") == 0 && size == 6 && !dir_has(root, "one.txt", false) &&
+         dir_count(f1) == 0;                                 // 文件不是目录
+    fd = fs_open(f2, 0);
+    ok = ok && fd >= 0 && fs_read(fd, 0, in, sizeof(in)) == 6 && memcmp(in, "second", 6) == 0 && fs_close(fd) == 0;
+
+    // 路径怎么写：开头结尾多余的 '/' 不算数，"." ".." 和空的一段不行
+    char odd[FS_NAME_MAX];
+    snprintf(odd, sizeof(odd), "%s/stdir/one.txt/", root);
+    fd = fs_open(odd, 0);
+    ok = ok && fd >= 0 && fs_size(fd) == 3 && fs_close(fd) == 0;
+    snprintf(odd, sizeof(odd), "%sstdir/./one.txt", root);
+    ok = ok && fs_open(odd, 0) == -1;
+    snprintf(odd, sizeof(odd), "%sstdir/sub/../one.txt", root);
+    ok = ok && fs_open(odd, 0) == -1;
+    snprintf(odd, sizeof(odd), "%sstdir//one.txt", root);
+    ok = ok && fs_open(odd, 0) == -1;
+
+    // 删：目录空了才能删
+    ok = ok && fs_unlink(d) == -1 && fs_unlink(sub) == -1 &&
+         fs_unlink(f2) == 0 && fs_unlink(sub) == 0 && fs_unlink(d) == -1 &&
+         fs_unlink(f1) == 0 && fs_unlink(d) == 0 && !dir_has(root, "stdir", true) && fs_mkdir(d) == 0 &&
+         fs_unlink(d) == 0;
+    return ok;
 }
 
 static void test_fs_client_reclaim(void) {
@@ -470,7 +562,7 @@ static void test_disk_fs(void) {
     char name[FS_NAME_MAX];
     uint32_t size = 0;
     int listed = 0;
-    for (int i = 0; fs_list(FS_DISK_PREFIX, i, name, &size) == 0; i++) {
+    for (int i = 0; fs_list(FS_DISK_PREFIX, i, name, &size, NULL) == 0; i++) {
         if (strcmp(name, "selftest.tmp") == 0 && size == sizeof(out)) {
             listed = 1;
         }
@@ -481,6 +573,7 @@ static void test_disk_fs(void) {
     ok = ok && fd >= 0 && fs_size(fd) == 0 && fs_read(fd, 0, in, 10) == 0 && fs_close(fd) == 0 &&
          fs_unlink(path) == 0 && fs_open(path, 0) == -1;
     report("disk file system", ok, "ok");
+    report("directories on disk", check_directories(FS_DISK_PREFIX), "ok");
 }
 
 static void test_disk_full(void) {
@@ -893,6 +986,9 @@ int main(int argc, char **argv) {
     test_shared_memory();
     test_names();
     test_fs();
+    // 启动映像里的子目录（user/bootfs/docs）装载出来也是目录
+    report("directories", check_directories("") && dir_has("", "docs", true) && dir_has("docs", "paths.txt", false),
+           "ok");
     test_fs_client_reclaim();
     test_block_device();
     test_disk_fs();

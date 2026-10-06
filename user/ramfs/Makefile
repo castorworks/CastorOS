@@ -4,12 +4,13 @@ TARGET = ramfs
 SOURCES = ramfs.cpp
 ASM_SOURCES = bootfs.S
 
-BOOT_PROGRAMS = ls cat cp rm echo write grep wc sleep hello disk ping ifconfig dns http echod selftest
+BOOT_PROGRAMS = ls cat cp rm mkdir echo write grep wc sleep hello disk ping ifconfig dns http echod selftest
 
 BOOTFS_DIR = build/$(ARCH)/bootfs
 BOOTFS_TAR = build/$(ARCH)/bootfs.tar
 BOOT_ELFS = $(foreach p,$(BOOT_PROGRAMS),../$(p)/build/$(ARCH)/$(p).elf)
-BOOT_FILES = $(wildcard ../bootfs/*)
+# bootfs 下可以有子目录，它们在启动映像里也是目录
+BOOT_FILES = $(wildcard ../bootfs/* ../bootfs/*/*)
 
 MODULES = $(BOOTFS_TAR)
 ASM_DEFINES = -DBOOTFS_IMAGE='"$(BOOTFS_TAR)"'
@@ -29,7 +30,7 @@ FORCE:
 # COPYFILE_DISABLE: 不让 macOS 的 tar 往归档里加 ._ 文件
 $(BOOTFS_TAR): $(BOOT_ELFS) $(BOOT_FILES)
 	@rm -rf $(BOOTFS_DIR) && mkdir -p $(BOOTFS_DIR)
-	@cp $(BOOT_FILES) $(BOOTFS_DIR)/
+	@cp -R ../bootfs/. $(BOOTFS_DIR)/
 	@for p in $(BOOT_PROGRAMS); do cp ../$$p/build/$(ARCH)/$$p.stripped.elf $(BOOTFS_DIR)/$$p; done
 	@cd $(BOOTFS_DIR) && COPYFILE_DISABLE=1 tar --format=ustar -cf ../bootfs.tar *
-	@echo "[OK] boot image: $(BOOTFS_TAR) ($(notdir $(BOOT_FILES)) $(BOOT_PROGRAMS))"
+	@echo "[OK] boot image: $(BOOTFS_TAR) ($(patsubst ../bootfs/%,%,$(BOOT_FILES)) $(BOOT_PROGRAMS))"

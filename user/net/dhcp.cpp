@@ -5,8 +5,9 @@
 // 等不到应答就退回 QEMU 用户网络（-netdev user）的固定配置。
 //
 // 地址是租来的。租期过半时续租：直接向给地址的那台服务器发一个 REQUEST（这时已经有地址，
-// 不用广播），收到 ACK 租期就重新算。服务器不理就隔一会儿再试；一直到租期满了还没续上，
-// 或者服务器明确拒绝（NAK），就放掉地址从 DISCOVER 重新来。
+// 不用广播），收到 ACK 租期就重新算。服务器不理就隔一会儿再试；到租期的 7/8 还没续上，
+// 那台服务器多半不在了，改成广播，问任何一台服务器肯不肯续（rebinding）。一直到租期满了
+// 还没续上，或者服务器明确拒绝（NAK），就放掉地址从 DISCOVER 重新来。
 // 结果写进 net.cpp 里的地址配置（my_ip、netmask、gateway、dns_server）。
 
 #include <syscall.h>
@@ -54,6 +55,7 @@ static int dhcp_tries;
 
 // 租约：只有地址来自 DHCP 而且服务器给了租期时才有（否则两个时刻都是 0）
 static uint64_t renew_at;                       // 该续租的时刻（租期过半）
+static uint64_t rebind_at;                      // 从这时起续租的请求改成广播（租期的 7/8）
 static uint64_t expires_at;                     // 租期满的时刻
 static uint32_t renewals;                       // 续租成功过几次
 
@@ -86,7 +88,9 @@ static void dhcp_send(uint8_t type) {
 
     dhcp_sent_at = uptime_ms();
     dhcp_tries++;
-    uint32_t dst = renewing && dhcp_server != 0 ? swap32(dhcp_server) : IP_BROADCAST;
+    // 续租先找原来的服务器；过了 rebind_at 就广播，谁答应都行
+    bool unicast = renewing && dhcp_server != 0 && (rebind_at == 0 || dhcp_sent_at < rebind_at);
+    uint32_t dst = unicast ? swap32(dhcp_server) : IP_BROADCAST;
     udp_send_raw(DHCP_CLIENT_PORT, dst, DHCP_SERVER_PORT, (const uint8_t *)&p, sizeof(p));
 }
 
@@ -106,7 +110,7 @@ void dhcp_start(void) {
     dhcp_xid = 0x43000000u | ((uint32_t)uptime_ms() & 0xFFFF) | ((uint32_t)my_mac[5] << 16);
     dhcp_state = DHCP_DISCOVERING;
     dhcp_tries = 0;
-    renew_at = expires_at = 0;
+    renew_at = rebind_at = expires_at = 0;
     dhcp_send(DHCP_DISCOVER);
 }
 
@@ -122,6 +126,7 @@ static void dhcp_renew(void) {
 static void lease_granted(uint32_t lease_s) {
     uint64_t now = uptime_ms();
     renew_at = lease_s ? now + (uint64_t)lease_s * 500 : 0;         // 租期过半
+    rebind_at = lease_s ? now + (uint64_t)lease_s * 875 : 0;        // 租期的 7/8
     expires_at = lease_s ? now + (uint64_t)lease_s * 1000 : 0;
 }
 
@@ -193,7 +198,10 @@ void dhcp_input(const uint8_t *data, size_t len) {
     } else if (dhcp_state == DHCP_REQUESTING && type == DHCP_NAK) {
         dhcp_start();           // 被拒绝：从头再来
     } else if (dhcp_state == DHCP_RENEWING && type == DHCP_ACK) {
-        // 续上了：地址不变，租期重新算
+        // 续上了：地址不变，租期重新算。答应的可能是另一台服务器（rebinding），下次找它
+        if (server != 0) {
+            dhcp_server = server;
+        }
         dhcp_state = DHCP_DONE;
         lease_granted(swap32(lease));
         renewals++;

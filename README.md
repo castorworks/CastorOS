@@ -35,6 +35,7 @@ make debug              # 同上，等待 GDB 连接 :1234
 
 make test               # 构建带内核测试的版本 (KTEST=1) 并运行：内核测试 + 用户态自检 + 命令行检查
 make test-all           # 所有架构；任何一个失败就返回非零
+make lib-test           # 用户库的宿主机测试（printf、字符串、数学函数），不需要交叉编译器和 QEMU
 
 make clean              # 清理当前架构
 make clean-all
