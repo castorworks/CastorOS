@@ -40,7 +40,7 @@ jobs:
       HOMEBREW_NO_INSTALL_CLEANUP: 1
       HOMEBREW_NO_ENV_HINTS: 1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install the cross compiler and QEMU
         run: brew install ${{ matrix.packages }} qemu
@@ -58,7 +58,7 @@ jobs:
       # 失败时最有用的就是这两份日志：QEMU 的全部输出，和命令行检查逐项的结果
       - name: Upload the test logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-logs-${{ matrix.arch }}
           path: build/${{ matrix.arch }}-ktest/*.log
