@@ -14,6 +14,8 @@
 | x86_64 | AMD64/Intel 64位 | Multiboot1（ELF32 外壳） |
 | arm64 | ARM AArch64 | QEMU `-M virt`，DTB |
 
+三个架构都能用上机器的多个 CPU（最多 8 个，`make run SMP=4`）：用户进程在各个 CPU 上同时运行，内核自己由一把锁保护，见 [多个 CPU](docs/reference/smp.md)。
+
 ## 开发语言
 
 内核与用户态程序均使用 freestanding C++20 编写（`-std=gnu++20 -fno-exceptions -fno-rtti`），引导与中断入口等少量代码使用汇编。与汇编互相调用的符号需声明为 `extern "C"`；内核的最小 C++ 运行时位于 `src/lib/cxxrt.cpp`。
