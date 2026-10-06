@@ -1,7 +1,7 @@
 // ip.cpp - 协议栈的下半部分：以太网、ARP、IPv4、ICMP 回显
 //
-// 帧从网卡驱动进来（eth_input），按类型交给 ARP 或 IP；IP 包再按协议交给 ICMP（这里）、
-// UDP（udp.cpp）或 TCP（tcp.cpp）。往外发的方向反过来：上层调 ip_send，这里选下一跳、
+// 帧从网卡驱动进来（eth_input），按类型交给 ARP 或 IP；IP 包（分片的先拼回来）再按协议
+// 交给 ICMP（这里）、UDP（udp.cpp）或 TCP（tcp.cpp）。往外发的方向反过来：上层调 ip_send，这里选下一跳、
 // 用 ARP 解析出它的 MAC，再交给驱动的 nic_send。发给自己地址的包不出网卡，走回环队列。
 
 #include <syscall.h>
@@ -176,6 +176,8 @@ bool arp_tick(uint64_t now) {
 
 #define IP_PROTO_ICMP   1
 #define IP_HDR          20
+#define IP_FLAG_MF      0x2000      // 分片字段：后面还有分片
+#define IP_FRAG_OFFSET  0x1FFF      // 分片字段：这一片在整个包里的偏移，以 8 字节为单位
 
 struct ip_header {
     uint8_t version_ihl;
@@ -238,16 +240,18 @@ void loopback_drain(void) {
     }
 }
 
-void ip_send(uint32_t dst, uint8_t protocol, const uint8_t *payload, size_t len) {
+/** 发一个 IP 包，或者一个大包的一片。frag 是头里的分片字段（MF 标志和以 8 字节为单位的偏移） */
+static void ip_send_one(uint32_t dst, uint8_t protocol, uint16_t id, uint16_t frag,
+                        const uint8_t *payload, size_t len) {
     static uint8_t packet[FRAME_MAX - ETH_HDR];
-    static uint16_t next_id = 1;
     if (len > sizeof(packet) - IP_HDR) {
         return;
     }
     struct ip_header h = {};
     h.version_ihl = 0x45;
     h.total_length = swap16((uint16_t)(IP_HDR + len));
-    h.id = swap16(next_id++);
+    h.id = swap16(id);
+    h.frag_offset = swap16(frag);
     h.ttl = 64;
     h.protocol = protocol;
     h.src = swap32(my_ip);
@@ -275,6 +279,110 @@ void ip_send(uint32_t dst, uint8_t protocol, const uint8_t *payload, size_t len)
     arp_send_ip(next_hop, packet, IP_HDR + len);
 }
 
+// 一个包里最多放多少上层数据。正常是一个以太网帧放得下的 IP_PAYLOAD_MAX；
+// 调试时可以调小（NET_DEBUG_FRAGMENT），让本来不用分片的包也分片，用来验证分片和重组
+static size_t fragment_at = IP_PAYLOAD_MAX;
+
+void ip_debug_fragment(uint32_t max_payload) {
+    fragment_at = max_payload >= 8 && max_payload < IP_PAYLOAD_MAX ? (max_payload & ~7u) : IP_PAYLOAD_MAX;
+}
+
+void ip_send(uint32_t dst, uint8_t protocol, const uint8_t *payload, size_t len) {
+    static uint16_t next_id = 1;
+    if (len > IP_DATAGRAM_MAX) {
+        return;
+    }
+    uint16_t id = next_id++;
+    if (len <= fragment_at) {
+        ip_send_one(dst, protocol, id, 0, payload, len);
+        return;
+    }
+    // 放不进一个帧：切成几片，各带同一个 id 和自己的偏移，最后一片之外都带 MF。
+    // 除了最后一片，每片的长度必须是 8 的倍数（偏移以 8 字节为单位）：fragment_at 是 8 的倍数
+    for (size_t off = 0; off < len; off += fragment_at) {
+        size_t n = len - off < fragment_at ? len - off : fragment_at;
+        uint16_t frag = (uint16_t)(off / 8) | (off + n < len ? IP_FLAG_MF : 0);
+        ip_send_one(dst, protocol, id, frag, payload + off, n);
+    }
+}
+
+// ----------------------------------------------------------------------------
+// 重组：把收到的分片拼回一个包
+// ----------------------------------------------------------------------------
+
+#define REASM_SLOTS         2       // 同时在拼的包
+#define REASM_TIMEOUT_MS    10000   // 这么久还没拼齐就作废
+
+static struct reasm {
+    bool used;
+    uint32_t src, dst;                  // 这四样相同的分片属于同一个包（都是头里的原样）
+    uint16_t id;
+    uint8_t protocol;
+    uint64_t started;
+    size_t total;                       // 上层数据的总长度；还没见到最后一片时是 0
+    uint8_t have[IP_DATAGRAM_MAX / 8 / 8];  // 收到了哪些 8 字节的块，每块一位
+    uint8_t data[IP_DATAGRAM_MAX];
+} reasm[REASM_SLOTS];
+
+/**
+ * 收下一个分片。拼齐了就返回整个包的上层数据（*len 是它的长度，下一个分片到来之前有效），
+ * 还没齐返回 NULL。
+ */
+static const uint8_t *reasm_add(const struct ip_header *h, const uint8_t *data, size_t *len) {
+    uint16_t frag = swap16(h->frag_offset);
+    size_t off = (size_t)(frag & IP_FRAG_OFFSET) * 8;
+    bool more = (frag & IP_FLAG_MF) != 0;
+    size_t n = *len;
+    if (n == 0 || off + n > IP_DATAGRAM_MAX || (more && n % 8 != 0)) {
+        return NULL;
+    }
+
+    // 找这个包已经在用的槽位；没有就用空的，都占着就挤掉最老的
+    uint64_t now = uptime_ms();
+    struct reasm *r = NULL, *spare = NULL;
+    for (int i = 0; i < REASM_SLOTS; i++) {
+        struct reasm *s = &reasm[i];
+        if (s->used && now - s->started >= REASM_TIMEOUT_MS) {
+            s->used = false;
+        }
+        if (s->used && s->src == h->src && s->dst == h->dst && s->id == h->id && s->protocol == h->protocol) {
+            r = s;
+        } else if (!spare || (spare->used && (!s->used || s->started < spare->started))) {
+            spare = s;
+        }
+    }
+    if (!r) {
+        r = spare;
+        r->used = true;
+        r->src = h->src;
+        r->dst = h->dst;
+        r->id = h->id;
+        r->protocol = h->protocol;
+        r->started = now;
+        r->total = 0;
+        memset(r->have, 0, sizeof(r->have));
+    }
+
+    memcpy(r->data + off, data, n);
+    for (size_t block = off / 8; block < (off + n + 7) / 8; block++) {
+        r->have[block / 8] |= (uint8_t)(1u << (block % 8));
+    }
+    if (!more) {
+        r->total = off + n;
+    }
+    if (r->total == 0) {
+        return NULL;
+    }
+    for (size_t block = 0; block < (r->total + 7) / 8; block++) {
+        if (!(r->have[block / 8] & (1u << (block % 8)))) {
+            return NULL;
+        }
+    }
+    r->used = false;
+    *len = r->total;
+    return r->data;
+}
+
 static void icmp_input(uint32_t src, const uint8_t *data, size_t len);
 
 static void ip_input(const uint8_t *packet, size_t len) {
@@ -294,11 +402,15 @@ static void ip_input(const uint8_t *packet, size_t len) {
     if (my_ip != 0 && dst != my_ip && dst != IP_BROADCAST && dst != (my_ip | ~netmask)) {
         return;
     }
-    if (swap16(h.frag_offset) & 0x3FFF) {
-        return;     // 分片：不支持重组
-    }
     const uint8_t *payload = packet + hdr_len;
     size_t payload_len = total - hdr_len;
+    if (swap16(h.frag_offset) & (IP_FLAG_MF | IP_FRAG_OFFSET)) {
+        // 一个大包的一片：攒起来，拼齐了才往上交
+        payload = reasm_add(&h, payload, &payload_len);
+        if (!payload) {
+            return;
+        }
+    }
     if (h.protocol == IP_PROTO_ICMP) {
         icmp_input(swap32(h.src), payload, payload_len);
     } else if (h.protocol == IP_PROTO_UDP) {

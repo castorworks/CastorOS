@@ -340,13 +340,7 @@ mm::PmmInfo mm::Pmm::get_info() {
  * @return PMM 数据结构结束的虚拟地址（页对齐）
  */
 uintptr_t mm::Pmm::get_bitmap_end() {
-    if (pmm_data_end_virt != 0) {
-        return pmm_data_end_virt;
-    }
-    
-    // 回退：如果还没有初始化，使用旧的计算方式
-    pfn_t bitmap_bytes = PAGE_ALIGN_UP((total_frames + 31) / 32 * 4);
-    return PAGE_ALIGN_UP((uintptr_t)frame_bitmap + bitmap_bytes);
+    return pmm_data_end_virt;       // init() 里算好的；调用者都在 init() 之后
 }
 
 /**

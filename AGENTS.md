@@ -93,7 +93,10 @@ starts; for a driver, init first finds its device (fixed ports or a PCI scan on 
 records its ports or device memory and its interrupt line in the child's allow-list with
 `hw_allow` (the `allow_*` functions in `user/init/init.cpp`; `virtio_allow` in `virtio.h`).
 A driver does not look for its device and does not hard-code an address: it reads what it was
-allowed with `hw_find` (`virtio_open` for virtio devices) and can touch nothing else. Both file services share the protocol in `fs.h` and the server
+allowed with `hw_find` (`virtio_open` for virtio devices) and can touch nothing else. On x86 the
+ports a process is allowed are opened in the TSS I/O permission bitmap while it runs, so
+`io_read`/`io_write` in the user library execute `in`/`out` directly for those ports and only
+fall back to the system call for the rest. Both file services share the protocol in `fs.h` and the server
 skeleton in `fs_server.h`; virtio drivers share `virtio.h`; servers that take a shared buffer
 from each client use `clients.h`. Other programs (`user/selftest`, `user/ls`, `user/cat`,
 `user/cp`, `user/rm`, `user/echo`, `user/write`, `user/grep`, `user/wc`, `user/disk`, `user/ping`, `user/ifconfig`, `user/dns`,

@@ -101,6 +101,9 @@ void tss_set_kernel_stack(uint32_t kernel_stack);
 uint32_t tss_get_address(void);
 uint32_t tss_get_size(void);
 
+/* 在 I/O 许可位图里打开（allow）或关上端口 [first, first + count)：打开的端口用户态可以直接访问 */
+void tss_io_allow(uint32_t first, uint32_t count, bool allow);
+
 // 汇编接口
 extern "C" void gdt_flush(uint32_t gdt_ptr);
 #endif // _ARCH_I686_GDT_H_

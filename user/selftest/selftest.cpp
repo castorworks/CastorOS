@@ -209,6 +209,20 @@ static void test_privilege(void) {
     int status = 0;
     waitpid(pid, &status, 0);
     report("hardware access without privilege", WEXITSTATUS(status) == 0, "refused");
+
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
+    // 驱动直接用 in/out 指令访问许可给它的端口（内核在 CPU 的 I/O 许可位图里打开了它们）。
+    // 没被许可的端口在位图里是关着的：绕过系统调用直接碰，CPU 不让，进程被终止
+    pid = fork();
+    if (pid == 0) {
+        uint8_t v;
+        __asm__ volatile("inb $0x80, %0" : "=a"(v));
+        exit(0);        // 读成功了才会走到这里
+    }
+    status = 0;
+    waitpid(pid, &status, 0);
+    report("direct port access without permission", WIFSIGNALED(status) || WEXITSTATUS(status) != 0, "refused");
+#endif
 }
 
 // 把一个值放进一个浮点寄存器，过一会儿再取出来。值只在寄存器里，不经过内存：
@@ -571,6 +585,38 @@ static void test_network(void) {
          net_udp_send(a, info.ip, 4000, out, 1) == -1;
     report("udp sockets", ok, "ok");
 
+    // 分片和重组：让网络服务把每个包切成 256 字节一片，一个 1200 字节的数据报要分成 5 片发出、
+    // 再拼回来；恢复正常之后不分片的包照常能过
+    a = net_udp_open(4001);
+    b = net_udp_open(0);
+    memset(in, 0, sizeof(in));
+    ok = a >= 0 && b >= 0 && net_debug_fragment(256) == 0 &&
+         net_udp_send(b, info.ip, 4001, out, sizeof(out)) == 0 &&
+         net_udp_recv(a, in, sizeof(in), 500, NULL, NULL) == (long)sizeof(out) &&
+         memcmp(out, in, sizeof(out)) == 0;
+    ok = net_debug_fragment(0) == 0 && ok;
+    ok = ok && net_udp_send(b, info.ip, 4001, out, 100) == 0 &&
+         net_udp_recv(a, in, sizeof(in), 500, NULL, NULL) == 100;
+    net_udp_close(a);
+    net_udp_close(b);
+    report("ip fragmentation and reassembly", ok, "ok");
+
+    // 续租：让网络服务现在就向 DHCP 服务器续租，成功的次数要增加，地址不变
+    if (!info.dhcp) {
+        printf("selftest: dhcp lease renewal: skipped (address is not from DHCP)\n");
+    } else {
+        long before = net_debug_renew();
+        long after = before;
+        start = uptime_ms();
+        while (before >= 0 && after == before && uptime_ms() - start < 3000) {
+            usleep(50000);
+            after = net_debug_renew();
+        }
+        struct net_info renewed;
+        ok = before >= 0 && after > before && net_info(&renewed) == 0 && renewed.ip == info.ip && renewed.dhcp;
+        report("dhcp lease renewal", ok, "ok");
+    }
+
     test_tcp(&info);
 }
 
@@ -735,6 +781,12 @@ static void test_tcp(const struct net_info *info) {
                step, conn, (unsigned)connect_ms, before, after);
     }
     report("tcp retransmission after lost frames", ok, "ok");
+
+    // 分片的包经过真的网卡：每个 TCP 段被切成几片发出去，对方要拼得回来
+    net_debug_fragment(512);
+    ok = conn >= 0 && tcp_echo_round(conn, 3000, 4, 8000);
+    net_debug_fragment(0);
+    report("tcp over fragmented packets", ok, "ok");
 
     // 接收窗口：先发 12000 字节而不去读，回显的数据填满我们 8KB 的接收缓冲区，
     // 窗口关闭；然后开始读，窗口重新打开，剩下的数据要能接着到

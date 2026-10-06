@@ -186,6 +186,13 @@ void gdt64_init_with_tss(uint64_t kernel_stack);
  */
 void tss64_set_kernel_stack(uint64_t kernel_stack);
 
+/**
+ * @brief Open (allow) or close ports [first, first + count) in the I/O permission bitmap
+ *
+ * User mode may access an open port directly with in/out.
+ */
+void tss64_io_allow(uint32_t first, uint32_t count, bool allow);
+
 /* ============================================================================
  * Assembly Functions (defined in gdt64_asm.asm)
  * ========================================================================== */

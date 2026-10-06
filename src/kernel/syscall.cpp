@@ -278,7 +278,10 @@ static syscall_arg_t sys_hw_allow_wrapper(syscall_arg_t *frame, syscall_arg_t ki
     (void)frame; (void)p4; (void)p5;
     task_t *current = kernel::Scheduler::get_current();
     if (!current || !current->privileged) return SYSCALL_FAIL;
-    return kernel::HwAccess::allow(current, (uint32_t)kind, start, count) ? 0 : SYSCALL_FAIL;
+    if (!kernel::HwAccess::allow(current, (uint32_t)kind, start, count)) return SYSCALL_FAIL;
+    // 当前进程正在 CPU 上：新许可的端口现在就让它能直接访问，不等下一次被换上来
+    hal::Platform::set_user_ports(current->hw_allowed, current->hw_allowed_count, true);
+    return 0;
 }
 
 /** hw_allowed(index, range*)：自己许可表里的第 index 条；没有这么多条时失败 */

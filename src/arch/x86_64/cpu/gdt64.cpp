@@ -42,8 +42,17 @@ static gdt64_entry_t gdt64_entries[7] __attribute__((aligned(16)));
 /* GDT pointer for LGDT instruction */
 static gdt64_ptr_t gdt64_pointer;
 
-/* Task State Segment */
-static tss64_entry_t tss64 __attribute__((aligned(16)));
+/* Task State Segment, followed by the I/O permission bitmap: one bit per port, 0 means
+ * user mode may access the port directly with in/out, 1 means #GP. The CPU may look at
+ * bits spanning two bytes, so one extra all-ones byte follows the bitmap. Normally all
+ * ones; when a user task is switched in, the ports it is allowed are opened
+ * (tss64_io_allow). */
+#define IOMAP_BYTES (65536 / 8)
+static struct {
+    tss64_entry_t tss;
+    uint8_t iomap[IOMAP_BYTES + 1];
+} __attribute__((packed, aligned(16))) tss64_area;
+#define tss64 (tss64_area.tss)
 
 /* ============================================================================
  * Internal Helper Functions
@@ -150,13 +159,14 @@ void gdt64_init_with_tss(uint64_t kernel_stack) {
     
     /* Initialize TSS */
     memset(&tss64, 0, sizeof(tss64));
+    memset(tss64_area.iomap, 0xFF, sizeof(tss64_area.iomap));
     tss64.rsp0 = kernel_stack;
-    tss64.iomap_base = sizeof(tss64);  /* No I/O bitmap */
+    tss64.iomap_base = sizeof(tss64);  /* The bitmap follows the TSS */
     
     LOG_DEBUG_MSG("  TSS addr=0x%llx size=%u\n", (unsigned long long)&tss64, (uint32_t)sizeof(tss64));
     
     /* Entry 5-6: TSS Descriptor (16 bytes) */
-    gdt64_set_tss_descriptor(5, (uint64_t)&tss64, sizeof(tss64) - 1);
+    gdt64_set_tss_descriptor(5, (uint64_t)&tss64, sizeof(tss64_area) - 1);     /* includes the bitmap */
     
     /* Set up GDT pointer */
     gdt64_pointer.limit = sizeof(gdt64_entries) - 1;
@@ -179,5 +189,15 @@ void gdt64_init_with_tss(uint64_t kernel_stack) {
  */
 void tss64_set_kernel_stack(uint64_t kernel_stack) {
     tss64.rsp0 = kernel_stack;
+}
+
+void tss64_io_allow(uint32_t first, uint32_t count, bool allow) {
+    for (uint32_t port = first; port < first + count && port < 65536; port++) {
+        if (allow) {
+            tss64_area.iomap[port / 8] &= (uint8_t)~(1u << (port % 8));
+        } else {
+            tss64_area.iomap[port / 8] |= (uint8_t)(1u << (port % 8));
+        }
+    }
 }
 

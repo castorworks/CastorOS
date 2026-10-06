@@ -287,6 +287,15 @@ void kernel::Scheduler::schedule() {
             hal::UserContext::fp_restore(&next_task->fp_state);
         }
 
+        // 许可给用户任务的 I/O 端口它可以直接访问（x86 的 I/O 许可位图）：位图只有一份，
+        // 换下去的任务的端口关上，换上来的打开
+        if (prev_task && prev_task->is_user_process) {
+            hal::Platform::set_user_ports(prev_task->hw_allowed, prev_task->hw_allowed_count, false);
+        }
+        if (next_task->is_user_process) {
+            hal::Platform::set_user_ports(next_task->hw_allowed, next_task->hw_allowed_count, true);
+        }
+
         task_switch_context(&old_ctx_ptr, &next_task->context);
         
         // 注意：永远不会执行到这里（task_switch_context 不会返回到这里）

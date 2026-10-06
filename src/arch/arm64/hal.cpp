@@ -291,3 +291,7 @@ bool hal::Platform::port_write(uint16_t port, uint32_t width, uint32_t value) {
     (void)port; (void)width; (void)value;
     return false;
 }
+
+void hal::Platform::set_user_ports(const struct hw_range *allowed, uint32_t count, bool allow) {
+    (void)allowed; (void)count; (void)allow;
+}

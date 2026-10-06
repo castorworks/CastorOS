@@ -8,6 +8,7 @@
  */
 
 #include <hal/hal.h>
+#include <kernel/hw_access.h>
 #include "include/gdt64.h"
 #include "include/idt64.h"
 #include "include/isr64.h"
@@ -142,4 +143,12 @@ bool hal::Platform::port_write(uint16_t port, uint32_t width, uint32_t value) {
     else if (width == 2) hal::Port::write16(port, (uint16_t)value);
     else hal::Port::write32(port, value);
     return true;
+}
+
+void hal::Platform::set_user_ports(const struct hw_range *allowed, uint32_t count, bool allow) {
+    for (uint32_t i = 0; i < count; i++) {
+        if (allowed[i].kind == HW_PORTS) {
+            tss64_io_allow((uint32_t)allowed[i].start, (uint32_t)allowed[i].count, allow);
+        }
+    }
 }

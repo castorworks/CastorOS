@@ -181,6 +181,73 @@ int ipc_reply(int dest, const struct ipc_msg *msg) {
 // 硬件访问
 // ============================================================================
 
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
+
+// 许可给本进程的端口可以直接用 in/out 指令访问：内核在换本进程上 CPU 时把它们在 CPU 的
+// I/O 许可位图里打开了，不用每次进内核。别的端口仍然走系统调用：有特权的进程（init）
+// 在那里通过，其余的被拒绝。直接碰一个没被许可的端口会让进程被终止，所以这里要先查。
+
+#define DIRECT_PORTS_MAX 8                  // 许可表的大小
+static struct hw_range direct_ports[DIRECT_PORTS_MAX];
+static int direct_ports_count = -1;         // -1：还没有向内核查过许可表
+
+static bool port_is_direct(uintptr_t port, int width) {
+    if (direct_ports_count < 0) {
+        direct_ports_count = 0;
+        struct hw_range r;
+        for (uint32_t i = 0; hw_allowed(i, &r) == 0 && direct_ports_count < DIRECT_PORTS_MAX; i++) {
+            if (r.kind == HW_PORTS) {
+                direct_ports[direct_ports_count++] = r;
+            }
+        }
+    }
+    for (int i = 0; i < direct_ports_count; i++) {
+        if (port >= direct_ports[i].start && port + (uintptr_t)width <= direct_ports[i].start + direct_ports[i].count) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int io_read(uintptr_t port, int width, uint32_t *value) {
+    if ((width == 1 || width == 2 || width == 4) && port_is_direct(port, width)) {
+        uint16_t p = (uint16_t)port;
+        if (width == 1) {
+            uint8_t v;
+            __asm__ volatile("inb %1, %0" : "=a"(v) : "Nd"(p));
+            *value = v;
+        } else if (width == 2) {
+            uint16_t v;
+            __asm__ volatile("inw %1, %0" : "=a"(v) : "Nd"(p));
+            *value = v;
+        } else {
+            uint32_t v;
+            __asm__ volatile("inl %1, %0" : "=a"(v) : "Nd"(p));
+            *value = v;
+        }
+        return 0;
+    }
+    return (int)syscall3(SYS_IO_READ, (syscall_arg_t)port, (syscall_arg_t)width, PTR_TO_ARG(value));
+}
+
+int io_write(uintptr_t port, int width, uint32_t value) {
+    if ((width == 1 || width == 2 || width == 4) && port_is_direct(port, width)) {
+        uint16_t p = (uint16_t)port;
+        if (width == 1) {
+            __asm__ volatile("outb %0, %1" : : "a"((uint8_t)value), "Nd"(p));
+        } else if (width == 2) {
+            __asm__ volatile("outw %0, %1" : : "a"((uint16_t)value), "Nd"(p));
+        } else {
+            __asm__ volatile("outl %0, %1" : : "a"(value), "Nd"(p));
+        }
+        return 0;
+    }
+    return (int)syscall3(SYS_IO_WRITE, (syscall_arg_t)port, (syscall_arg_t)width, (syscall_arg_t)value);
+}
+
+#else
+
+// 没有 I/O 端口的架构：内核恒返回失败
 int io_read(uintptr_t port, int width, uint32_t *value) {
     return (int)syscall3(SYS_IO_READ, (syscall_arg_t)port, (syscall_arg_t)width, PTR_TO_ARG(value));
 }
@@ -188,6 +255,8 @@ int io_read(uintptr_t port, int width, uint32_t *value) {
 int io_write(uintptr_t port, int width, uint32_t value) {
     return (int)syscall3(SYS_IO_WRITE, (syscall_arg_t)port, (syscall_arg_t)width, (syscall_arg_t)value);
 }
+
+#endif
 
 void *map_device(uintptr_t phys, size_t length) {
     return (void *)(uintptr_t)syscall2(SYS_MAP_DEVICE, (syscall_arg_t)phys, (syscall_arg_t)length);
@@ -210,6 +279,9 @@ void drop_privilege(void) {
 }
 
 int hw_allow(uint32_t kind, uintptr_t start, uintptr_t count) {
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
+    direct_ports_count = -1;        // 许可表要变了：下次访问端口时重新查
+#endif
     return (int)syscall3(SYS_HW_ALLOW, (syscall_arg_t)kind, (syscall_arg_t)start, (syscall_arg_t)count);
 }
 

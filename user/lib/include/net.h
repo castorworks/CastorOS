@@ -44,6 +44,10 @@ enum {
     NET_DEBUG_DROP  = 20,   // 调试：data[0] / data[1]: 丢掉接下来发出 / 收到的这么多个 TCP 帧
                             //   （发出的只算带 SYN 或数据的帧，纯确认不算）。
                             //   应答 data[1]: TCP 至今重传的次数
+    NET_DEBUG_FRAGMENT = 21, // 调试：data[0]: 往外发的 IP 包每片最多放这么多字节上层数据（0 = 恢复正常），
+                            //   让本来一个帧放得下的包也被分片
+    NET_DEBUG_RENEW = 22,   // 调试：现在就向 DHCP 服务器续租。应答 data[0]: 0 / -1（地址不是 DHCP 给的），
+                            //   data[1]: 至今续租成功的次数（不含这一次）
 };
 
 struct net_info {
@@ -107,6 +111,18 @@ int net_tcp_accept(int listener, uint32_t timeout_ms, uint32_t *peer_ip, uint16_
  * @return TCP 至今重传的次数，没有网络服务返回 -1
  */
 long net_debug_drop(uint32_t drop_tx, uint32_t drop_rx);
+
+/**
+ * 调试用：让网络服务把往外发的 IP 包切成每片最多 max_payload 字节上层数据（0 = 恢复正常），
+ * 用来验证分片和重组。@return 0，没有网络服务返回 -1
+ */
+int net_debug_fragment(uint32_t max_payload);
+
+/**
+ * 调试用：让网络服务现在就向 DHCP 服务器续租（已经在续的时候不重复发）。
+ * @return 至今续租成功的次数；地址不是 DHCP 给的、或者没有网络服务返回 -1
+ */
+long net_debug_renew(void);
 
 /**
  * 把主机名解析成 IPv4 地址（先当作 "a.b.c.d" 试，不是的话向配置的 DNS 服务器查询）。

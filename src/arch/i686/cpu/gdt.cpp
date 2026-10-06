@@ -9,7 +9,15 @@
 /* GDT 表（6个表项：空 + 内核代码/数据 + 用户代码/数据 + TSS） */
 static struct gdt_entry gdt_entries[6];
 static struct gdt_ptr gdt_pointer;
-static tss_entry_t tss;
+/* TSS 后面紧跟 I/O 许可位图：每个端口一位，0 表示用户态可以直接用 in/out 访问这个端口，
+ * 1 表示不行（#GP）。CPU 一次最多查跨两个字节的位，所以位图后面还要多一个全 1 的字节。
+ * 平时全是 1；换一个用户任务上 CPU 时，把许可给它的端口打开（tss_io_allow）。 */
+#define IOMAP_BYTES (65536 / 8)
+static struct {
+    tss_entry_t tss;
+    uint8_t iomap[IOMAP_BYTES + 1];
+} __attribute__((packed)) tss_area;
+#define tss (tss_area.tss)
 
 /* 声明汇编函数 */
 extern "C" void gdt_flush(uint32_t gdt_ptr_addr);
@@ -77,10 +85,11 @@ void gdt_write_tss_descriptor(uint32_t base, uint32_t limit) {
 /* TSS 初始化（在调用 gdt_build_with_tss 之后） */
 void tss_init(uint32_t kernel_stack, uint32_t kernel_ss) {
     memset(&tss, 0, sizeof(tss));
+    memset(tss_area.iomap, 0xFF, sizeof(tss_area.iomap));
 
     tss.ss0 = kernel_ss;
     tss.esp0 = kernel_stack;
-    tss.iomap_base = sizeof(tss);
+    tss.iomap_base = sizeof(tss);       // 位图紧跟在 TSS 后面
 
     LOG_DEBUG_MSG("  TSS addr=0x%x size=%u\n", (uint32_t)&tss, (uint32_t)sizeof(tss));
 }
@@ -97,7 +106,17 @@ void tss_set_kernel_stack(uint32_t kernel_stack) {
 
 /* 供外部读取 TSS 地址/大小 */
 uint32_t tss_get_address(void) { return (uint32_t)&tss; }
-uint32_t tss_get_size(void)    { return (uint32_t)sizeof(tss); }
+uint32_t tss_get_size(void)    { return (uint32_t)sizeof(tss_area); }      // 含 I/O 许可位图
+
+void tss_io_allow(uint32_t first, uint32_t count, bool allow) {
+    for (uint32_t port = first; port < first + count && port < 65536; port++) {
+        if (allow) {
+            tss_area.iomap[port / 8] &= (uint8_t)~(1u << (port % 8));
+        } else {
+            tss_area.iomap[port / 8] |= (uint8_t)(1u << (port % 8));
+        }
+    }
+}
 
 /* 一次性初始化接口（推荐） */
 void gdt_init_all_with_tss(uint32_t kernel_stack, uint16_t kernel_ss) {

@@ -780,6 +780,7 @@ public:
 
 
 struct device_info;
+struct hw_range;
 
 namespace hal {
 
@@ -808,6 +809,16 @@ public:
      */
     static bool port_read(uint16_t port, uint32_t width, uint32_t *value);
     static bool port_write(uint16_t port, uint32_t width, uint32_t value);
+
+    /**
+     * @brief Let user mode access the I/O ports in an allow-list directly, or stop it
+     *
+     * Called with the allow-list of a user task when it is switched in (allow = true)
+     * and out (allow = false); entries that are not port ranges are skipped. On x86 this
+     * opens the ports in the I/O permission bitmap, so a driver reads and writes its
+     * ports with in/out instead of a system call each time. Nothing to do elsewhere.
+     */
+    static void set_user_ports(const struct hw_range *allowed, uint32_t count, bool allow);
 };
 
 } // namespace hal

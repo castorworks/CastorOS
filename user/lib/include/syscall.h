@@ -215,7 +215,11 @@ int hw_allowed(uint32_t index, struct hw_range *range);
  */
 bool hw_find(uint32_t kind, uint32_t n, struct hw_range *range);
 
-/** 读/写 x86 的 I/O 端口，width 是 1、2 或 4 字节。arm64 没有端口，恒返回 -1 */
+/**
+ * 读/写 x86 的 I/O 端口，width 是 1、2 或 4 字节。arm64 没有端口，恒返回 -1。
+ * 许可表里的端口直接用 in/out 指令访问（内核在本进程运行期间把它们对用户态打开了），
+ * 别的端口走系统调用：有特权才成功。
+ */
 int io_read(uintptr_t port, int width, uint32_t *value);
 int io_write(uintptr_t port, int width, uint32_t value);
 

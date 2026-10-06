@@ -8,8 +8,11 @@
 
 #define IP_PROTO_TCP    6
 
-/** 一个 IP 包里最多能放多少上层数据（以太网帧 1514 - 以太网头 14 - IP 头 20） */
+/** 一个不分片的 IP 包里最多能放多少上层数据（以太网帧 1514 - 以太网头 14 - IP 头 20） */
 #define IP_PAYLOAD_MAX  1480
+
+/** 一个 IP 包（分片之前 / 重组之后）最多能有多少上层数据 */
+#define IP_DATAGRAM_MAX 8192
 
 // 网络字节序是大端，三个架构都是小端
 static inline uint16_t swap16(uint16_t v) { return (uint16_t)((v << 8) | (v >> 8)); }
@@ -58,8 +61,11 @@ void eth_input(uint8_t *frame, size_t len);
 /** 互联网校验和：16 位反码求和。start 用来接着前一段（伪首部）的和算 */
 uint16_t checksum(const void *data, size_t len, uint32_t start);
 
-/** 发一个 IP 包。payload 在返回之前就被拷走了 */
+/** 发一个 IP 包，一个帧放不下就分片（最多 IP_DATAGRAM_MAX）。payload 在返回之前就被拷走了 */
 void ip_send(uint32_t dst, uint8_t protocol, const uint8_t *payload, size_t len);
+
+/** 调试用：往外发的包每片最多放 max_payload 字节上层数据（NET_DEBUG_FRAGMENT）；0 恢复正常 */
+void ip_debug_fragment(uint32_t max_payload);
 
 /** 把发给自己的包（回环队列里的）交给协议栈。主循环每处理完一件事调用一次 */
 void loopback_drain(void);
@@ -97,8 +103,12 @@ void udp_drop_owner(int pid);
 void dhcp_start(void);
 /** DHCP 客户端端口上收到一个数据报 */
 void dhcp_input(const uint8_t *data, size_t len);
-/** 定时器：重发、放弃。@return 是否还在等应答 */
+/** 定时器：重发、放弃、到时间续租。@return 是否还在等应答 */
 bool dhcp_tick(uint64_t now);
+/** 下一次要续租（或者租约到期）的时刻；没有租约返回 0。主循环据此设定时器 */
+uint64_t dhcp_next_deadline(void);
+/** 调试用：现在就续租（NET_DEBUG_RENEW）。@return 至今续租成功过几次 */
+uint32_t dhcp_debug_renew(void);
 
 // ---- tcp.cpp 提供 ----
 

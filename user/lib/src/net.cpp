@@ -253,6 +253,28 @@ long net_debug_drop(uint32_t drop_tx, uint32_t drop_rx) {
     return (long)m.data[1];
 }
 
+int net_debug_fragment(uint32_t max_payload) {
+    if (!net_find()) {
+        return -1;
+    }
+    struct ipc_msg m = {};
+    m.label = NET_DEBUG_FRAGMENT;
+    m.data[0] = max_payload;
+    return net_request(&m) == 0 ? 0 : -1;
+}
+
+long net_debug_renew(void) {
+    if (!net_find()) {
+        return -1;
+    }
+    struct ipc_msg m = {};
+    m.label = NET_DEBUG_RENEW;
+    if (net_request(&m) != 0 || (int64_t)m.data[0] != 0) {
+        return -1;
+    }
+    return (long)m.data[1];
+}
+
 // ---------------------------------------------------------------------------
 // 名字解析：向配置的 DNS 服务器发一个 A 记录查询
 // ---------------------------------------------------------------------------

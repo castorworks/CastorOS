@@ -14,7 +14,7 @@
 // 它们之间的接口都在 net_internal.h 里。
 //
 // 地址在启动时用 DHCP 获取；等不到应答就退回 QEMU 用户网络（-netdev user）的固定配置
-// 10.0.2.15/24，网关 10.0.2.2。没有分片重组，也不续租。
+// 10.0.2.15/24，网关 10.0.2.2。
 
 #include <syscall.h>
 #include <stdio.h>
@@ -88,6 +88,15 @@ static void handle_request(struct ipc_msg *m) {
         reply_client(pid, NET_DEBUG_DROP, 0, tcp_retransmits, 0);
         return;
     }
+    if (m->label == NET_DEBUG_FRAGMENT) {
+        ip_debug_fragment((uint32_t)m->data[0]);
+        reply_client(pid, NET_DEBUG_FRAGMENT, 0, 0, 0);
+        return;
+    }
+    if (m->label == NET_DEBUG_RENEW) {
+        reply_client(pid, NET_DEBUG_RENEW, from_dhcp ? 0 : -1, dhcp_debug_renew(), 0);
+        return;
+    }
 
     switch (m->label) {
         case NET_INFO:
@@ -159,6 +168,11 @@ int main() {
         loopback_drain();       // 超时处理里也可能发出回环包（重传）
         if (waiting) {
             timer_set(TICK_MS);
+        } else if (dhcp_next_deadline() != 0) {
+            // 没有别的事在等：睡到该续租的时候。这之前来了请求或者中断，回到这里会重新设
+            uint64_t now = uptime_ms(), at = dhcp_next_deadline();
+            uint64_t wait = at > now ? at - now : 1;
+            timer_set(wait > 0x7FFFFFFF ? 0x7FFFFFFF : (uint32_t)wait);
         }
     }
 }
