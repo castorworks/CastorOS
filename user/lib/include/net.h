@@ -7,7 +7,7 @@
 //
 // 服务进程以 "net" 登记（user/net：virtio-net 驱动加一个很小的协议栈，
 // 支持 ARP、IPv4、ICMP 回显、UDP 和 TCP，启动时用 DHCP 获取地址）。IP 地址在这套接口里都是主机字节序的
-// 32 位整数，a.b.c.d 写成 NET_IP(a, b, c, d)。UDP 的数据经共享缓冲区传递。
+// 32 位整数，a.b.c.d 写成 NET_IP(a, b, c, d)。UDP 和 TCP 的数据经共享缓冲区传递。
 
 #define NET_SERVICE_NAME    "net"
 

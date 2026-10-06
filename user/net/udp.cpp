@@ -201,7 +201,7 @@ void udp_request(const struct ipc_msg *m) {
         } else if (s && m->label == NET_UDP_SEND) {
             char *buf = clients_buf(pid);
             if (buf && my_ip != 0 && m->data[3] <= NET_UDP_MAX && m->data[2] != 0 && m->data[2] <= 0xFFFF) {
-                // 先应答再发：发给自己的数据报会立刻进到某个套接字，那里可能又要应答别的客户
+                // 先应答再发。发给自己的数据报进回环队列，回到主循环后才送到套接字
                 reply_client(pid, NET_UDP_SEND, 0, 0, 0);
                 udp_send(s, (uint32_t)m->data[1], (uint16_t)m->data[2], buf, (size_t)m->data[3]);
                 return;

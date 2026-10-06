@@ -27,7 +27,7 @@ static bool net_find(void) {
     return true;
 }
 
-/** 确保有共享缓冲区（只有 UDP 收发需要） */
+/** 确保有共享缓冲区（UDP 和 TCP 收发数据时需要） */
 static bool net_connect(void) {
     if (!net_find()) {
         return false;

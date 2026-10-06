@@ -546,7 +546,7 @@ void ping_start(int pid, uint32_t ip, uint32_t timeout_ms) {
         if (p->pid != 0) {
             continue;
         }
-        // 先登记再发：发给自己时应答在 icmp_send_echo 返回之前就到了
+        // 先登记再发。发给自己的请求进回环队列，应答要等回到主循环才会到
         p->pid = pid;
         p->ip = ip;
         p->seq = ping_seq++;

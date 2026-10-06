@@ -42,8 +42,9 @@ static bool unmap_user_page(task_t *task, uintptr_t page) {
 
 /* mmap 区域的起始和结束地址（在堆和栈之间） */
 #if defined(ARCH_ARM64)
-/* arm64：每个用户地址空间的 0x40000000-0xFFFFFFFF 是内核 RAM 的 1GB 块映射，
- * 4GB 以下还有设备块，所以 mmap 区域放在 4GB 以上 */
+/* arm64：mmap 区域放在 4GB 以上。这个位置定下来的时候，用户地址空间的低 4GB 里还有
+ * 内核的块映射要避开；现在用户的页表里已经没有内核的映射（内核地址走 TTBR1），
+ * 位置沿用下来 */
 #define MMAP_REGION_START   ((uintptr_t)0x100000000ULL)  /* 4GB 起始 */
 #define MMAP_REGION_END     ((uintptr_t)0x140000000ULL)  /* 5GB 结束 */
 #else
