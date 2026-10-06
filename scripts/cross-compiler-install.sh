@@ -5,7 +5,7 @@
 # 从源码编译三个架构的裸机工具链（binutils + gcc/g++），并用 apt 装上 NASM 和 QEMU：
 #   i686-elf-      x86_64-elf-      aarch64-elf-
 # 内核是 C++20 写的（-std=gnu++20），需要 GCC 10 以上；这里用和 macOS 上 Homebrew
-# 一样的版本，两边编出来的东西一致。macOS 上不用这个脚本，见 docs/00-environment.md。
+# 一样的版本，两边编出来的东西一致。macOS 上不用这个脚本，见 docs/setup.md。
 #
 # 用法:
 #   scripts/cross-compiler-install.sh [-y] [-f] [目标...]

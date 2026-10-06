@@ -1,12 +1,10 @@
 # 引导过程
 
-## 概述
-
 x86 上的 CastorOS 遵循 Multiboot 规范：任何支持 Multiboot 的引导加载器都可以加载它。开发时用的是 QEMU 自带的加载器（`qemu -kernel`），真机上可以用 GRUB。引导过程从固件开始，经过引导加载器，最终将控制权交给内核。
 
 ## 引导流程
 
-```
+```text
 固件 (BIOS/UEFI)
     ↓
 引导加载器 (QEMU -kernel / GRUB，Multiboot)
@@ -28,10 +26,10 @@ kernel_main()
 
 内核必须在前 8KB 包含 Multiboot 头，告诉引导加载器如何加载内核：
 
-```c
-// multiboot.asm
+```asm
+; multiboot.asm
 MULTIBOOT_MAGIC     equ 0x1BADB002
-MULTIBOOT_FLAGS     equ 0x00000003  // 页对齐 | 提供内存信息
+MULTIBOOT_FLAGS     equ 0x00000003  ; 页对齐 | 提供内存信息
 MULTIBOOT_CHECKSUM  equ -(MULTIBOOT_MAGIC + MULTIBOOT_FLAGS)
 
 section .multiboot
@@ -47,6 +45,57 @@ section .multiboot
 - **保护模式**: 32位保护模式，A20 已启用
 - **分页**: 禁用
 - **中断**: 禁用
+
+### Multiboot 信息结构
+
+```c
+typedef struct {
+    uint32_t flags;           // 标志位，指示哪些字段有效
+
+    // 内存信息 (flags bit 0)
+    uint32_t mem_lower;       // 低端内存 (KB)
+    uint32_t mem_upper;       // 高端内存 (KB)
+
+    // 引导设备 (flags bit 1)
+    uint32_t boot_device;
+
+    // 命令行 (flags bit 2)
+    uint32_t cmdline;
+
+    // 模块 (flags bit 3)
+    uint32_t mods_count;
+    uint32_t mods_addr;
+
+    // 符号表 (flags bit 4 or 5)
+    // ...
+
+    // 内存映射 (flags bit 6)
+    uint32_t mmap_length;
+    uint32_t mmap_addr;
+
+    // VBE 信息 (flags bit 11)
+    // Framebuffer 信息 (flags bit 12)
+    // ...
+} multiboot_info_t;
+```
+
+### 内存映射
+
+引导加载器提供详细的内存映射，指示哪些区域可用：
+
+```c
+typedef struct {
+    uint32_t size;      // 此条目大小（不含 size 字段本身）
+    uint64_t addr;      // 起始地址
+    uint64_t len;       // 长度
+    uint32_t type;      // 类型
+    // 1 = 可用
+    // 2 = 保留
+    // 3 = ACPI 可回收
+    // 4 = ACPI NVS
+    // 5 = 坏内存
+} multiboot_memory_map_t;
+```
 
 ## boot.asm 详解
 
@@ -71,9 +120,9 @@ _start:
 boot_page_directory:
     ; PDE 0: 恒等映射前 4MB
     dd (boot_page_table1 - KERNEL_VIRTUAL_BASE) + 0x003
-    
+
     times (KERNEL_PAGE_NUMBER - 1) dd 0  ; PDE 1-511: 未映射
-    
+
     ; PDE 512-515: 高半核映射（前 16MB）
     dd (boot_page_table1 - KERNEL_VIRTUAL_BASE) + 0x003
     dd (boot_page_table2 - KERNEL_VIRTUAL_BASE) + 0x003
@@ -87,7 +136,7 @@ boot_page_directory:
     ; 加载页目录到 CR3
     mov ecx, (boot_page_directory - KERNEL_VIRTUAL_BASE)
     mov cr3, ecx
-    
+
     ; 启用分页（CR0.PG）和写保护（CR0.WP）
     mov ecx, cr0
     or ecx, 0x80010000  ; PG | WP
@@ -105,10 +154,10 @@ higher_half:
     ; 现在运行在高半核地址空间
     ; 可以移除恒等映射了
     mov dword [boot_page_directory], 0
-    
+
     ; 设置栈指针
     mov esp, stack_top
-    
+
     ; 调用 C 内核入口
     push ebx  ; Multiboot 信息结构
     push eax  ; 魔数
@@ -146,17 +195,15 @@ static void kernel_start(void) {
 }
 ```
 
-内核初始化到此为止。驱动、文件系统、命令行都由 init 在用户态启动
-（见 [../microkernel.md](../microkernel.md)）。
+内核初始化到此为止。驱动、文件系统、命令行都由 init 在用户态启动（见 [微内核结构](../microkernel.md#init-和模块)）。
 
 arm64 的流程相同，只是硬件的描述来自设备树而不是 Multiboot。
 
 ## 设备树（arm64）
 
-x86 上内核从 Multiboot 信息里得知内存有多少；arm64 上固件（这里是 QEMU）交给内核的是一份
-**设备树**：一棵描述硬件的树，每个节点是一个设备或一条总线，带着若干属性。
+x86 上内核从 Multiboot 信息里得知内存有多少；arm64 上固件（这里是 QEMU）交给内核的是一份 **设备树**：一棵描述硬件的树，每个节点是一个设备或一条总线，带着若干属性。
 
-```
+```text
 / {
     #address-cells = <2>;           子节点的 reg 里，地址占 2 个 32 位单元
     #size-cells = <2>;              长度占 2 个
@@ -173,83 +220,23 @@ x86 上内核从 Multiboot 信息里得知内存有多少；arm64 上固件（�
 };
 ```
 
-`dtb_parse()`（`src/arch/arm64/dtb/dtb.cpp`）走一遍这棵树，整理出物理内存的范围、
-中断控制器、定时器、串口，以及其余设备的列表。几条容易弄错的规则：
+`dtb_parse()`（`src/arch/arm64/dtb/dtb.cpp`）走一遍这棵树，整理出物理内存的范围、中断控制器、定时器、串口，以及其余设备的列表。几条容易弄错的规则：
 
-- 一个节点是什么设备由 `compatible` 决定，而它的 `reg`、`interrupts` 可能排在 `compatible`
-  前面。所以要等节点的属性都读完（节点结束时）再归类，不能读到一个属性就下结论。
-- `reg` 里地址和长度各占几个单元，由**父节点**的 `#address-cells` / `#size-cells` 决定，
-  不是节点自己的，也不从祖先继承。
+- 一个节点是什么设备由 `compatible` 决定，而它的 `reg`、`interrupts` 可能排在 `compatible` 前面。所以要等节点的属性都读完（节点结束时）再归类，不能读到一个属性就下结论。
+- `reg` 里地址和长度各占几个单元，由**父节点**的 `#address-cells` / `#size-cells` 决定，不是节点自己的，也不从祖先继承。
 - `compatible` 是一个字符串列表，要找的那一项不一定是第一项。
-- 中断号不是直接写在 `interrupts` 里的：GIC 的格式是三个单元（类型、编号、触发方式），
-  共享外设中断 (SPI) 的中断号是编号加 32，每 CPU 私有的 (PPI) 是编号加 16。
+- 中断号不是直接写在 `interrupts` 里的：GIC 的格式是三个单元（类型、编号、触发方式），共享外设中断 (SPI) 的中断号是编号加 32，每 CPU 私有的 (PPI) 是编号加 16。
 
-内核用到的有四样：内存范围交给物理内存分配器；串口、中断控制器的地址和定时器的中断号
-交给各自的驱动（`arm64_configure_from_device_tree()`）。其余设备的列表留着给用户态的驱动查：
-它们用 `device_find` 系统调用按型号找自己的设备（见 [../microkernel.md](../microkernel.md)）。
+内核用到的有四样：内存范围交给物理内存分配器；串口、中断控制器的地址和定时器的中断号交给各自的驱动（`arm64_configure_from_device_tree()`）。其余设备的列表留着给用户态的驱动用：init 用 `device_find` 系统调用按型号替它们找设备（见 [特权与硬件访问](../reference/hardware.md)）。
 
-这里有个先后问题：解析设备树时如果出了错，内核要能把错误打印出来，而打印要用串口，
-串口的地址又在设备树里。解决办法是**早期控制台**：串口驱动一开始先用一个写死的地址
-（QEMU virt 上 PL011 的位置），让内核从第一行代码起就能输出；设备树解析完之后，再把它
-指到设备树描述的那个串口上。中断控制器和定时器没有这个问题，它们在设备树解析之后才初始化。
+这里有个先后问题：解析设备树时如果出了错，内核要能把错误打印出来，而打印要用串口，串口的地址又在设备树里。解决办法是**早期控制台**：串口驱动一开始先用一个写死的地址（QEMU virt 上 PL011 的位置），让内核从第一行代码起就能输出；设备树解析完之后，再把它指到设备树描述的那个串口上。中断控制器和定时器没有这个问题，它们在设备树解析之后才初始化。
 
-中断控制器的驱动只支持 GICv2。设备树说是 GICv3 时内核直接停下并说明原因，而不是按 v2 的
-方式去操作一个不存在的设备然后无声地卡住。
+中断控制器的驱动只支持 GICv2。设备树说是 GICv3 时内核直接停下并说明原因，而不是按 v2 的方式去操作一个不存在的设备然后无声地卡住。
 
-## Multiboot 信息结构
-
-```c
-typedef struct {
-    uint32_t flags;           // 标志位，指示哪些字段有效
-    
-    // 内存信息 (flags bit 0)
-    uint32_t mem_lower;       // 低端内存 (KB)
-    uint32_t mem_upper;       // 高端内存 (KB)
-    
-    // 引导设备 (flags bit 1)
-    uint32_t boot_device;
-    
-    // 命令行 (flags bit 2)
-    uint32_t cmdline;
-    
-    // 模块 (flags bit 3)
-    uint32_t mods_count;
-    uint32_t mods_addr;
-    
-    // 符号表 (flags bit 4 or 5)
-    // ...
-    
-    // 内存映射 (flags bit 6)
-    uint32_t mmap_length;
-    uint32_t mmap_addr;
-    
-    // VBE 信息 (flags bit 11)
-    // Framebuffer 信息 (flags bit 12)
-    // ...
-} multiboot_info_t;
-```
-
-## 内存映射
-
-引导加载器提供详细的内存映射，指示哪些区域可用：
-
-```c
-typedef struct {
-    uint32_t size;      // 此条目大小（不含 size 字段本身）
-    uint64_t addr;      // 起始地址
-    uint64_t len;       // 长度
-    uint32_t type;      // 类型
-    // 1 = 可用
-    // 2 = 保留
-    // 3 = ACPI 可回收
-    // 4 = ACPI NVS
-    // 5 = 坏内存
-} multiboot_memory_map_t;
-```
-
-## 关键注意事项
+## 注意事项
 
 ### 1. 地址转换
+
 在分页启用前，所有地址都是物理地址。Multiboot 信息结构中的地址也是物理地址，需要转换：
 
 ```c
@@ -257,6 +244,7 @@ typedef struct {
 ```
 
 ### 2. 栈设置
+
 引导代码必须设置栈才能调用 C 函数：
 
 ```asm
@@ -268,10 +256,9 @@ stack_top:
 ```
 
 ### 3. 恒等映射移除
+
 跳转到高半核后应移除恒等映射，防止意外访问低地址。
 
 ### 4. 浮点单元
-引导后 FPU 处于未初始化状态，要用浮点运算得先初始化。CastorOS 在启动时为用户程序打开它：
-x86 上清掉 `CR0.EM`、置上 `CR4.OSFXSR` 并执行 `fninit`（i686 在 `hal::Cpu::init`，x86_64 在
-`boot64.asm`），arm64 上把 `CPACR_EL1.FPEN` 设成 3。内核自己不用浮点。
 
+引导后 FPU 处于未初始化状态，要用浮点运算得先初始化。CastorOS 在启动时为用户程序打开它：x86 上清掉 `CR0.EM`、置上 `CR4.OSFXSR` 并执行 `fninit`（i686 在 `hal::Cpu::init`，x86_64 在 `boot64.asm`），arm64 上把 `CPACR_EL1.FPEN` 设成 3。内核自己不用浮点（见 [浮点数](../reference/floating-point.md)）。

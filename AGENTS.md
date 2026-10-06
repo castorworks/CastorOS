@@ -1,6 +1,7 @@
 # AGENTS.md
 
-本文件为 AI 编码助手（及人类贡献者）提供 CastorOS 的项目上下文与约定。
+Project context and conventions for AI coding assistants and human contributors working on
+CastorOS. This file is written in English; everything under `docs/` is in Chinese.
 
 ## Product Overview
 
@@ -12,17 +13,32 @@ CastorOS is an educational microkernel for learning and experimentation.
   shared memory, uptime/timer, and I/O port / device memory / DMA / IRQ access, platform
   device lookup and per-device hardware permissions for user-space drivers)
 - File systems, networking, device drivers and shells are **not** in the kernel; they are
-  meant to come back as user-space modules (see `docs/microkernel.md`). Do not add them
-  to `src/`.
+  user-space modules (see `docs/microkernel.md`). Do not add them to `src/`.
 - Higher-half kernel (i686 virtual base 0x80000000)
 - Written in freestanding C++20 with NASM / GNU as assembly for architecture-specific code
 
-### Documentation Language
+## Documentation
 
-Project documentation is primarily in Chinese (简体中文). Code comments mix Chinese and English.
-`docs/microkernel.md` describes the current structure and `docs/concepts/` explains the
-mechanisms behind it. `docs/history/` is a development log written before the microkernel
-cut; its code listings no longer match the tree.
+Project documentation is in Chinese (简体中文). Code comments mix Chinese and English.
+
+| Where | What |
+|-------|------|
+| `README.md` | Entry point: what it is, quick start, directory list |
+| `docs/README.md` | Index of all documents, and the writing conventions |
+| `docs/setup.md` | Toolchain and QEMU installation |
+| `docs/testing.md` | What `make test` does, logs, CI, manual QEMU runs, GDB |
+| `docs/microkernel.md` | Current structure: kernel boundary, boot, init and modules, adding a module |
+| `docs/reference/` | One page per part: `syscalls.md`, `ipc.md`, `hardware.md`, `drivers.md`, `fs.md`, `net.md`, `shell.md`, `floating-point.md` |
+| `docs/concepts/` | The mechanisms behind it (boot, paging, interrupts, scheduling, ...) |
+
+All of them describe the current tree and are kept in sync with the code; there is no archive
+of outdated documents (the old development log, `docs/history/`, was deleted and lives in git
+history only). When a change alters behaviour, limits or an interface, update the matching page in
+`docs/reference/` (each section ends with its known limits, introduced by “当前的限制”). The
+number of system calls (31) is stated in this file, `docs/microkernel.md`,
+`docs/reference/syscalls.md`, `docs/README.md` and `docs/concepts/07-system-calls.md`; change
+them together. Writing conventions (one paragraph per line, no hard wraps in Chinese text, one fact
+in one place) are listed at the end of `docs/README.md`.
 
 ## Technology Stack
 
@@ -54,6 +70,12 @@ CXXFLAGS = -std=gnu++20 -ffreestanding -O0 -g -Wall -Wextra \
 | x86_64 | x86_64-elf-      | NASM      | Multiboot1 via `castor32.elf` |
 | arm64  | aarch64-elf-     | GNU as    | `-M virt -kernel`, DTB        |
 
+### Dependencies
+
+- QEMU for emulation
+- Cross-compiler toolchain, GCC 10 or newer for `-std=gnu++20`: Homebrew on macOS,
+  `scripts/cross-compiler-install.sh` (builds all three targets from source) on Ubuntu/Debian
+
 ### Common Commands
 
 ```bash
@@ -70,71 +92,13 @@ make test               # Build with in-kernel tests (KTEST=1), boot, and check 
 make test-all
 make lib-test           # Host-side tests of the user library (no cross compiler or QEMU)
 
+make check              # Build the current arch and show the kernel image
 make clean              # Current arch only
 make clean-all          # Everything, including user/ builds
 make compile-db         # compile_commands.json (needs compiledb)
-make info
+make info               # Current configuration
+make sources            # List source files
 ```
-
-### User Space
-
-`user/lib` is the user library (syscall wrappers, printf, string, math). `user/init` is the first
-process; its ELF is embedded into the kernel image by `src/kernel/init_image.S` (`.incbin`),
-so there is no disk image. init starts the modules and is the name server (`names.h` in
-`user/lib`). Resident modules are embedded into init the same way (`user/init/modules.S`):
-`user/uart` (serial input driver; protocol and the `console_read`/`read_line`
-client in `console.h`), `user/blk` (virtio-blk driver,
-protocol and client in `blk.h`), `user/net` (virtio-net driver plus a small
-ARP/IPv4/ICMP/UDP/TCP stack with a DHCP client; protocol and client in `net.h`), `user/ramfs` (in-memory file
-service), `user/diskfs`
-(persistent file service on top of blk; files are addressed with a `disk:` prefix) and
-`user/sh` (command line). Only init is privileged. Every module drops privilege before it
-starts; for a driver, init first finds its device (fixed ports or a PCI scan on x86,
-`device_find("<compatible>", index, &info)` on arm64, which answers from the device tree) and
-records its ports or device memory and its interrupt line in the child's allow-list with
-`hw_allow` (the `allow_*` functions in `user/init/init.cpp`; `virtio_allow` in `virtio.h`).
-A driver does not look for its device and does not hard-code an address: it reads what it was
-allowed with `hw_find` (`virtio_open` for virtio devices) and can touch nothing else. On x86 the
-ports a process is allowed are opened in the TSS I/O permission bitmap while it runs, so
-`io_read`/`io_write` in the user library execute `in`/`out` directly for those ports and only
-fall back to the system call for the rest. Both file services share the protocol in `fs.h` and the server
-skeleton in `fs_server.h`, which also owns the directory rules (paths are written from the root with
-`/`, there is no current directory; a backend only stores a flat table of full paths); virtio drivers share `virtio.h`; servers that take a shared buffer
-from each client use `clients.h`. Other programs (`user/selftest`, `user/ls`, `user/cat`,
-`user/cp`, `user/rm`, `user/mkdir`, `user/echo`, `user/write`, `user/grep`, `user/wc`, `user/disk`, `user/ping`, `user/ifconfig`, `user/dns`,
-`user/http`, `user/echod`, `user/sleep`, `user/hello`) go into the boot image: a ustar archive of `user/bootfs/` (subdirectories become directories) plus the programs
-in `BOOT_PROGRAMS` (`user/ramfs/Makefile`), embedded in ramfs and unpacked at startup. sh
-runs them with fork + exec, and runs the `rc` file (which starts `selftest`) at boot.
-To add a program, create `user/<name>/` and add it to `BOOT_PROGRAMS`. Every user program's
-Makefile just sets `TARGET`/`SOURCES` and includes `user/program.mk`. Compiler and flags for all
-of user space (library and programs) are in `user/arch.mk`; change them there, nowhere else. The kernel Makefile
-rebuilds all of it when `user/` changes.
-
-### Testing
-
-Kernel tests (`src/tests`, `ktest` framework) are compiled in only with `KTEST=1` and run during
-boot, before init starts. `make test` builds into `build/<arch>-ktest/`. User-space behaviour
-is checked in two places: `user/selftest` (runs inside the system from `rc`; add checks there
-for anything a program can observe) and `scripts/shell-test.sh` (drives the command line over
-the serial port from the host; add checks there for anything that needs typed input, such as
-job control). Patterns in shell-test.sh must not assume a line starts at column 0 unless the
-shell is known to be idle: output of background programs follows the `> ` prompt.
-
-The parts of `user/lib` that do not need the kernel (printf family, string and math functions)
-also have host-side tests: `make lib-test` compiles them with the host compiler and runs
-`user/lib/tests/lib_test.cpp` in a couple of seconds, with no cross compiler and no QEMU. Add
-checks there for pure library code; it is the fastest loop there is.
-
-Every push to `main` and every pull request runs `make test` for each architecture on GitHub
-Actions (`.github/workflows/test.yml`, three jobs on macOS runners with the Homebrew cross
-compilers), plus `make lib-test`. The logs of each run (`test.log`, `shell-test.log`) are uploaded as artifacts. If
-you add a build dependency, add it to the workflow's `brew install` line too.
-
-### Dependencies
-
-- QEMU for emulation
-- Cross-compiler toolchain, GCC 10 or newer for `-std=gnu++20`: Homebrew on macOS,
-  `scripts/cross-compiler-install.sh` (builds all three targets from source) on Ubuntu/Debian
 
 ## Project Structure
 
@@ -172,20 +136,69 @@ CastorOS/
 │   ├── program.mk          # Shared build rules for user programs
 │   ├── arch.mk             # Compiler and flags shared by the user library and all programs
 │   └── linker/             # User linker scripts
-├── docs/                   # Documentation (Chinese)
+├── docs/                   # Documentation (Chinese), see the Documentation section above
 ├── scripts/                # cross-compiler-install.sh, shell-test.sh (used by make test)
 ├── build/                  # Build output: build/<arch>/, build/<arch>-ktest/
 ├── Makefile
 └── linker.ld, linker_x86_64.ld, linker_arm64.ld
 ```
 
-### Key Conventions
+### User Space
 
-#### HAL (Hardware Abstraction Layer)
+**Library and init.** `user/lib` is the user library (syscall wrappers, printf, string, math).
+`user/init` is the first process; its ELF is embedded into the kernel image by
+`src/kernel/init_image.S` (`.incbin`), so there is no disk image. init starts the modules and is
+the name server (`names.h` in `user/lib`).
+
+**Resident modules** are embedded into init the same way (`user/init/modules.S`):
+
+- `user/uart`: serial input driver; protocol and the `console_read`/`read_line` client in
+  `console.h`
+- `user/blk`: virtio-blk driver; protocol and client in `blk.h`
+- `user/net`: virtio-net driver plus a small ARP/IPv4/ICMP/UDP/TCP stack with a DHCP client;
+  protocol and client in `net.h`
+- `user/ramfs`: in-memory file service
+- `user/diskfs`: persistent file service on top of blk; files are addressed with a `disk:` prefix
+- `user/sh`: command line
+
+**Privilege and devices.** Only init is privileged. Every module drops privilege before it
+starts; for a driver, init first finds its device (fixed ports or a PCI scan on x86,
+`device_find("<compatible>", index, &info)` on arm64, which answers from the device tree) and
+records its ports or device memory and its interrupt line in the child's allow-list with
+`hw_allow` (the `allow_*` functions in `user/init/init.cpp`; `virtio_allow` in `virtio.h`).
+A driver does not look for its device and does not hard-code an address: it reads what it was
+allowed with `hw_find` (`virtio_open` for virtio devices) and can touch nothing else. On x86 the
+ports a process is allowed are opened in the TSS I/O permission bitmap while it runs, so
+`io_read`/`io_write` in the user library execute `in`/`out` directly for those ports and only
+fall back to the system call for the rest.
+
+**Shared code.** Both file services share the protocol in `fs.h` and the server skeleton in
+`fs_server.h`, which also owns the directory rules (paths are written from the root with `/`,
+there is no current directory; a backend only stores a flat table of full paths); virtio drivers
+share `virtio.h`; servers that take a shared buffer from each client use `clients.h`.
+
+**Programs in the boot image.** Other programs (`user/selftest`, `user/ls`, `user/cat`,
+`user/cp`, `user/rm`, `user/mkdir`, `user/echo`, `user/write`, `user/grep`, `user/wc`,
+`user/disk`, `user/ping`, `user/ifconfig`, `user/dns`, `user/http`, `user/echod`, `user/sleep`,
+`user/hello`) go into the boot image: a ustar archive of `user/bootfs/` (subdirectories become
+directories) plus the programs in `BOOT_PROGRAMS` (`user/ramfs/Makefile`), embedded in ramfs and
+unpacked at startup. sh runs them with fork + exec, and runs the `rc` file (which starts
+`selftest`) at boot.
+
+**Build.** To add a program, create `user/<name>/` and add it to `BOOT_PROGRAMS`. Every user
+program's Makefile just sets `TARGET`/`SOURCES` and includes `user/program.mk`. Compiler and
+flags for all of user space (library and programs) are in `user/arch.mk`; change them there,
+nowhere else. The kernel Makefile rebuilds all of it when `user/` changes.
+
+## Conventions
+
+### HAL (Hardware Abstraction Layer)
 
 - `src/include/hal/hal.h` - Unified interface for all architectures
 - `src/arch/$(ARCH)/hal.cpp` - Architecture-specific implementation
-- Use `hal_*` functions for portable code
+- Portable code goes through the HAL: `hal::Category::action()` (e.g., `hal::Cpu::init()`,
+  `hal::Mmu::map()`), selected per architecture at compile time. A few C-style helpers
+  (`hal_arch_name()`, the `hal_*_barrier()` functions) are in `hal.h` as well.
 - Page tables: the walk, map/unmap/protect, and creating, cloning (COW) and destroying address
   spaces are written once in `src/mm/pagetable.cpp`. Each architecture only describes its entry
   format through the functions in `src/include/hal/pt.h` (implemented at the end of
@@ -198,39 +211,52 @@ CastorOS/
   which `kernel/task.h` includes. `task.cpp`, `sched.cpp`, `process.cpp`, `loader.cpp`,
   `syscall.cpp` and `kernel/task.h` have no `#if ARCH_*`. An address space is always passed around
   as the physical address of its top-level table (`uintptr_t`), never as a pointer to it.
-- `kernel::Scheduler` is implemented in two files: `sched.cpp` (run queue, idle task, `schedule()`,
-  timer tick, yield/sleep/block/wakeup) and `task.cpp` (task table, creating and exiting processes,
-  kill, privilege queries). What they share is in `src/kernel/task_private.h`; nothing else
-  includes it.
 - `src/mm/vmm.cpp` has no `#if ARCH_*`: address-space creation, cloning (COW), teardown, extending
   the kernel's direct mapping and the i686 kernel-mapping sync are `hal::Mmu` functions implemented
   per architecture. New architecture-dependent memory code goes behind a `hal::Mmu` function, not
   into a conditional in generic code.
 
-#### Header Organization
+### Header Organization
 
 - Public headers: `src/include/<subsystem>/<file>.h`
 - Arch-specific headers: `src/arch/$(ARCH)/include/`
 - User-space headers: `user/lib/include/`
 
-#### Naming Conventions
+### Naming and Code Style
 
 - Kernel subsystems: namespace + class, e.g. `mm::Pmm::alloc_frame()`,
   `kernel::Scheduler::yield()`, `syscall::Process::fork()`, `drivers::Timer::get_uptime_ms()`.
   Singleton modules use static member functions; `sync::Spinlock` uses real members.
+- Still C-style free functions: syscall wrappers (`sys_*_wrapper`), `kprintf`/`klog`/string library,
+  `kmalloc()`/`kfree()`, and all of user space (POSIX-style API).
+- Inside a member function, call a same-named global function with `::name()` (unqualified names
+  bind to the class member first).
+- Do not declare functions with block-scope `extern` inside member functions; include the header.
+- Assembly files: `.asm` (NASM) or `.S` (GNU as for ARM64)
+
+### Kernel
+
+- `kernel::Scheduler` is implemented in two files: `sched.cpp` (run queue, idle task, `schedule()`,
+  timer tick, yield/sleep/block/wakeup) and `task.cpp` (task table, creating and exiting processes,
+  kill, privilege queries). What they share is in `src/kernel/task_private.h`; nothing else
+  includes it.
 - Prefer the RAII guard `sync::SpinlockIrqGuard` over manual lock/unlock pairs. The spinlock is the
   only lock in the kernel: nothing needed a mutex or a semaphore, so they were removed.
 - Kernel code that nothing calls gets deleted together with its tests, not kept "for later". To
   find it: build with `-ffunction-sections -fdata-sections` and link with
   `--gc-sections --print-gc-sections`; whatever the linker would drop is unreachable.
-- Still C-style free functions: syscall wrappers (`sys_*_wrapper`), `kprintf`/`klog`/string library,
-  `kmalloc()`/`kfree()`, and all of user space (POSIX-style API).
-- User programs may use floating point and SIMD: the scheduler saves and restores those registers
-  whenever it switches user tasks (`hal::UserContext::fp_save` / `fp_restore`, state in
-  `task_t::fp_state`). The kernel itself must not touch them — it is built with `-mno-sse` /
+- The kernel must not touch floating-point or SIMD registers — it is built with `-mno-sse` /
   `-mgeneral-regs-only` and they are not saved on kernel entry — so no `float`/`double` in `src/`.
+  User programs may use them: the scheduler saves and restores those registers whenever it
+  switches user tasks (`hal::UserContext::fp_save` / `fp_restore`, state in `task_t::fp_state`).
+- Syscall numbers live in `src/include/kernel/syscall.h` and must match `user/lib/include/syscall.h`.
 - Program arguments travel through the argument page at the top of the user stack region
   (`USER_ARGS_ADDR` / `user_args_t` in `kernel/task.h`, mirrored in `user/lib/src/crt0.cpp`).
+- Memory layout (i686): kernel virtual base `0x80000000` (2GB), kernel physical load `0x100000`
+  (1MB). Use the `PHYS_TO_VIRT()` / `VIRT_TO_PHYS()` macros for address conversion.
+
+### User Programs
+
 - Usage text and error messages go to standard error with `eprintf`, never `printf`: with
   `cmd > file` or a pipe they must still reach the screen.
 - Programs write output with `printf`/`write_out` and read input with `read_line`/`read_input`
@@ -238,81 +264,105 @@ CastorOS/
   `cmd1 | cmd2` work. Standard input/output is a user-library concept: sh passes a hidden last
   argument (starting with `\x01`) that `crt0` strips; pipes are plain synchronous IPC between
   the two programs. The kernel knows nothing about it.
-- Syscall numbers live in `src/include/kernel/syscall.h` and must match `user/lib/include/syscall.h`.
-- Inside a member function, call a same-named global function with `::name()` (unqualified names
-  bind to the class member first).
-- Do not declare functions with block-scope `extern` inside member functions; include the header.
-- HAL: `hal::Category::action()` (e.g., `hal::Cpu::init()`, `hal::Mmu::map()`), selected per architecture at compile time
-- Test cases: `test_<name>` with `TEST_CASE()` macro. A test module only runs its cases; the runner
-  (`run_all_tests`) resets the counters before each module and prints its summary afterwards. Do
-  not call `unittest_init()` / `unittest_print_summary()` in a module, and register every new
-  module in `test_runner.cpp` — a module that is not listed there never runs.
-- Assembly files: `.asm` (NASM) or `.S` (GNU as for ARM64)
 
-#### Memory Layout (i686)
+## Testing
 
-- Kernel virtual base: `0x80000000` (2GB)
-- Kernel physical load: `0x100000` (1MB)
-- Use `PHYS_TO_VIRT()` / `VIRT_TO_PHYS()` macros for address conversion
+`docs/testing.md` has the same material for human readers, in Chinese.
 
-## 调试指南
+### Where Checks Go
 
-### 测试
+- **Kernel tests** (`src/tests`, `ktest` framework) are compiled in only with `KTEST=1` and run
+  during boot, before init starts. `make test` builds into `build/<arch>-ktest/`.
+  Test cases are `test_<name>` with the `TEST_CASE()` macro. A test module only runs its cases;
+  the runner (`run_all_tests`) resets the counters before each module and prints its summary
+  afterwards. Do not call `unittest_init()` / `unittest_print_summary()` in a module, and register
+  every new module in `test_runner.cpp` — a module that is not listed there never runs.
+- **`user/selftest`** runs inside the system from `rc`; add checks there for anything a program
+  can observe.
+- **`scripts/shell-test.sh`** drives the command line over the serial port from the host; add
+  checks there for anything that needs typed input, such as job control. Patterns in
+  shell-test.sh must not assume a line starts at column 0 unless the shell is known to be idle:
+  output of background programs follows the `> ` prompt.
+- **Host-side library tests**: the parts of `user/lib` that do not need the kernel (printf
+  family, string and math functions) are also tested on the host. `make lib-test` compiles them
+  with the host compiler and runs `user/lib/tests/lib_test.cpp` in a couple of seconds, with no
+  cross compiler and no QEMU. Add checks there for pure library code; it is the fastest loop
+  there is.
+
+### Running Tests
 
 ```bash
-make test                      # i686：构建 KTEST=1 内核并运行，命令行检查做完即结束（通常十几秒）
+make test                      # i686: build the KTEST=1 kernel and run it; ends when the shell checks are done (usually ten-odd seconds)
 make test ARCH=x86_64
 make test ARCH=arm64
-make test-all                  # 三个架构都跑完，有任何一个失败就返回非零
-make test TEST_TIMEOUT=300     # 机器很忙时放宽上限（默认 180 秒）
-make test ARCH=x86_64 QEMU_MEMORY=3G   # 给虚拟机更多内存（默认是 QEMU 的 128MB）；
-                               # 超过 1GB 时"高处的物理内存"那组内核测试才有内容
+make test-all                  # all three architectures; non-zero if any of them fails
+make test TEST_TIMEOUT=300     # raise the limit on a busy machine (default 180 seconds)
+make test ARCH=x86_64 QEMU_MEMORY=3G   # more memory for the VM (default is QEMU's 128MB); the
+                               # "high physical memory" kernel tests only have content above 1GB
 ```
 
-内核不会自己关机：`make test` 通过 `scripts/shell-test.sh` 启动 QEMU，等日志里出现 `sh: ready`
-（以 `TEST_TIMEOUT` 为上限），然后向串口输入一串命令检查命令行的行为（运行程序、后台任务、
-Ctrl-C、`kill`、被终止的服务的端口能否重用、程序读键盘输入、重定向和管道、引号、标准错误、脚本），每一步等到预期的输出出现为止（每步最多
-`STEP_TIMEOUT` 秒，默认 30），做完就结束 QEMU。完整日志写到 `build/<arch>-ktest/test.log`，
-命令行检查的结果写到 `build/<arch>-ktest/shell-test.log`（每项一行 `shelltest: <名字>: ok|FAILED`）。
-最后汇总各模块的 `Total/Passed/Failed tests` 计数；有失败用例、用户态没有起来、用户态自检
-没有通过（没有 `selftest: all passed`）、自检跳过了任何一项（测试环境里磁盘、网卡、回显服务
-都在）或者命令行检查没有全部通过时返回非零。
+The kernel does not power off by itself: `make test` starts QEMU through
+`scripts/shell-test.sh`, waits for `sh: ready` in the log (at most `TEST_TIMEOUT`), then types a
+series of commands into the serial port to check the command line (running programs, background
+jobs, Ctrl-C, `kill`, whether the port of a killed service can be reused, programs reading
+keyboard input, redirection and pipes, quoting, standard error, scripts). Each step waits until
+the expected output appears (at most `STEP_TIMEOUT` seconds per step, default 30), and QEMU is
+stopped when the steps are done.
 
-主机负载极高时（load 上百），QEMU 可能几十秒没有任何输出，自检里有时间上限的检查也可能超时；
-先看 `uptime` 再判断是不是真的坏了。
+- Full log: `build/<arch>-ktest/test.log`
+- Shell check results: `build/<arch>-ktest/shell-test.log`, one line per check,
+  `shelltest: <name>: ok|FAILED`
 
-### 手动运行
+At the end the `Total/Passed/Failed tests` counts of all modules are summed. `make test` returns
+non-zero if a test case failed, user space did not come up, the selftest did not pass (no
+`selftest: all passed`), the selftest skipped anything (the test environment has the disk, the
+network card and the echo service), or not all shell checks passed.
+
+When the host is extremely loaded (load in the hundreds), QEMU may print nothing for tens of
+seconds and selftest checks with a time limit may time out; look at `uptime` before deciding
+something is really broken. Do not run builds and tests in parallel.
+
+### CI
+
+Every push to `main` and every pull request runs `make test` for each architecture on GitHub
+Actions (`.github/workflows/test.yml`, three jobs on macOS runners with the Homebrew cross
+compilers), plus `make lib-test`. The logs of each run (`test.log`, `shell-test.log`) are
+uploaded as artifacts. If you add a build dependency, add it to the workflow's `brew install`
+line too.
+
+### Running by Hand
 
 ```bash
-# 下面的命令不带磁盘和网卡（blk、diskfs、net 会直接退出，selftest 跳过相关的检查）；要带上就加：
+# These commands attach no disk and no network card (blk, diskfs and net exit at once, selftest
+# skips the related checks). To attach them, add:
 #   x86:   -drive file=disk.img,format=raw,if=none,id=disk0 -device virtio-blk-pci,drive=disk0
 #          -netdev user,id=net0,guestfwd=tcp:10.0.2.100:7-cmd:cat -device virtio-net-pci,netdev=net0
-#   arm64: 同上，设备名换成 virtio-blk-device / virtio-net-device
-# 控制台是串口；向 QEMU 的标准输入写入的内容经 uart 驱动送到 sh
-# （help、jobs、kill <pid> 是内置命令；其余如 ls、cat <file>、write <file> [text] 是程序；
-#   行尾加 & 后台运行，Ctrl-C（0x03）终止前台程序；前台程序运行期间输入归它，
-#   行首的 Ctrl-D（0x04）表示输入结束；cmd < in > out 2> err、cmd >> out、cmd1 | cmd2、
-#   "带 空格 的参数" 可用；文本文件当作脚本执行，$1-$9 是参数）
+#   arm64: the same, with the device names virtio-blk-device / virtio-net-device
 timeout 20 qemu-system-i386 -kernel build/i686/castor.bin -serial stdio -display none
 timeout 20 qemu-system-x86_64 -kernel build/x86_64/castor32.elf -serial stdio -display none
 timeout 20 qemu-system-aarch64 -M virt -cpu cortex-a72 -kernel build/arm64/castor.bin -serial stdio -display none
 
 # GDB
-make debug                     # QEMU 等待连接，另一个终端: gdb build/i686/castor.bin -ex 'target remote :1234'
+make debug                     # QEMU waits for a connection; in another terminal: gdb build/i686/castor.bin -ex 'target remote :1234'
 ```
 
-### 构建验证
+The console is the serial port; whatever is written to QEMU's standard input reaches sh through
+the uart driver. In sh:
 
-```bash
-make check                     # 当前架构
-make build-all                 # 所有架构
-make info                      # 显示当前配置
-make sources                   # 列出源文件
-```
+- `help`, `jobs` and `kill <pid>` are built in; everything else (`ls`, `cat <file>`,
+  `write <file> [text]`, ...) is a program.
+- A trailing `&` runs a program in the background; Ctrl-C (0x03) kills the foreground program.
+  While a foreground program runs, input belongs to it; Ctrl-D (0x04) at the start of a line
+  means end of input.
+- `cmd < in > out 2> err`, `cmd >> out`, `cmd1 | cmd2` and `"arguments with spaces"` work.
+- A text file is run as a script; `$1`-`$9` are its arguments.
 
-### 常见问题
+### Troubleshooting
 
-1. **手动运行用的 timeout 未找到**: `brew install coreutils` (macOS；`make test` 本身不需要)
-2. **交叉编译器未找到**: macOS 用 `brew install i686-elf-gcc x86_64-elf-gcc aarch64-elf-gcc`，Ubuntu/Debian 运行 `scripts/cross-compiler-install.sh`
-3. **QEMU 未找到**: `brew install qemu`
-4. **QEMU 无输出或卡住**: 先看主机负载（`uptime`），不要并行跑构建和测试
+1. **`timeout` not found (used for manual runs)**: `brew install coreutils` (macOS; `make test`
+   itself does not need it)
+2. **Cross compiler not found**: `brew install i686-elf-gcc x86_64-elf-gcc aarch64-elf-gcc` on
+   macOS, `scripts/cross-compiler-install.sh` on Ubuntu/Debian
+3. **QEMU not found**: `brew install qemu`
+4. **QEMU prints nothing or hangs**: check the host load first (`uptime`); do not run builds and
+   tests in parallel

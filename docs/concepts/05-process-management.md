@@ -1,17 +1,12 @@
 # 进程管理
 
-## 概述
-
 CastorOS 实现了抢占式多任务，支持用户态和内核态任务。每个任务有独立的地址空间和内核栈。
 
-代码在 `src/kernel/` 的两个文件里，一起实现 `kernel::Scheduler`：`task.cpp` 是任务表和进程的
-一生（PCB 的分配和释放、创建第一个进程、退出、kill），`sched.cpp` 是调度（就绪队列、idle、
-`schedule()`、时钟滴答、让出/睡眠/阻塞/唤醒）。`fork`、`exec`、`waitpid` 在
-`src/kernel/syscalls/process.cpp`。
+代码在 `src/kernel/` 的两个文件里，一起实现 `kernel::Scheduler`：`task.cpp` 是任务表和进程的一生（PCB 的分配和释放、创建第一个进程、退出、kill），`sched.cpp` 是调度（就绪队列、idle、`schedule()`、时钟滴答、让出/睡眠/阻塞/唤醒）。`fork`、`exec`、`waitpid` 在 `src/kernel/syscalls/process.cpp`。
 
 ## 任务状态
 
-```
+```text
                     创建
                       ↓
     +------------→ READY ←-----------+
@@ -26,7 +21,7 @@ CastorOS 实现了抢占式多任务，支持用户态和内核态任务。每�
                   等待条件满足
                        ↓
                     READY
-                       
+
     RUNNING → exit() → ZOMBIE → wait() → TERMINATED
 ```
 
@@ -84,28 +79,22 @@ PCB 里没有文件描述符表和工作目录：内核不认识文件，这些�
 
 ## CPU 上下文
 
-任务不在 CPU 上运行的时候，它的寄存器内容存在 PCB 里的 `cpu_context_t` 中。这个结构
-每个架构都不一样（寄存器不同），所以定义不在通用的 `kernel/task.h` 里，而是每个架构各有
-一份 `src/arch/<arch>/include/task_context.h`。在 i686 上它是通用寄存器、段寄存器、指令指针、
-标志寄存器、栈指针，再加上 `cr3`——这个任务的地址空间。
+任务不在 CPU 上运行的时候，它的寄存器内容存在 PCB 里的 `cpu_context_t` 中。这个结构每个架构都不一样（寄存器不同），所以定义不在通用的 `kernel/task.h` 里，而是每个架构各有一份 `src/arch/<arch>/include/task_context.h`。在 i686 上它是通用寄存器、段寄存器、指令指针、标志寄存器、栈指针，再加上 `cr3`——这个任务的地址空间。
 
-通用的调度和进程代码不直接读写里面的字段。需要构造或改写现场的地方只有几处，
-都通过 `hal::UserContext`（`src/arch/<arch>/task/user_context.cpp`）：
+通用的调度和进程代码不直接读写里面的字段。需要构造或改写现场的地方只有几处，都通过 `hal::UserContext`（`src/arch/<arch>/task/user_context.cpp`）：
 
 | 函数 | 什么时候用 |
 |------|------------|
 | `init(ctx, entry, user_sp, space, kernel_sp)` | 新进程、`exec` 之后：从入口开始在用户态运行 |
 | `init_kernel(ctx, entry, kernel_sp, space)` | idle 任务：在内核态运行一个函数 |
 | `fork(child, frame, space, kernel_sp)` | 子进程：和父进程进入系统调用时一样，只是返回值是 0 |
-| `exec_return(frame, entry, user_sp)` | 改写系统调用的返回帧，让它"返回"到新程序 |
+| `exec_return(frame, entry, user_sp)` | 改写系统调用的返回帧，让它“返回”到新程序 |
 | `set_kernel_stack(kernel_sp)` | 告诉 CPU 这个任务从用户态陷入内核时用哪个内核栈 |
 | `fp_reset(state)` / `fp_save(state)` / `fp_restore(state)` | 浮点/SIMD 寄存器：新程序的初始状态、存进 PCB、从 PCB 装回 |
 
 其中 `frame` 是系统调用入口保存在内核栈上的用户寄存器，它的布局由各架构的汇编入口决定。
 
-浮点/SIMD 寄存器不在 `cpu_context_t` 里，而是 PCB 里单独的一块 `fp_state`（x86 上是
-`FXSAVE` 的 512 字节，arm64 上是 V0-V31 加两个状态寄存器）。分开放是因为它们的保存时机
-不一样：内核自己不用这些寄存器，所以进出内核不用管它们，只有换一个用户任务上 CPU 时才换。
+浮点/SIMD 寄存器不在 `cpu_context_t` 里，而是 PCB 里单独的一块 `fp_state`（x86 上是 `FXSAVE` 的 512 字节，arm64 上是 V0-V31 加两个状态寄存器）。分开放是因为它们的保存时机不一样：内核自己不用这些寄存器，所以进出内核不用管它们，只有换一个用户任务上 CPU 时才换。
 
 ## 调度器
 
@@ -118,25 +107,18 @@ PCB 里没有文件描述符表和工作目录：内核不认识文件，这些�
 1. 当前任务如果还能运行，放回就绪队列的队尾。
 2. 从队首取下一个任务；队列空了就运行 idle 任务。
 3. 如果下一个是用户任务，`hal::UserContext::set_kernel_stack()` 换好它的内核栈。
-4. 换浮点/SIMD 寄存器：当前任务是用户任务就 `fp_save` 存进它的 PCB，下一个是用户任务就
-   `fp_restore` 装回它的。内核线程（idle）不用这些寄存器，轮到它时什么都不做：用户任务 A
-   换下去时已经存好了，之后不管中间隔了几次 idle，换上来的用户任务都从自己的 PCB 里装。
+4. 换浮点/SIMD 寄存器：当前任务是用户任务就 `fp_save` 存进它的 PCB，下一个是用户任务就 `fp_restore` 装回它的。内核线程（idle）不用这些寄存器，轮到它时什么都不做：用户任务 A 换下去时已经存好了，之后不管中间隔了几次 idle，换上来的用户任务都从自己的 PCB 里装。
 5. `task_switch_context(&prev->context, &next->context)` 切换。
 
-idle 任务只做一件事：关着中断检查有没有任务可运行，没有就开中断并停机，等下一次中断。
-检查和停机必须是一个不可分的动作，否则可能在两者之间错过一次唤醒。
+idle 任务只做一件事：关着中断检查有没有任务可运行，没有就开中断并停机，等下一次中断。检查和停机必须是一个不可分的动作，否则可能在两者之间错过一次唤醒。
 
 调度发生在三种时候：定时器中断发现时间片用完（抢占）、任务自己 `yield`、任务阻塞。
 
 ### 上下文切换
 
-`task_switch_context` 是汇编写的（`src/arch/<arch>/task/`）。它把当前的寄存器存进旧任务
-的 `cpu_context_t`，从新任务的 `cpu_context_t` 里恢复寄存器和地址空间，然后跳到新任务
-上次停下的地方。
+`task_switch_context` 是汇编写的（`src/arch/<arch>/task/`）。它把当前的寄存器存进旧任务的 `cpu_context_t`，从新任务的 `cpu_context_t` 里恢复寄存器和地址空间，然后跳到新任务上次停下的地方。
 
-对一个从没运行过的任务，"上次停下的地方"就是 `hal::UserContext::init` 填好的初始现场：
-切换代码照常恢复它，其中的特权级是用户态，于是用"从中断返回"的指令（x86 的 `iret`，
-arm64 的 `eret`）落到用户程序的入口。进入用户态没有单独的代码路径，它就是一次上下文切换。
+对一个从没运行过的任务，“上次停下的地方”就是 `hal::UserContext::init` 填好的初始现场：切换代码照常恢复它，其中的特权级是用户态，于是用“从中断返回”的指令（x86 的 `iret`，arm64 的 `eret`）落到用户程序的入口。进入用户态没有单独的代码路径，它就是一次上下文切换。
 
 ## 进程创建
 
@@ -212,7 +194,7 @@ uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size
 }
 ```
 
-新程序的启动代码（`user/lib/src/crt0.cpp`）从参数页取出参数，组装成 `argv` 再调用 `main`。
+新程序的启动代码（`user/lib/src/crt0.cpp`）从参数页取出参数，组装成 `argv` 再调用 `main`（见 [程序参数](../reference/shell.md#程序参数)）。
 
 ## 进程终止
 
@@ -263,14 +245,11 @@ uint32_t syscall::Process::waitpid(int32_t pid, uint32_t *wstatus, uint32_t opti
 }
 ```
 
-等待必须是真正的阻塞。如果父进程在内核里轮询（让出 CPU 再停机等下一次中断），它停机的
-那段时间里别的任务都得不到运行，系统里每一次唤醒都可能被拖到下一个时钟滴答。
+等待必须是真正的阻塞。如果父进程在内核里轮询（让出 CPU 再停机等下一次中断），它停机的那段时间里别的任务都得不到运行，系统里每一次唤醒都可能被拖到下一个时钟滴答。
 
 ## 内核栈
 
-每个任务有两个栈：用户栈在它自己的地址空间里，内核栈在内核里（`kmalloc` 分配）。
-任务在用户态运行时用用户栈；一旦因为系统调用、中断或异常进入内核，CPU 换到它的内核栈上
-——内核不能信任用户栈指针指向的是有效内存。
+每个任务有两个栈：用户栈在它自己的地址空间里，内核栈在内核里（`kmalloc` 分配）。任务在用户态运行时用用户栈；一旦因为系统调用、中断或异常进入内核，CPU 换到它的内核栈上——内核不能信任用户栈指针指向的是有效内存。
 
 CPU 怎么知道该换到哪个栈，各架构不同，所以由 `hal::UserContext::set_kernel_stack()` 负责：
 
@@ -280,12 +259,9 @@ CPU 怎么知道该换到哪个栈，各架构不同，所以由 `hal::UserConte
 
 ## 终止别的进程：kill
 
-CastorOS 没有信号处理函数。`kill(pid, sig)` 只有两种用法：`sig == 0` 探测进程是否存在，
-其他值终止目标进程。
+CastorOS 没有信号处理函数。`kill(pid, sig)` 只有两种用法：`sig == 0` 探测进程是否存在，其他值终止目标进程。
 
-终止不是由调用者就地完成的。目标进程一定停在内核里的某个点上，可能正持有锁、
-正排在某个等待队列里；直接改它的状态或释放它的资源会破坏内核。所以 `kill` 只给目标
-记一个待处理的标记，由目标自己在安全的地方退出：
+终止不是由调用者就地完成的。目标进程一定停在内核里的某个点上，可能正持有锁、正排在某个等待队列里；直接改它的状态或释放它的资源会破坏内核。所以 `kill` 只给目标记一个待处理的标记，由目标自己在安全的地方退出：
 
 ```cpp
 bool Scheduler::request_kill(task_t *target, uint32_t signal) {
@@ -317,4 +293,3 @@ void Scheduler::deliver_pending_kill() {
 3. **就绪队列**：考虑优先级队列或多级反馈队列
 4. **COW 优化**：fork() 后立即 exec() 的场景很常见
 5. **资源清理**：exit() 时确保释放所有资源
-

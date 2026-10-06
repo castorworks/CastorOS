@@ -2,7 +2,7 @@
 # 跑内核测试、用户态自检和命令行检查（就是本地的 make test ARCH=<arch>）。
 #
 # 用 macOS 的 runner 是因为三个裸机交叉编译器在 Homebrew 里都有现成的包，
-# 和 docs/00-environment.md 里推荐的开发环境一样；Ubuntu 上要从源码编译 GCC。
+# 和 docs/setup.md 里推荐的开发环境一样；Ubuntu 上要从源码编译 GCC。
 
 name: test
 

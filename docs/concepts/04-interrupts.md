@@ -1,8 +1,6 @@
-# 中断与异常处理
+# 中断与异常
 
-## 概述
-
-x86 处理器通过中断和异常机制处理硬件事件和错误情况。CastorOS 使用 IDT（中断描述符表）来管理这些事件。
+x86 处理器通过中断和异常机制处理硬件事件和错误情况。CastorOS 使用 IDT（中断描述符表）来管理这些事件。这一篇以 i686 为例；arm64 上对应的是异常向量表和 GIC，结构相同。
 
 ## 中断类型
 
@@ -104,26 +102,26 @@ isr_common:
     push es
     push fs
     push gs
-    
+
     ; 切换到内核数据段
     mov ax, 0x10
     mov ds, ax
     mov es, ax
     mov fs, ax
     mov gs, ax
-    
+
     ; 调用 C 处理程序
     push esp        ; 传递 registers_t 指针
     call isr_handler
     add esp, 4
-    
+
     ; 恢复寄存器
     pop gs
     pop fs
     pop es
     pop ds
     popa
-    
+
     add esp, 8      ; 跳过错误码和中断号
     iret            ; 中断返回
 ```
@@ -134,14 +132,14 @@ isr_common:
 typedef struct {
     // 段寄存器（手动保存）
     uint32_t gs, fs, es, ds;
-    
+
     // 通用寄存器（pusha 保存）
     uint32_t edi, esi, ebp, esp;
     uint32_t ebx, edx, ecx, eax;
-    
+
     // 中断信息
     uint32_t int_no, err_code;
-    
+
     // CPU 自动保存
     uint32_t eip, cs, eflags;
     uint32_t user_esp, user_ss;  // 仅特权级变化时
@@ -150,8 +148,7 @@ typedef struct {
 
 ### 4. C 处理程序
 
-每个异常号可以登记一个处理函数（`isr_register_handler`）。汇编入口最后都调到同一个
-`isr_handler`，由它按异常号分发：
+每个异常号可以登记一个处理函数（`isr_register_handler`）。汇编入口最后都调到同一个 `isr_handler`，由它按异常号分发：
 
 ```cpp
 isr_register_handler(13, general_protection_fault_handler);
@@ -172,7 +169,7 @@ void isr_handler(registers_t *regs) {
 
 ### 错误码格式
 
-```
+```text
 +---+---+---+---+---+
 | I | R | U | W | P |
 +---+---+---+---+---+
@@ -220,7 +217,7 @@ static void page_fault_handler(registers_t *regs) {
 
 传统 PC 使用两个级联的 8259 PIC 管理 16 个 IRQ：
 
-```
+```text
 Master PIC (0x20-0x21)    Slave PIC (0xA0-0xA1)
   IRQ 0 - Timer             IRQ 8  - RTC
   IRQ 1 - Keyboard          IRQ 9  - Free
@@ -239,19 +236,19 @@ static void pic_remap(void) {
     // ICW1: 开始初始化
     outb(0x20, 0x11);
     outb(0xA0, 0x11);
-    
+
     // ICW2: 设置中断向量偏移
     outb(0x21, 0x20);  // Master: IRQ 0-7 -> INT 32-39
     outb(0xA1, 0x28);  // Slave:  IRQ 8-15 -> INT 40-47
-    
+
     // ICW3: 主从级联
     outb(0x21, 0x04);  // Master: IR2 连接从 PIC
     outb(0xA1, 0x02);  // Slave: 连接到主 PIC 的 IR2
-    
+
     // ICW4: 8086 模式
     outb(0x21, 0x01);
     outb(0xA1, 0x01);
-    
+
     // 屏蔽所有中断
     outb(0x21, 0xFF);
     outb(0xA1, 0xFF);
@@ -270,12 +267,12 @@ void irq_register_handler(int irq, irq_handler_t handler) {
 
 void irq_handler(registers_t *regs) {
     int irq = regs->int_no - 32;
-    
+
     // 调用注册的处理程序
     if (irq_handlers[irq]) {
         irq_handlers[irq](regs);
     }
-    
+
     // 发送 EOI (End of Interrupt)
     if (irq >= 8) {
         outb(0xA0, 0x20);  // Slave PIC
@@ -304,11 +301,9 @@ void irq_disable_line(int irq) {
 
 ## 中断状态管理
 
-内核里有些代码不能被打断（见 [同步](06-synchronization.md)）。x86 上关、开中断是 `cli` 和
-`sti` 两条指令，但直接用它们有个问题：一段关了中断的代码调用另一段也要关中断的代码，
-内层结束时如果无条件 `sti`，外层就在不知情的情况下被打开了中断。
+内核里有些代码不能被打断（见 [同步](06-synchronization.md)）。x86 上关、开中断是 `cli` 和 `sti` 两条指令，但直接用它们有个问题：一段关了中断的代码调用另一段也要关中断的代码，内层结束时如果无条件 `sti`，外层就在不知情的情况下被打开了中断。
 
-所以内核里总是"保存原来的状态并关中断"，结束时"恢复原来的状态"：
+所以内核里总是“保存原来的状态并关中断”，结束时“恢复原来的状态”：
 
 ```cpp
 {
@@ -319,8 +314,7 @@ void irq_disable_line(int irq) {
 
 ## 定时器中断
 
-定时器每 10ms 产生一次中断（x86 上是 PIT，把 1193182Hz 的基础频率分频到 100Hz；arm64 上是
-Generic Timer）。它是内核里仅有的两个驱动之一（另一个是只做输出的串口），做三件事：
+定时器每 10ms 产生一次中断（x86 上是 PIT，把 1193182Hz 的基础频率分频到 100Hz；arm64 上是 Generic Timer）。它是内核里仅有的两个驱动之一（另一个是只做输出的串口），做三件事：
 
 1. 累加开机以来的时间（`uptime_ms`、`nanosleep`、`timer_set` 都靠它）。
 2. 唤醒睡眠时间到了的任务，给定时器到期的进程发 `IPC_LABEL_TIMER` 消息。
@@ -328,19 +322,14 @@ Generic Timer）。它是内核里仅有的两个驱动之一（另一个是只�
 
 ## 设备中断交给用户态驱动
 
-除了定时器，内核不处理任何设备的中断：驱动是用户态进程。内核做的只是把"中断发生了"
-这件事转成一条消息（`src/kernel/user_irq.cpp`）：
+除了定时器，内核不处理任何设备的中断：驱动是用户态进程。内核做的只是把“中断发生了” 这件事转成一条消息（`src/kernel/user_irq.cpp`）：
 
-1. 驱动用 `irq_claim(irq)` 认领一条中断线（这条线得是 init 许可给它的）。同一条线可以被几个驱动认领
-   （x86 上磁盘和网卡共用 11 号线）。
+1. 驱动用 `irq_claim(irq)` 认领一条中断线（这条线得是 init 许可给它的，见 [特权与硬件访问](../reference/hardware.md)）。同一条线可以被几个驱动认领（x86 上磁盘和网卡共用 11 号线）。
 2. 中断发生时，内核先**屏蔽这条线**，再给每个认领者记一条待收的中断消息。
-3. 驱动在 `ipc_recv` 上收到这条消息（发送者是内核，标签是 `IPC_LABEL_IRQ`），去读设备、
-   让设备撤销中断请求，然后调用 `irq_ack(irq)`。
+3. 驱动在 `ipc_recv` 上收到这条消息（发送者是内核，标签是 `IPC_LABEL_IRQ`），去读设备、让设备撤销中断请求，然后调用 `irq_ack(irq)`。
 4. 所有认领者都 `irq_ack` 之后，内核重新打开这条线。
 
-第 2 步的屏蔽是必须的。中断处理程序返回后中断就重新打开了，而设备的中断请求要等驱动
-处理过才会撤销——驱动是个普通进程，这时还没轮到它运行。不屏蔽的话，同一个中断会立刻
-再次触发，内核永远在处理中断，驱动永远得不到 CPU。
+第 2 步的屏蔽是必须的。中断处理程序返回后中断就重新打开了，而设备的中断请求要等驱动处理过才会撤销——驱动是个普通进程，这时还没轮到它运行。不屏蔽的话，同一个中断会立刻再次触发，内核永远在处理中断，驱动永远得不到 CPU。
 
 ## 最佳实践
 
@@ -349,4 +338,3 @@ Generic Timer）。它是内核里仅有的两个驱动之一（另一个是只�
 3. **避免在中断中睡眠**：中断上下文不能调用可能阻塞的函数
 4. **EOI 时机**：在处理完成后再发送 EOI，避免中断嵌套问题
 5. **栈溢出防护**：确保中断栈足够大
-
