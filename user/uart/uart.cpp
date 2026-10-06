@@ -3,14 +3,17 @@
 // 内核只用串口做调试输出（kprintf / console_write）；接收方向完全在这里：
 // 认领串口中断，把收到的字节存进缓冲区，通过 IPC 交给读者。
 // 读者有两个：终端的主人（命令行）和它指定的前台进程，协议见 <console.h>。
-// x86 是 16550 (COM1)，通过 I/O 端口访问；arm64 是 PL011，它在哪里、用哪个中断
-// 向内核查（device_find，数据来自设备树），寄存器用 map_device 映射进自己的地址空间。
+// x86 是 16550，通过 I/O 端口访问；arm64 是 PL011，寄存器用 map_device 映射进自己的
+// 地址空间。设备在哪里、用哪个中断不写在这里：init 许可给本进程的端口（或设备内存）
+// 和中断线就是它的设备（hw_find）。
 
 #include <syscall.h>
 #include <stdio.h>
 #include <string.h>
 #include <names.h>
 #include <console.h>
+
+static int uart_irq;
 
 #if defined(ARCH_ARM64)
 
@@ -21,6 +24,8 @@
 #define PL011_FR_RXFE   (1 << 4)    // 接收 FIFO 空
 #define PL011_INT_RX    (1 << 4)
 #define PL011_INT_RT    (1 << 6)    // 接收超时
+
+#define UART_HW_KIND    HW_MEMORY
 
 // 设备寄存器映射在自己的地址空间里
 static volatile uint32_t *regs;
@@ -33,25 +38,13 @@ static void reg_write(uint32_t off, uint32_t value) {
     regs[off / 4] = value;
 }
 
-static struct device_info uart_dev;
-static int uart_irq;
-
-/** 找到设备：地址和中断号来自设备树 */
-static bool hw_probe(void) {
-    if (device_find("arm,pl011", 0, &uart_dev) != 0 || !uart_dev.has_irq) {
-        return false;
-    }
-    uart_irq = (int)uart_dev.irq;
-    return true;
-}
-
-static bool hw_init(void) {
-    uint64_t page = uart_dev.base & ~(uint64_t)0xFFF;
-    void *mapped = map_device(page, 0x1000);
+static bool hw_init(const struct hw_range *where) {
+    uint64_t page = where->start & ~(uint64_t)0xFFF;
+    void *mapped = map_device((uintptr_t)page, 0x1000);
     if (mapped == MAP_FAILED) {
         return false;
     }
-    regs = (volatile uint32_t *)((char *)mapped + (uart_dev.base - page));
+    regs = (volatile uint32_t *)((char *)mapped + (where->start - page));
     reg_write(PL011_ICR, 0x7FF);
     reg_write(PL011_IMSC, reg_read(PL011_IMSC) | PL011_INT_RX | PL011_INT_RT);
     return true;
@@ -71,27 +64,25 @@ static char hw_rx_byte(void) {
 
 #else /* i686, x86_64 */
 
-#define UART_BASE       0x3F8       // COM1：PC 上这个端口和 4 号中断是固定的
-static const int uart_irq = 4;
-
-static bool hw_probe(void) {
-    return true;
-}
-
 #define UART_RBR        0           // 接收缓冲
 #define UART_IER        1           // 中断使能
 #define UART_LSR        5           // 线路状态
 #define UART_IER_RX     0x01
 #define UART_LSR_DR     0x01        // 有数据可读
 
+#define UART_HW_KIND    HW_PORTS
+
+static uint32_t uart_base;          // 寄存器的端口基址
+
 static uint32_t reg_read(uint32_t off) {
     uint32_t v = 0;
-    io_read(UART_BASE + off, 1, &v);
+    io_read(uart_base + off, 1, &v);
     return v;
 }
 
-static bool hw_init(void) {
-    return io_write(UART_BASE + UART_IER, 1, UART_IER_RX) == 0;
+static bool hw_init(const struct hw_range *where) {
+    uart_base = (uint32_t)where->start;
+    return io_write(uart_base + UART_IER, 1, UART_IER_RX) == 0;
 }
 
 static void hw_irq_clear(void) {
@@ -272,15 +263,17 @@ static void handle_request(const struct ipc_msg *m) {
 }
 
 int main() {
-    if (!hw_probe()) {
+    struct hw_range where, irq;
+    if (!hw_find(UART_HW_KIND, 0, &where) || !hw_find(HW_IRQ, 0, &irq)) {
         printf("uart: no serial port found\n");
         return 1;
     }
+    uart_irq = (int)irq.start;
     if (irq_claim(uart_irq) != 0) {
         printf("uart: cannot claim IRQ %d\n", uart_irq);
         return 1;
     }
-    if (!hw_init()) {
+    if (!hw_init(&where)) {
         printf("uart: cannot access the device\n");
         return 1;
     }

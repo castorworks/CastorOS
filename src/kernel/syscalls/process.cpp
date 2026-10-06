@@ -137,7 +137,9 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
     
     // 设置父子关系
     child->parent = parent;
-    child->privileged = parent->privileged;  // fork 继承特权
+    child->privileged = parent->privileged;  // fork 继承特权和硬件许可
+    memcpy(child->hw_allowed, parent->hw_allowed, sizeof(child->hw_allowed));
+    child->hw_allowed_count = parent->hw_allowed_count;
     
     // 添加到就绪队列
     child->state = TASK_READY;

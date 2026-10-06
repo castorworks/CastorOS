@@ -40,20 +40,25 @@ enum {
     SYS_IPC_REPLY       = 16,  // ipc_reply(dest, msg)：应答正在 call 自己的进程，从不阻塞
     SYS_MEM_GRANT       = 17,  // mem_grant(pid, addr, len)：把自己的一段内存共享给 pid，对方收到 IPC_LABEL_GRANT 消息
 
-    // 硬件访问（仅特权进程，供用户态驱动使用）
+    // 硬件访问（供用户态驱动使用）：特权进程都能用，没有特权的进程只碰得到许可给它的
+    // 端口、设备内存和中断线（见 kernel/hw_access.h）
     SYS_IO_READ         = 18,  // io_read(port, width, value*)：x86 I/O 端口（arm64 上没有，恒失败）
     SYS_IO_WRITE        = 19,  // io_write(port, width, value)
     SYS_MAP_DEVICE      = 20,  // map_device(phys, len)：把设备内存映射进自己的地址空间
     SYS_IRQ_CLAIM       = 21,  // irq_claim(irq)：中断以 IPC 消息的形式投递（见 kernel/user_irq.h）
     SYS_IRQ_ACK         = 22,  // irq_ack(irq)：处理完毕，重新打开中断线
-    SYS_DROP_PRIVILEGE  = 23,  // drop_privilege()：放弃特权，不可恢复
-    SYS_DMA_ALLOC       = 24,  // dma_alloc(len, phys*)：物理连续的内存，返回虚拟地址并告知物理地址
+    SYS_DROP_PRIVILEGE  = 23,  // drop_privilege()：放弃特权，不可恢复；许可表留着
+    SYS_DMA_ALLOC       = 24,  // dma_alloc(len, phys*)：物理连续的内存，返回虚拟地址并告知物理地址（仅驱动）
 
     // 时间
     SYS_UPTIME_MS       = 25,  // uptime_ms(ms*)：开机以来的毫秒数
     SYS_TIMER_SET       = 26,  // timer_set(ms)：ms 毫秒后收到一条 IPC_LABEL_TIMER 消息；0 取消
     SYS_MEM_FREE        = 27,  // mem_free_pages()：还没有分配出去的物理页数
     SYS_DEVICE_FIND     = 28,  // device_find(info*)：按型号查平台设备的地址和中断号（需要特权）
+
+    // 按设备授权
+    SYS_HW_ALLOW        = 29,  // hw_allow(kind, start, count)：往自己的许可表里加一条（需要特权）
+    SYS_HW_ALLOWED      = 30,  // hw_allowed(index, range*)：自己许可表里的第 index 条
 
     SYS_MAX
 };
@@ -66,10 +71,10 @@ struct device_info {
     char     compatible[32];    /**< 入：要找的设备型号，如 "virtio,mmio"、"arm,pl011"；设备的
                                  *   compatible 列表里有这一项就算（不必是第一项） */
     uint32_t index;             /**< 入：同一型号的第几个（从 0 开始） */
-    uint32_t irq;               /**< 出：中断号（可以直接交给 irq_claim） */
+    uint32_t irq;               /**< 出：中断号（可以直接交给 irq_claim / hw_allow） */
     uint32_t has_irq;           /**< 出：这个设备有没有中断 */
     uint32_t reserved;
-    uint64_t base;              /**< 出：寄存器的物理地址（交给 map_device） */
+    uint64_t base;              /**< 出：寄存器的物理地址（交给 map_device / hw_allow） */
     uint64_t size;              /**< 出：寄存器区的大小 */
     char     name[32];          /**< 出：设备的名字，如 "virtio_mmio@a000000" */
 };

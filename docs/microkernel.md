@@ -26,14 +26,14 @@ CastorOS 的内核只保留五件事：CPU/中断、内存管理、任务调度�
 
 `user/init` 是第一个用户进程，负责启动模块并充当名字服务。内核保证它的 PID 是 1（普通任务从 2 开始编号），用户态把这个 PID 当作名字服务的固定地址。构建内核时先编译出 `user/init/build/<arch>/init.elf`，再由 `src/kernel/init_image.S` 用 `.incbin` 嵌进内核映像，不需要磁盘或文件系统。
 
-init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/init/modules.S`），启动方式是 `fork` + `exec`。目前有六个：
+init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/init/modules.S`），启动方式是 `fork` + `exec`。有特权的只有 init 自己：每个模块都是放弃特权之后才启动的。驱动在放弃之前由 init 把它的设备许可给它（见“特权与硬件访问”），之后只碰得到这一个设备。目前有六个：
 
-- `user/uart`：串口输入驱动，保留特权启动。
-- `user/blk`：virtio-blk 块设备驱动，保留特权启动。没有磁盘时它直接退出。
-- `user/net`：网络服务（virtio-net 驱动加协议栈：ARP、IPv4、ICMP、UDP、TCP，启动时用 DHCP 取地址），保留特权启动。没有网卡时它直接退出。
-- `user/ramfs`：内存文件系统服务，放弃特权后启动。启动映像嵌在它里面。
-- `user/diskfs`：磁盘文件系统服务，放弃特权后启动。没有块设备时它直接退出。
-- `user/sh`：命令行，放弃特权后启动。输入来自 uart 驱动，文件操作交给文件服务。
+- `user/uart`：串口输入驱动，得到串口的寄存器和中断线。
+- `user/blk`：virtio-blk 块设备驱动，得到磁盘的寄存器和中断线。没有磁盘时它什么都得不到，直接退出。
+- `user/net`：网络服务（virtio-net 驱动加协议栈：ARP、IPv4、ICMP、UDP、TCP，启动时用 DHCP 取地址），得到网卡的寄存器和中断线。没有网卡时它直接退出。
+- `user/ramfs`：内存文件系统服务，不碰硬件。启动映像嵌在它里面。
+- `user/diskfs`：磁盘文件系统服务，不碰硬件（读写磁盘是发给 blk 的消息）。没有块设备时它直接退出。
+- `user/sh`：命令行，不碰硬件。输入来自 uart 驱动，文件操作交给文件服务。
 
 其余程序不嵌在 init 里，而是放在启动映像中，由命令行从文件服务里读出来运行：
 
@@ -117,7 +117,7 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 
 ## 系统调用
 
-共 29 个，编号在 `src/include/kernel/syscall.h`，用户态包装在 `user/lib`。
+共 31 个，编号在 `src/include/kernel/syscall.h`，用户态包装在 `user/lib`。
 
 | 编号 | 调用 | 说明 |
 |------|------|------|
@@ -137,15 +137,17 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 | 15 | `ipc_call(dest, msg)` | 发送请求并等待 `dest` 的应答，应答写回 `msg` |
 | 16 | `ipc_reply(dest, msg)` | 应答正在 `call` 自己的进程，从不阻塞 |
 | 17 | `mem_grant(pid, addr, len)` | 把自己的一段内存共享给 `pid`，对方收到内核发来的授予通知 |
-| 18 / 19 | `io_read(port, width, value*)` / `io_write(port, width, value)` | x86 的 I/O 端口，仅特权进程 |
-| 20 | `map_device(phys, len)` | 把设备内存映射进自己的地址空间，仅特权进程 |
-| 21 / 22 | `irq_claim(irq)` / `irq_ack(irq)` | 认领设备中断 / 处理完毕后重新打开，仅特权进程 |
-| 23 | `drop_privilege()` | 放弃特权，不可恢复 |
-| 24 | `dma_alloc(len, phys*)` | 物理连续的内存，返回虚拟地址并告知物理地址，仅特权进程 |
+| 18 / 19 | `io_read(port, width, value*)` / `io_write(port, width, value)` | x86 的 I/O 端口；需要特权，或者端口在许可表里 |
+| 20 | `map_device(phys, len)` | 把设备内存映射进自己的地址空间；需要特权，或者这段内存在许可表里 |
+| 21 / 22 | `irq_claim(irq)` / `irq_ack(irq)` | 认领设备中断 / 处理完毕后重新打开；认领需要特权，或者这条线在许可表里 |
+| 23 | `drop_privilege()` | 放弃特权，不可恢复；许可表留着 |
+| 24 | `dma_alloc(len, phys*)` | 物理连续的内存，返回虚拟地址并告知物理地址；只给驱动（有特权，或者许可表不空） |
 | 25 | `uptime_ms(ms*)` | 开机以来的毫秒数 |
 | 26 | `timer_set(ms)` | 一次性定时器：到期时收到内核发来的 `IPC_LABEL_TIMER` 消息；0 取消 |
 | 27 | `mem_free_pages()` | 还没有分配出去的物理页数；自检用它检查进程退出后内存全部归还 |
 | 28 | `device_find(info*)` | 按型号（设备树的 `compatible`）查平台设备的寄存器地址和中断号，仅特权进程 |
+| 29 | `hw_allow(kind, start, count)` | 往自己的许可表里加一条：一段 I/O 端口、一段设备内存或者几条中断线。仅特权进程 |
+| 30 | `hw_allowed(index, range*)` | 读自己许可表里的第 `index` 条；驱动据此得知自己的设备在哪里 |
 
 ## 进程间通信
 
@@ -227,8 +229,10 @@ for (;;) {
 
 `user/blk` 是 virtio-blk 驱动。virtio 设备的公共部分（legacy 接口：找设备、寄存器访问、队列）在 `user/lib` 的 `virtio.h` 里，块设备和网卡驱动共用。两种接入方式只是寄存器的访问方法不同：
 
-- **x86**：virtio-pci。通过 0xCF8/0xCFC 端口扫描 PCI 配置空间找到设备，寄存器在它的 I/O 端口 BAR 里，中断线从配置空间读出。
-- **arm64**：virtio-mmio。QEMU virt 上有 32 个槽位，用 `map_device` 把它们映射进来逐个查看。
+- **x86**：virtio-pci。寄存器在设备的 I/O 端口 BAR 里。
+- **arm64**：virtio-mmio。寄存器用 `map_device` 映射进来。
+
+找设备和用设备是两个进程的事，各有一个函数。`virtio_allow(类型)` 由 init 在即将成为驱动的子进程里调用（这时还有特权）：x86 上通过 0xCF8/0xCFC 端口扫描 PCI 配置空间，量出 BAR 占多少个端口，读出中断线，打开设备的端口访问和总线主控；arm64 上向内核查设备树里的 32 个 virtio-mmio 槽位，逐个映射进来看里面是什么设备。找到之后把寄存器和中断线记进许可表。`virtio_open` 由驱动调用：许可表里的端口（或设备内存）和中断线就是它的设备。驱动自己不扫总线，也碰不到 PCI 配置空间。
 
 队列和请求缓冲区来自 `dma_alloc`（设备只认物理地址）。块设备驱动一次处理一个请求：提交给设备后用 `ipc_recv(IPC_FROM_KERNEL)` 只等中断，这期间其他客户的请求留在各自的 `call` 里排队。
 
@@ -238,25 +242,32 @@ for (;;) {
 
 ## 特权与硬件访问
 
-用户态驱动需要碰硬件，内核为此提供下面几样东西，都只对带 `privileged` 标志的进程开放：
+用户态驱动需要碰硬件，内核为此提供下面几样东西。谁能用由两样东西决定：进程的 `privileged` 标志，和它的许可表。
 
-- **特权的来源**：内核直接创建的 init 有特权，`fork` 和 `exec` 都保留；进程调用 `drop_privilege()` 之后永久失去。init 启动驱动时保留特权，启动其他模块时先让子进程放弃。
-- **I/O 端口**（仅 x86）：`io_read` / `io_write`，宽度 1/2/4 字节。
-- **设备在哪里**：`device_find(compatible, index, &info)`。x86 上设备靠探测发现（驱动自己扫 PCI 配置空间），不需要它；arm64 上设备的位置是固件用设备树告诉内核的，驱动按型号来查（如 `"virtio,mmio"`、`"arm,pl011"`；设备树里一个设备会列出几个型号，从最具体的到最一般的，按其中任何一个都查得到），得到寄存器的物理地址和中断号，再交给下面的 `map_device` 和 `irq_claim`。驱动里不写死任何一块板子上的地址。
-- **设备内存**：`map_device(phys, len)` 把设备的寄存器或显存映射进调用者的地址空间（不缓存）。只接受设备地址区，也就是固件没有报告为可用内存的地址（x86 上是 Multiboot 内存映射里的空洞，arm64 上是设备树的内存节点之外）；普通内存一律拒绝。映射同样带“共享”标记，`fork` 后父子都能访问设备。
-- **DMA 内存**：`dma_alloc(len, phys*)` 分配物理上连续、已清零的内存并映射进调用者，同时告知物理地址，供驱动把缓冲区交给设备。
-- **设备中断**：`irq_claim(irq)` 认领一条内核自己没在用的中断线（x86 是 PIC 的 IRQ 号，arm64 是 GIC 的 SPI 中断号）。中断到来时内核屏蔽这条线，并向属主投递一条 `sender == IPC_KERNEL`、`label == IPC_LABEL_IRQ`、`data[0] == irq` 的消息；属主没在 `recv` 时记为待处理，下一次 `recv(IPC_ANY)` 先收到它。驱动处理完设备后调用 `irq_ack(irq)` 重新打开中断线。进程退出时它的认领被释放。
+- **特权的来源**：内核直接创建的 init 有特权，`fork` 和 `exec` 都保留；进程调用 `drop_privilege()` 之后永久失去。有特权的进程什么硬件都能碰。系统里只有 init 留着特权：它启动每个模块之前都先让子进程放弃。
+- **按设备授权**：每个进程有一张许可表，最多 8 条，每条是一段 I/O 端口（`HW_PORTS`）、一段设备内存（`HW_MEMORY`）或者几条中断线（`HW_IRQ`）。没有特权的进程只碰得到表里有的东西。表只能在还有特权时用 `hw_allow(kind, start, count)` 填，`fork` 和 `exec` 都保留，放弃特权之后不能再加，也没有办法交给别的进程。init 启动驱动的过程因此是：`fork`，在子进程里找到这个驱动的设备并 `hw_allow` 它占用的资源，`drop_privilege`，`exec`。驱动从第一条指令起就只碰得到自己的设备：串口驱动读不了磁盘的寄存器，磁盘驱动认领不了网卡的中断。
+- **设备在哪里**：驱动不找设备，也不把地址写死。许可给它的就是它的设备：`hw_allowed(index, &range)` 读出许可表里的一条，用户库的 `hw_find(kind, n, &range)` 取某一种资源的第 n 条。找设备是 init 的事（`user/init/init.cpp` 里的 `allow_*` 函数）：x86 上串口的端口和中断是 PC 的固定值，virtio 设备靠扫 PCI 配置空间发现；arm64 上设备的位置是固件用设备树告诉内核的，init 用 `device_find(compatible, index, &info)` 按型号来查（如 `"virtio,mmio"`、`"arm,pl011"`；设备树里一个设备会列出几个型号，从最具体的到最一般的，按其中任何一个都查得到），得到寄存器的物理地址和中断号。`device_find` 只对特权进程开放。
+- **I/O 端口**（仅 x86）：`io_read` / `io_write`，宽度 1/2/4 字节。许可是精确到端口的。
+- **设备内存**：`map_device(phys, len)` 把设备的寄存器或显存映射进调用者的地址空间（不缓存）。只接受设备地址区，也就是固件没有报告为可用内存的地址（x86 上是 Multiboot 内存映射里的空洞，arm64 上是设备树的内存节点之外）；普通内存一律拒绝，有特权也不行。映射同样带“共享”标记，`fork` 后父子都能访问设备。许可按页算：映射的最小单位是一页，许可了一页里的一部分就可以映射整页。
+- **DMA 内存**：`dma_alloc(len, phys*)` 分配物理上连续、已清零的内存并映射进调用者，同时告知物理地址，供驱动把缓冲区交给设备。只给驱动，也就是有特权或者许可表不空的进程。
+- **设备中断**：`irq_claim(irq)` 认领一条内核自己没在用、并且许可给了调用者的中断线（x86 是 PIC 的 IRQ 号，arm64 是 GIC 的 SPI 中断号）。中断到来时内核屏蔽这条线，并向属主投递一条 `sender == IPC_KERNEL`、`label == IPC_LABEL_IRQ`、`data[0] == irq` 的消息；属主没在 `recv` 时记为待处理，下一次 `recv(IPC_ANY)` 先收到它。驱动处理完设备后调用 `irq_ack(irq)` 重新打开中断线。进程退出时它的认领被释放。
   一条线可以被多个进程认领（x86 上磁盘和网卡就共用 IRQ 11）：中断到来时每个属主都收到消息，驱动要自己看设备状态、没有事就直接 `irq_ack`；所有属主都应答之后内核才重新打开这条线。
 
-实现在 `src/kernel/user_irq.cpp`、`src/kernel/syscall.cpp` 和 `src/kernel/syscalls/mm.cpp`。
+实现在 `src/kernel/hw_access.cpp`（许可表）、`src/kernel/user_irq.cpp`、`src/kernel/syscall.cpp` 和 `src/kernel/syscalls/mm.cpp`。
 
-当前的限制：特权是全有或全无的，没有按设备授权；x86 的端口访问每次都是一次系统调用。
+当前的限制：
+
+- 许可拦不住能做 DMA 的设备。驱动把一个物理地址交给设备，设备就往那里读写，内核看不见也管不了（没有 IOMMU）。所以许可表防的是驱动的错误和越界，不是一个存心作恶的磁盘或网卡驱动。
+- 设备内存的许可以页为单位。QEMU virt 上 virtio-mmio 的槽位每个只有 0x200 字节，一页里有 8 个，磁盘和网卡通常落在同一页：两个驱动互相映射得到对方的寄存器。
+- 中断线是共享的（x86 上磁盘和网卡共用 IRQ 11）：得到同一条线的驱动都会收到对方设备的中断消息。
+- 许可表是进程自己的，不能转交：一个驱动不能把它的设备再分给子进程里的一部分，子进程拿到的总是整张表。
+- x86 的端口访问每次都是一次系统调用。
 
 ## 第一个用户态驱动：uart
 
 `user/uart` 是串口输入驱动：x86 的 16550 通过 I/O 端口访问，arm64 的 PL011 用 `map_device` 把寄存器映射进来直接读写。内核只用串口做输出，接收方向完全在驱动里：
 
-1. 启动时 `irq_claim` 串口中断，打开设备的接收中断。
+1. 启动时从许可表里取出自己的设备（`hw_find`：端口或设备内存，以及中断线），`irq_claim` 串口中断，打开设备的接收中断。
 2. 主循环 `ipc_recv(IPC_ANY)`：收到内核的中断消息就把硬件 FIFO 读进自己的缓冲区并 `irq_ack`；收到 `UART_READ` 请求就记下读者。
 3. 缓冲区里有数据且有读者在等时，把数据作为应答发回去。读者有两个（终端的主人和前台进程），各有各的缓冲区，新到的字节按当时有没有前台进程分到其中一个。读请求可以带超时：到时间还没有输入就应答 0 字节（驱动用 `timer_set` 给自己定时）。
 
@@ -272,5 +283,5 @@ for (;;) {
 
 1. 在 `user/` 下新建目录，写一个三行的 Makefile（`TARGET`、`SOURCES`、`include ../program.mk`），链接 `user/lib`。
 2. 定义它的 IPC 协议（请求的 `label` 和 `data` 布局；要传大块数据就像文件服务那样用共享缓冲区），主循环按上面服务进程的结构写，启动后用 `name_register` 登记自己的名字。
-3. 把它加进 `user/init/Makefile` 的 `MODULE_NAMES` 和 `user/init/modules.S`，在 init 的 `main` 里用 `start_module` 启动；最后一个参数决定它是否保留特权（只有驱动需要）。
+3. 把它加进 `user/init/Makefile` 的 `MODULE_NAMES` 和 `user/init/modules.S`，在 init 的 `main` 里用 `start_module` 启动。最后一个参数只有驱动需要：一个 `allow_*` 函数，在子进程放弃特权之前运行，找到驱动的设备并用 `hw_allow` 许可给它；其余模块传 `NULL`。驱动自己用 `hw_find` 取出许可给它的端口（或设备内存）和中断线。
 4. 客户用 `name_wait("名字")` 拿到 PID，再用 `ipc_call` 发请求。

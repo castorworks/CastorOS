@@ -11,6 +11,7 @@
 #include <types.h>
 #include <mm/vmm.h>
 #include <kernel/ipc.h>
+#include <kernel/hw_access.h>
 
 /* ============================================================================
  * 常量定义
@@ -284,11 +285,18 @@ typedef struct task {
     bool timer_pending;              ///< 定时器已到期、消息还没被 recv 取走
 
     /**
-     * 特权进程：可以 kill 任意用户进程、访问设备寄存器、认领设备中断。
+     * 特权进程：可以 kill 任意用户进程、访问任何设备的寄存器、认领任何设备中断。
      * 第一个用户进程（init）有特权，fork 和 exec 都保留，
      * 直到进程自己调用 drop_privilege（不可恢复）。
      */
     bool privileged;
+
+    /**
+     * 许可表：没有特权时还碰得到的硬件（kernel/hw_access.h）。有特权时用 hw_allow
+     * 往里加，fork 和 exec 都保留，放弃特权之后不能再加。
+     */
+    hw_range hw_allowed[HW_ALLOW_MAX];
+    uint32_t hw_allowed_count;
 } task_t;
 
 /* ============================================================================

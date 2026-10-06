@@ -8,9 +8,9 @@ CastorOS is an educational microkernel for learning and experimentation.
 
 - Targets i686, x86_64 and ARM64; all three build, boot and pass the kernel tests in QEMU
 - The kernel contains only CPU/interrupt setup, memory management, scheduling, sync
-  primitives and a 29-call syscall interface (process, memory, debug output, synchronous IPC,
-  shared memory, uptime/timer, and I/O port / device memory / DMA / IRQ access and platform
-  device lookup for privileged user-space drivers)
+  primitives and a 31-call syscall interface (process, memory, debug output, synchronous IPC,
+  shared memory, uptime/timer, and I/O port / device memory / DMA / IRQ access, platform
+  device lookup and per-device hardware permissions for user-space drivers)
 - File systems, networking, device drivers and shells are **not** in the kernel; they are
   meant to come back as user-space modules (see `docs/microkernel.md`). Do not add them
   to `src/`.
@@ -81,14 +81,19 @@ make info
 process; its ELF is embedded into the kernel image by `src/kernel/init_image.S` (`.incbin`),
 so there is no disk image. init starts the modules and is the name server (`names.h` in
 `user/lib`). Resident modules are embedded into init the same way (`user/init/modules.S`):
-`user/uart` (privileged serial input driver; protocol and the `console_read`/`read_line`
-client in `console.h`). On arm64 drivers do not hard-code where their device is: they ask the
-kernel with `device_find("<compatible>", index, &info)`, which answers from the device tree, `user/blk` (privileged virtio-blk driver,
-protocol and client in `blk.h`), `user/net` (privileged virtio-net driver plus a small
+`user/uart` (serial input driver; protocol and the `console_read`/`read_line`
+client in `console.h`), `user/blk` (virtio-blk driver,
+protocol and client in `blk.h`), `user/net` (virtio-net driver plus a small
 ARP/IPv4/ICMP/UDP/TCP stack with a DHCP client; protocol and client in `net.h`), `user/ramfs` (in-memory file
 service), `user/diskfs`
 (persistent file service on top of blk; files are addressed with a `disk:` prefix) and
-`user/sh` (command line). Both file services share the protocol in `fs.h` and the server
+`user/sh` (command line). Only init is privileged. Every module drops privilege before it
+starts; for a driver, init first finds its device (fixed ports or a PCI scan on x86,
+`device_find("<compatible>", index, &info)` on arm64, which answers from the device tree) and
+records its ports or device memory and its interrupt line in the child's allow-list with
+`hw_allow` (the `allow_*` functions in `user/init/init.cpp`; `virtio_allow` in `virtio.h`).
+A driver does not look for its device and does not hard-code an address: it reads what it was
+allowed with `hw_find` (`virtio_open` for virtio devices) and can touch nothing else. Both file services share the protocol in `fs.h` and the server
 skeleton in `fs_server.h`; virtio drivers share `virtio.h`; servers that take a shared buffer
 from each client use `clients.h`. Other programs (`user/selftest`, `user/ls`, `user/cat`,
 `user/cp`, `user/rm`, `user/echo`, `user/write`, `user/grep`, `user/wc`, `user/disk`, `user/ping`, `user/ifconfig`, `user/dns`,
@@ -128,7 +133,7 @@ CastorOS/
 │   ├── drivers/            # Only serial (debug output) and timer (tick)
 │   │   ├── x86/            # COM1, PIT
 │   │   └── arm/            # PL011, ARM Generic Timer
-│   ├── kernel/             # task.cpp (scheduler), syscall.cpp, ipc.cpp, user_irq.cpp, elf.cpp, ...
+│   ├── kernel/             # task.cpp (scheduler), syscall.cpp, ipc.cpp, user_irq.cpp, hw_access.cpp, elf.cpp, ...
 │   │   ├── sync/           # The spinlock
 │   │   └── syscalls/       # process.cpp, mm.cpp
 │   ├── lib/                # Kernel library (kprintf, klog, string, cxxrt)
@@ -137,13 +142,13 @@ CastorOS/
 │   └── tests/              # Kernel unit tests (KTEST=1)
 ├── user/                   # User-space programs
 │   ├── lib/                # User library
-│   ├── init/               # First user process: starts modules, name service
-│   ├── uart/               # Serial input driver (privileged module)
-│   ├── blk/                # virtio-blk driver (privileged module): virtio-pci on x86, virtio-mmio on arm64
-│   ├── net/                # Network service (privileged module): virtio-net + ARP/IPv4/ICMP/UDP/TCP
-│   ├── diskfs/             # Persistent file service on the block device (unprivileged module)
-│   ├── ramfs/              # In-memory file service (unprivileged module), holds the boot image
-│   ├── sh/                 # Command line (unprivileged module): runs programs, background jobs, Ctrl-C
+│   ├── init/               # First user process (the only privileged one): starts modules, assigns devices, name service
+│   ├── uart/               # Serial input driver (module, allowed the serial port)
+│   ├── blk/                # virtio-blk driver (module, allowed the disk): virtio-pci on x86, virtio-mmio on arm64
+│   ├── net/                # Network service (module, allowed the network card): virtio-net + ARP/IPv4/ICMP/UDP/TCP
+│   ├── diskfs/             # Persistent file service on the block device (module, no hardware)
+│   ├── ramfs/              # In-memory file service (module, no hardware), holds the boot image
+│   ├── sh/                 # Command line (module, no hardware): runs programs, background jobs, Ctrl-C
 │   ├── selftest/           # User-space self-checks, in the boot image, run from rc at boot
 │   ├── ls/ cat/ cp/ rm/ echo/ write/ grep/ wc/ sleep/ disk/ ping/ ifconfig/ dns/ http/ echod/ hello/   # Programs in the boot image
 │   ├── bootfs/             # Static files for the boot image (rc, readme.txt)

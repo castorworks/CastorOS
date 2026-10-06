@@ -1,7 +1,7 @@
 // blk - virtio-blk 块设备驱动
 //
-// 特权的用户态驱动，以 "blk" 登记，实现 blk.h 里的协议。
-// 找设备、访问寄存器、队列这些 virtio 的公共部分在 user/lib 的 virtio 里（x86 走 PCI，
+// 用户态驱动，以 "blk" 登记，实现 blk.h 里的协议。没有特权：只碰得到 init 许可给它的
+// 那个设备。访问寄存器、队列这些 virtio 的公共部分在 user/lib 的 virtio 里（x86 走 PCI，
 // arm64 走 MMIO）；这里只有块设备自己的部分。
 // 一次只处理一个请求：提交给设备后等它的中断，再应答客户。
 
@@ -35,7 +35,7 @@ static uint64_t req_hdr_phys, req_status_phys, req_data_phys;
 static uint64_t capacity;       // 扇区数
 
 static bool device_init(void) {
-    if (!virtio_find(&dev, VIRTIO_ID_BLOCK)) {
+    if (!virtio_open(&dev, VIRTIO_ID_BLOCK)) {
         return false;
     }
     virtio_set_features(&dev, 0);   // 不需要任何可选特性

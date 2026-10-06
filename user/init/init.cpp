@@ -1,14 +1,17 @@
 // init - 第一个用户进程
 //
 // 以 ELF 映像的形式嵌入内核（src/kernel/init_image.S），由内核在启动时加载。
-// 它做两件事：
-//   1. 启动模块（映像带在自己身上，见 modules.S）：驱动保留特权，其余的先放弃
-//   2. 充当名字服务：服务进程把名字登记到这里，客户按名字查到它的 PID（协议见 names.h）
+// 它做三件事：
+//   1. 启动模块（映像带在自己身上，见 modules.S）
+//   2. 分配设备：只有 init 有特权。模块启动前都先放弃特权；驱动在放弃之前由 init 把
+//      它的设备（端口或设备内存、中断线）记进许可表，之后它只碰得到这一个设备
+//   3. 充当名字服务：服务进程把名字登记到这里，客户按名字查到它的 PID（协议见 names.h）
 
 #include <syscall.h>
 #include <stdio.h>
 #include <string.h>
 #include <names.h>
+#include <virtio.h>
 
 extern "C" const char uart_image_start[], uart_image_end[];
 extern "C" const char blk_image_start[], blk_image_end[];
@@ -18,22 +21,63 @@ extern "C" const char diskfs_image_start[], diskfs_image_end[];
 extern "C" const char sh_image_start[], sh_image_end[];
 
 // ============================================================================
+// 分配设备
+//
+// 下面每个函数在 fork 出来、还有特权的子进程里运行：找到一个驱动的设备，把它占用的
+// 资源记进这个子进程的许可表。找不到设备就什么都不记，驱动启动后发现没有设备自己退出。
+// ============================================================================
+
+static void allow_uart(void) {
+#if defined(ARCH_ARM64)
+    // PL011 在哪里、用哪个中断，由设备树说了算
+    struct device_info dev;
+    if (device_find("arm,pl011", 0, &dev) == 0 && dev.has_irq) {
+        hw_allow(HW_MEMORY, (uintptr_t)dev.base, (uintptr_t)(dev.size ? dev.size : 0x1000));
+        hw_allow(HW_IRQ, dev.irq, 1);
+    }
+#else
+    // COM1：PC 上它的 8 个端口和 4 号中断是固定的
+    hw_allow(HW_PORTS, 0x3F8, 8);
+    hw_allow(HW_IRQ, 4, 1);
+#endif
+}
+
+static void allow_blk(void) {
+    virtio_allow(VIRTIO_ID_BLOCK);
+}
+
+static void allow_net(void) {
+    virtio_allow(VIRTIO_ID_NET);
+}
+
+// ============================================================================
 // 模块启动
 // ============================================================================
 
-// fork 之后用模块的 ELF 映像替换子进程
-static int start_module(const char *name, const char *image, const char *image_end, bool privileged) {
+// fork 之后用模块的 ELF 映像替换子进程。allow 不为 NULL 表示这个模块是驱动：
+// 子进程放弃特权之前先调用它，把驱动的设备许可给自己
+static int start_module(const char *name, const char *image, const char *image_end, void (*allow)(void)) {
+    int parent = getpid();
     int pid = fork();
     if (pid == 0) {
-        if (!privileged) {
-            drop_privilege();
+        if (allow) {
+            allow();
+            struct ipc_msg done = {};
+            ipc_send(parent, &done);
         }
+        drop_privilege();
         const char *argv[] = { name, NULL };
         exec(image, (size_t)(image_end - image), argv);
         printf("init: exec %s failed\n", name);
         exit(1);
     }
-    printf("init: started %s (pid %d%s)\n", name, pid, privileged ? ", privileged" : "");
+    if (allow) {
+        // 等它找完设备再启动下一个：找设备要读写 PCI 配置空间，地址和数据是两个端口，
+        // 两个进程同时找会互相打断（子进程中途退出时这里返回 -1，不会一直等）
+        struct ipc_msg done;
+        ipc_recv(pid, &done);
+    }
+    printf("init: started %s (pid %d%s)\n", name, pid, allow ? ", driver" : "");
     return pid;
 }
 
@@ -93,12 +137,12 @@ static bool register_name(const char *name, int pid) {
 int main() {
     printf("init: started, pid=%d\n", getpid());
 
-    start_module("uart", uart_image_start, uart_image_end, true);
-    start_module("blk", blk_image_start, blk_image_end, true);
-    start_module("net", net_image_start, net_image_end, true);
-    start_module("ramfs", ramfs_image_start, ramfs_image_end, false);
-    start_module("diskfs", diskfs_image_start, diskfs_image_end, false);
-    start_module("sh", sh_image_start, sh_image_end, false);
+    start_module("uart", uart_image_start, uart_image_end, allow_uart);
+    start_module("blk", blk_image_start, blk_image_end, allow_blk);
+    start_module("net", net_image_start, net_image_end, allow_net);
+    start_module("ramfs", ramfs_image_start, ramfs_image_end, NULL);
+    start_module("diskfs", diskfs_image_start, diskfs_image_end, NULL);
+    start_module("sh", sh_image_start, sh_image_end, NULL);
 
     struct ipc_msg m;
     for (;;) {

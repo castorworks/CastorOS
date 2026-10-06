@@ -2,7 +2,7 @@
 
 ## 概述
 
-系统调用是用户程序进入内核的唯一入口。CastorOS 的系统调用很少（29 个，完整的表在
+系统调用是用户程序进入内核的唯一入口。CastorOS 的系统调用很少（31 个，完整的表在
 [../microkernel.md](../microkernel.md)）：进程、内存、调试输出、IPC，以及给用户态驱动
 用的硬件访问。文件、网络这些功能不是系统调用，而是发给用户态服务进程的 IPC 消息。
 
@@ -97,11 +97,13 @@ static syscall_arg_t sys_ipc_recv_wrapper(syscall_arg_t *frame, syscall_arg_t fr
 
 `can_write` 还会把处于写时复制状态的页先复制出来，这样内核随后往里写不会再触发缺页。
 
-**权限。** 访问硬件的调用只对特权进程开放：
+**权限。** 访问硬件的调用先问“当前进程可不可以碰这段资源”：有特权（只有 init），
+或者这段端口、设备内存、这条中断线在进程的许可表里（init 启动驱动时填的，见
+microkernel.md 的“特权与硬件访问”）：
 
 ```cpp
 static syscall_arg_t sys_irq_claim_wrapper(syscall_arg_t *frame, syscall_arg_t irq, ...) {
-    if (!kernel::Scheduler::current_is_privileged()) return SYSCALL_FAIL;
+    if (!kernel::HwAccess::current_may(HW_IRQ, irq, 1)) return SYSCALL_FAIL;
     return sys_ret32((uint32_t)kernel::UserIrq::claim((uint32_t)irq));
 }
 ```

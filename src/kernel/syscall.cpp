@@ -15,6 +15,7 @@
 #include <kernel/uaccess.h>
 #include <kernel/ipc.h>
 #include <kernel/user_irq.h>
+#include <kernel/hw_access.h>
 #include <kernel/task.h>
 #include <kernel/interrupt.h>
 #include <drivers/timer.h>
@@ -231,15 +232,15 @@ static syscall_arg_t sys_ipc_call_wrapper(syscall_arg_t *frame, syscall_arg_t de
 }
 
 /* ============================================================================
- * 硬件访问：只对特权进程开放
+ * 硬件访问：对特权进程开放，没有特权的进程只碰得到许可给它的设备（kernel/hw_access.h）
  * ============================================================================ */
 
 /** port/width 是否是一次合法的端口访问（只有 x86 有 I/O 端口；设备内存用 map_device） */
 static bool io_access_ok(syscall_arg_t port, syscall_arg_t width) {
 #if defined(ARCH_I686) || defined(ARCH_X86_64)
-    if (!kernel::Scheduler::current_is_privileged()) return false;
     if (width != 1 && width != 2 && width != 4) return false;
-    return port <= 0xFFFF && port + width <= 0x10000;
+    if (port > 0xFFFF || port + width > 0x10000) return false;
+    return kernel::HwAccess::current_may(HW_PORTS, port, width);
 #else
     (void)port; (void)width;
     return false;
@@ -274,14 +275,15 @@ static syscall_arg_t sys_io_write_wrapper(syscall_arg_t *frame, syscall_arg_t po
 static syscall_arg_t sys_map_device_wrapper(syscall_arg_t *frame, syscall_arg_t phys, syscall_arg_t length,
                                             syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    if (!kernel::Scheduler::current_is_privileged()) return SYSCALL_FAIL;
+    if (!kernel::HwAccess::current_may(HW_MEMORY, phys, length)) return SYSCALL_FAIL;
     return syscall::Mm::map_device((uint64_t)phys, (size_t)length);
 }
 
 static syscall_arg_t sys_dma_alloc_wrapper(syscall_arg_t *frame, syscall_arg_t length, syscall_arg_t phys_ptr,
                                            syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p3; (void)p4; (void)p5;
-    if (!kernel::Scheduler::current_is_privileged()) return SYSCALL_FAIL;
+    // 没有按设备区分：设备拿到物理地址之后写哪里内核管不了（没有 IOMMU），只限制到"是驱动"
+    if (!kernel::HwAccess::current_is_driver()) return SYSCALL_FAIL;
     if (!user_wr(phys_ptr, sizeof(uint64_t))) return SYSCALL_FAIL;
     return syscall::Mm::dma_alloc((size_t)length, (uint64_t *)(uintptr_t)phys_ptr);
 }
@@ -295,7 +297,7 @@ static syscall_arg_t sys_mem_grant_wrapper(syscall_arg_t *frame, syscall_arg_t p
 static syscall_arg_t sys_irq_claim_wrapper(syscall_arg_t *frame, syscall_arg_t irq, syscall_arg_t p2,
                                            syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
     (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
-    if (!kernel::Scheduler::current_is_privileged()) return SYSCALL_FAIL;
+    if (!kernel::HwAccess::current_may(HW_IRQ, irq, 1)) return SYSCALL_FAIL;
     return sys_ret32((uint32_t)kernel::UserIrq::claim((uint32_t)irq));
 }
 
@@ -312,6 +314,29 @@ static syscall_arg_t sys_drop_privilege_wrapper(syscall_arg_t *frame, syscall_ar
     if (current) {
         current->privileged = false;
     }
+    return 0;
+}
+
+/**
+ * hw_allow(kind, start, count)：往自己的许可表里加一条。只有特权进程可以加：
+ * init 给驱动授权的办法是 fork 之后在子进程里加好，再 drop_privilege、exec
+ */
+static syscall_arg_t sys_hw_allow_wrapper(syscall_arg_t *frame, syscall_arg_t kind, syscall_arg_t start,
+                                          syscall_arg_t count, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p4; (void)p5;
+    task_t *current = kernel::Scheduler::get_current();
+    if (!current || !current->privileged) return SYSCALL_FAIL;
+    return kernel::HwAccess::allow(current, (uint32_t)kind, start, count) ? 0 : SYSCALL_FAIL;
+}
+
+/** hw_allowed(index, range*)：自己许可表里的第 index 条；没有这么多条时失败 */
+static syscall_arg_t sys_hw_allowed_wrapper(syscall_arg_t *frame, syscall_arg_t index, syscall_arg_t range_ptr,
+                                            syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p3; (void)p4; (void)p5;
+    task_t *current = kernel::Scheduler::get_current();
+    if (!current || index >= current->hw_allowed_count) return SYSCALL_FAIL;
+    if (!user_wr(range_ptr, sizeof(hw_range))) return SYSCALL_FAIL;
+    *(hw_range *)(uintptr_t)range_ptr = current->hw_allowed[index];
     return 0;
 }
 
@@ -412,6 +437,8 @@ void syscall_init(void) {
     syscall_table[SYS_IRQ_CLAIM]     = sys_irq_claim_wrapper;
     syscall_table[SYS_IRQ_ACK]       = sys_irq_ack_wrapper;
     syscall_table[SYS_DROP_PRIVILEGE] = sys_drop_privilege_wrapper;
+    syscall_table[SYS_HW_ALLOW]      = sys_hw_allow_wrapper;
+    syscall_table[SYS_HW_ALLOWED]    = sys_hw_allowed_wrapper;
 
     /* 架构相关的系统调用入口（INT 0x80 / SYSCALL / SVC） */
     hal::Syscall::init(NULL);

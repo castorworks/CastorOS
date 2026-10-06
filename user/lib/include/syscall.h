@@ -37,6 +37,8 @@ enum {
     SYS_TIMER_SET       = 26,
     SYS_MEM_FREE        = 27,  // mem_free_pages()：还没有分配出去的物理页数
     SYS_DEVICE_FIND     = 28,  // device_find(info*)：按型号查平台设备的地址和中断号（需要特权）
+    SYS_HW_ALLOW        = 29,
+    SYS_HW_ALLOWED      = 30,
 };
 
 typedef uintptr_t syscall_arg_t;
@@ -89,10 +91,10 @@ struct device_info {
     char     compatible[32];    /**< 入：要找的设备型号，如 "virtio,mmio"、"arm,pl011"；设备的
                                  *   compatible 列表里有这一项就算（不必是第一项） */
     uint32_t index;             /**< 入：同一型号的第几个（从 0 开始） */
-    uint32_t irq;               /**< 出：中断号（可以直接交给 irq_claim） */
+    uint32_t irq;               /**< 出：中断号（可以直接交给 irq_claim / hw_allow） */
     uint32_t has_irq;           /**< 出：这个设备有没有中断 */
     uint32_t reserved;
-    uint64_t base;              /**< 出：寄存器的物理地址（交给 map_device） */
+    uint64_t base;              /**< 出：寄存器的物理地址（交给 map_device / hw_allow） */
     uint64_t size;              /**< 出：寄存器区的大小 */
     char     name[32];          /**< 出：设备的名字，如 "virtio_mmio@a000000" */
 };
@@ -101,8 +103,8 @@ struct device_info {
  * 按型号查找平台设备（需要特权）。
  *
  * 有些机器上设备的位置不是靠探测得到的，而是固件用一份设备树告诉内核的（arm64）；
- * 驱动通过这个调用拿到自己的设备在哪里，而不是把某块板子上的地址写死。
- * 在靠探测发现设备的机器上（x86 的 PCI）没有这样的表，总是找不到。
+ * init 通过这个调用查到每个驱动的设备在哪里，再许可给它（hw_allow），谁都不用把
+ * 某块板子上的地址写死。在靠探测发现设备的机器上（x86 的 PCI）没有这样的表，总是找不到。
  *
  * @param index 同一型号有多个时取第几个，从 0 开始
  * @return 0 找到了，结果在 info 里；-1 没有这个设备（或者没有特权）
@@ -180,10 +182,38 @@ int ipc_call(int dest, struct ipc_msg *msg);
 int ipc_reply(int dest, const struct ipc_msg *msg);
 
 // ============================================================================
-// 硬件访问（仅特权进程）
+// 硬件访问
 //
-// 特权从 init 开始，fork 和 exec 都保留，drop_privilege 之后永久失去。
+// 特权从 init 开始，fork 和 exec 都保留，drop_privilege 之后永久失去。有特权的进程
+// 什么硬件都能碰；没有特权的进程只碰得到许可表里有的端口、设备内存和中断线。
+// 许可表在还有特权时用 hw_allow 填，同样被 fork 和 exec 保留，放弃特权之后不能再加：
+// init 就是这样把每个驱动限制在它自己的设备上的。
 // ============================================================================
+
+#define HW_PORTS        0       // x86 的 I/O 端口 [start, start + count)
+#define HW_MEMORY       1       // 设备内存 [start, start + count)，单位是字节
+#define HW_IRQ          2       // 中断线 [start, start + count)
+
+/** 许可表里的一条（内核和用户库各有一份定义，必须一致） */
+struct hw_range {
+    uint32_t kind;
+    uint32_t reserved;
+    uint64_t start;
+    uint64_t count;
+};
+
+/** 往自己的许可表里加一条。需要特权；表满（8 条）或范围不合法返回 -1 */
+int hw_allow(uint32_t kind, uintptr_t start, uintptr_t count);
+
+/** 自己许可表里的第 index 条（从 0 开始）；没有这么多条返回 -1 */
+int hw_allowed(uint32_t index, struct hw_range *range);
+
+/**
+ * 许可表里种类是 kind 的第 n 条（从 0 开始）。驱动用它得知自己的设备在哪里：
+ * 许可给它的端口、设备内存、中断线就是它的设备。
+ * @return 没有返回 false
+ */
+bool hw_find(uint32_t kind, uint32_t n, struct hw_range *range);
 
 /** 读/写 x86 的 I/O 端口，width 是 1、2 或 4 字节。arm64 没有端口，恒返回 -1 */
 int io_read(uintptr_t port, int width, uint32_t *value);
@@ -191,14 +221,14 @@ int io_write(uintptr_t port, int width, uint32_t value);
 
 /**
  * 把设备内存 [phys, phys+length) 映射进自己的地址空间（不缓存）。phys 必须页对齐，
- * 且不能是普通内存。
+ * 且不能是普通内存。许可按页算：许可了一页里的一部分就可以映射整页。
  * @return 映射的地址；失败返回 MAP_FAILED
  */
 void *map_device(uintptr_t phys, size_t length);
 
 /**
  * 分配一段物理上连续、已清零的内存用于 DMA：*phys 得到物理地址（交给设备），
- * 返回值是它在自己地址空间里的地址。用 munmap 释放。
+ * 返回值是它在自己地址空间里的地址。用 munmap 释放。只给驱动（有特权，或者持有任何一条许可）。
  * @return 失败返回 MAP_FAILED
  */
 void *dma_alloc(size_t length, uint64_t *phys);
@@ -211,7 +241,7 @@ void *dma_alloc(size_t length, uint64_t *phys);
 int irq_claim(int irq);
 int irq_ack(int irq);
 
-/** 放弃特权（不可恢复） */
+/** 放弃特权（不可恢复）。许可表留着 */
 void drop_privilege(void);
 
 #endif // _USERLAND_LIB_SYSCALL_H_

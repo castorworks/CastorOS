@@ -1,6 +1,7 @@
 // net - 网络服务
 //
-// 特权的用户态服务，以 "net" 登记，实现 net.h 里的协议。它把两样东西放在同一个
+// 用户态服务，以 "net" 登记，实现 net.h 里的协议。没有特权：只碰得到 init 许可给它的
+// 那块网卡。它把两样东西放在同一个
 // 进程里：virtio-net 网卡驱动，和一个很小的协议栈（以太网、ARP、IPv4、ICMP 回显、UDP，
 // 以及 tcp.cpp 里的 TCP）。
 // 放在一起是因为收包是由中断驱动的：一个主循环同时等中断、定时器和客户请求，
@@ -88,7 +89,7 @@ static bool is_tcp_frame_with_payload(const uint8_t *frame, size_t len) {
 }
 
 static bool nic_init(void) {
-    if (!virtio_find(&nic, VIRTIO_ID_NET)) {
+    if (!virtio_open(&nic, VIRTIO_ID_NET)) {
         return false;
     }
     if (!(virtio_get_features(&nic) & VIRTIO_NET_F_MAC)) {

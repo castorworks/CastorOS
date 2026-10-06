@@ -1,5 +1,5 @@
 /**
- * virtio 设备的公共部分（legacy 接口）：找设备、寄存器访问、队列
+ * virtio 设备的公共部分（legacy 接口）：找设备并许可给驱动、寄存器访问、队列
  */
 
 #include <virtio.h>
@@ -20,6 +20,7 @@
 
 // virtio-mmio (legacy)。每个设备是设备树里一个 "virtio,mmio" 节点：寄存器在哪里、
 // 用哪个中断向内核查（device_find）。QEMU virt 上有 32 个这样的槽位，大多数是空的
+#define MMIO_MAGIC_VALUE    0x74726976
 
 #define MMIO_MAGIC          0x000   // 'virt'
 #define MMIO_VERSION        0x004   // 1 = legacy
@@ -43,33 +44,60 @@
 static uint32_t reg_read(struct virtio_dev *dev, uint32_t off) { return dev->regs[off / 4]; }
 static void reg_write(struct virtio_dev *dev, uint32_t off, uint32_t value) { dev->regs[off / 4] = value; }
 
-static bool transport_find(struct virtio_dev *dev, uint32_t device_id) {
+/** 把 base 所在的那一页映射进来，*regs 指向 base 处的寄存器。用完 unmap_slot */
+static void *map_slot(uint64_t base, volatile uint32_t **regs) {
+    uint64_t page = base & ~(uint64_t)(PAGE_SIZE - 1);
+    void *mapped = map_device((uintptr_t)page, PAGE_SIZE);
+    if (mapped != MAP_FAILED) {
+        *regs = (volatile uint32_t *)((char *)mapped + (base - page));
+    }
+    return mapped;
+}
+
+static bool transport_allow(uint32_t device_id) {
     struct device_info slot;
     for (uint32_t i = 0; device_find("virtio,mmio", i, &slot) == 0; i++) {
         if (!slot.has_irq) {
             continue;
         }
-        // 把这个槽位所在的那一页映射进来看看里面是什么设备；不是要找的就撤掉
-        uint64_t page = slot.base & ~(uint64_t)(PAGE_SIZE - 1);
-        void *mapped = map_device(page, PAGE_SIZE);
+        // 把这个槽位映射进来看看里面是什么设备；看完就撤掉，许可记的是物理地址
+        struct virtio_dev probe;
+        void *mapped = map_slot(slot.base, &probe.regs);
         if (mapped == MAP_FAILED) {
             continue;
         }
-        dev->regs = (volatile uint32_t *)((char *)mapped + (slot.base - page));
-        if (reg_read(dev, MMIO_MAGIC) != 0x74726976 || reg_read(dev, MMIO_DEVICE_ID) != device_id) {
-            munmap(mapped, PAGE_SIZE);
-            continue;
+        bool found = reg_read(&probe, MMIO_MAGIC) == MMIO_MAGIC_VALUE &&
+                     reg_read(&probe, MMIO_DEVICE_ID) == device_id;
+        munmap(mapped, PAGE_SIZE);
+        if (found) {
+            return hw_allow(HW_MEMORY, (uintptr_t)slot.base, (uintptr_t)(slot.size ? slot.size : PAGE_SIZE)) == 0 &&
+                   hw_allow(HW_IRQ, slot.irq, 1) == 0;
         }
-        if (reg_read(dev, MMIO_VERSION) != 1) {
-            printf("virtio: mmio version %u is not supported (need legacy)\n", reg_read(dev, MMIO_VERSION));
-            munmap(mapped, PAGE_SIZE);
-            return false;
-        }
-        dev->irq = (int)slot.irq;
-        reg_write(dev, MMIO_GUEST_PAGE_SIZE, PAGE_SIZE);
-        return true;
     }
     return false;
+}
+
+static bool transport_open(struct virtio_dev *dev, uint32_t device_id) {
+    struct hw_range mem, irq;
+    if (!hw_find(HW_MEMORY, 0, &mem) || !hw_find(HW_IRQ, 0, &irq)) {
+        return false;
+    }
+    void *mapped = map_slot(mem.start, &dev->regs);
+    if (mapped == MAP_FAILED) {
+        return false;
+    }
+    if (reg_read(dev, MMIO_MAGIC) != MMIO_MAGIC_VALUE || reg_read(dev, MMIO_DEVICE_ID) != device_id) {
+        munmap(mapped, PAGE_SIZE);
+        return false;
+    }
+    if (reg_read(dev, MMIO_VERSION) != 1) {
+        printf("virtio: mmio version %u is not supported (need legacy)\n", reg_read(dev, MMIO_VERSION));
+        munmap(mapped, PAGE_SIZE);
+        return false;
+    }
+    dev->irq = (int)irq.start;
+    reg_write(dev, MMIO_GUEST_PAGE_SIZE, PAGE_SIZE);
+    return true;
 }
 
 static void transport_set_status(struct virtio_dev *dev, uint32_t status) { reg_write(dev, MMIO_STATUS, status); }
@@ -145,7 +173,7 @@ static void pci_write(uint32_t dev, uint32_t off, uint32_t value) {
     io_write(PCI_CONFIG_DATA, 4, value);
 }
 
-static bool transport_find(struct virtio_dev *dev, uint32_t device_id) {
+static bool transport_allow(uint32_t device_id) {
     // 只扫描 0 号总线上各设备的 0 号功能：QEMU 把设备都放在这里
     for (uint32_t slot = 0; slot < 32; slot++) {
         uint32_t id = pci_read(slot, 0x00);
@@ -160,13 +188,34 @@ static bool transport_find(struct virtio_dev *dev, uint32_t device_id) {
             printf("virtio: pci device has no I/O port BAR (need a legacy/transitional device)\n");
             return false;
         }
-        dev->io_base = bar0 & ~3u;
-        dev->irq = (int)(pci_read(slot, 0x3C) & 0xFF);
-        // 打开端口访问和总线主控（设备要自己读写内存）
-        pci_write(slot, 0x04, pci_read(slot, 0x04) | 0x5);
-        return true;
+        // BAR 占多少个端口：全写 1 再读回来，设备不译码的低位读出来是 0。量的时候先关掉
+        // 设备的端口译码，免得它在这一瞬间响应别处的端口
+        uint32_t command = pci_read(slot, 0x04);
+        pci_write(slot, 0x04, command & ~0x1u);
+        pci_write(slot, 0x10, 0xFFFFFFFFu);
+        uint32_t io_size = (~(pci_read(slot, 0x10) & ~3u) + 1) & 0xFFFF;
+        pci_write(slot, 0x10, bar0);
+        // 打开端口访问和总线主控（设备要自己读写内存）：驱动碰不到配置空间，这一步得在这里做
+        pci_write(slot, 0x04, command | 0x5);
+        if (io_size == 0) {
+            return false;
+        }
+        return hw_allow(HW_PORTS, bar0 & ~3u, io_size) == 0 &&
+               hw_allow(HW_IRQ, pci_read(slot, 0x3C) & 0xFF, 1) == 0;
     }
     return false;
+}
+
+// legacy 的端口寄存器里没有设备类型可查：许可给本进程的就是它的设备
+static bool transport_open(struct virtio_dev *dev, uint32_t device_id) {
+    (void)device_id;
+    struct hw_range ports, irq;
+    if (!hw_find(HW_PORTS, 0, &ports) || !hw_find(HW_IRQ, 0, &irq)) {
+        return false;
+    }
+    dev->io_base = (uint32_t)ports.start;
+    dev->irq = (int)irq.start;
+    return true;
 }
 
 static void transport_set_status(struct virtio_dev *dev, uint32_t status) {
@@ -218,8 +267,12 @@ void virtio_irq_ack(struct virtio_dev *dev) { port_read(dev->io_base + VPCI_ISR,
 // 公共部分
 // ============================================================================
 
-bool virtio_find(struct virtio_dev *dev, uint32_t device_id) {
-    if (!transport_find(dev, device_id)) {
+bool virtio_allow(uint32_t device_id) {
+    return transport_allow(device_id);
+}
+
+bool virtio_open(struct virtio_dev *dev, uint32_t device_id) {
+    if (!transport_open(dev, device_id)) {
         return false;
     }
     transport_set_status(dev, 0);   // 复位

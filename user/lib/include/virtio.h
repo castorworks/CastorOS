@@ -6,9 +6,13 @@
 // virtio 设备的公共部分（legacy 接口），给用户态驱动用。
 //
 // 两种接入方式只是寄存器的访问方法不同，这里把差别包起来：
-//   - x86：virtio-pci。在 PCI 配置空间里找到设备，寄存器在它的 I/O 端口 BAR 里
-//   - arm64：virtio-mmio，设备的位置向内核查（device_find），寄存器用 map_device 映射
-// 队列内存来自 dma_alloc：设备只认物理地址。调用者必须是特权进程。
+//   - x86：virtio-pci，寄存器在设备的 I/O 端口 BAR 里
+//   - arm64：virtio-mmio，寄存器用 map_device 映射
+// 队列内存来自 dma_alloc：设备只认物理地址。
+//
+// 找设备和用设备是两个进程的事。init（有特权）用 virtio_allow 找到设备，把它的寄存器和
+// 中断线许可给即将成为驱动的子进程；驱动用 virtio_open 打开许可给自己的那个设备。
+// 驱动自己不找设备，也碰不到别的设备。
 
 #define VIRTIO_ID_NET       1
 #define VIRTIO_ID_BLOCK     2
@@ -59,10 +63,19 @@ struct virtq {
 };
 
 /**
- * 找到类型为 device_id 的设备，复位并声明“有驱动了”。
- * 之后依次：协商特性、建立队列、virtio_driver_ok。
+ * 找到类型为 device_id 的设备，把它的寄存器和中断线加进当前进程的许可表（hw_allow）。
+ * 需要特权：x86 上要扫 PCI 配置空间并打开设备的端口访问和总线主控，arm64 上要向内核
+ * 查设备树里的槽位并逐个看里面是什么设备。
+ * @return 没有这种设备返回 false
  */
-bool virtio_find(struct virtio_dev *dev, uint32_t device_id);
+bool virtio_allow(uint32_t device_id);
+
+/**
+ * 打开许可给当前进程的设备（类型应当是 device_id），复位并声明“有驱动了”。
+ * 之后依次：协商特性、建立队列、virtio_driver_ok。
+ * @return 没有被许可任何设备，或者那不是一个能用的 device_id 设备，返回 false
+ */
+bool virtio_open(struct virtio_dev *dev, uint32_t device_id);
 
 /** 设备提供的特性位（低 32 位）/ 告诉设备驱动要用哪些 */
 uint32_t virtio_get_features(struct virtio_dev *dev);

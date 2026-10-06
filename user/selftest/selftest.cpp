@@ -189,14 +189,22 @@ static void test_timer(void) {
 }
 
 static void test_privilege(void) {
-    // 本程序没有特权：不能访问设备寄存器，不能认领中断，也查不到设备在哪里
+    // 本程序没有特权，也没有被许可任何设备：不能访问设备寄存器，不能认领中断，
+    // 拿不到 DMA 内存，查不到设备在哪里，也不能给自己加许可
     int pid = fork();
     if (pid == 0) {
         uint32_t v;
+        uint64_t phys;
         struct device_info info;
-        exit(io_read(0x80, 1, &v) == -1 && irq_claim(5) == -1 && irq_claim(40) == -1 &&
-             map_device(0xB8000, 4096) == MAP_FAILED &&
-             device_find("arm,pl011", 0, &info) == -1 && device_find("virtio,mmio", 0, &info) == -1 ? 0 : 1);
+        struct hw_range range;
+        exit(io_read(0x80, 1, &v) == -1 && io_read(0x3F8, 1, &v) == -1 &&
+             irq_claim(5) == -1 && irq_claim(40) == -1 &&
+             map_device(0xB8000, 4096) == MAP_FAILED && map_device(0x09000000, 4096) == MAP_FAILED &&
+             dma_alloc(4096, &phys) == MAP_FAILED &&
+             device_find("arm,pl011", 0, &info) == -1 && device_find("virtio,mmio", 0, &info) == -1 &&
+             hw_allowed(0, &range) == -1 && !hw_find(HW_IRQ, 0, &range) &&
+             hw_allow(HW_PORTS, 0x80, 1) == -1 && hw_allow(HW_IRQ, 5, 1) == -1 &&
+             io_read(0x80, 1, &v) == -1 && irq_claim(5) == -1 ? 0 : 1);
     }
     int status = 0;
     waitpid(pid, &status, 0);

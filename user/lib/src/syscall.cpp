@@ -208,3 +208,20 @@ int irq_ack(int irq) {
 void drop_privilege(void) {
     syscall0(SYS_DROP_PRIVILEGE);
 }
+
+int hw_allow(uint32_t kind, uintptr_t start, uintptr_t count) {
+    return (int)syscall3(SYS_HW_ALLOW, (syscall_arg_t)kind, (syscall_arg_t)start, (syscall_arg_t)count);
+}
+
+int hw_allowed(uint32_t index, struct hw_range *range) {
+    return (int)syscall2(SYS_HW_ALLOWED, (syscall_arg_t)index, PTR_TO_ARG(range));
+}
+
+bool hw_find(uint32_t kind, uint32_t n, struct hw_range *range) {
+    for (uint32_t i = 0; hw_allowed(i, range) == 0; i++) {
+        if (range->kind == kind && n-- == 0) {
+            return true;
+        }
+    }
+    return false;
+}
