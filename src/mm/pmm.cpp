@@ -194,7 +194,8 @@ void mm::Pmm::init(const mm::MemRegion *regions, uint32_t count) {
  * 
  * 分配后会清零页帧内容
  */
-paddr_t mm::Pmm::alloc_frame() {
+/** 从位图里拿一个空闲页帧，记成已用（引用计数 1）。内容还没有清零 */
+static paddr_t take_free_frame(void) {
     sync::SpinlockIrqGuard guard(pmm_lock);
 
     pfn_t idx = find_free_frame();
@@ -248,10 +249,16 @@ paddr_t mm::Pmm::alloc_frame() {
         LOG_WARN_MSG("PMM: Allocated frame 0x%llx in page directory danger zone\n", 
                     (unsigned long long)addr);
     }
-    
-    // 清零页帧内容
-    memset((void*)PHYS_TO_VIRT(addr), 0, PAGE_SIZE);
-    
+    return addr;
+}
+
+paddr_t mm::Pmm::alloc_frame() {
+    paddr_t addr = take_free_frame();
+    if (addr != PADDR_INVALID) {
+        // 清零不在锁里做：这一帧已经记在我们名下，没有别人会碰它，而清一页比锁里的
+        // 记账慢得多——几个 CPU 同时分配内存时，它们只在记账上排队
+        memset((void*)PHYS_TO_VIRT(addr), 0, PAGE_SIZE);
+    }
     return addr;
 }
 
@@ -332,6 +339,7 @@ void mm::Pmm::free_frame(paddr_t frame) {
  * @return 物理内存信息结构
  */
 mm::PmmInfo mm::Pmm::get_info() {
+    sync::SpinlockIrqGuard guard(pmm_lock);     // 别的 CPU 可能正在改这几个数
     return pmm_info;
 }
 
@@ -432,6 +440,8 @@ paddr_t mm::Pmm::alloc_contiguous(size_t count) {
         return PADDR_INVALID;
     }
 
+    paddr_t addr;
+    {
     sync::SpinlockIrqGuard guard(pmm_lock);
 
     // 找一段连续的空闲帧
@@ -458,7 +468,9 @@ paddr_t mm::Pmm::alloc_contiguous(size_t count) {
         pmm_info.used_frames++;
     }
 
-    paddr_t addr = PFN_TO_PADDR(run_start);
+    addr = PFN_TO_PADDR(run_start);
+    }
+    // 清零在锁外面做（见 alloc_frame）：这里可以是上百页，关着中断清太久了
     memset((void *)PHYS_TO_VIRT((uintptr_t)addr), 0, count * PAGE_SIZE);
     return addr;
 }

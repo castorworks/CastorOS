@@ -405,6 +405,166 @@ static void test_cpus(void) {
     report("idle cpus are woken for a ready task", ok, "ok");
 }
 
+// 一个进程反复做的事：要内存、写满、长堆缩堆、fork、把一页共享给父进程、还内存。
+// 每一步都核对内容。@return 一切都对
+static bool memory_worker(int parent, uint32_t seed) {
+    for (uint32_t round = 0; round < 120; round++) {
+        seed = seed * 1103515245u + 12345u;
+        size_t pages = 1 + (seed >> 16) % 8;
+        uint32_t *block = (uint32_t *)mmap(NULL, pages * 4096, PROT_READ | PROT_WRITE,
+                                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (block == MAP_FAILED) {
+            return false;
+        }
+        // 新映射的页是清零的；每页写上只有自己知道的值
+        for (size_t i = 0; i < pages; i++) {
+            if (block[i * 1024] != 0 || block[i * 1024 + 1023] != 0) {
+                return false;
+            }
+            block[i * 1024] = seed + (uint32_t)i;
+            block[i * 1024 + 1023] = ~(seed + (uint32_t)i);
+        }
+
+        if (round % 3 == 0) {
+            // 堆长三页、写、缩回去
+            char *top = (char *)sbrk(3 * 4096);
+            if (top == (char *)-1) {
+                return false;
+            }
+            top[0] = (char)seed;
+            top[3 * 4096 - 1] = (char)~seed;
+            if (top[0] != (char)seed || sbrk(-3 * 4096) == (void *)-1) {
+                return false;
+            }
+        }
+        if (round % 10 == 5) {
+            // 子进程改它那一份（写时复制），我们这一份不能变
+            int child = fork();
+            if (child == 0) {
+                for (size_t i = 0; i < pages; i++) {
+                    block[i * 1024] = 0xDEADBEEFu;
+                }
+                exit(block[1023] == ~seed ? 0 : 1);
+            }
+            int status = 1;
+            waitpid(child, &status, 0);
+            if (WEXITSTATUS(status) != 0) {
+                return false;
+            }
+        }
+        if (round % 8 == 7) {
+            // 把第一页共享给父进程：它核对内容，在里面留个记号，然后撤掉它那边的映射
+            if (mem_grant(parent, block, 4096) != 0) {
+                return false;
+            }
+            struct ipc_msg ask = {};
+            ask.label = 1;
+            if (ipc_call(parent, &ask) != 0 || block[1] != (uint32_t)parent) {
+                return false;
+            }
+            block[1] = 0;
+        }
+
+        for (size_t i = 0; i < pages; i++) {
+            if (block[i * 1024] != seed + (uint32_t)i || block[i * 1024 + 1023] != ~(seed + (uint32_t)i)) {
+                return false;
+            }
+        }
+        if (munmap(block, pages * 4096) != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/** 启动 workers 个 memory_worker，等它们做完，期间收它们共享过来的页。@return 内容都对 */
+static bool run_memory_workers(int workers) {
+    int self = getpid();
+    int pids[6];
+    for (int i = 0; i < workers; i++) {
+        pids[i] = fork();
+        if (pids[i] == 0) {
+            bool ok = memory_worker(self, 0x1234567u * (uint32_t)(i + 1));
+            struct ipc_msg done = {};
+            done.label = 2;
+            done.data[0] = ok;
+            ipc_call(self, &done);
+            exit(ok ? 0 : 1);
+        }
+    }
+
+    // 等它们做完；这期间收它们共享过来的页
+    bool ok = true;
+    uintptr_t granted[6] = {};
+    for (int finished = 0; finished < workers; ) {
+        struct ipc_msg m;
+        if (ipc_recv(IPC_ANY, &m) != 0) {
+            continue;
+        }
+        int slot = -1;
+        for (int i = 0; i < workers; i++) {
+            if (pids[i] == (int)m.sender) {
+                slot = i;
+            }
+        }
+        if (slot < 0) {
+            continue;
+        }
+        struct ipc_msg reply = {};
+        if (m.label == IPC_LABEL_GRANT) {
+            granted[slot] = (uintptr_t)m.data[0];       // 映射在这里；等它来问的时候再看
+        } else if (m.label == 1) {
+            uint32_t *page = (uint32_t *)granted[slot];
+            ok = ok && page != NULL && page[1023] != 0;
+            if (page) {
+                page[1] = (uint32_t)self;
+                munmap(page, 4096);
+                granted[slot] = 0;
+            }
+            reply.label = 1;
+            ipc_reply(m.sender, &reply);
+        } else if (m.label == 2) {
+            ok = ok && m.data[0] != 0;
+            finished++;
+            reply.label = 2;
+            ipc_reply(m.sender, &reply);
+        }
+    }
+    for (int i = 0; i < workers; i++) {
+        int status = 1;
+        waitpid(pids[i], &status, 0);
+        ok = ok && WEXITSTATUS(status) == 0;
+    }
+    return ok;
+}
+
+static void test_parallel_memory(void) {
+    // 内存的系统调用（mmap、munmap、brk）不拿内核锁，几个 CPU 上的进程可以同时在里面。
+    // 让几个进程同时反复要内存、还内存，中间夹着 fork（写时复制）和共享内存（别的进程往
+    // 自己的地址空间里放映射）。每个进程看到的内容都得是自己写的，最后一页内存都不能少
+    uint32_t cpus = 1;
+    cpu_info(&cpus);
+    int workers = cpus < 2 ? 2 : cpus > 6 ? 6 : (int)cpus;
+
+    // 跑两遍，数第二遍前后的空闲页。第一遍里我们自己的地址空间第一次收到共享来的页，
+    // 内核要给那段地址建页表，那一页到我们退出才还——它不是漏掉的
+    bool ok = run_memory_workers(workers);
+    long before = mem_free_pages();
+    ok = run_memory_workers(workers) && ok;
+
+    // 退出的进程的内存是延迟一点才收回的：等它稳定下来
+    long after = mem_free_pages();
+    for (int i = 0; i < 50 && after != before; i++) {
+        usleep(20000);
+        after = mem_free_pages();
+    }
+    if (!ok || after != before) {
+        printf("selftest: (%d workers, contents %s, free pages %ld -> %ld)\n", workers,
+               ok ? "ok" : "WRONG", before, after);
+    }
+    report("memory system calls from several processes at once", ok && after == before, "ok");
+}
+
 static void test_shared_memory(void) {
     // 父进程把一页内存共享给子进程；内核用一条 IPC_LABEL_GRANT 消息告诉子进程映射在哪。
     // 子进程经由共享映射写入，父进程能看到（fork 得到的那份只是写时复制的副本）
@@ -1147,6 +1307,7 @@ int main(int argc, char **argv) {
     test_floating_point();
     test_cpus();
     test_shared_memory();
+    test_parallel_memory();
     test_names();
     test_fs();
     // 启动映像里的子目录（user/bootfs/docs）装载出来也是目录

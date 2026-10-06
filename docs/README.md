@@ -14,7 +14,7 @@
 
 | 文档 | 内容 |
 |------|------|
-| [系统调用表](reference/syscalls.md) | 31 个系统调用的编号、参数和权限要求 |
+| [系统调用表](reference/syscalls.md) | 32 个系统调用的编号、参数和权限要求 |
 | [进程间通信](reference/ipc.md) | 同步消息传递、超时、共享内存、名字服务 |
 | [特权与硬件访问](reference/hardware.md) | 特权、许可表、I/O 端口、设备内存、DMA、设备中断 |
 | [用户态驱动](reference/drivers.md) | 串口驱动 uart、virtio 的公共部分、块设备驱动 blk |

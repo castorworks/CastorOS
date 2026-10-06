@@ -40,16 +40,26 @@ static bool unmap_user_page(task_t *task, uintptr_t page) {
     return true;
 }
 
-/* mmap 区域的起始和结束地址（在堆和栈之间） */
+/*
+ * 堆和栈之间的一段地址留给映射，分成两块：
+ *   [MMAP_REGION_START, GRANT_REGION_START)  进程自己要来的：mmap、设备内存、DMA 内存
+ *   [GRANT_REGION_START, MMAP_REGION_END)    别的进程用 mem_grant 共享进来的
+ * 分开是为了不用给地址空间加锁。往一个地址空间里放映射的只有两种人：它自己，和把内存
+ * 共享给它的别的进程。它自己的 mmap 不拿内核锁就能运行（见 kernel/syscall.cpp），这时
+ * 别的 CPU 上可能正有进程在往它这里共享内存；两边各在各的那一块里找空闲地址，就不会
+ * 挑中同一段。页表本身的修改由 VMM 的锁保护。
+ */
 #if defined(ARCH_ARM64)
-/* arm64：mmap 区域放在 4GB 以上。这个位置定下来的时候，用户地址空间的低 4GB 里还有
+/* arm64：这段地址放在 4GB 以上。这个位置定下来的时候，用户地址空间的低 4GB 里还有
  * 内核的块映射要避开；现在用户的页表里已经没有内核的映射（内核地址走 TTBR1），
  * 位置沿用下来 */
-#define MMAP_REGION_START   ((uintptr_t)0x100000000ULL)  /* 4GB 起始 */
-#define MMAP_REGION_END     ((uintptr_t)0x140000000ULL)  /* 5GB 结束 */
+#define MMAP_REGION_START   ((uintptr_t)0x100000000ULL)  /* 4GB */
+#define GRANT_REGION_START  ((uintptr_t)0x130000000ULL)  /* 4.75GB */
+#define MMAP_REGION_END     ((uintptr_t)0x140000000ULL)  /* 5GB */
 #else
-#define MMAP_REGION_START   ((uintptr_t)0x40000000)  /* 1GB 起始 */
-#define MMAP_REGION_END     ((uintptr_t)0x70000000)  /* 1.75GB 结束 */
+#define MMAP_REGION_START   ((uintptr_t)0x40000000)  /* 1GB */
+#define GRANT_REGION_START  ((uintptr_t)0x60000000)  /* 1.5GB */
+#define MMAP_REGION_END     ((uintptr_t)0x70000000)  /* 1.75GB */
 #endif
 
 /** 地址空间 space 里 page 这一页是否已有映射（任何大小、任何权限） */
@@ -186,25 +196,29 @@ static bool is_vaddr_range_free(hal_addr_space_t space, uintptr_t start, size_t 
 }
 
 /**
- * 在 mmap 区域查找空闲的虚拟地址空间
+ * 在 [region_start, region_end) 里找一段空闲的虚拟地址
  * @param hint 建议地址（0 表示由内核选择）
- * @param length 需要的长度（已页对齐，不超过 mmap 区域大小）
+ * @param length 需要的长度（已页对齐）
  * @return 找到的虚拟地址，失败返回 0
  */
-static uintptr_t find_free_vaddr(hal_addr_space_t space, uintptr_t hint, size_t length) {
+static uintptr_t find_free_vaddr_in(hal_addr_space_t space, uintptr_t region_start, uintptr_t region_end,
+                                    uintptr_t hint, size_t length) {
+    if (length > region_end - region_start) {
+        return 0;
+    }
     // 如果提供了 hint 且在有效范围内，先尝试 hint 地址
-    if (hint != 0 && hint <= MMAP_REGION_END - length) {
+    if (hint != 0 && hint <= region_end - length) {
         uintptr_t start = PAGE_ALIGN_UP(hint);
-        if (start >= MMAP_REGION_START && start <= MMAP_REGION_END - length) {
+        if (start >= region_start && start <= region_end - length) {
             if (is_vaddr_range_free(space, start, length, NULL)) {
                 return start;
             }
         }
     }
 
-    // 从 mmap 区域开始线性搜索
-    uintptr_t start = MMAP_REGION_START;
-    while (start <= MMAP_REGION_END - length) {
+    // 从区域开头线性搜索
+    uintptr_t start = region_start;
+    while (start <= region_end - length) {
         uintptr_t mapped_at = 0;
         if (is_vaddr_range_free(space, start, length, &mapped_at)) {
             return start;
@@ -213,6 +227,11 @@ static uintptr_t find_free_vaddr(hal_addr_space_t space, uintptr_t hint, size_t 
     }
 
     return 0;  // 没有找到足够大的空闲区域
+}
+
+/** 当前进程给自己找一段地址（mmap、设备内存、DMA 内存） */
+static uintptr_t find_free_vaddr(uintptr_t hint, size_t length) {
+    return find_free_vaddr_in(HAL_ADDR_SPACE_CURRENT, MMAP_REGION_START, GRANT_REGION_START, hint, length);
 }
 
 /**
@@ -294,7 +313,7 @@ uintptr_t syscall::Mm::mmap(uintptr_t addr, size_t length, uint32_t prot,
     }
 
     // 检查长度是否超出限制（在对齐之前检查，对齐不会回绕）
-    if (length > MMAP_REGION_END - MMAP_REGION_START) {
+    if (length > GRANT_REGION_START - MMAP_REGION_START) {
         LOG_ERROR_MSG("syscall::Mm::mmap: length 0x%llx too large\n", (unsigned long long)length);
         return (uintptr_t)-1;
     }
@@ -310,7 +329,7 @@ uintptr_t syscall::Mm::mmap(uintptr_t addr, size_t length, uint32_t prot,
     }
 
     // 查找空闲虚拟地址空间
-    uintptr_t vaddr = find_free_vaddr(HAL_ADDR_SPACE_CURRENT, addr, length);
+    uintptr_t vaddr = find_free_vaddr(addr, length);
     if (vaddr == 0) {
         LOG_ERROR_MSG("syscall::Mm::mmap: no free virtual address space for length 0x%llx\n",
                       (unsigned long long)length);
@@ -430,7 +449,7 @@ uintptr_t syscall::Mm::map_device(uint64_t phys, size_t length) {
         return (uintptr_t)-1;
     }
 
-    uintptr_t vaddr = find_free_vaddr(HAL_ADDR_SPACE_CURRENT, 0, length);
+    uintptr_t vaddr = find_free_vaddr(0, length);
     if (vaddr == 0) {
         return (uintptr_t)-1;
     }
@@ -459,7 +478,7 @@ uintptr_t syscall::Mm::dma_alloc(size_t length, uint64_t *phys) {
     length = PAGE_ALIGN_UP(length);
     size_t pages = length / PAGE_SIZE;
 
-    uintptr_t vaddr = find_free_vaddr(HAL_ADDR_SPACE_CURRENT, 0, length);
+    uintptr_t vaddr = find_free_vaddr(0, length);
     paddr_t base = vaddr ? mm::Pmm::alloc_contiguous(pages) : PADDR_INVALID;
     if (base == PADDR_INVALID) {
         return (uintptr_t)-1;
@@ -499,7 +518,8 @@ int syscall::Mm::grant(uint32_t pid, uintptr_t addr, size_t length) {
     }
 
     hal_addr_space_t target_space = (hal_addr_space_t)target->page_dir_phys;
-    uintptr_t vaddr = find_free_vaddr(target_space, 0, length);
+    // 在对方地址空间里留给共享的那一块里找：对方自己这时可能正在 mmap（它不拿内核锁）
+    uintptr_t vaddr = find_free_vaddr_in(target_space, GRANT_REGION_START, MMAP_REGION_END, 0, length);
     if (vaddr == 0) {
         return -1;
     }

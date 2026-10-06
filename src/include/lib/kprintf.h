@@ -5,6 +5,23 @@
 #include <stdarg.h>
 
 /**
+ * @brief 作用域内独占控制台：一次完整的输出不会被别的输出从中间插进来
+ *
+ * 关中断（中断处理函数也打日志），并且拿控制台的锁（别的 CPU 也打日志：不拿内核锁就能
+ * 运行的系统调用也会走到这里，所以不能指望内核锁）。同一个 CPU 可以嵌套：klog 里再调用
+ * kprintf 不会把自己锁死。
+ */
+class ConsoleGuard {
+public:
+    ConsoleGuard();
+    ~ConsoleGuard();
+    ConsoleGuard(const ConsoleGuard &) = delete;
+    ConsoleGuard &operator=(const ConsoleGuard &) = delete;
+private:
+    bool was_enabled_;
+};
+
+/**
  * 内核打印库
  * 
  * 提供类似标准库 printf 的格式化输出功能

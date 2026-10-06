@@ -1,6 +1,8 @@
 # 系统调用表
 
-内核一共有 31 个系统调用。编号在 `src/include/kernel/syscall.h`，用户态在 `user/lib/include/syscall.h` 里有一份相同的定义，包装函数在 `user/lib/src/syscall.cpp`。陷入内核的方式、参数校验和返回值的约定见 [概念：系统调用](../concepts/07-system-calls.md)。
+内核一共有 32 个系统调用。编号在 `src/include/kernel/syscall.h`，用户态在 `user/lib/include/syscall.h` 里有一份相同的定义，包装函数在 `user/lib/src/syscall.cpp`。陷入内核的方式、参数校验和返回值的约定见 [概念：系统调用](../concepts/07-system-calls.md)。
+
+标了 ⚡ 的调用不拿内核锁就运行，几个 CPU 上的进程可以同时在里面（见 [多个 CPU](smp.md) 的“不拿内核锁的系统调用”）；其余的调用同一时刻只有一个 CPU 在执行。
 
 | 编号 | 调用 | 说明 |
 |------|------|------|
@@ -8,12 +10,12 @@
 | 1 | `fork()` | 写时复制 |
 | 2 | `exec(image, size, args, args_size)` | 用调用者内存里的 ELF 映像替换当前进程，并把参数块交给新程序；内核不认识路径。映像最大 16MB |
 | 3 | `waitpid(pid, wstatus, options)` | 阻塞到子进程退出；支持 `WNOHANG` |
-| 4 / 5 | `getpid()` / `getppid()` | |
+| 4 / 5 | `getpid()` / `getppid()` | `getpid` ⚡ |
 | 6 | `yield()` | |
 | 7 | `kill(pid, signal)` | 没有信号处理函数：非 0 信号终止目标；非特权进程只能发给自己和子孙。信号 0 只探测进程是否存在，谁都可以用 |
 | 8 | `nanosleep(req, rem)` | |
-| 9 | `brk(addr)` | |
-| 10 / 11 | `mmap(...)` / `munmap(addr, len)` | 只支持匿名映射 |
+| 9 | `brk(addr)` | ⚡ |
+| 10 / 11 | `mmap(...)` / `munmap(addr, len)` | ⚡ 只支持匿名映射 |
 | 12 | `console_write(buf, len)` | 写内核串口控制台（调试输出）；一次最多 4096 字节，多出来的不写，返回实际写的字节数 |
 | 13 | `ipc_send(dest, msg)` | 把消息发给 PID `dest`，阻塞到对方收下 |
 | 14 | `ipc_recv(from, msg)` | 接收消息；`from` 为 `IPC_ANY`、指定 PID，或 `IPC_FROM_KERNEL`（只收内核发来的消息：设备中断和定时器到期） |
@@ -27,11 +29,11 @@
 | 24 | `dma_alloc(len, phys*)` | 物理连续的内存，返回虚拟地址并告知物理地址；只给驱动（有特权，或者许可表不空） |
 | 25 | `uptime_ms(ms*)` | 开机以来的毫秒数 |
 | 26 | `timer_set(ms)` | 一次性定时器：到期时收到内核发来的 `IPC_LABEL_TIMER` 消息；0 取消 |
-| 27 | `mem_free_pages()` | 还没有分配出去的物理页数；自检用它检查进程退出后内存全部归还 |
+| 27 | `mem_free_pages()` | ⚡ 还没有分配出去的物理页数；自检用它检查进程退出后内存全部归还 |
 | 28 | `device_find(info*)` | 按型号（设备树的 `compatible`）查平台设备的寄存器地址和中断号，仅特权进程 |
 | 29 | `hw_allow(kind, start, count)` | 往自己的许可表里加一条：一段 I/O 端口、一段设备内存或者几条中断线。仅特权进程 |
-| 30 | `hw_allowed(index, range*)` | 读自己许可表里的第 `index` 条；驱动据此得知自己的设备在哪里 |
-| 31 | `cpu_info(count*)` | 返回调用者此刻在哪个 CPU 上运行（从 0 开始），`*count` 得到正在运行的 CPU 个数。见 [多个 CPU](smp.md) |
+| 30 | `hw_allowed(index, range*)` | ⚡ 读自己许可表里的第 `index` 条；驱动据此得知自己的设备在哪里 |
+| 31 | `cpu_info(count*)` | ⚡ 返回调用者此刻在哪个 CPU 上运行（从 0 开始），`*count` 得到正在运行的 CPU 个数。见 [多个 CPU](smp.md) |
 
 各组调用的详细说明：
 

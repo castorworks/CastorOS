@@ -52,7 +52,7 @@ void klog(log_level_t level, const char *fmt, ...) {
     }
     
     // 整条日志（颜色码、前缀、正文、复位）作为一个整体输出
-    kernel::InterruptGuard guard;
+    ConsoleGuard guard;
     
     // 输出：颜色码 + 前缀
     kprint(color_code);

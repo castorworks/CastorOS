@@ -31,6 +31,20 @@ typedef syscall_arg_t (*syscall_handler_t)(syscall_arg_t*, syscall_arg_t, syscal
 
 static syscall_handler_t syscall_table[SYS_MAX];
 
+/**
+ * 哪些系统调用不拿内核锁就运行（kernel/smp.h）。几个 CPU 上的进程可以同时在里面。
+ *
+ * 默认是拿锁的：内核里的数据结构大多没有自己的锁，靠"同一时刻只有一个 CPU 在内核里"
+ * 保平安。一个调用要列在这里，它的整条路径必须只碰这三类东西：
+ *   1. 调用者自己的、别人不会同时读写的东西（它的寄存器帧、它的堆边界、它的许可表）；
+ *   2. 自己带锁的子系统：物理页帧（PMM）、页表（VMM）、内核堆、控制台输出；
+ *   3. 只读的、或者读到旧值也无妨的全局量。
+ * 而且它不能睡眠、不能调度：切换任务的代码假定 CPU 拿着内核锁。
+ * 别的进程碰得到调用者的地方也要想清楚——比如 mem_grant 会往它的地址空间里放映射，
+ * 所以共享来的内存和它自己 mmap 的内存各用各的地址范围（syscalls/mm.cpp）。
+ */
+static bool syscall_unlocked[SYS_MAX];
+
 /* ============================================================================
  * 用户指针校验辅助
  * 包装器拿到的地址/长度全部来自用户态，传给实现函数之前先在这里校验，
@@ -360,23 +374,32 @@ static syscall_arg_t dispatch(syscall_arg_t syscall_num, syscall_arg_t p1, sysca
         return (syscall_arg_t)-1;
     }
     
-    syscall_arg_t ret = handler(frame, p1, p2, p3, p4, p5);
-
-    /* 返回用户态之前处理别的任务发来的 kill：此时本任务不持有任何内核锁，
-     * 可以安全地自行退出（有待处理的 kill 时不返回） */
-    kernel::Scheduler::deliver_pending_kill();
-
-    return ret;
+    return handler(frame, p1, p2, p3, p4, p5);
 }
 
 syscall_arg_t syscall_dispatcher(syscall_arg_t syscall_num, syscall_arg_t p1, syscall_arg_t p2,
                                  syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5,
                                  syscall_arg_t *frame) {
-    /* 内核代码都在内核锁里执行（kernel/smp.h）。x86 上系统调用的汇编入口直接来到这里：
-     * 锁在这里拿，返回用户态之前在这里放。arm64 的异常入口已经拿过一次，这里只是嵌套一层 */
-    kernel::KernelLock::enter();
+    /* 内核代码默认在内核锁里执行（kernel/smp.h）：锁在这里拿，返回用户态之前在这里放。
+     * 列在 syscall_unlocked 里的调用不拿。 */
+    bool locked = syscall_num >= SYS_MAX || !syscall_unlocked[syscall_num];
+    if (locked) {
+        kernel::KernelLock::enter();
+    }
     syscall_arg_t ret = dispatch(syscall_num, p1, p2, p3, p4, p5, frame);
-    kernel::KernelLock::leave();
+
+    /* 返回用户态之前处理别的任务发来的 kill：此时本任务不持有任何别的内核锁，
+     * 可以安全地自行退出（有待处理的 kill 时不返回）。退出要动任务表和调度器，得拿着
+     * 内核锁；没拿锁的调用先看一眼自己身上有没有请求（只有自己会清它），有才去拿 */
+    task_t *current = kernel::Scheduler::get_current();
+    if (!locked && current && current->kill_pending) {
+        kernel::KernelLock::enter();
+        locked = true;
+    }
+    if (locked) {
+        kernel::Scheduler::deliver_pending_kill();
+        kernel::KernelLock::leave();
+    }
     return ret;
 }
 
@@ -417,6 +440,17 @@ void syscall_init(void) {
     syscall_table[SYS_HW_ALLOW]      = sys_hw_allow_wrapper;
     syscall_table[SYS_HW_ALLOWED]    = sys_hw_allowed_wrapper;
     syscall_table[SYS_CPU_INFO]      = sys_cpu_info_wrapper;
+
+    /* 不拿内核锁的调用（规矩见 syscall_unlocked 的说明）。
+     * 内存：PMM 和页表各有自己的锁，改的是调用者自己的地址空间和堆边界 */
+    syscall_unlocked[SYS_BRK]        = true;
+    syscall_unlocked[SYS_MMAP]       = true;
+    syscall_unlocked[SYS_MUNMAP]     = true;
+    /* 只读调用者自己的东西，或者读一个自己带锁的计数 */
+    syscall_unlocked[SYS_GETPID]     = true;
+    syscall_unlocked[SYS_HW_ALLOWED] = true;
+    syscall_unlocked[SYS_CPU_INFO]   = true;
+    syscall_unlocked[SYS_MEM_FREE]   = true;
 
     /* 架构相关的系统调用入口（INT 0x80 / SYSCALL / SVC） */
     hal::Syscall::init(NULL);

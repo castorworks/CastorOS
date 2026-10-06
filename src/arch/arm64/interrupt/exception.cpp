@@ -442,8 +442,14 @@ static void handle_serror(arm64_regs_t *regs, uint32_t source) {
 void arm64_exception_handler(arm64_regs_t *regs, uint32_t type, uint32_t source) {
     /* Kernel code runs with the kernel lock held (kernel/smp.h). Coming from user
      * mode, or from the idle task's wait, this CPU does not hold it yet and waits
-     * here; interrupting kernel code that already holds it only nests. */
-    kernel::KernelLock::enter();
+     * here; interrupting kernel code that already holds it only nests.
+     * System calls are the exception: syscall_dispatcher decides per call whether to
+     * take the lock (some run without it), so it is not taken here for them. */
+    bool is_syscall = type == EXCEPTION_SYNC && source == EXCEPTION_FROM_EL0_64 &&
+                      ((arm64_get_esr() >> ESR_EC_SHIFT) & 0x3F) == ESR_EC_SVC64;
+    if (!is_syscall) {
+        kernel::KernelLock::enter();
+    }
 
     switch (type) {
         case EXCEPTION_SYNC:
@@ -471,7 +477,8 @@ void arm64_exception_handler(arm64_regs_t *regs, uint32_t type, uint32_t source)
 
     /* Going back to user mode: let go of the lock whatever the nesting says (the
      * task returning here may have entered the kernel on another path, see
-     * KernelLock::release). Going back into the kernel: undo our own enter(). */
+     * KernelLock::release); nothing to do if this CPU does not hold it, as after a
+     * system call that ran without. Going back into the kernel: undo our own enter(). */
     if (source == EXCEPTION_FROM_EL0_64) {
         kernel::KernelLock::release();
     } else {

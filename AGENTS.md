@@ -253,6 +253,16 @@ nowhere else. The kernel Makefile rebuilds all of it when `user/` changes.
   do the same, and anything it touches before that (the x86_64 `syscall_entry` stub) must be
   per CPU. A new user task does not leave the kernel through those paths the first time: it
   starts in `user_task_start` (`sched.cpp`), which releases the lock.
+- Some system calls run without the kernel lock (`syscall_unlocked` in `src/kernel/syscall.cpp`;
+  today `mmap`, `munmap`, `brk` and a few read-only ones). Locked is the default and the safe
+  choice. To move a call out, its whole path may touch only: the caller's own state that nobody
+  else reads or writes concurrently; subsystems with a lock of their own (PMM, VMM page-table
+  operations, the kernel heap, console output); and globals where a stale read is harmless. It
+  must not sleep or schedule. Think about what other processes, holding the kernel lock, can do
+  to the caller meanwhile (that is why `mem_grant` maps into a separate address range from the
+  target's own `mmap`). Conversely, code on those paths — everything under `src/mm/`,
+  `kprintf`/`klog` — can no longer assume the kernel lock is held: protect new shared state
+  there with its own lock.
 - `kernel::Scheduler` is implemented in two files: `sched.cpp` (run queue, idle task, `schedule()`,
   timer tick, yield/sleep/block/wakeup) and `task.cpp` (task table, creating and exiting processes,
   kill, privilege queries). What they share is in `src/kernel/task_private.h`; nothing else

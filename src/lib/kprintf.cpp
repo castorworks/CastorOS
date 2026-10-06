@@ -2,6 +2,8 @@
 // kprintf.c - 内核格式化输出
 // ============================================================================
 
+#include <hal/hal.h>
+#include <kernel/sync/spinlock.h>
 #include <lib/kprintf.h>
 #include <lib/string.h>
 #include <drivers/serial.h>
@@ -22,17 +24,39 @@ static void output_string(const char *msg) {
     drivers::Serial::print(msg);
 }
 
-/* 中断处理函数也会打日志。下面每个公共输出入口都整体关中断，
- * 保证一次输出不会被另一次输出从中间插入。 */
+/* 中断处理函数也会打日志，别的 CPU 也会。下面每个公共输出入口都整体独占控制台
+ * （ConsoleGuard），保证一次输出不会被另一次输出从中间插入。 */
+
+static sync::Spinlock console_lock;
+static volatile uint32_t console_owner = (uint32_t)-1;     // 哪个 CPU 拿着；-1 表示没人
+static uint32_t console_depth = 0;                          // 它嵌套了几层（只有拿着的 CPU 读写）
+
+ConsoleGuard::ConsoleGuard() : was_enabled_(kernel::Interrupts::disable()) {
+    // 关了中断，这个 CPU 上不会再有别的代码进来；owner 等于自己只可能是自己设的
+    uint32_t cpu = hal::Cpu::id();
+    if (console_owner != cpu) {
+        console_lock.lock();
+        console_owner = cpu;
+    }
+    console_depth++;
+}
+
+ConsoleGuard::~ConsoleGuard() {
+    if (--console_depth == 0) {
+        console_owner = (uint32_t)-1;
+        console_lock.unlock();
+    }
+    kernel::Interrupts::restore(was_enabled_);
+}
 
 
 void kputchar(char c) {
-    kernel::InterruptGuard guard;
+    ConsoleGuard guard;
     output_char(c);
 }
 
 void kprint(const char *msg) {
-    kernel::InterruptGuard guard;
+    ConsoleGuard guard;
     output_string(msg);
 }
 
@@ -334,7 +358,7 @@ static void vkprintf_internal(const char *fmt, va_list args) {
  * ============================================================================ */
 
 void vkprintf(const char *fmt, va_list args) {
-    kernel::InterruptGuard guard;
+    ConsoleGuard guard;
     vkprintf_internal(fmt, args);
 }
 
