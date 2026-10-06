@@ -118,6 +118,11 @@ the serial port from the host; add checks there for anything that needs typed in
 job control). Patterns in shell-test.sh must not assume a line starts at column 0 unless the
 shell is known to be idle: output of background programs follows the `> ` prompt.
 
+Every push to `main` and every pull request runs `make test` for each architecture on GitHub
+Actions (`.github/workflows/test.yml`, three jobs on macOS runners with the Homebrew cross
+compilers). The logs of each run (`test.log`, `shell-test.log`) are uploaded as artifacts. If
+you add a build dependency, add it to the workflow's `brew install` line too.
+
 ### Dependencies
 
 - QEMU for emulation
@@ -250,7 +255,7 @@ CastorOS/
 make test                      # i686：构建 KTEST=1 内核并运行，命令行检查做完即结束（通常十几秒）
 make test ARCH=x86_64
 make test ARCH=arm64
-make test-all
+make test-all                  # 三个架构都跑完，有任何一个失败就返回非零
 make test TEST_TIMEOUT=300     # 机器很忙时放宽上限（默认 180 秒）
 make test ARCH=x86_64 QEMU_MEMORY=3G   # 给虚拟机更多内存（默认是 QEMU 的 128MB）；
                                # 超过 1GB 时"高处的物理内存"那组内核测试才有内容

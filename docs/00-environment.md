@@ -196,6 +196,15 @@ make run                # 在 QEMU 里运行 i686，串口控制台接到当前�
 make test-all           # 三个架构各跑一遍内核测试、用户态自检和命令行检查
 ```
 
+### 持续集成
+
+每次推送到 `main`、每个 PR，GitHub Actions 都会对三个架构各跑一遍 `make test ARCH=<arch>`
+（`.github/workflows/test.yml`）。它用 macOS 的 runner 和上面“方法一”里的 Homebrew 包，
+所以和在 macOS 上本地开发是同一套工具。三个架构各是一个独立的任务，一个失败不影响另外两个跑完。
+每次运行的日志（`test.log` 是 QEMU 的全部输出，`shell-test.log` 是命令行检查逐项的结果）作为
+artifact 上传，失败时先下载它们来看。runner 比开发机慢，所以那里把等待的上限放宽了
+（`TEST_TIMEOUT=600`、`STEP_TIMEOUT=120`）；它们只是上限，不会让通过的运行变慢。
+
 不需要安装 GRUB。
 
 ## 目录结构

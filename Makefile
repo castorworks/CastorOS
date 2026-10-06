@@ -262,10 +262,13 @@ run-test: $(BOOT_IMAGE)
 	           exit (t == 0 || f > 0 || fail_lines > 0 || t != p || !booted || !selftest_passed || skipped || !shell_passed) }' \
 	     $(BUILD_DIR)/test.log $(BUILD_DIR)/shell-test.log
 
+# 每个架构都跑完（一个失败了不影响后面的），最后只要有失败的就返回非零
 test-all:
-	@for arch in $(VALID_ARCHS); do \
-		$(MAKE) --no-print-directory test ARCH=$$arch || true; \
-	done
+	@failed=""; \
+	for arch in $(VALID_ARCHS); do \
+		$(MAKE) --no-print-directory test ARCH=$$arch || failed="$$failed $$arch"; \
+	done; \
+	if [ -n "$$failed" ]; then echo "test-all: FAILED on:$$failed"; exit 1; fi
 
 # ============================================================================
 # 清理

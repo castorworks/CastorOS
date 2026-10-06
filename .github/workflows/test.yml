@@ -1,0 +1,65 @@
+# 每次推送和每个 PR：三个架构各自构建带内核测试的内核，在 QEMU 里启动，
+# 跑内核测试、用户态自检和命令行检查（就是本地的 make test ARCH=<arch>）。
+#
+# 用 macOS 的 runner 是因为三个裸机交叉编译器在 Homebrew 里都有现成的包，
+# 和 docs/00-environment.md 里推荐的开发环境一样；Ubuntu 上要从源码编译 GCC。
+
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 同一个分支上新的推送来了，旧的那次就不用跑完了
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.arch }}
+    runs-on: macos-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false          # 一个架构失败了，另外两个照样跑完：要知道是不是只有它坏
+      matrix:
+        include:
+          - arch: i686
+            packages: i686-elf-gcc nasm
+          - arch: x86_64
+            packages: x86_64-elf-gcc nasm
+          - arch: arm64
+            packages: aarch64-elf-gcc
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+      HOMEBREW_NO_ENV_HINTS: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the cross compiler and QEMU
+        run: brew install ${{ matrix.packages }} qemu
+
+      - name: Show the build configuration
+        run: make info ARCH=${{ matrix.arch }}
+
+      # runner 比开发机慢，而且 QEMU 在上面是纯软件模拟：把等待的上限放宽。
+      # 这些只是上限，检查一做完就结束，不会多等。
+      - name: Build and test
+        run: make test ARCH=${{ matrix.arch }} TEST_TIMEOUT=600
+        env:
+          STEP_TIMEOUT: 120
+
+      # 失败时最有用的就是这两份日志：QEMU 的全部输出，和命令行检查逐项的结果
+      - name: Upload the test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-${{ matrix.arch }}
+          path: build/${{ matrix.arch }}-ktest/*.log
+          if-no-files-found: ignore

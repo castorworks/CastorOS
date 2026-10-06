@@ -1,5 +1,7 @@
 # CastorOS
 
+[![test](https://github.com/castorworks/CastorOS/actions/workflows/test.yml/badge.svg)](https://github.com/castorworks/CastorOS/actions/workflows/test.yml)
+
 > CastorOS is an operating system designed for learning and fun.
 
 一个用于学习的微内核：内核只做 CPU/中断、内存管理、任务调度、系统调用和进程间通信，驱动等其余功能都放在用户态。
@@ -32,7 +34,7 @@ make run                # 在 QEMU 中运行，串口控制台接到当前终端
 make debug              # 同上，等待 GDB 连接 :1234
 
 make test               # 构建带内核测试的版本 (KTEST=1) 并运行：内核测试 + 用户态自检 + 命令行检查
-make test-all           # 所有架构
+make test-all           # 所有架构；任何一个失败就返回非零
 
 make clean              # 清理当前架构
 make clean-all
