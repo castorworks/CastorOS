@@ -123,3 +123,11 @@ void hal::Interrupt::unmask_irq(uint32_t irq) {
 const char *hal_arch_name(void) {
     return "x86_64";
 }
+
+/**
+ * x86 没有固件给的设备表：设备由驱动自己探测（扫 PCI 配置空间）
+ */
+bool hal::Platform::find_device(struct device_info *info) {
+    (void)info;
+    return false;
+}

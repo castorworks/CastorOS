@@ -53,8 +53,24 @@ enum {
     SYS_UPTIME_MS       = 25,  // uptime_ms(ms*)：开机以来的毫秒数
     SYS_TIMER_SET       = 26,  // timer_set(ms)：ms 毫秒后收到一条 IPC_LABEL_TIMER 消息；0 取消
     SYS_MEM_FREE        = 27,  // mem_free_pages()：还没有分配出去的物理页数
+    SYS_DEVICE_FIND     = 28,  // device_find(info*)：按型号查平台设备的地址和中断号（需要特权）
 
     SYS_MAX
+};
+
+/**
+ * device_find 的参数和结果。调用者填 compatible 和 index，内核填其余的。
+ * （内核和用户库各有一份定义，必须一致）
+ */
+struct device_info {
+    char     compatible[32];    /**< 入：要找的设备型号，如 "virtio,mmio"、"arm,pl011" */
+    uint32_t index;             /**< 入：同一型号的第几个（从 0 开始） */
+    uint32_t irq;               /**< 出：中断号（可以直接交给 irq_claim） */
+    uint32_t has_irq;           /**< 出：这个设备有没有中断 */
+    uint32_t reserved;
+    uint64_t base;              /**< 出：寄存器的物理地址（交给 map_device） */
+    uint64_t size;              /**< 出：寄存器区的大小 */
+    char     name[32];          /**< 出：设备的名字，如 "virtio_mmio@a000000" */
 };
 
 // 初始化 syscall 表

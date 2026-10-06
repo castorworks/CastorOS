@@ -82,6 +82,13 @@ int usleep(unsigned int usec) {
 // 时间
 // ============================================================================
 
+int device_find(const char *compatible, uint32_t index, struct device_info *info) {
+    memset(info, 0, sizeof(*info));
+    strncpy(info->compatible, compatible, sizeof(info->compatible) - 1);
+    info->index = index;
+    return (int)syscall1(SYS_DEVICE_FIND, PTR_TO_ARG(info));
+}
+
 long mem_free_pages(void) {
     return (long)syscall0(SYS_MEM_FREE);
 }

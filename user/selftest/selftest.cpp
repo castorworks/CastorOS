@@ -189,12 +189,14 @@ static void test_timer(void) {
 }
 
 static void test_privilege(void) {
-    // 本程序没有特权：不能访问设备寄存器，也不能认领中断
+    // 本程序没有特权：不能访问设备寄存器，不能认领中断，也查不到设备在哪里
     int pid = fork();
     if (pid == 0) {
         uint32_t v;
+        struct device_info info;
         exit(io_read(0x80, 1, &v) == -1 && irq_claim(5) == -1 && irq_claim(40) == -1 &&
-             map_device(0xB8000, 4096) == MAP_FAILED ? 0 : 1);
+             map_device(0xB8000, 4096) == MAP_FAILED &&
+             device_find("arm,pl011", 0, &info) == -1 && device_find("virtio,mmio", 0, &info) == -1 ? 0 : 1);
     }
     int status = 0;
     waitpid(pid, &status, 0);

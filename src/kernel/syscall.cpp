@@ -342,6 +342,17 @@ static syscall_arg_t sys_mem_free_wrapper(syscall_arg_t *frame, syscall_arg_t p1
     return (syscall_arg_t)mm::Pmm::get_info().free_frames;
 }
 
+/** 按型号查平台设备：驱动据此得知自己的设备在哪里（数据来自固件，比如设备树） */
+static syscall_arg_t sys_device_find_wrapper(syscall_arg_t *frame, syscall_arg_t info_ptr, syscall_arg_t p2,
+                                             syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
+    if (!kernel::Scheduler::current_is_privileged()) return SYSCALL_FAIL;
+    if (!user_wr(info_ptr, sizeof(struct device_info))) return SYSCALL_FAIL;
+    struct device_info *info = (struct device_info *)(uintptr_t)info_ptr;
+    info->compatible[sizeof(info->compatible) - 1] = '\0';
+    return hal::Platform::find_device(info) ? 0 : SYSCALL_FAIL;
+}
+
 syscall_arg_t syscall_dispatcher(syscall_arg_t syscall_num, syscall_arg_t p1, syscall_arg_t p2, 
                                  syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5, 
                                  syscall_arg_t *frame) {
@@ -397,6 +408,7 @@ void syscall_init(void) {
     syscall_table[SYS_UPTIME_MS]     = sys_uptime_ms_wrapper;
     syscall_table[SYS_TIMER_SET]     = sys_timer_set_wrapper;
     syscall_table[SYS_MEM_FREE]      = sys_mem_free_wrapper;
+    syscall_table[SYS_DEVICE_FIND]   = sys_device_find_wrapper;
     syscall_table[SYS_IRQ_CLAIM]     = sys_irq_claim_wrapper;
     syscall_table[SYS_IRQ_ACK]       = sys_irq_ack_wrapper;
     syscall_table[SYS_DROP_PRIVILEGE] = sys_drop_privilege_wrapper;

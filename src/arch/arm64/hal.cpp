@@ -15,6 +15,8 @@
 #include "include/dtb.h"
 #include <drivers/serial.h>
 #include <lib/klog.h>
+#include <lib/string.h>
+#include <kernel/syscall.h>
 #include <lib/kprintf.h>
 
 /* Forward declaration for serial output (defined in stubs.c) */
@@ -252,4 +254,29 @@ bool arm64_configure_from_device_tree(const dtb_info_t *dtb) {
 /** 定时器用的中断号 */
 uint32_t arm64_timer_irq(void) {
     return g_timer_irq;
+}
+
+/**
+ * 设备树里型号（compatible 的第一项）是 info->compatible 的第 info->index 个设备
+ */
+bool hal::Platform::find_device(struct device_info *info) {
+    const dtb_info_t *dtb = dtb_get_info();
+    if (!dtb) {
+        return false;
+    }
+    uint32_t seen = 0;
+    for (uint32_t i = 0; i < dtb->num_devices; i++) {
+        const dtb_device_t *dev = &dtb->devices[i];
+        if (strcmp(dev->compatible, info->compatible) != 0 || seen++ != info->index) {
+            continue;
+        }
+        info->base = dev->base_addr;
+        info->size = dev->size;
+        info->irq = dev->irq;
+        info->has_irq = dev->has_irq;
+        memcpy(info->name, dev->name, sizeof(info->name));
+        info->name[sizeof(info->name) - 1] = '\0';
+        return true;
+    }
+    return false;
 }

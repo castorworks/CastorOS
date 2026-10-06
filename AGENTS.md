@@ -8,9 +8,9 @@ CastorOS is an educational microkernel for learning and experimentation.
 
 - Targets i686, x86_64 and ARM64; all three build, boot and pass the kernel tests in QEMU
 - The kernel contains only CPU/interrupt setup, memory management, scheduling, sync
-  primitives and a 28-call syscall interface (process, memory, debug output, synchronous IPC,
-  shared memory, uptime/timer, and I/O port / device memory / DMA / IRQ access for privileged
-  user-space drivers)
+  primitives and a 29-call syscall interface (process, memory, debug output, synchronous IPC,
+  shared memory, uptime/timer, and I/O port / device memory / DMA / IRQ access and platform
+  device lookup for privileged user-space drivers)
 - File systems, networking, device drivers and shells are **not** in the kernel; they are
   meant to come back as user-space modules (see `docs/microkernel.md`). Do not add them
   to `src/`.
@@ -82,7 +82,8 @@ process; its ELF is embedded into the kernel image by `src/kernel/init_image.S` 
 so there is no disk image. init starts the modules and is the name server (`names.h` in
 `user/lib`). Resident modules are embedded into init the same way (`user/init/modules.S`):
 `user/uart` (privileged serial input driver; protocol and the `console_read`/`read_line`
-client in `console.h`), `user/blk` (privileged virtio-blk driver,
+client in `console.h`). On arm64 drivers do not hard-code where their device is: they ask the
+kernel with `device_find("<compatible>", index, &info)`, which answers from the device tree, `user/blk` (privileged virtio-blk driver,
 protocol and client in `blk.h`), `user/net` (privileged virtio-net driver plus a small
 ARP/IPv4/ICMP/UDP/TCP stack with a DHCP client; protocol and client in `net.h`), `user/ramfs` (in-memory file
 service), `user/diskfs`

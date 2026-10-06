@@ -12,6 +12,8 @@
 #include "../../../arch/arm64/include/dtb.h"
 #include "../../../arch/arm64/include/gic.h"
 #include <drivers/serial.h>
+#include <hal/hal.h>
+#include <kernel/syscall.h>
 
 // ---------------------------------------------------------------------------
 // QEMU virt 的设备树
@@ -72,6 +74,42 @@ TEST_CASE(test_dtb_values_reach_the_drivers) {
     ASSERT_TRUE(gic_distributor_base() == info->gic.distributor_base);
     ASSERT_TRUE(gic_cpu_interface_base() == info->gic.cpu_interface_base);
     ASSERT_EQ_UINT(info->timer_irq, arm64_timer_irq());
+}
+
+TEST_CASE(test_platform_find_device) {
+    // 驱动通过 device_find 系统调用走到这里：按型号、按序号查设备
+    ASSERT_TRUE(dtb_parse(dtb_find(NULL)) != NULL);
+
+    struct device_info info;
+    memset(&info, 0, sizeof(info));
+    strncpy(info.compatible, "arm,pl011", sizeof(info.compatible) - 1);
+    ASSERT_TRUE(hal::Platform::find_device(&info));
+    ASSERT_TRUE(info.base == 0x09000000ULL);
+    ASSERT_TRUE(info.has_irq && info.irq == 33);
+
+    // 同一型号的设备按序号一个个取，各不相同，取完为止
+    uint64_t previous = 0;
+    uint32_t count = 0;
+    for (;; count++) {
+        memset(&info, 0, sizeof(info));
+        strncpy(info.compatible, "virtio,mmio", sizeof(info.compatible) - 1);
+        info.index = count;
+        if (!hal::Platform::find_device(&info)) {
+            break;
+        }
+        ASSERT_TRUE(info.base != 0 && info.base != previous && info.size > 0);
+        ASSERT_TRUE(info.has_irq && info.irq >= 32);
+        previous = info.base;
+    }
+    ASSERT_TRUE(count >= 2);
+
+    // 没有的型号、型号的前缀都找不到
+    memset(&info, 0, sizeof(info));
+    strncpy(info.compatible, "no,such-device", sizeof(info.compatible) - 1);
+    ASSERT_FALSE(hal::Platform::find_device(&info));
+    memset(&info, 0, sizeof(info));
+    strncpy(info.compatible, "virtio", sizeof(info.compatible) - 1);
+    ASSERT_FALSE(hal::Platform::find_device(&info));
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +344,7 @@ TEST_SUITE(arm64_dtb_tests) {
     RUN_TEST(test_dtb_qemu_virt_memory);
     RUN_TEST(test_dtb_qemu_virt_devices);
     RUN_TEST(test_dtb_values_reach_the_drivers);
+    RUN_TEST(test_platform_find_device);
     RUN_TEST(test_dtb_memory_regions);
     RUN_TEST(test_dtb_property_order_does_not_matter);
     RUN_TEST(test_dtb_cells_come_from_the_parent);

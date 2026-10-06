@@ -7,7 +7,7 @@
 //
 // 两种接入方式只是寄存器的访问方法不同，这里把差别包起来：
 //   - x86：virtio-pci。在 PCI 配置空间里找到设备，寄存器在它的 I/O 端口 BAR 里
-//   - arm64：virtio-mmio（QEMU virt 的 32 个槽位），寄存器用 map_device 映射
+//   - arm64：virtio-mmio，设备的位置向内核查（device_find），寄存器用 map_device 映射
 // 队列内存来自 dma_alloc：设备只认物理地址。调用者必须是特权进程。
 
 #define VIRTIO_ID_NET       1

@@ -176,6 +176,20 @@ static void classify_node(const struct node *n, const struct node *parent) {
         return;         // 没有 compatible 的节点不是设备（/chosen、/cpus、/aliases 之类）
     }
 
+    // 每个设备都进设备列表（驱动按型号来查）
+    if (g_info.num_devices < DTB_MAX_DEVICES) {
+        dtb_device_t *dev = &g_info.devices[g_info.num_devices++];
+        copy_name(dev->name, n->name, DTB_MAX_NAME_LEN);
+        copy_name(dev->compatible, (const char *)n->compatible.data, n->compatible.len);
+        if (reg_entry(n, parent, 0, &base, &size)) {
+            dev->base_addr = base;
+            dev->size = size;
+        }
+        dev->has_irq = interrupt_entry(n, 0, &dev->irq);
+    }
+
+    // 内核自己要用的几样另外记一份
+
     // 中断控制器。reg 的第一项是 distributor，第二项是 CPU interface (v2) 或 redistributor (v3)
     bool gic_v3 = compatible_with(&n->compatible, "arm,gic-v3");
     bool gic_v2 = compatible_with(&n->compatible, "arm,cortex-a15-gic") ||
@@ -193,33 +207,18 @@ static void classify_node(const struct node *n, const struct node *parent) {
                 g_info.gic.cpu_interface_base = base;
             }
         }
-        return;
     }
 
     // ARM 通用定时器。interrupts 依次是：安全物理、非安全物理、虚拟、hypervisor
     if (compatible_with(&n->compatible, "arm,armv8-timer") ||
         compatible_with(&n->compatible, "arm,armv7-timer")) {
         g_info.timer_found = interrupt_entry(n, 1, &g_info.timer_irq);
-        return;
     }
 
-    // 串口：只记第一个 PL011
+    // 串口：第一个 PL011
     if (compatible_with(&n->compatible, "arm,pl011") && !g_info.uart_found) {
         g_info.uart_found = reg_entry(n, parent, 0, &g_info.uart_base, &size);
         interrupt_entry(n, 0, &g_info.uart_irq);
-        return;
-    }
-
-    // 其余的设备
-    if (g_info.num_devices < DTB_MAX_DEVICES) {
-        dtb_device_t *dev = &g_info.devices[g_info.num_devices++];
-        copy_name(dev->name, n->name, DTB_MAX_NAME_LEN);
-        copy_name(dev->compatible, (const char *)n->compatible.data, n->compatible.len);
-        if (reg_entry(n, parent, 0, &base, &size)) {
-            dev->base_addr = base;
-            dev->size = size;
-        }
-        dev->has_irq = interrupt_entry(n, 0, &dev->irq);
     }
 }
 
@@ -355,7 +354,7 @@ const dtb_info_t *dtb_parse(const void *dtb) {
     }
 
     g_valid = true;
-    LOG_INFO_MSG("DTB: %llu MB of memory in %u region(s), GIC v%u, %u other device(s)\n",
+    LOG_INFO_MSG("DTB: %llu MB of memory in %u region(s), GIC v%u, %u device(s)\n",
                  (unsigned long long)(g_info.total_memory >> 20), g_info.num_memory_regions,
                  g_info.gic.version, g_info.num_devices);
     return &g_info;

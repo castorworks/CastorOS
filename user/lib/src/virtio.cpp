@@ -18,11 +18,8 @@
 
 #if defined(ARCH_ARM64)
 
-// virtio-mmio (legacy)：QEMU virt 上 32 个槽位，每个 0x200 字节，中断号 48 + 槽位号
-#define MMIO_BASE           0x0a000000
-#define MMIO_SLOT_SIZE      0x200
-#define MMIO_SLOTS          32
-#define MMIO_IRQ_BASE       48
+// virtio-mmio (legacy)。每个设备是设备树里一个 "virtio,mmio" 节点：寄存器在哪里、
+// 用哪个中断向内核查（device_find）。QEMU virt 上有 32 个这样的槽位，大多数是空的
 
 #define MMIO_MAGIC          0x000   // 'virt'
 #define MMIO_VERSION        0x004   // 1 = legacy
@@ -43,29 +40,32 @@
 #define MMIO_STATUS         0x070
 #define MMIO_CONFIG         0x100
 
-static volatile uint32_t *mmio_slots = NULL;    // 全部槽位，映射一次
-
 static uint32_t reg_read(struct virtio_dev *dev, uint32_t off) { return dev->regs[off / 4]; }
 static void reg_write(struct virtio_dev *dev, uint32_t off, uint32_t value) { dev->regs[off / 4] = value; }
 
 static bool transport_find(struct virtio_dev *dev, uint32_t device_id) {
-    if (!mmio_slots) {
-        void *p = map_device(MMIO_BASE, MMIO_SLOT_SIZE * MMIO_SLOTS);
-        if (p == MAP_FAILED) {
-            return false;
+    struct device_info slot;
+    for (uint32_t i = 0; device_find("virtio,mmio", i, &slot) == 0; i++) {
+        if (!slot.has_irq) {
+            continue;
         }
-        mmio_slots = (volatile uint32_t *)p;
-    }
-    for (int i = 0; i < MMIO_SLOTS; i++) {
-        dev->regs = mmio_slots + i * (MMIO_SLOT_SIZE / 4);
+        // 把这个槽位所在的那一页映射进来看看里面是什么设备；不是要找的就撤掉
+        uint64_t page = slot.base & ~(uint64_t)(PAGE_SIZE - 1);
+        void *mapped = map_device(page, PAGE_SIZE);
+        if (mapped == MAP_FAILED) {
+            continue;
+        }
+        dev->regs = (volatile uint32_t *)((char *)mapped + (slot.base - page));
         if (reg_read(dev, MMIO_MAGIC) != 0x74726976 || reg_read(dev, MMIO_DEVICE_ID) != device_id) {
+            munmap(mapped, PAGE_SIZE);
             continue;
         }
         if (reg_read(dev, MMIO_VERSION) != 1) {
             printf("virtio: mmio version %u is not supported (need legacy)\n", reg_read(dev, MMIO_VERSION));
+            munmap(mapped, PAGE_SIZE);
             return false;
         }
-        dev->irq = MMIO_IRQ_BASE + i;
+        dev->irq = (int)slot.irq;
         reg_write(dev, MMIO_GUEST_PAGE_SIZE, PAGE_SIZE);
         return true;
     }

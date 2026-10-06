@@ -3,8 +3,8 @@
 // 内核只用串口做调试输出（kprintf / console_write）；接收方向完全在这里：
 // 认领串口中断，把收到的字节存进缓冲区，通过 IPC 交给读者。
 // 读者有两个：终端的主人（命令行）和它指定的前台进程，协议见 <console.h>。
-// x86 是 16550 (COM1)，通过 I/O 端口访问；arm64 是 PL011 (QEMU virt)，
-// 寄存器用 map_device 映射进自己的地址空间。
+// x86 是 16550 (COM1)，通过 I/O 端口访问；arm64 是 PL011，它在哪里、用哪个中断
+// 向内核查（device_find，数据来自设备树），寄存器用 map_device 映射进自己的地址空间。
 
 #include <syscall.h>
 #include <stdio.h>
@@ -13,9 +13,6 @@
 #include <console.h>
 
 #if defined(ARCH_ARM64)
-
-#define UART_BASE       0x09000000
-#define UART_IRQ        33          // SPI 1
 
 #define PL011_DR        0x00
 #define PL011_FR        0x18
@@ -36,11 +33,25 @@ static void reg_write(uint32_t off, uint32_t value) {
     regs[off / 4] = value;
 }
 
-static bool hw_init(void) {
-    regs = (volatile uint32_t *)map_device(UART_BASE, 0x1000);
-    if (regs == MAP_FAILED) {
+static struct device_info uart_dev;
+static int uart_irq;
+
+/** 找到设备：地址和中断号来自设备树 */
+static bool hw_probe(void) {
+    if (device_find("arm,pl011", 0, &uart_dev) != 0 || !uart_dev.has_irq) {
         return false;
     }
+    uart_irq = (int)uart_dev.irq;
+    return true;
+}
+
+static bool hw_init(void) {
+    uint64_t page = uart_dev.base & ~(uint64_t)0xFFF;
+    void *mapped = map_device(page, 0x1000);
+    if (mapped == MAP_FAILED) {
+        return false;
+    }
+    regs = (volatile uint32_t *)((char *)mapped + (uart_dev.base - page));
     reg_write(PL011_ICR, 0x7FF);
     reg_write(PL011_IMSC, reg_read(PL011_IMSC) | PL011_INT_RX | PL011_INT_RT);
     return true;
@@ -60,8 +71,12 @@ static char hw_rx_byte(void) {
 
 #else /* i686, x86_64 */
 
-#define UART_BASE       0x3F8       // COM1
-#define UART_IRQ        4
+#define UART_BASE       0x3F8       // COM1：PC 上这个端口和 4 号中断是固定的
+static const int uart_irq = 4;
+
+static bool hw_probe(void) {
+    return true;
+}
 
 #define UART_RBR        0           // 接收缓冲
 #define UART_IER        1           // 中断使能
@@ -257,8 +272,12 @@ static void handle_request(const struct ipc_msg *m) {
 }
 
 int main() {
-    if (irq_claim(UART_IRQ) != 0) {
-        printf("uart: cannot claim IRQ %d\n", UART_IRQ);
+    if (!hw_probe()) {
+        printf("uart: no serial port found\n");
+        return 1;
+    }
+    if (irq_claim(uart_irq) != 0) {
+        printf("uart: cannot claim IRQ %d\n", uart_irq);
         return 1;
     }
     if (!hw_init()) {
@@ -270,7 +289,7 @@ int main() {
         printf("uart: cannot register name\n");
         return 1;
     }
-    printf("uart: driver ready (pid %d, irq %d)\n", getpid(), UART_IRQ);
+    printf("uart: driver ready (pid %d, irq %d)\n", getpid(), uart_irq);
 
     struct ipc_msg m;
     for (;;) {
@@ -281,7 +300,7 @@ int main() {
         if (m.sender == IPC_KERNEL) {
             if (m.label == IPC_LABEL_IRQ) {
                 drain_hw();
-                irq_ack(UART_IRQ);
+                irq_ack(uart_irq);
             }
             // IPC_LABEL_TIMER：下面统一检查读者是否超时
         } else {

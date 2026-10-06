@@ -4,7 +4,7 @@
  *
  * arm64 上固件（这里是 QEMU）交给内核一份设备树：一棵描述硬件的树，每个节点有若干
  * 属性。dtb_parse() 走一遍这棵树，把内核关心的东西整理出来：物理内存的范围、
- * 中断控制器 (GIC)、ARM 通用定时器、串口，以及其余带 compatible 属性的设备。
+ * 中断控制器 (GIC)、ARM 通用定时器、串口，以及所有带 compatible 属性的设备的列表。
  */
 
 #ifndef _ARM64_DTB_H_
@@ -56,7 +56,7 @@ typedef struct {
     uint64_t uart_base;
     uint32_t uart_irq;
 
-    uint32_t num_devices;           /**< 其余带 compatible 的节点 */
+    uint32_t num_devices;           /**< 所有带 compatible 的节点（包括上面单独记了一份的那几个） */
     dtb_device_t devices[DTB_MAX_DEVICES];
 } dtb_info_t;
 

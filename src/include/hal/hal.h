@@ -779,4 +779,26 @@ public:
 } // namespace hal
 
 
+struct device_info;
+
+namespace hal {
+
+/**
+ * @brief What the firmware told the kernel about the machine
+ */
+class Platform {
+public:
+    /**
+     * @brief Look up a platform device by its "compatible" string
+     *
+     * info->compatible and info->index select the device; the rest is filled in.
+     * Machines that discover devices by probing (x86 PCI) have no such table.
+     *
+     * @return true if there is such a device
+     */
+    static bool find_device(struct device_info *info);
+};
+
+} // namespace hal
+
 #endif /* _HAL_HAL_H_ */

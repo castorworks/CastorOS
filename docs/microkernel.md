@@ -117,7 +117,7 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 
 ## 系统调用
 
-共 28 个，编号在 `src/include/kernel/syscall.h`，用户态包装在 `user/lib`。
+共 29 个，编号在 `src/include/kernel/syscall.h`，用户态包装在 `user/lib`。
 
 | 编号 | 调用 | 说明 |
 |------|------|------|
@@ -145,6 +145,7 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 | 25 | `uptime_ms(ms*)` | 开机以来的毫秒数 |
 | 26 | `timer_set(ms)` | 一次性定时器：到期时收到内核发来的 `IPC_LABEL_TIMER` 消息；0 取消 |
 | 27 | `mem_free_pages()` | 还没有分配出去的物理页数；自检用它检查进程退出后内存全部归还 |
+| 28 | `device_find(info*)` | 按型号（设备树的 `compatible`）查平台设备的寄存器地址和中断号，仅特权进程 |
 
 ## 进程间通信
 
@@ -241,6 +242,7 @@ for (;;) {
 
 - **特权的来源**：内核直接创建的 init 有特权，`fork` 和 `exec` 都保留；进程调用 `drop_privilege()` 之后永久失去。init 启动驱动时保留特权，启动其他模块时先让子进程放弃。
 - **I/O 端口**（仅 x86）：`io_read` / `io_write`，宽度 1/2/4 字节。
+- **设备在哪里**：`device_find(compatible, index, &info)`。x86 上设备靠探测发现（驱动自己扫 PCI 配置空间），不需要它；arm64 上设备的位置是固件用设备树告诉内核的，驱动按型号来查（如 `"virtio,mmio"`、`"arm,pl011"`），得到寄存器的物理地址和中断号，再交给下面的 `map_device` 和 `irq_claim`。驱动里不写死任何一块板子上的地址。
 - **设备内存**：`map_device(phys, len)` 把设备的寄存器或显存映射进调用者的地址空间（不缓存）。只接受设备地址区，也就是固件没有报告为可用内存的地址（x86 上是 Multiboot 内存映射里的空洞，arm64 上是设备树的内存节点之外）；普通内存一律拒绝。映射同样带“共享”标记，`fork` 后父子都能访问设备。
 - **DMA 内存**：`dma_alloc(len, phys*)` 分配物理上连续、已清零的内存并映射进调用者，同时告知物理地址，供驱动把缓冲区交给设备。
 - **设备中断**：`irq_claim(irq)` 认领一条内核自己没在用的中断线（x86 是 PIC 的 IRQ 号，arm64 是 GIC 的 SPI 中断号）。中断到来时内核屏蔽这条线，并向属主投递一条 `sender == IPC_KERNEL`、`label == IPC_LABEL_IRQ`、`data[0] == irq` 的消息；属主没在 `recv` 时记为待处理，下一次 `recv(IPC_ANY)` 先收到它。驱动处理完设备后调用 `irq_ack(irq)` 重新打开中断线。进程退出时它的认领被释放。
