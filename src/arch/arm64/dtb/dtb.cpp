@@ -180,7 +180,17 @@ static void classify_node(const struct node *n, const struct node *parent) {
     if (g_info.num_devices < DTB_MAX_DEVICES) {
         dtb_device_t *dev = &g_info.devices[g_info.num_devices++];
         copy_name(dev->name, n->name, DTB_MAX_NAME_LEN);
-        copy_name(dev->compatible, (const char *)n->compatible.data, n->compatible.len);
+        // 整个 compatible 列表都留着（驱动可能按其中任何一项来找）；放不下就只留前面完整的几项
+        for (uint32_t i = 0; i < n->compatible.len; ) {
+            const char *item = (const char *)n->compatible.data + i;
+            size_t item_len = strnlen(item, n->compatible.len - i);
+            if (dev->compatible_len + item_len + 1 > DTB_MAX_COMPATIBLE_LEN) {
+                break;
+            }
+            memcpy(dev->compatible + dev->compatible_len, item, item_len);
+            dev->compatible_len += (uint32_t)item_len + 1;      // 结尾的 NUL 已经在那里（整个结构清过零）
+            i += item_len + 1;
+        }
         if (reg_entry(n, parent, 0, &base, &size)) {
             dev->base_addr = base;
             dev->size = size;
@@ -358,6 +368,11 @@ const dtb_info_t *dtb_parse(const void *dtb) {
                  (unsigned long long)(g_info.total_memory >> 20), g_info.num_memory_regions,
                  g_info.gic.version, g_info.num_devices);
     return &g_info;
+}
+
+bool dtb_device_is(const dtb_device_t *dev, const char *model) {
+    struct prop list = { (const uint8_t *)dev->compatible, dev->compatible_len };
+    return compatible_with(&list, model);
 }
 
 const dtb_info_t *dtb_get_info(void) {

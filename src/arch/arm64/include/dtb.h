@@ -15,6 +15,7 @@
 #define DTB_MAX_MEMORY_REGIONS  8
 #define DTB_MAX_DEVICES         64
 #define DTB_MAX_NAME_LEN        32
+#define DTB_MAX_COMPATIBLE_LEN  96
 
 /** 一段物理内存 */
 typedef struct {
@@ -34,7 +35,10 @@ typedef struct {
 /** 一个设备节点 */
 typedef struct {
     char     name[DTB_MAX_NAME_LEN];        /**< 节点名，含 @ 后面的地址，如 "virtio_mmio@a000000" */
-    char     compatible[DTB_MAX_NAME_LEN];  /**< compatible 列表里的第一项 */
+    /** compatible 列表：一个接一个的字符串，各以 NUL 结尾，从最具体的型号到最一般的。
+     *  放不下时在一项的边界上截断。第一项就是 compatible 本身当字符串读 */
+    char     compatible[DTB_MAX_COMPATIBLE_LEN];
+    uint32_t compatible_len;                /**< 列表占的字节数（含各项结尾的 NUL） */
     uint64_t base_addr;                     /**< reg 的第一项；没有 reg 时为 0 */
     uint64_t size;
     uint32_t irq;                           /**< interrupts 的第一项对应的 GIC 中断号 */
@@ -75,5 +79,8 @@ const dtb_info_t *dtb_parse(const void *dtb);
 
 /** 最近一次成功解析的结果；还没有解析过返回 NULL */
 const dtb_info_t *dtb_get_info(void);
+
+/** 设备的 compatible 列表里有没有 model 这一项 */
+bool dtb_device_is(const dtb_device_t *dev, const char *model);
 
 #endif /* _ARM64_DTB_H_ */

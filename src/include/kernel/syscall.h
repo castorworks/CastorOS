@@ -63,7 +63,8 @@ enum {
  * （内核和用户库各有一份定义，必须一致）
  */
 struct device_info {
-    char     compatible[32];    /**< 入：要找的设备型号，如 "virtio,mmio"、"arm,pl011" */
+    char     compatible[32];    /**< 入：要找的设备型号，如 "virtio,mmio"、"arm,pl011"；设备的
+                                 *   compatible 列表里有这一项就算（不必是第一项） */
     uint32_t index;             /**< 入：同一型号的第几个（从 0 开始） */
     uint32_t irq;               /**< 出：中断号（可以直接交给 irq_claim） */
     uint32_t has_irq;           /**< 出：这个设备有没有中断 */

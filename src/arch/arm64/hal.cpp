@@ -257,7 +257,7 @@ uint32_t arm64_timer_irq(void) {
 }
 
 /**
- * 设备树里型号（compatible 的第一项）是 info->compatible 的第 info->index 个设备
+ * 设备树里 compatible 列表中有 info->compatible 这一项的第 info->index 个设备
  */
 bool hal::Platform::find_device(struct device_info *info) {
     const dtb_info_t *dtb = dtb_get_info();
@@ -267,7 +267,7 @@ bool hal::Platform::find_device(struct device_info *info) {
     uint32_t seen = 0;
     for (uint32_t i = 0; i < dtb->num_devices; i++) {
         const dtb_device_t *dev = &dtb->devices[i];
-        if (strcmp(dev->compatible, info->compatible) != 0 || seen++ != info->index) {
+        if (!dtb_device_is(dev, info->compatible) || seen++ != info->index) {
             continue;
         }
         info->base = dev->base_addr;

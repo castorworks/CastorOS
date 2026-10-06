@@ -49,7 +49,7 @@ TEST_CASE(test_dtb_qemu_virt_devices) {
     uint64_t first_base = 0;
     for (uint32_t i = 0; i < info->num_devices; i++) {
         const dtb_device_t *dev = &info->devices[i];
-        if (strcmp(dev->compatible, "virtio,mmio") != 0) {
+        if (!dtb_device_is(dev, "virtio,mmio")) {
             continue;
         }
         ASSERT_TRUE(dev->base_addr != 0 && dev->has_irq && dev->irq >= 32);
@@ -102,6 +102,20 @@ TEST_CASE(test_platform_find_device) {
         previous = info.base;
     }
     ASSERT_TRUE(count >= 2);
+
+    // 设备树里一个设备列出几个型号（从具体到一般）：按哪一个都找得到同一个设备
+    // （QEMU 的 PL011 是 "arm,pl011", "arm,primecell"；别的 primecell 设备也排在这个型号下面）
+    bool uart_among_primecells = false;
+    for (uint32_t i = 0; ; i++) {
+        memset(&info, 0, sizeof(info));
+        strncpy(info.compatible, "arm,primecell", sizeof(info.compatible) - 1);
+        info.index = i;
+        if (!hal::Platform::find_device(&info)) {
+            break;
+        }
+        uart_among_primecells = uart_among_primecells || info.base == 0x09000000ULL;
+    }
+    ASSERT_TRUE(uart_among_primecells);
 
     // 没有的型号、型号的前缀都找不到
     memset(&info, 0, sizeof(info));
@@ -258,7 +272,24 @@ TEST_CASE(test_dtb_property_order_does_not_matter) {
     ASSERT_EQ_UINT(2, info->gic.version);
     ASSERT_TRUE(info->gic.distributor_base == 0x08000000ULL);
     ASSERT_TRUE(info->gic.cpu_interface_base == 0x08010000ULL);
+
+    // 设备列表里留着完整的 compatible 列表：按第二项也查得到这个串口
+    struct device_info found;
+    memset(&found, 0, sizeof(found));
+    strncpy(found.compatible, "arm,pl011", sizeof(found.compatible) - 1);
+    ASSERT_TRUE(hal::Platform::find_device(&found));
+    ASSERT_TRUE(found.base == 0x09000000ULL && found.irq == 37);
+    ASSERT_TRUE(strcmp(found.name, "serial@9000000") == 0);
+    memset(&found, 0, sizeof(found));
+    strncpy(found.compatible, "vendor,uart", sizeof(found.compatible) - 1);
+    ASSERT_TRUE(hal::Platform::find_device(&found));
+    ASSERT_TRUE(found.base == 0x09000000ULL);
+    // 列表里的一项的一部分不算
+    memset(&found, 0, sizeof(found));
+    strncpy(found.compatible, "arm", sizeof(found.compatible) - 1);
+    ASSERT_FALSE(hal::Platform::find_device(&found));
 }
+
 
 TEST_CASE(test_dtb_cells_come_from_the_parent) {
     // 一个总线节点给它的子节点声明了不同的单元数：只影响它的子节点，
@@ -295,6 +326,36 @@ TEST_CASE(test_dtb_cells_come_from_the_parent) {
     ASSERT_TRUE(info->devices[1].base_addr == 0x10000000ULL && info->devices[1].size == 0x1000);
     ASSERT_TRUE(info->devices[2].base_addr == 0x20000000ULL && info->devices[2].size == 0x2000);
     ASSERT_FALSE(info->devices[2].has_irq);
+}
+
+TEST_CASE(test_dtb_long_compatible_list) {
+    // 列表比设备表里留的位置长：留下前面完整的几项，不会留半项
+    static char list[160];
+    uint32_t len = 0;
+    for (int i = 0; i < 6; i++) {
+        const char *item = "vendor,a-rather-long-model-name-";
+        memcpy(list + len, item, strlen(item));
+        len += (uint32_t)strlen(item);
+        list[len++] = (char)('0' + i);
+        list[len++] = '\0';
+    }
+    root_begin(1, 1);
+    node_begin("dev@1000");
+    prop("compatible", list, len);
+    node_end();
+    node_end();
+    blob_finish();
+
+    const dtb_info_t *info = dtb_parse(blob);
+    ASSERT_TRUE(info != NULL);
+    ASSERT_EQ_UINT(1, info->num_devices);
+    const dtb_device_t *dev = &info->devices[0];
+    ASSERT_TRUE(dev->compatible_len > 0 && dev->compatible_len <= DTB_MAX_COMPATIBLE_LEN);
+    ASSERT_TRUE(dev->compatible[dev->compatible_len - 1] == '\0');
+    ASSERT_TRUE(dtb_device_is(dev, "vendor,a-rather-long-model-name-0"));
+    ASSERT_TRUE(dtb_device_is(dev, "vendor,a-rather-long-model-name-1"));
+    ASSERT_FALSE(dtb_device_is(dev, "vendor,a-rather-long-model-name-5"));     // 放不下的
+    ASSERT_FALSE(dtb_device_is(dev, "vendor,a-rather-long-model-name-"));      // 半项
 }
 
 TEST_CASE(test_dtb_rejects_bad_input) {
@@ -348,6 +409,7 @@ TEST_SUITE(arm64_dtb_tests) {
     RUN_TEST(test_dtb_memory_regions);
     RUN_TEST(test_dtb_property_order_does_not_matter);
     RUN_TEST(test_dtb_cells_come_from_the_parent);
+    RUN_TEST(test_dtb_long_compatible_list);
     RUN_TEST(test_dtb_rejects_bad_input);
     RUN_TEST(test_dtb_restore_real_tree);
 }
