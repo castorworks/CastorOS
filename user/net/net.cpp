@@ -93,6 +93,11 @@ static void handle_request(struct ipc_msg *m) {
         reply_client(pid, NET_DEBUG_FRAGMENT, 0, 0, 0);
         return;
     }
+    if (m->label == NET_DEBUG_EXIT) {
+        reply_client(pid, NET_DEBUG_EXIT, 0, 0, 0);
+        printf("net: exiting on request (NET_DEBUG_EXIT)\n");
+        exit(1);
+    }
     if (m->label == NET_DEBUG_RENEW) {
         reply_client(pid, NET_DEBUG_RENEW, from_dhcp ? 0 : -1, dhcp_debug_renew(), 0);
         return;

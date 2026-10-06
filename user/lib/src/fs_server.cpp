@@ -189,6 +189,54 @@ static int64_t do_unlink(char *path) {
     return 0;
 }
 
+/** 改名或移动：buf 里是原来的路径、'\0'、新的路径。目录连同里面的东西一起走 */
+static int64_t do_rename(char *buf) {
+    char from[FS_NAME_MAX], to[FS_NAME_MAX];
+    buf[FS_NAME_MAX - 1] = '\0';
+    size_t from_len = strlen(buf);
+    char *second = buf + from_len + 1;
+    second[FS_NAME_MAX - 1] = '\0';
+    if (!normalize(buf) || !normalize(second)) {
+        return -1;
+    }
+    strcpy(from, buf);
+    strcpy(to, second);
+    from_len = strlen(from);
+    size_t to_len = strlen(to);
+
+    int file = backend->find(from);
+    if (file < 0 || to[0] == '\0' || backend->find(to) >= 0 || !parent_exists(to)) {
+        return -1;
+    }
+    if (!backend->is_dir(file)) {
+        return backend->rename(file, to);
+    }
+    // 目录：不能移到自己里面去；里面每一项的路径都要跟着改，先看改完之后是不是都放得下
+    if (strncmp(to, from, from_len) == 0 && to[from_len] == '/') {
+        return -1;
+    }
+    int member;
+    for (int i = 0; (member = backend->entry(i)) >= 0; i++) {
+        const char *path = backend->path(member);
+        if (strncmp(path, from, from_len) == 0 && path[from_len] == '/' &&
+            to_len + strlen(path + from_len) >= FS_NAME_MAX) {
+            return -1;
+        }
+    }
+    for (int i = 0; (member = backend->entry(i)) >= 0; i++) {
+        const char *path = backend->path(member);
+        if (strncmp(path, from, from_len) == 0 && path[from_len] == '/') {
+            char moved[FS_NAME_MAX];
+            strcpy(moved, to);
+            strcpy(moved + to_len, path + from_len);
+            if (backend->rename(member, moved) != 0) {
+                return -1;
+            }
+        }
+    }
+    return backend->rename(file, to);
+}
+
 /** 列出目录 buf 的第 index 个成员：名字（最后一段）写回 buf */
 static int64_t do_list(char *buf, uint64_t index, uint64_t *size, uint64_t *directory) {
     char dir[FS_NAME_MAX];
@@ -263,6 +311,9 @@ int fs_serve(const char *service_name, const struct fs_backend *ops) {
                     break;
                 case FS_MKDIR:
                     result = do_mkdir(buf);
+                    break;
+                case FS_RENAME:
+                    result = do_rename(buf);
                     break;
                 case FS_LIST:
                     result = do_list(buf, m.data[0], &reply.data[1], &reply.data[2]);

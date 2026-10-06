@@ -30,6 +30,8 @@ struct fs_backend {
     int (*truncate)(int file);
     /** 删除这一项。@return 0 成功 */
     int (*remove)(int file);
+    /** 把这一项的完整路径改成 path（内容不动）。@return 0 成功 */
+    int (*rename)(int file, const char *path);
     /** 表里的第 index 项（从 0 开始，顺序任意但稳定）。@return 文件号，-1 没有这么多项 */
     int (*entry)(int index);
 };

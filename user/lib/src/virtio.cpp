@@ -68,6 +68,11 @@ static bool transport_allow(uint32_t device_id) {
         }
         bool found = reg_read(&probe, MMIO_MAGIC) == MMIO_MAGIC_VALUE &&
                      reg_read(&probe, MMIO_DEVICE_ID) == device_id;
+        if (found) {
+            // 复位设备。上一个驱动如果是崩溃的，设备还在往它的（已经被收回的）内存里
+            // 读写：在新驱动启动之前先让它停下来
+            reg_write(&probe, MMIO_STATUS, 0);
+        }
         munmap(mapped, PAGE_SIZE);
         if (found) {
             return hw_allow(HW_MEMORY, (uintptr_t)slot.base, (uintptr_t)(slot.size ? slot.size : PAGE_SIZE)) == 0 &&
@@ -197,6 +202,9 @@ static bool transport_allow(uint32_t device_id) {
         pci_write(slot, 0x10, bar0);
         // 打开端口访问和总线主控（设备要自己读写内存）：驱动碰不到配置空间，这一步得在这里做
         pci_write(slot, 0x04, command | 0x5);
+        // 复位设备。上一个驱动如果是崩溃的，设备还在往它的（已经被收回的）内存里读写：
+        // 在新驱动启动之前先让它停下来
+        io_write((bar0 & ~3u) + VPCI_STATUS, 1, 0);
         if (io_size == 0) {
             return false;
         }

@@ -14,13 +14,19 @@
 // 客户第一次使用时用 mem_grant 把缓冲区共享给服务，之后每个请求只在消息里
 // 带参数，内容在缓冲区里。
 //
-// 文件用路径来指：各段之间用 '/' 隔开，总是从根写起（"docs/notes.txt"、"disk:a/b/c"）。
-// 没有"当前目录"，也没有 "." 和 ".."；开头和结尾多写的 '/' 不算数。文件只能建在已经
-// 存在的目录里（根目录总是存在），目录用 fs_mkdir 建，空了才能删。
+// 文件用路径来指，各段之间用 '/' 隔开：
+//   "disk:a/b"、"ram:a/b"   从磁盘 / 内存文件系统的根写起
+//   "/a/b"                  从当前目录所在的那个文件系统的根写起
+//   "a/b"                   从当前目录写起；"." 是所在的目录，".." 是上一级
+// 当前目录（fs_chdir / fs_getcwd）是每个进程自己的，一开始是内存文件系统的根；命令行
+// 启动程序时把自己的当前目录传给它。当前目录和 "."、".." 都由这个客户端库处理掉，
+// 服务看到的永远是从根写起的完整路径。文件只能建在已经存在的目录里（根目录总是存在），
+// 目录用 fs_mkdir 建，空了才能删。
 
 #define FS_SERVICE_NAME         "fs"
 #define FS_DISK_SERVICE_NAME    "diskfs"
 #define FS_DISK_PREFIX          "disk:"
+#define FS_RAM_PREFIX           "ram:"
 
 /** 路径的最大长度（整条路径，含结尾 NUL） */
 #define FS_NAME_MAX     64
@@ -40,6 +46,8 @@ enum {
                     //   应答 data[0]: 0 有这一项 / -1 没有了（或者那不是一个目录），
                     //   data[1]: 文件大小，data[2]: 是不是目录，这一项的名字（不含目录部分）在缓冲区
     FS_MKDIR  = 8,  // 缓冲区: 路径。创建一个目录（它的上一级必须已经存在）
+    FS_RENAME = 9,  // 缓冲区: 原来的路径、'\0'、新的路径。改名或者移到别的目录（同一个文件系统里）；
+                    //   目录里的东西跟着走。新路径上已经有东西、或者它的上一级不存在时失败
 };
 
 // FS_OPEN 的标志
@@ -66,9 +74,30 @@ int fs_unlink(const char *name);
 int fs_mkdir(const char *path);
 
 /**
+ * 把 from 改名或者移动成 to：两个路径必须在同一个文件系统里。目录连同里面的东西一起移。
+ * @return 0 成功；-1 from 不存在、to 已经存在、to 的上一级不存在、跨了文件系统…
+ */
+int fs_rename(const char *from, const char *to);
+
+/**
+ * 换当前目录。path 和别的路径一样可以是相对的。
+ * @return 0 成功，-1 那不是一个存在的目录
+ */
+int fs_chdir(const char *path);
+
+/** 当前目录，写成从根开始的完整路径："/"、"/docs"、"disk:/notes"。buf 至少 FS_NAME_MAX + 8 字节 */
+void fs_getcwd(char *buf);
+
+/**
+ * 当前目录的内部写法（"docs"、"disk:notes"，根是空串）/ 照这种写法直接设置，不检查。
+ * 命令行用它把自己的当前目录交给它启动的程序（见 stdio.h）。
+ */
+const char *fs_cwd_spec(void);
+void fs_set_cwd_spec(const char *spec);
+
+/**
  * 列出目录 dir 的第 index 个成员
- * @param dir "" 是内存文件系统的根目录，"docs" 是它下面的一个目录；
- *            FS_DISK_PREFIX、"disk:docs" 是磁盘文件系统的
+ * @param dir 一个目录的路径；"" 是当前目录，"disk:" 是磁盘文件系统的根
  * @param name 至少 FS_NAME_MAX 字节，得到这一项的名字（不含目录部分和前缀）
  * @param size、is_dir 可以是 NULL
  * @return 0 成功，-1 没有这一项（或者 dir 不是一个目录，或者那个文件系统不存在）

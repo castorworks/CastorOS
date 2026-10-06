@@ -38,13 +38,24 @@ static bool blk_connect(void) {
     return true;
 }
 
+/** 向驱动发请求。驱动不在了就忘掉这条连接：它可能被 init 重启成另一个进程，下次重新找 */
+static int blk_call(struct ipc_msg *m) {
+    if (ipc_call(blk_server, m) == 0) {
+        return 0;
+    }
+    munmap(blk_buf, BLK_BUF_SIZE);
+    blk_buf = NULL;
+    blk_server = 0;
+    return -1;
+}
+
 uint64_t blk_capacity(void) {
     if (!blk_connect()) {
         return 0;
     }
     struct ipc_msg m = {};
     m.label = BLK_INFO;
-    if (ipc_call(blk_server, &m) != 0 || m.data[0] != 0) {
+    if (blk_call(&m) != 0 || m.data[0] != 0) {
         return 0;
     }
     return m.data[1];
@@ -66,7 +77,7 @@ static int blk_transfer(uint32_t label, uint64_t sector, char *buf, uint32_t cou
         m.label = label;
         m.data[0] = sector;
         m.data[1] = n;
-        if (ipc_call(blk_server, &m) != 0 || m.data[0] != 0) {
+        if (blk_call(&m) != 0 || m.data[0] != 0) {
             return -1;
         }
         if (label == BLK_READ) {

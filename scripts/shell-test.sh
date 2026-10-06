@@ -174,6 +174,39 @@ directories() {
 }
 check "directories" directories
 
+# ---- 当前目录：cd、pwd；程序从命令行所在的目录开始，换了目录命令照样找得到 ----
+current_directory() {
+    send 'pwd\n'; expect '^/$' || return 1
+    send 'cd docs\n'; expect '> $' || return 1
+    send 'pwd\n'; expect '^/docs$' || return 1
+    send 'ls\n'; expect '^ *[0-9]+  paths.txt$' || return 1
+    send 'cat paths.txt | grep current\n'; expect '^There is no current directory' || return 1
+    send 'write here.txt inside docs\n'; expect '> $' || return 1
+    send 'cat /docs/here.txt\n'; expect '^inside docs$' || return 1
+    send 'cat ../readme.txt | wc > count\n'; expect '> $' || return 1      # 重定向的文件名也是相对的
+    send 'ls | grep count\n'; expect '^ *[0-9]+  count$' || return 1
+    send 'cd nosuch\n'; expect '^cd: nosuch: not a directory$' || return 1
+    send 'cd ..\n'; expect '> $' || return 1
+    send 'pwd\n'; expect '^/$' || return 1
+    send 'rm docs/here.txt docs/count\n'; expect '> $'
+}
+check "current directory" current_directory
+
+# ---- 改名和移动 ----
+rename_files() {
+    send 'write old.txt moved text\n'; expect '> $' || return 1
+    send 'mv old.txt new.txt\n'; expect '> $' || return 1
+    send 'cat new.txt\n'; expect '^moved text$' || return 1
+    send 'cat old.txt\n'; expect '^cat: old.txt: no such file$' || return 1
+    send 'mkdir crate\n'; expect '> $' || return 1
+    send 'mv new.txt crate\n'; expect '> $' || return 1                # 目标是目录：移进去
+    send 'mv crate box2\n'; expect '> $' || return 1                   # 目录连同里面的东西
+    send 'cat box2/new.txt\n'; expect '^moved text$' || return 1
+    send 'mv box2/new.txt docs/paths.txt\n'; expect '^mv: cannot move' || return 1    # 不盖掉已有的
+    send 'rm box2/new.txt box2\n'; expect '> $'
+}
+check "rename and move" rename_files
+
 # ---- 键盘输入进管道的第一段；Ctrl-C 终止管道里的每一段 ----
 pipe_keyboard() {
     send 'cat | grep keep > kept\n'; sleep 0.5

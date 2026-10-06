@@ -126,6 +126,11 @@ static int ramfs_remove(int file) {
     return 0;
 }
 
+static int ramfs_rename(int file, const char *path) {
+    strcpy(files[file].name, path);
+    return 0;
+}
+
 static int ramfs_entry(int index) {
     for (int i = 0; i < MAX_FILES; i++) {
         if (files[i].used && index-- == 0) {
@@ -137,7 +142,7 @@ static int ramfs_entry(int index) {
 
 static const struct fs_backend ramfs_backend = {
     ramfs_find, ramfs_create, ramfs_is_dir, ramfs_path, ramfs_size, ramfs_read, ramfs_write,
-    ramfs_truncate, ramfs_remove, ramfs_entry,
+    ramfs_truncate, ramfs_remove, ramfs_rename, ramfs_entry,
 };
 
 // ============================================================================

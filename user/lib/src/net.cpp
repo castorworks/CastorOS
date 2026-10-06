@@ -50,6 +50,13 @@ static bool net_connect(void) {
 
 static long net_request(struct ipc_msg *m) {
     if (ipc_call(net_server, m) != 0) {
+        // 服务不在了（崩溃后可能被 init 重启成另一个进程）：忘掉这条连接，
+        // 下一次调用重新按名字找。它那边的套接字和连接已经没有了
+        if (net_buf) {
+            munmap(net_buf, NET_BUF_SIZE);
+            net_buf = NULL;
+        }
+        net_server = 0;
         return -1;
     }
     return (long)(int64_t)m->data[0];
@@ -260,6 +267,15 @@ int net_debug_fragment(uint32_t max_payload) {
     struct ipc_msg m = {};
     m.label = NET_DEBUG_FRAGMENT;
     m.data[0] = max_payload;
+    return net_request(&m) == 0 ? 0 : -1;
+}
+
+int net_debug_exit(void) {
+    if (!net_find()) {
+        return -1;
+    }
+    struct ipc_msg m = {};
+    m.label = NET_DEBUG_EXIT;
     return net_request(&m) == 0 ? 0 : -1;
 }
 

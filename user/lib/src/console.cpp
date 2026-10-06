@@ -21,7 +21,11 @@ long console_read(char *buf, size_t len, uint32_t timeout_ms) {
         struct ipc_msg m = {};
         m.label = UART_READ;
         m.data[0] = timeout_ms;
-        if (driver <= 0 || ipc_call(driver, &m) != 0 || (long)m.data[0] < 0) {
+        if (driver <= 0 || ipc_call(driver, &m) != 0) {
+            driver = 0;         // 驱动不在了：下次重新按名字找（它可能被重启了）
+            return -1;
+        }
+        if ((long)m.data[0] < 0) {
             return -1;
         }
         input_len = (size_t)m.data[0] <= UART_READ_MAX ? (size_t)m.data[0] : 0;

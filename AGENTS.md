@@ -132,7 +132,7 @@ CastorOS/
 │   ├── ramfs/              # In-memory file service (module, no hardware), holds the boot image
 │   ├── sh/                 # Command line (module, no hardware): runs programs, background jobs, Ctrl-C
 │   ├── selftest/           # User-space self-checks, in the boot image, run from rc at boot
-│   ├── ls/ cat/ cp/ rm/ mkdir/ echo/ write/ grep/ wc/ sleep/ disk/ ping/ ifconfig/ dns/ http/ echod/ hello/   # Programs in the boot image
+│   ├── ls/ cat/ cp/ rm/ mv/ mkdir/ echo/ write/ grep/ wc/ sleep/ disk/ ping/ ifconfig/ dns/ http/ echod/ hello/   # Programs in the boot image
 │   ├── bootfs/             # Static files for the boot image (rc, readme.txt, docs/)
 │   ├── program.mk          # Shared build rules for user programs
 │   ├── arch.mk             # Compiler and flags shared by the user library and all programs
@@ -167,19 +167,23 @@ starts; for a driver, init first finds its device (fixed ports or a PCI scan on 
 `device_find("<compatible>", index, &info)` on arm64, which answers from the device tree) and
 records its ports or device memory and its interrupt line in the child's allow-list with
 `hw_allow` (the `allow_*` functions in `user/init/init.cpp`; `virtio_allow` in `virtio.h`).
-A driver does not look for its device and does not hard-code an address: it reads what it was
+init also watches the modules: one that exits after it registered its service name is started
+again (device re-granted, name handed over), at most 5 times. Client libraries drop their
+connection when a request fails and look the service up again on the next one, so a service
+must be able to start from nothing and a client must tolerate one failed request. A driver does not look for its device and does not hard-code an address: it reads what it was
 allowed with `hw_find` (`virtio_open` for virtio devices) and can touch nothing else. On x86 the
 ports a process is allowed are opened in the TSS I/O permission bitmap while it runs, so
 `io_read`/`io_write` in the user library execute `in`/`out` directly for those ports and only
 fall back to the system call for the rest.
 
 **Shared code.** Both file services share the protocol in `fs.h` and the server skeleton in
-`fs_server.h`, which also owns the directory rules (paths are written from the root with `/`,
-there is no current directory; a backend only stores a flat table of full paths); virtio drivers
+`fs_server.h`, which also owns the directory rules (a backend only stores a flat table of full
+paths). The current directory, relative paths, `.` and `..` are resolved in the client library
+(`user/lib/src/fs.cpp`); a server only ever sees full paths from the root; virtio drivers
 share `virtio.h`; servers that take a shared buffer from each client use `clients.h`.
 
 **Programs in the boot image.** Other programs (`user/selftest`, `user/ls`, `user/cat`,
-`user/cp`, `user/rm`, `user/mkdir`, `user/echo`, `user/write`, `user/grep`, `user/wc`,
+`user/cp`, `user/rm`, `user/mv`, `user/mkdir`, `user/echo`, `user/write`, `user/grep`, `user/wc`,
 `user/disk`, `user/ping`, `user/ifconfig`, `user/dns`, `user/http`, `user/echod`, `user/sleep`,
 `user/hello`) go into the boot image: a ustar archive of `user/bootfs/` (subdirectories become
 directories) plus the programs in `BOOT_PROGRAMS` (`user/ramfs/Makefile`), embedded in ramfs and

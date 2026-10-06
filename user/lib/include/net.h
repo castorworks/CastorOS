@@ -46,6 +46,7 @@ enum {
                             //   应答 data[1]: TCP 至今重传的次数
     NET_DEBUG_FRAGMENT = 21, // 调试：data[0]: 往外发的 IP 包每片最多放这么多字节上层数据（0 = 恢复正常），
                             //   让本来一个帧放得下的包也被分片
+    NET_DEBUG_EXIT  = 23,   // 调试：服务应答之后立刻退出（像崩溃了一样），用来验证 init 会重启它
     NET_DEBUG_RENEW = 22,   // 调试：现在就向 DHCP 服务器续租。应答 data[0]: 0 / -1（地址不是 DHCP 给的），
                             //   data[1]: 至今续租成功的次数（不含这一次）
 };
@@ -123,6 +124,12 @@ int net_debug_fragment(uint32_t max_payload);
  * @return 至今续租成功的次数；地址不是 DHCP 给的、或者没有网络服务返回 -1
  */
 long net_debug_renew(void);
+
+/**
+ * 调试用：让网络服务退出，像它崩溃了一样（init 会重启它，见 user/init）。
+ * @return 0，没有网络服务返回 -1
+ */
+int net_debug_exit(void);
 
 /**
  * 把主机名解析成 IPv4 地址（先当作 "a.b.c.d" 试，不是的话向配置的 DNS 服务器查询）。

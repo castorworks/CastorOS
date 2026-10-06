@@ -6,6 +6,7 @@
 #include <names.h>
 #include <syscall.h>
 #include <string.h>
+#include <stdio.h>
 
 // 每个文件服务一条连接。句柄的高位记录它属于哪条连接。
 struct conn {
@@ -53,14 +54,67 @@ static struct conn *fs_connect(int index) {
     return c;
 }
 
-/** 按前缀选连接；*name 被改成去掉前缀之后的部分 */
-static int route(const char **name) {
-    size_t n = strlen(FS_DISK_PREFIX);
-    if (strncmp(*name, FS_DISK_PREFIX, n) == 0) {
-        *name += n;
-        return 1;
+// 当前目录：哪个文件系统（conns 的下标），和从它的根写起的路径（根是空串）
+static int cwd_fs = 0;
+static char cwd_path[FS_NAME_MAX] = "";
+
+/**
+ * 把调用者给的路径变成"哪个文件系统 + 从根写起的完整路径"（不带开头的 '/'，根是空串）：
+ * 认前缀、接上当前目录、把 "." 和 ".." 算掉。服务端不认识这些，它只收完整的路径。
+ * @return 路径太长，或者 ".." 走到了根的上面，返回 false
+ */
+static bool resolve(const char *path, int *fs, char *out) {
+    size_t len = 0;
+    out[0] = '\0';
+    if (strncmp(path, FS_DISK_PREFIX, strlen(FS_DISK_PREFIX)) == 0) {
+        *fs = 1;
+        path += strlen(FS_DISK_PREFIX);
+    } else if (strncmp(path, FS_RAM_PREFIX, strlen(FS_RAM_PREFIX)) == 0) {
+        *fs = 0;
+        path += strlen(FS_RAM_PREFIX);
+    } else {
+        *fs = cwd_fs;
+        if (path[0] != '/') {           // 相对路径：从当前目录出发
+            strcpy(out, cwd_path);
+            len = strlen(out);
+        }
     }
-    return 0;
+
+    while (*path) {
+        while (*path == '/') {
+            path++;
+        }
+        size_t n = 0;
+        while (path[n] && path[n] != '/') {
+            n++;
+        }
+        if (n == 0 || (n == 1 && path[0] == '.')) {
+            // 空的一段或者 "."：原地不动
+        } else if (n == 2 && path[0] == '.' && path[1] == '.') {
+            if (len == 0) {
+                return false;           // 根没有上一级
+            }
+            while (len > 0 && out[len - 1] != '/') {
+                len--;
+            }
+            if (len > 0) {
+                len--;                  // 连同前面的 '/' 一起去掉
+            }
+            out[len] = '\0';
+        } else {
+            if (len + (len > 0) + n >= FS_NAME_MAX) {
+                return false;
+            }
+            if (len > 0) {
+                out[len++] = '/';
+            }
+            memcpy(out + len, path, n);
+            len += n;
+            out[len] = '\0';
+        }
+        path += n;
+    }
+    return true;
 }
 
 /** 句柄对应的连接；*fd 被改成服务端的句柄 */
@@ -76,23 +130,25 @@ static struct conn *conn_of(int *fd) {
 /** 发一个请求，返回应答的 data[0]；m 里带回完整应答 */
 static long fs_request(struct conn *c, struct ipc_msg *m) {
     if (ipc_call(c->server, m) != 0) {
+        // 服务不在了（崩溃后可能被 init 重启成另一个进程）：忘掉这条连接，下一次调用
+        // 重新按名字找。原来打开的句柄在新的服务那里不存在
+        munmap(c->buf, FS_BUF_SIZE);
+        c->buf = NULL;
+        c->server = 0;
         return -1;
     }
     return (long)(int64_t)m->data[0];
 }
 
-/** 选好连接并把（去掉前缀的）文件名放进共享缓冲区 */
+/** 选好连接并把完整的路径放进共享缓冲区。根目录（空路径）不是一个能打开、能删的东西 */
 static struct conn *put_name(const char *name, int *index) {
-    if (!name) {
-        return NULL;
-    }
-    *index = route(&name);
-    if (name[0] == '\0' || strlen(name) >= FS_NAME_MAX) {
+    char full[FS_NAME_MAX];
+    if (!name || !resolve(name, index, full) || full[0] == '\0') {
         return NULL;
     }
     struct conn *c = fs_connect(*index);
     if (c) {
-        strcpy(c->buf, name);
+        strcpy(c->buf, full);
     }
     return c;
 }
@@ -206,13 +262,36 @@ int fs_mkdir(const char *path) {
     return (int)fs_request(c, &m);
 }
 
-int fs_list(const char *dir, int index, char *name, uint32_t *size, bool *is_dir) {
-    const char *rest = dir ? dir : "";
-    struct conn *c = fs_connect(route(&rest));
-    if (!c || strlen(rest) >= FS_NAME_MAX) {
+int fs_rename(const char *from, const char *to) {
+    char old_path[FS_NAME_MAX], new_path[FS_NAME_MAX];
+    int old_fs, new_fs;
+    if (!from || !to || !resolve(from, &old_fs, old_path) || !resolve(to, &new_fs, new_path) ||
+        old_fs != new_fs || old_path[0] == '\0' || new_path[0] == '\0') {
         return -1;
     }
-    strcpy(c->buf, rest);       // 空串是根目录
+    struct conn *c = fs_connect(old_fs);
+    if (!c) {
+        return -1;
+    }
+    // 两个路径一前一后放在缓冲区里，中间隔一个 '\0'
+    strcpy(c->buf, old_path);
+    strcpy(c->buf + strlen(old_path) + 1, new_path);
+    struct ipc_msg m = {};
+    m.label = FS_RENAME;
+    return (int)fs_request(c, &m);
+}
+
+int fs_list(const char *dir, int index, char *name, uint32_t *size, bool *is_dir) {
+    char full[FS_NAME_MAX];
+    int fs;
+    if (!resolve(dir ? dir : "", &fs, full)) {
+        return -1;
+    }
+    struct conn *c = fs_connect(fs);
+    if (!c) {
+        return -1;
+    }
+    strcpy(c->buf, full);       // 空串是根目录
     struct ipc_msg m = {};
     m.label = FS_LIST;
     m.data[0] = (uint64_t)index;
@@ -228,4 +307,69 @@ int fs_list(const char *dir, int index, char *name, uint32_t *size, bool *is_dir
         *is_dir = m.data[2] != 0;
     }
     return 0;
+}
+
+// ============================================================================
+// 当前目录
+// ============================================================================
+
+static const char *const fs_prefixes[] = { FS_RAM_PREFIX, FS_DISK_PREFIX };
+
+int fs_chdir(const char *path) {
+    char full[FS_NAME_MAX];
+    int fs;
+    if (!path || !resolve(path, &fs, full)) {
+        return -1;
+    }
+    if (full[0] != '\0') {
+        // 它得是一个存在的目录：在它的上一级里找到它，看是不是目录
+        char parent[FS_NAME_MAX + 8];
+        char *slash = NULL;
+        for (char *p = full; *p; p++) {
+            if (*p == '/') {
+                slash = p;
+            }
+        }
+        const char *leaf = slash ? slash + 1 : full;
+        strcpy(parent, fs_prefixes[fs]);
+        if (slash) {
+            size_t n = strlen(parent);
+            memcpy(parent + n, full, (size_t)(slash - full));
+            parent[n + (size_t)(slash - full)] = '\0';
+        }
+        char name[FS_NAME_MAX];
+        bool is_dir = false, found = false;
+        for (int i = 0; !found && fs_list(parent, i, name, NULL, &is_dir) == 0; i++) {
+            found = strcmp(name, leaf) == 0;
+        }
+        if (!found || !is_dir) {
+            return -1;
+        }
+    } else if (!fs_connect(fs)) {
+        return -1;      // 那个文件系统不存在（没有磁盘）
+    }
+    cwd_fs = fs;
+    strcpy(cwd_path, full);
+    return 0;
+}
+
+void fs_getcwd(char *buf) {
+    snprintf(buf, FS_NAME_MAX + 8, "%s/%s", cwd_fs == 0 ? "" : FS_DISK_PREFIX, cwd_path);
+}
+
+const char *fs_cwd_spec(void) {
+    static char spec[FS_NAME_MAX + 8];
+    snprintf(spec, sizeof(spec), "%s%s", cwd_fs == 0 ? "" : FS_DISK_PREFIX, cwd_path);
+    return spec;
+}
+
+void fs_set_cwd_spec(const char *spec) {
+    cwd_fs = 0;
+    if (strncmp(spec, FS_DISK_PREFIX, strlen(FS_DISK_PREFIX)) == 0) {
+        cwd_fs = 1;
+        spec += strlen(FS_DISK_PREFIX);
+    }
+    if (strlen(spec) < FS_NAME_MAX) {
+        strcpy(cwd_path, spec);
+    }
 }

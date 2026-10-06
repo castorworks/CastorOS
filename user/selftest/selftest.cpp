@@ -362,6 +362,47 @@ static void test_cpus(void) {
                count, used, (unsigned)elapsed, n);
     }
     report("processes run on several cpus at once", ok, "ok");
+
+    // 一个 CPU 让任务变成就绪时，闲着的 CPU 是被立刻叫醒的，不是等到自己的下一次时钟中断
+    // （最多 10 毫秒）才发现。子进程向我们发请求然后等应答；我们应答（它变成就绪）之后
+    // 不让出 CPU，继续占着算 15 毫秒，所以它只能由别的、正闲着的 CPU 接手。应答里带着
+    // 应答那一刻的时间，子进程醒来后看过了多久，报告 30 次里有几次等了 2 毫秒以上。
+    // 靠时钟中断发现的话十次里有八次要等这么久；被叫醒的话几乎一次都没有（偶尔别的 CPU
+    // 正忙着别的进程，那一次会久一些，所以数次数而不是把时间加起来）
+    int waiter = fork();
+    if (waiter == 0) {
+        int slow = 0;
+        for (int i = 0; i < 30; i++) {
+            struct ipc_msg m = {};
+            m.label = 1;
+            if (ipc_call(getppid(), &m) != 0) {
+                exit(255);
+            }
+            slow += uptime_ms() - m.data[0] >= 2;
+        }
+        exit(slow);
+    }
+    for (int i = 0; i < 30; i++) {
+        struct ipc_msg m;
+        if (ipc_recv(waiter, &m) != 0) {
+            break;
+        }
+        struct ipc_msg reply = {};
+        reply.label = 1;
+        uint64_t now = uptime_ms();
+        reply.data[0] = now;
+        ipc_reply(waiter, &reply);
+        while (uptime_ms() - now < 15) {
+        }
+    }
+    int status = 0;
+    waitpid(waiter, &status, 0);
+    int slow = WEXITSTATUS(status);
+    ok = slow < 10;
+    if (!ok) {
+        printf("selftest: (a woken task waited 2 ms or more in %d of 30 rounds)\n", slow);
+    }
+    report("idle cpus are woken for a ready task", ok, "ok");
 }
 
 static void test_shared_memory(void) {
@@ -531,17 +572,51 @@ static bool check_directories(const char *root) {
     fd = fs_open(f2, 0);
     ok = ok && fd >= 0 && fs_read(fd, 0, in, sizeof(in)) == 6 && memcmp(in, "second", 6) == 0 && fs_close(fd) == 0;
 
-    // 路径怎么写：开头结尾多余的 '/' 不算数，"." ".." 和空的一段不行
+    // 路径怎么写：多余的 '/' 不算数，"." 是所在的目录，".." 是上一级；根没有上一级
+    static const char *const same[] = { "%s/stdir/one.txt/", "%sstdir/./one.txt", "%sstdir/sub/../one.txt",
+                                        "%sstdir//one.txt", "%sstdir/sub/./../../stdir/one.txt" };
     char odd[FS_NAME_MAX];
-    snprintf(odd, sizeof(odd), "%s/stdir/one.txt/", root);
-    fd = fs_open(odd, 0);
+    for (size_t i = 0; i < sizeof(same) / sizeof(same[0]); i++) {
+        snprintf(odd, sizeof(odd), same[i], root);
+        fd = fs_open(odd, 0);
+        ok = ok && fd >= 0 && fs_size(fd) == 3 && fs_close(fd) == 0;
+    }
+    snprintf(odd, sizeof(odd), "%sstdir/../../one.txt", root);
+    ok = ok && fs_open(odd, 0) == -1;
+
+    // 当前目录：换进去之后，不带前缀、不以 '/' 开头的路径从那里算起；
+    // 以 '/' 开头的从同一个文件系统的根算起。不是目录的地方换不进去
+    char cwd[FS_NAME_MAX + 8], want[FS_NAME_MAX + 8];
+    ok = ok && fs_chdir(f1) == -1 && fs_chdir(deep) == -1 && fs_chdir(sub) == 0;
+    fs_getcwd(cwd);
+    snprintf(want, sizeof(want), "%s/stdir/sub", root[0] ? root : "");
+    ok = ok && strcmp(cwd, want) == 0;
+    fd = fs_open("two.txt", 0);
+    ok = ok && fd >= 0 && fs_size(fd) == 6 && fs_close(fd) == 0;
+    fd = fs_open("../one.txt", 0);
     ok = ok && fd >= 0 && fs_size(fd) == 3 && fs_close(fd) == 0;
-    snprintf(odd, sizeof(odd), "%sstdir/./one.txt", root);
-    ok = ok && fs_open(odd, 0) == -1;
-    snprintf(odd, sizeof(odd), "%sstdir/sub/../one.txt", root);
-    ok = ok && fs_open(odd, 0) == -1;
-    snprintf(odd, sizeof(odd), "%sstdir//one.txt", root);
-    ok = ok && fs_open(odd, 0) == -1;
+    fd = fs_open("/stdir/one.txt", 0);
+    ok = ok && fd >= 0 && fs_size(fd) == 3 && fs_close(fd) == 0;
+    ok = ok && dir_count("") == 1 && dir_count("..") == 2 && fs_open("one.txt", 0) == -1;
+    ok = fs_chdir(FS_RAM_PREFIX) == 0 && ok;        // 回到开始的地方，不管上面成没成
+    fs_getcwd(cwd);
+    ok = ok && strcmp(cwd, "/") == 0;
+
+    // 改名和移动：文件改名、移进别的目录；目录连同里面的东西一起移；不能盖掉已有的东西，
+    // 不能移到不存在的目录里，不能把目录移进它自己
+    char moved[FS_NAME_MAX], d2[FS_NAME_MAX], inside[FS_NAME_MAX];
+    snprintf(moved, sizeof(moved), "%sstdir/sub/moved.txt", root);
+    snprintf(d2, sizeof(d2), "%sstdir2", root);
+    snprintf(inside, sizeof(inside), "%sstdir/sub/deeper", root);
+    ok = ok && fs_rename(f1, f2) == -1 && fs_rename(f1, deep) == -1 && fs_rename(d, inside) == -1 &&
+         fs_rename(f1, moved) == 0 && fs_open(f1, 0) == -1 && dir_count(sub) == 2 && dir_count(d) == 1;
+    fd = fs_open(moved, 0);
+    ok = ok && fd >= 0 && fs_read(fd, 0, in, sizeof(in)) == 3 && memcmp(in, "one", 3) == 0 && fs_close(fd) == 0;
+    ok = ok && fs_rename(d, d2) == 0 && !dir_has(root, "stdir", true) && dir_has(root, "stdir2", true);
+    snprintf(odd, sizeof(odd), "%sstdir2/sub/two.txt", root);
+    fd = fs_open(odd, 0);
+    ok = ok && fd >= 0 && fs_size(fd) == 6 && fs_close(fd) == 0;
+    ok = ok && fs_rename(d2, d) == 0 && fs_rename(moved, f1) == 0;      // 放回原处，下面照旧清理
 
     // 删：目录空了才能删
     ok = ok && fs_unlink(d) == -1 && fs_unlink(sub) == -1 &&
@@ -962,6 +1037,31 @@ static void test_tcp(const struct net_info *info) {
     }
     ok = ok && memcmp(wtx, wrx, sizeof(wtx)) == 0 && net_tcp_close(conn) == 0;
     report("tcp receive window closes and reopens", ok, "ok");
+
+    // 服务崩溃了 init 会重启它：让网络服务退出（像崩溃一样），它要以另一个进程的身份
+    // 重新出现，重新拿到网卡、配好地址，原来的客户（我们）不用做任何事就能接着用
+    int old_net = name_lookup(NET_SERVICE_NAME);
+    ok = old_net > 0 && net_debug_exit() == 0;
+    int new_net = 0;
+    start = uptime_ms();
+    while (ok && uptime_ms() - start < 5000) {
+        new_net = name_lookup(NET_SERVICE_NAME);
+        if (new_net > 0 && new_net != old_net) {
+            break;
+        }
+        usleep(20000);
+    }
+    struct net_info again = {};
+    while (ok && uptime_ms() - start < 10000 && (net_info(&again) != 0 || again.ip == 0)) {
+        usleep(20000);
+    }
+    uint32_t rtt = 0;
+    ok = ok && new_net > 0 && new_net != old_net && again.ip == info->ip &&
+         net_ping(again.gateway, 1000, &rtt) == 0;
+    if (!ok) {
+        printf("selftest: (net was pid %d, is pid %d, address %u)\n", old_net, new_net, again.ip);
+    }
+    report("a service that exits is restarted", ok, "ok");
 }
 // 反复创建并结束进程，走遍几条退出路径
 static bool churn_processes(int rounds, const void *image, size_t image_size) {

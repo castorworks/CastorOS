@@ -67,10 +67,15 @@ void stdio_setup(const char *spec) {
     }
     const char *output = sep + 1;
     const char *sep2 = strchr(output, STDIO_ARG_MARK);
+    const char *sep3 = sep2 ? strchr(sep2 + 1, STDIO_ARG_MARK) : NULL;
+    // 先换到命令行的当前目录：下面要打开的文件名可能是相对它写的
+    if (sep3) {
+        fs_set_cwd_spec(sep3 + 1);
+    }
     open_stream(&in, input, (size_t)(sep - input), false);
     open_stream(&out, output, sep2 ? (size_t)(sep2 - output) : strlen(output), true);
     if (sep2 && sep2[1] != 'p') {
-        open_stream(&err, sep2 + 1, strlen(sep2 + 1), true);
+        open_stream(&err, sep2 + 1, sep3 ? (size_t)(sep3 - sep2 - 1) : strlen(sep2 + 1), true);
     }
 }
 

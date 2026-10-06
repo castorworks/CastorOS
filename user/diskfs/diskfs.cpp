@@ -329,6 +329,12 @@ static int diskfs_remove(int file) {
     return dir_flush(file) && chain_free(first) ? 0 : -1;
 }
 
+static int diskfs_rename(int file, const char *path) {
+    memset(dir[file].name, 0, sizeof(dir[file].name));
+    strcpy(dir[file].name, path);
+    return dir_flush(file) ? 0 : -1;
+}
+
 static int diskfs_entry(int index) {
     for (int i = 0; i < (int)MAX_FILES; i++) {
         if (dir[i].name[0] != '\0' && index-- == 0) {
@@ -340,7 +346,7 @@ static int diskfs_entry(int index) {
 
 static const struct fs_backend diskfs_backend = {
     diskfs_find, diskfs_create, diskfs_is_dir, diskfs_path, diskfs_size, diskfs_read, diskfs_write,
-    diskfs_truncate, diskfs_remove, diskfs_entry,
+    diskfs_truncate, diskfs_remove, diskfs_rename, diskfs_entry,
 };
 
 // ============================================================================

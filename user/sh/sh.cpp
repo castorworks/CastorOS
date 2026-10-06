@@ -24,9 +24,23 @@
 // 运行程序
 // ============================================================================
 
+/**
+ * 一个命令名对应哪个文件。只是一个名字（没有 '/'，也没有 "disk:" 这样的前缀）时到内存
+ * 文件系统的根目录里找：程序都在那里，换了当前目录也要找得到。带路径的照路径来
+ * （"./tool"、"disk:bin/tool"）。
+ */
+static const char *command_file(const char *name) {
+    static char path[FS_NAME_MAX + 8];
+    if (strchr(name, '/') || strchr(name, ':') || strlen(name) >= FS_NAME_MAX) {
+        return name;
+    }
+    snprintf(path, sizeof(path), "%s/%s", FS_RAM_PREFIX, name);
+    return path;
+}
+
 // 把文件整个读进新映射的内存。成功返回地址并设置 *size，失败返回 NULL
 static void *load_file(const char *name, size_t *size) {
-    int fd = fs_open(name, 0);
+    int fd = fs_open(command_file(name), 0);
     if (fd < 0) {
         return NULL;
     }
@@ -195,7 +209,7 @@ struct stage {
 // 在 fork 出来的子进程里：换成这一段的程序。标准输入/输出不是控制台时，
 // 在参数最后附上说明（格式见 <stdio.h>），由新程序的启动代码去设置
 static void exec_stage(struct stage *st, int in_pid, int out_pid) {
-    static char spec[3 * FS_NAME_MAX + 12];
+    static char spec[4 * FS_NAME_MAX + 24];
     char in[FS_NAME_MAX + 2] = "";
     char out[FS_NAME_MAX + 2] = "";
     if (st->in_file) {
@@ -212,9 +226,11 @@ static void exec_stage(struct stage *st, int in_pid, int out_pid) {
     if (st->err_file) {
         snprintf(err, sizeof(err), "%c%s", st->err_append ? 'a' : 'f', st->err_file);
     }
-    if (in[0] || out[0] || err[0]) {
-        snprintf(spec, sizeof(spec), "%c%s%c%s%c%s", STDIO_ARG_MARK, in, STDIO_ARG_MARK, out,
-                 STDIO_ARG_MARK, err);
+    // 当前目录也经这里交给程序：它从命令行所在的目录开始
+    const char *cwd = fs_cwd_spec();
+    if (in[0] || out[0] || err[0] || cwd[0]) {
+        snprintf(spec, sizeof(spec), "%c%s%c%s%c%s%c%s", STDIO_ARG_MARK, in, STDIO_ARG_MARK, out,
+                 STDIO_ARG_MARK, err, STDIO_ARG_MARK, cwd);
         st->argv[st->argc] = spec;
         st->argv[st->argc + 1] = NULL;
     }
@@ -311,7 +327,10 @@ static void run_pipeline(struct stage *stages, int count, bool background) {
             }
             if (uart > 0 && !interrupted && take_ctrl_c()) {
                 printf("^C\n");
-                for (int i = 0; i < count; i++) {
+                // 从管道的最后一段往前杀。反过来的话，前一段一死，后一段读到"输入结束"
+                // 就自己正常退出了（它可能正在另一个 CPU 上运行，比我们的下一个 kill 快），
+                // 报告出来就成了"只有第一段是被 Ctrl-C 终止的"
+                for (int i = count - 1; i >= 0; i--) {
                     if (!stages[i].exited) {
                         kill(stages[i].pid, SIGINT);
                     }
@@ -504,7 +523,7 @@ static void run_command(char *line) {
     if (count == 1) {
         struct stage *st = &stages[0];
         if (strcmp(st->argv[0], "help") == 0) {
-            printf("builtins: help, jobs, kill <pid>\n");
+            printf("builtins: help, jobs, kill <pid>, cd [directory], pwd\n");
             printf("anything else runs a program from the file service with the rest of the\n");
             printf("line as its arguments, e.g.: ls, cat <file>, write <file>, ping <ip>, hello\n");
             printf("  \"two words\"            quotes (\" or ') keep spaces and | & < > in an argument\n");
@@ -517,6 +536,20 @@ static void run_command(char *line) {
         }
         if (strcmp(st->argv[0], "jobs") == 0) {
             cmd_jobs();
+            return;
+        }
+        // 当前目录是命令行自己的状态，所以换目录只能是内置命令：一个程序换的是它自己的
+        if (strcmp(st->argv[0], "cd") == 0) {
+            const char *where = st->argc >= 2 ? st->argv[1] : FS_RAM_PREFIX;
+            if (st->argc > 2 || fs_chdir(where) != 0) {
+                printf("cd: %s: not a directory\n", st->argc == 2 ? where : "usage: cd [directory]");
+            }
+            return;
+        }
+        if (strcmp(st->argv[0], "pwd") == 0) {
+            char cwd[FS_NAME_MAX + 8];
+            fs_getcwd(cwd);
+            printf("%s\n", cwd);
             return;
         }
         if (strcmp(st->argv[0], "kill") == 0) {
@@ -562,7 +595,7 @@ static int script_depth = 0;
 
 /** 文件存在而且不是 ELF 映像 */
 static bool is_script(const char *name) {
-    int fd = fs_open(name, 0);
+    int fd = fs_open(command_file(name), 0);
     if (fd < 0) {
         return false;
     }
@@ -666,16 +699,22 @@ static void run_script_command(char **argv, int argc, bool background) {
     printf("[%d] %s\n", pid, args[0]);
 }
 
-int main() {
+/** 找到 uart 驱动，登记为终端的主人。驱动重启之后（init 会重启它）要重新来一遍 */
+static bool attach_uart(void) {
     uart = name_wait("uart");
     struct ipc_msg attach = {};
     attach.label = UART_ATTACH;
-    if (uart <= 0 || ipc_call(uart, &attach) != 0 || attach.data[0] != 0) {
+    return uart > 0 && ipc_call(uart, &attach) == 0 && attach.data[0] == 0;
+}
+
+int main(int argc, char **argv) {
+    if (!attach_uart()) {
         printf("sh: cannot use the uart driver\n");
         return 1;
     }
-    // 启动脚本
-    if (is_script("rc")) {
+    // 启动脚本。命令行自己崩溃后被 init 重启时不再执行：那是开机时做一次的事
+    bool restarted = argc > 1 && strcmp(argv[1], "restarted") == 0;
+    if (!restarted && is_script("rc")) {
         char rc_name[] = "rc";
         char *rc_argv[] = { rc_name };
         run_script(rc_argv, 1);
@@ -689,8 +728,12 @@ int main() {
         if (pending_len == 0) {
             int running = reap_jobs();
             if (!fetch_input(running > 0 ? 200 : 0)) {
-                printf("sh: uart driver is gone\n");
-                return 1;
+                // 驱动不在了。init 会重启它：等新的那个出现，重新登记
+                printf("sh: uart driver is gone, waiting for a new one\n");
+                if (!attach_uart()) {
+                    return 1;
+                }
+                printf("> ");
             }
             continue;
         }
