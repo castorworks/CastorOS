@@ -35,7 +35,7 @@ All of them describe the current tree and are kept in sync with the code; there 
 of outdated documents (the old development log, `docs/history/`, was deleted and lives in git
 history only). When a change alters behaviour, limits or an interface, update the matching page in
 `docs/reference/` (each section ends with its known limits, introduced by “当前的限制”). The
-number of system calls (31) is stated in this file, `docs/microkernel.md`,
+number of system calls (32) is stated in this file, `docs/microkernel.md`,
 `docs/reference/syscalls.md`, `docs/README.md` and `docs/concepts/07-system-calls.md`; change
 them together. Writing conventions (one paragraph per line, no hard wraps in Chinese text, one fact
 in one place) are listed at the end of `docs/README.md`.
