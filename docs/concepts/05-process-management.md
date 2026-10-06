@@ -93,8 +93,13 @@ PCB 里没有文件描述符表和工作目录：内核不认识文件，这些�
 | `fork(child, frame, space, kernel_sp)` | 子进程：和父进程进入系统调用时一样，只是返回值是 0 |
 | `exec_return(frame, entry, user_sp)` | 改写系统调用的返回帧，让它"返回"到新程序 |
 | `set_kernel_stack(kernel_sp)` | 告诉 CPU 这个任务从用户态陷入内核时用哪个内核栈 |
+| `fp_reset(state)` / `fp_save(state)` / `fp_restore(state)` | 浮点/SIMD 寄存器：新程序的初始状态、存进 PCB、从 PCB 装回 |
 
 其中 `frame` 是系统调用入口保存在内核栈上的用户寄存器，它的布局由各架构的汇编入口决定。
+
+浮点/SIMD 寄存器不在 `cpu_context_t` 里，而是 PCB 里单独的一块 `fp_state`（x86 上是
+`FXSAVE` 的 512 字节，arm64 上是 V0-V31 加两个状态寄存器）。分开放是因为它们的保存时机
+不一样：内核自己不用这些寄存器，所以进出内核不用管它们，只有换一个用户任务上 CPU 时才换。
 
 ## 调度器
 
@@ -107,7 +112,10 @@ PCB 里没有文件描述符表和工作目录：内核不认识文件，这些�
 1. 当前任务如果还能运行，放回就绪队列的队尾。
 2. 从队首取下一个任务；队列空了就运行 idle 任务。
 3. 如果下一个是用户任务，`hal::UserContext::set_kernel_stack()` 换好它的内核栈。
-4. `task_switch_context(&prev->context, &next->context)` 切换。
+4. 换浮点/SIMD 寄存器：当前任务是用户任务就 `fp_save` 存进它的 PCB，下一个是用户任务就
+   `fp_restore` 装回它的。内核线程（idle）不用这些寄存器，轮到它时什么都不做：用户任务 A
+   换下去时已经存好了，之后不管中间隔了几次 idle，换上来的用户任务都从自己的 PCB 里装。
+5. `task_switch_context(&prev->context, &next->context)` 切换。
 
 idle 任务只做一件事：关着中断检查有没有任务可运行，没有就开中断并停机，等下一次中断。
 检查和停机必须是一个不可分的动作，否则可能在两者之间错过一次唤醒。
@@ -145,9 +153,14 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
     //    子进程从 fork() 返回处继续执行，返回值是 0
     hal::UserContext::fork(&child->context, frame, child->page_dir_phys, child->kernel_stack);
 
-    // 5. 继承父子关系和特权
+    // 5. 继承父子关系、特权和硬件许可
     child->parent = parent;
     child->privileged = parent->privileged;
+    memcpy(child->hw_allowed, parent->hw_allowed, sizeof(child->hw_allowed));
+    child->hw_allowed_count = parent->hw_allowed_count;
+
+    //    浮点寄存器也一样：父进程正在 CPU 上，最新的值在寄存器里，直接存进子进程的 PCB
+    hal::UserContext::fp_save(&child->fp_state);
 
     // 6. 加入就绪队列
     child->state = TASK_READY;
@@ -185,6 +198,10 @@ uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size
     hal::UserContext::init(&current->context, entry_point, current->user_stack,
                            current->page_dir_phys, current->kernel_stack);
     hal::UserContext::exec_return(frame, entry_point, current->user_stack);
+
+    // 6. 新程序从干净的浮点状态开始
+    hal::UserContext::fp_reset(&current->fp_state);
+    hal::UserContext::fp_restore(&current->fp_state);
     return 0;
 }
 ```

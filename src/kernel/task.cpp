@@ -324,6 +324,7 @@ uint32_t kernel::Scheduler::create_user_process(const char *name, uintptr_t entr
     // 用户进程标志
     task->is_user_process = true;
     task->privileged = true;         // 由内核直接创建的用户进程（init）
+    hal::UserContext::fp_reset(&task->fp_state);
     task->user_entry = entry_point;
     
     // 分配内核栈
@@ -539,6 +540,15 @@ void kernel::Scheduler::schedule() {
                         prev_task->pid, prev_task->name);
         }
         
+        // 浮点/SIMD 寄存器不在 task_switch_context 换的那一组里。内核自己不用它们，
+        // 所以只在用户任务之间换：换下去的存起来，换上来的装回去（中间隔着 idle 也一样）
+        if (prev_task && prev_task->is_user_process) {
+            hal::UserContext::fp_save(&prev_task->fp_state);
+        }
+        if (next_task->is_user_process) {
+            hal::UserContext::fp_restore(&next_task->fp_state);
+        }
+
         task_switch_context(&old_ctx_ptr, &next_task->context);
         
         // 注意：永远不会执行到这里（task_switch_context 不会返回到这里）

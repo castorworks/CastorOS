@@ -69,10 +69,59 @@ void num_to_str_oct(unsigned long long val, char *tmp, int *len) {
     *len = i;
 }
 
+// 辅助函数：把一个非负的浮点数转换成小数形式的字符串（符号由调用者输出）
+// precision 是小数点后的位数（最多 15）。tmp 至少要有 FLOAT_STR_MAX 字节：最大的 double 有 309 位整数
+#define FLOAT_STR_MAX 352
+void num_to_str_float(double mag, int precision, char *tmp, int *len) {
+    int i = 0;
+    if (mag != mag) {
+        tmp[i++] = 'n'; tmp[i++] = 'a'; tmp[i++] = 'n';
+    } else if (mag > 1.7976931348623157e308) {
+        tmp[i++] = 'i'; tmp[i++] = 'n'; tmp[i++] = 'f';
+    } else {
+        // 整数部分要放进 64 位整数里逐位取。太大的数先缩小，缩掉的位补 0：
+        // double 只有十六七位有效数字，那些位本来就不准
+        int scaled = 0;
+        while (mag >= 1e18) {
+            mag /= 10;
+            scaled++;
+        }
+        if (scaled == 0) {
+            // 四舍五入到要输出的最后一位
+            double half = 0.5;
+            for (int p = 0; p < precision; p++) {
+                half /= 10;
+            }
+            mag += half;
+        }
+        long long whole = (long long)mag;
+        double frac = mag - (double)whole;
+
+        int whole_len;
+        num_to_str_dec((unsigned long long)whole, 0, tmp, &whole_len);
+        i = whole_len;
+        while (scaled-- > 0) {
+            tmp[i++] = '0';
+            frac = 0;
+        }
+        if (precision > 0) {
+            tmp[i++] = '.';
+            for (int p = 0; p < precision; p++) {
+                frac *= 10;
+                int digit = (int)frac;
+                tmp[i++] = (char)('0' + digit);
+                frac -= digit;
+            }
+        }
+    }
+    tmp[i] = '\0';
+    *len = i;
+}
+
 // 增强的 printf 实现
-// 支持格式符: %s, %d, %i, %u, %c, %x, %X, %o, %p, %ld, %lu, %lld, %llu, %%
+// 支持格式符: %s, %d, %i, %u, %c, %x, %X, %o, %p, %f, %ld, %lu, %lld, %llu, %%
 // 支持标志: -, 0 (左对齐, 零填充)
-// 支持宽度: %5d, %-10s 等
+// 支持宽度: %5d, %-10s 等；精度只对 %f 有意义（%.2f，默认 6 位，最多 15 位）
 static void format_and_write(bool to_err, const char *format, __builtin_va_list args) {
     static char buffer[8192];  // 足够大的静态缓冲区
     size_t pos = 0;
@@ -100,6 +149,17 @@ static void format_and_write(bool to_err, const char *format, __builtin_va_list 
                 format++;
             }
             
+            // 解析精度
+            int precision = -1;
+            if (*format == '.') {
+                format++;
+                precision = 0;
+                while (*format >= '0' && *format <= '9') {
+                    precision = precision * 10 + (*format - '0');
+                    format++;
+                }
+            }
+
             // 解析长度修饰符
             if (*format == 'l') {
                 long_flag = 1;
@@ -313,6 +373,40 @@ static void format_and_write(bool to_err, const char *format, __builtin_va_list 
                     }
                     break;
                 }
+                case 'f': {
+                    // 变参里的 float 也是按 double 传的
+                    double val = __builtin_va_arg(args, double);
+                    int neg = (val < 0);
+                    if (precision < 0) precision = 6;
+                    if (precision > 15) precision = 15;
+                    char tmp[FLOAT_STR_MAX];
+                    int len;
+                    num_to_str_float(neg ? -val : val, precision, tmp, &len);
+
+                    int pad = (width > len + neg) ? (width - len - neg) : 0;
+                    if (!left_align && !zero_pad) {
+                        while (pad-- > 0 && pos < sizeof(buffer) - 1) {
+                            buffer[pos++] = ' ';
+                        }
+                    }
+                    if (neg && pos < sizeof(buffer) - 1) {
+                        buffer[pos++] = '-';
+                    }
+                    if (!left_align && zero_pad) {
+                        while (pad-- > 0 && pos < sizeof(buffer) - 1) {
+                            buffer[pos++] = '0';
+                        }
+                    }
+                    for (int i = 0; i < len && pos < sizeof(buffer) - 1; i++) {
+                        buffer[pos++] = tmp[i];
+                    }
+                    if (left_align) {
+                        while (pad-- > 0 && pos < sizeof(buffer) - 1) {
+                            buffer[pos++] = ' ';
+                        }
+                    }
+                    break;
+                }
                 case 'c': {
                     char c = (char)__builtin_va_arg(args, int);
                     buffer[pos++] = c;
@@ -363,9 +457,9 @@ void print(const char *msg) {
 }
 
 // snprintf 实现
-// 支持格式符: %s, %d, %i, %u, %c, %x, %X, %o, %p, %ld, %lu, %lld, %llu, %%
+// 支持格式符: %s, %d, %i, %u, %c, %x, %X, %o, %p, %f, %ld, %lu, %lld, %llu, %%
 // 支持标志: -, 0 (左对齐, 零填充)
-// 支持宽度: %5d, %-10s 等
+// 支持宽度: %5d, %-10s 等；精度只对 %f 有意义（%.2f，默认 6 位，最多 15 位）
 int snprintf(char *str, size_t size, const char *format, ...) {
     if (!str || size == 0) {
         return 0;
@@ -401,6 +495,17 @@ int snprintf(char *str, size_t size, const char *format, ...) {
                 fmt++;
             }
             
+            // 解析精度
+            int precision = -1;
+            if (*fmt == '.') {
+                fmt++;
+                precision = 0;
+                while (*fmt >= '0' && *fmt <= '9') {
+                    precision = precision * 10 + (*fmt - '0');
+                    fmt++;
+                }
+            }
+
             // 解析长度修饰符
             if (*fmt == 'l') {
                 long_flag = 1;
@@ -611,6 +716,40 @@ int snprintf(char *str, size_t size, const char *format, ...) {
                     
                     for (int i = 0; i < len && pos < size - 1; i++) {
                         str[pos++] = tmp[i];
+                    }
+                    break;
+                }
+                case 'f': {
+                    // 变参里的 float 也是按 double 传的
+                    double val = __builtin_va_arg(args, double);
+                    int neg = (val < 0);
+                    if (precision < 0) precision = 6;
+                    if (precision > 15) precision = 15;
+                    char tmp[FLOAT_STR_MAX];
+                    int len;
+                    num_to_str_float(neg ? -val : val, precision, tmp, &len);
+
+                    int pad = (width > len + neg) ? (width - len - neg) : 0;
+                    if (!left_align && !zero_pad) {
+                        while (pad-- > 0 && pos < size - 1) {
+                            str[pos++] = ' ';
+                        }
+                    }
+                    if (neg && pos < size - 1) {
+                        str[pos++] = '-';
+                    }
+                    if (!left_align && zero_pad) {
+                        while (pad-- > 0 && pos < size - 1) {
+                            str[pos++] = '0';
+                        }
+                    }
+                    for (int i = 0; i < len && pos < size - 1; i++) {
+                        str[pos++] = tmp[i];
+                    }
+                    if (left_align) {
+                        while (pad-- > 0 && pos < size - 1) {
+                            str[pos++] = ' ';
+                        }
                     }
                     break;
                 }

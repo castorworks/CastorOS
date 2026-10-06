@@ -211,6 +211,71 @@ static void test_privilege(void) {
     report("hardware access without privilege", WEXITSTATUS(status) == 0, "refused");
 }
 
+// 把一个值放进一个浮点寄存器，过一会儿再取出来。值只在寄存器里，不经过内存：
+// 这期间如果被换下 CPU，它能不能原样回来全靠内核保存和恢复这些寄存器
+#if defined(ARCH_ARM64)
+static void fp_reg_set(uint64_t v) {
+    __asm__ volatile("fmov d15, %0" : : "r"(v));
+}
+static uint64_t fp_reg_get(void) {
+    uint64_t v;
+    __asm__ volatile("fmov %0, d15" : "=r"(v));
+    return v;
+}
+#elif defined(ARCH_X86_64)
+static void fp_reg_set(uint64_t v) {
+    __asm__ volatile("movq %0, %%xmm15" : : "r"(v));
+}
+static uint64_t fp_reg_get(void) {
+    uint64_t v;
+    __asm__ volatile("movq %%xmm15, %0" : "=r"(v));
+    return v;
+}
+#else
+// i686 的程序用 x87：压进它的寄存器栈，取的时候弹出来（63 位以内的整数在里面是精确的）
+static void fp_reg_set(uint64_t v) {
+    __asm__ volatile("fildll %0" : : "m"(v));
+}
+static uint64_t fp_reg_get(void) {
+    uint64_t v;
+    __asm__ volatile("fistpll %0" : "=m"(v));
+    return v;
+}
+#endif
+
+static void test_floating_point(void) {
+    // 父子两个进程各把自己的值留在同一个浮点寄存器里，然后让出 CPU，对方上来放它的值
+    int pid = fork();
+    uint64_t mine = pid == 0 ? 0x1111222233334444ULL : 0x0555666677778888ULL;
+    bool ok = true;
+    for (uint64_t i = 0; i < 200 && ok; i++) {
+        fp_reg_set(mine + i);
+        yield();
+        ok = fp_reg_get() == mine + i;
+    }
+    // 不主动让出、被时钟中断换下去的时候也一样
+    for (uint64_t i = 0; i < 4 && ok; i++) {
+        fp_reg_set(mine - i);
+        uint64_t start = uptime_ms();
+        while (uptime_ms() - start < 30) {
+        }
+        ok = fp_reg_get() == mine - i;
+    }
+    if (pid == 0) {
+        exit(ok ? 0 : 1);
+    }
+    int status = 1;
+    waitpid(pid, &status, 0);
+    report("floating-point registers across context switches", ok && WEXITSTATUS(status) == 0, "kept");
+
+    // 浮点运算和 %f（volatile：让运算在运行时做，而不是编译器算好）
+    volatile double a = 1.5, b = 2.75, pi = 3.14159;
+    char text[48];
+    snprintf(text, sizeof(text), "%.2f|%f|%8.3f|%.0f", pi, -a / 4, -a, a + 1.1);
+    report("floating-point arithmetic and %f",
+           a * b == 4.125 && (int)(a * b * 8) == 33 && strcmp(text, "3.14|-0.375000|  -1.500|3") == 0, "ok");
+}
+
 static void test_shared_memory(void) {
     // 父进程把一页内存共享给子进程；内核用一条 IPC_LABEL_GRANT 消息告诉子进程映射在哪。
     // 子进程经由共享映射写入，父进程能看到（fork 得到的那份只是写时复制的副本）
@@ -772,6 +837,7 @@ int main(int argc, char **argv) {
     test_ipc_blocking();
     test_timer();
     test_privilege();
+    test_floating_point();
     test_shared_memory();
     test_names();
     test_fs();

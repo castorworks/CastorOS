@@ -22,7 +22,7 @@ else ifeq ($(ARCH),x86_64)
     CXX = x86_64-elf-g++
     AR = x86_64-elf-ar
     AS = x86_64-elf-gcc
-    ARCH_CFLAGS = -m64 -DARCH_X86_64 -mcmodel=large -mno-red-zone -mno-mmx -mno-sse -mno-sse2
+    ARCH_CFLAGS = -m64 -DARCH_X86_64 -mcmodel=large -mno-red-zone
     ARCH_ASFLAGS = -m64
     ARCH_DIR = x86_64
 else ifeq ($(ARCH),arm64)
@@ -30,7 +30,7 @@ else ifeq ($(ARCH),arm64)
     CXX = aarch64-elf-g++
     AR = aarch64-elf-ar
     AS = aarch64-elf-gcc
-    ARCH_CFLAGS = -DARCH_ARM64 -mgeneral-regs-only
+    ARCH_CFLAGS = -DARCH_ARM64
     ARCH_ASFLAGS =
     ARCH_DIR = arm64
 else

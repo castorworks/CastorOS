@@ -90,3 +90,27 @@ void hal::UserContext::set_kernel_stack(uintptr_t kernel_sp) {
     tss_set_kernel_stack(kernel_sp);                    // 中断和异常
     hal_syscall_set_kernel_stack((uint64_t)kernel_sp);  // SYSCALL 指令不经过 TSS
 }
+
+/* ============================================================================
+ * 浮点/SIMD 寄存器
+ * ========================================================================== */
+
+#define FXSAVE_FCW      0       /* x87 控制字（16 位） */
+#define FXSAVE_MXCSR    24      /* SSE 控制/状态寄存器（32 位） */
+
+void hal::UserContext::fp_reset(hal_fp_state_t *state) {
+    // 和 fninit 之后的状态一样：寄存器全空，所有异常屏蔽，x87 用 64 位精度，就近舍入
+    memset(state, 0, sizeof(*state));
+    uint16_t fcw = 0x037F;
+    uint32_t mxcsr = 0x1F80;
+    memcpy(state->data + FXSAVE_FCW, &fcw, sizeof(fcw));
+    memcpy(state->data + FXSAVE_MXCSR, &mxcsr, sizeof(mxcsr));
+}
+
+void hal::UserContext::fp_save(hal_fp_state_t *state) {
+    __asm__ volatile("fxsave (%0)" : : "r"(state) : "memory");
+}
+
+void hal::UserContext::fp_restore(const hal_fp_state_t *state) {
+    __asm__ volatile("fxrstor (%0)" : : "r"(state) : "memory");
+}

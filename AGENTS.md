@@ -200,8 +200,10 @@ CastorOS/
   `--gc-sections --print-gc-sections`; whatever the linker would drop is unreachable.
 - Still C-style free functions: syscall wrappers (`sys_*_wrapper`), `kprintf`/`klog`/string library,
   `kmalloc()`/`kfree()`, and all of user space (POSIX-style API).
-- User programs are built without FP/SIMD (`-mno-sse` / `-mgeneral-regs-only`): the kernel does not
-  save those registers across context switches.
+- User programs may use floating point and SIMD: the scheduler saves and restores those registers
+  whenever it switches user tasks (`hal::UserContext::fp_save` / `fp_restore`, state in
+  `task_t::fp_state`). The kernel itself must not touch them — it is built with `-mno-sse` /
+  `-mgeneral-regs-only` and they are not saved on kernel entry — so no `float`/`double` in `src/`.
 - Program arguments travel through the argument page at the top of the user stack region
   (`USER_ARGS_ADDR` / `user_args_t` in `kernel/task.h`, mirrored in `user/lib/src/crt0.cpp`).
 - Usage text and error messages go to standard error with `eprintf`, never `printf`: with

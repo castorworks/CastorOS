@@ -14,10 +14,10 @@ ifeq ($(ARCH),i686)
     ARCH_CFLAGS = -m32 -DARCH_I686
 else ifeq ($(ARCH),x86_64)
     CROSS = x86_64-elf-
-    ARCH_CFLAGS = -m64 -DARCH_X86_64 -mcmodel=large -mno-red-zone -mno-mmx -mno-sse -mno-sse2
+    ARCH_CFLAGS = -m64 -DARCH_X86_64 -mcmodel=large -mno-red-zone
 else ifeq ($(ARCH),arm64)
     CROSS = aarch64-elf-
-    ARCH_CFLAGS = -DARCH_ARM64 -mgeneral-regs-only
+    ARCH_CFLAGS = -DARCH_ARM64
 else
     $(error Unsupported architecture: $(ARCH). Use i686, x86_64, or arm64)
 endif

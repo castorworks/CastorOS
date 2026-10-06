@@ -12,6 +12,7 @@
 #include <kernel/idt.h>
 #include <kernel/isr.h>
 #include <kernel/irq.h>
+#include <kernel/panic.h>
 #include <mm/vmm.h>
 #include <lib/klog.h>
 
@@ -42,6 +43,25 @@ void hal::Cpu::init() {
      * - Default kernel stack at 0x90000, kernel data segment 0x10
      */
     gdt_init_all_with_tss(0x90000, 0x10);
+
+    /* Floating point and SSE for user programs. The kernel saves and restores
+     * these registers with FXSAVE/FXRSTOR when it switches user tasks, so the
+     * CPU has to have them (every CPU model QEMU offers by default does). */
+    uint32_t eax = 1, ebx = 0, ecx = 0, edx = 0;
+    __asm__ volatile("cpuid" : "+a"(eax), "=b"(ebx), "+c"(ecx), "=d"(edx));
+    (void)ebx;
+    if (!(edx & (1u << 24)) || !(edx & (1u << 25))) {
+        PANIC("this CPU has no FXSAVE/SSE: cannot save the floating-point state of user tasks");
+    }
+    uint32_t cr0, cr4;
+    __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+    cr0 &= ~((1u << 2) | (1u << 3));    /* EM, TS: x87/SSE instructions do not trap */
+    cr0 |= (1u << 1) | (1u << 5);       /* MP, NE: x87 errors arrive as #MF */
+    __asm__ volatile("mov %0, %%cr0" : : "r"(cr0));
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+    cr4 |= (1u << 9) | (1u << 10);      /* OSFXSR, OSXMMEXCPT: SSE and FXSAVE allowed, SIMD errors as #XM */
+    __asm__ volatile("mov %0, %%cr4" : : "r"(cr4));
+    __asm__ volatile("fninit");
     
     g_hal_cpu_initialized = true;
     LOG_INFO_MSG("HAL: i686 CPU initialization complete\n");

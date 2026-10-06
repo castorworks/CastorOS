@@ -58,3 +58,24 @@ void hal::UserContext::exec_return(uintptr_t *frame, uintptr_t entry, uintptr_t 
 void hal::UserContext::set_kernel_stack(uintptr_t kernel_sp) {
     (void)kernel_sp;            // 内核栈随现场一起保存和恢复（cpu_context_t::kernel_sp）
 }
+
+/* ============================================================================
+ * 浮点/SIMD 寄存器
+ * ========================================================================== */
+
+/* 内核是用 -mgeneral-regs-only 编译的，碰 V 寄存器的指令只能写在汇编里（task/fp.S） */
+extern "C" void arm64_fp_save(hal_fp_state_t *state);
+extern "C" void arm64_fp_restore(const hal_fp_state_t *state);
+
+void hal::UserContext::fp_reset(hal_fp_state_t *state) {
+    // 全零就是复位后的状态：FPCR = 0 是就近舍入、所有异常不陷入
+    memset(state, 0, sizeof(*state));
+}
+
+void hal::UserContext::fp_save(hal_fp_state_t *state) {
+    arm64_fp_save(state);
+}
+
+void hal::UserContext::fp_restore(const hal_fp_state_t *state) {
+    arm64_fp_restore(state);
+}

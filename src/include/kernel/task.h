@@ -213,6 +213,26 @@ typedef struct {
 #endif
 
 /**
+ * 一个用户任务的浮点/SIMD 寄存器。不在 cpu_context_t 里：内核自己不用这些寄存器，
+ * 所以只在换一个用户任务上 CPU 时保存和恢复（hal::UserContext::fp_save / fp_restore）。
+ */
+#if defined(ARCH_ARM64)
+/* V0-V31（各 128 位）、FPSR、FPCR；布局和 arch/arm64/task/fp.S 里的偏移一致 */
+typedef struct {
+    uint64_t v[64];
+    uint64_t fpsr;
+    uint64_t fpcr;
+} __attribute__((aligned(16))) hal_fp_state_t;
+
+static_assert(__builtin_offsetof(hal_fp_state_t, fpsr) == 512, "fpsr offset must match fp.S");
+#else
+/* x87、MMX、XMM、MXCSR，FXSAVE 的格式；FXSAVE/FXRSTOR 要求 16 字节对齐 */
+typedef struct {
+    uint8_t data[512];
+} __attribute__((aligned(16))) hal_fp_state_t;
+#endif
+
+/**
  * @brief 任务控制块（TCB/PCB）
  * 
  * 进程控制块，包含进程的所有状态信息
@@ -297,6 +317,12 @@ typedef struct task {
      */
     hw_range hw_allowed[HW_ALLOW_MAX];
     uint32_t hw_allowed_count;
+
+    /**
+     * 浮点/SIMD 寄存器，只对用户进程有意义。任务在 CPU 上运行时寄存器里的才是最新的，
+     * 这里是它上一次被换下 CPU 时存下的（hal::UserContext::fp_save）。
+     */
+    hal_fp_state_t fp_state;
 } task_t;
 
 /* ============================================================================

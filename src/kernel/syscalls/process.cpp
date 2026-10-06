@@ -140,6 +140,9 @@ uint32_t syscall::Process::fork(uintptr_t *frame) {
     child->privileged = parent->privileged;  // fork 继承特权和硬件许可
     memcpy(child->hw_allowed, parent->hw_allowed, sizeof(child->hw_allowed));
     child->hw_allowed_count = parent->hw_allowed_count;
+
+    // 子进程的浮点寄存器和父进程此刻的一样：父进程正在 CPU 上，最新的值在寄存器里
+    hal::UserContext::fp_save(&child->fp_state);
     
     // 添加到就绪队列
     child->state = TASK_READY;
@@ -321,6 +324,10 @@ uint32_t syscall::Process::exec(uintptr_t *frame, const void *image, size_t size
     hal::UserContext::init(&current->context, entry_point, current->user_stack,
                            current->page_dir_phys, current->kernel_stack);
     hal::UserContext::exec_return(frame, entry_point, current->user_stack);
+
+    // 新程序从干净的浮点状态开始，不继承旧程序留在寄存器里的东西
+    hal::UserContext::fp_reset(&current->fp_state);
+    hal::UserContext::fp_restore(&current->fp_state);
 
     // 返回 0，让系统调用正常返回（通过 iret 到新程序）
     return 0;
