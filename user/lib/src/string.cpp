@@ -43,9 +43,11 @@ char *strcpy(char *dest, const char *src) {
 char *strncpy(char *dest, const char *src, size_t n) {
     if (!dest || !src || n == 0) return dest;
     char *ret = dest;
-    while (n > 0 && (*dest++ = *src++)) {
+    while (n > 0 && *src) {
+        *dest++ = *src++;
         n--;
     }
+    // 源串比 n 短：剩下的用 '\0' 补满，一共正好写 n 个字节
     while (n > 0) {
         *dest++ = '\0';
         n--;

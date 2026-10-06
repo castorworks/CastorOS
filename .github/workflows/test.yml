@@ -21,6 +21,17 @@ permissions:
   contents: read
 
 jobs:
+  # 用户库里不依赖内核的部分（printf、字符串函数）：用 runner 自带的编译器编译后直接运行，
+  # 不需要交叉编译器和 QEMU，几秒钟就有结果
+  lib:
+    name: user library
+    runs-on: macos-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run the host-side library tests
+        run: make lib-test
+
   test:
     name: ${{ matrix.arch }}
     runs-on: macos-latest

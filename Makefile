@@ -107,7 +107,7 @@ endif
 
 # 第一个用户进程，以 .incbin 嵌入内核 (src/kernel/init_image.S)
 INIT_ELF = user/init/build/$(ARCH)/init.elf
-INIT_DEPS = $(wildcard user/program.mk user/arch.mk user/linker/*.ld user/bootfs/* \
+INIT_DEPS = $(wildcard user/program.mk user/arch.mk user/linker/*.ld user/bootfs/* user/bootfs/*/* \
               user/*/Makefile user/*/*.cpp user/*/*.h user/*/*.S \
               user/lib/src/*.cpp user/lib/src/arch/$(ARCH)/*.S user/lib/include/*.h)
 
@@ -262,6 +262,11 @@ run-test: $(BOOT_IMAGE)
 	           exit (t == 0 || f > 0 || fail_lines > 0 || t != p || !booted || !selftest_passed || skipped || !shell_passed) }' \
 	     $(BUILD_DIR)/test.log $(BUILD_DIR)/shell-test.log
 
+# 用户库的宿主机测试：printf 一族和字符串函数，用宿主机的编译器编译后直接运行，
+# 不需要交叉编译器和 QEMU（user/lib/tests/lib_test.cpp）
+lib-test:
+	@$(MAKE) --no-print-directory -C user/lib host-test
+
 # 每个架构都跑完（一个失败了不影响后面的），最后只要有失败的就返回非零
 test-all:
 	@failed=""; \
@@ -310,5 +315,6 @@ help:
 	@echo "  debug          Run in QEMU waiting for GDB on :1234"
 	@echo "  test           Build with in-kernel tests (KTEST=1), boot, and check the results"
 	@echo "  test-all       test for every architecture"
+	@echo "  lib-test       Run the user library's host-side tests (no cross compiler or QEMU needed)"
 	@echo "  clean          Clean current arch;  clean-all: everything"
 	@echo "  info / sources / compile-db"

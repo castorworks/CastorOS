@@ -40,7 +40,7 @@ LIBRARY = $(BUILD_DIR)/libuser.a
 # 目标
 # ============================================================================
 
-.PHONY: all clean info
+.PHONY: all clean clean-all info
 
 all: $(LIBRARY)
 	@echo ""
@@ -65,6 +65,24 @@ $(BUILD_DIR)/arch/%.o: $(ARCH_SRC_DIR)/%.S
 	$(CC) $(ARCH_CFLAGS) -c $< -o $@
 
 -include $(OBJECTS:.o=.d)
+
+# ============================================================================
+# 宿主机测试：库里不依赖内核的部分（printf 一族、字符串函数、数学函数）用宿主机的编译器编译、
+# 直接在开发机上运行（tests/lib_test.cpp）。不需要交叉编译器和 QEMU
+# ============================================================================
+
+HOST_CXX ?= c++
+HOST_TEST = build/host/lib_test
+HOST_TEST_SOURCES = tests/lib_test.cpp src/stdio.cpp src/string.cpp src/math.cpp
+
+.PHONY: host-test
+host-test: $(HOST_TEST)
+	@$(HOST_TEST)
+
+# -fno-builtin：不让宿主机的编译器把 memcpy、strlen 这些换成它自己的实现，要测的是库里的
+$(HOST_TEST): $(HOST_TEST_SOURCES) $(wildcard include/*.h)
+	@mkdir -p $(dir $@)
+	$(HOST_CXX) -std=gnu++20 -O0 -g -Wall -Wextra -fno-builtin -Iinclude -o $@ $(HOST_TEST_SOURCES)
 
 # 清理
 clean:
