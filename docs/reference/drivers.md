@@ -1,6 +1,6 @@
 # 用户态驱动
 
-驱动是普通的用户进程。init 启动它之前把它的设备许可给它，之后它只碰得到这一个设备（机制见 [特权与硬件访问](hardware.md)）。现在有四个：串口 `user/uart`、键盘 `user/kbd`（只有 PC 有）、磁盘 `user/blk`，以及和协议栈在同一个进程里的网卡驱动（`user/net/nic.cpp`，见 [网络](net.md)）。前两个是输入设备，收到的字符都交给终端输入服务 `user/console`；后两个是 virtio 设备，公共部分在 `user/lib` 的 `virtio.h`。
+驱动是普通的用户进程。init 启动它之前把它的设备许可给它，之后它只碰得到这一个设备（机制见 [特权与硬件访问](hardware.md)）。现在有四个：串口 `user/uart`、键盘 `user/kbd`（只有 PC 有）、磁盘 `user/blk`（virtio-blk，PC 上还有 IDE 硬盘），以及和协议栈在同一个进程里的网卡驱动（`user/net/nic.cpp`，见 [网络](net.md)）。前两个是输入设备，收到的字符都交给终端输入服务 `user/console`；virtio 设备的公共部分在 `user/lib` 的 `virtio.h`。
 
 ## 终端输入：console
 
@@ -53,10 +53,17 @@ virtio 设备的公共部分（legacy 接口：找设备、寄存器访问、队
 
 ## 块设备：blk
 
-`user/blk` 是 virtio-blk 驱动，以 `"blk"` 登记。块设备的协议和客户端接口在 `user/lib`（`blk.h`）：`blk_capacity`、`blk_read`、`blk_write`，以 512 字节扇区为单位，数据同样经客户与驱动之间的共享缓冲区传递。
+`user/blk` 是块设备驱动，以 `"blk"` 登记。块设备的协议和客户端接口在 `user/lib`（`blk.h`）：`blk_capacity`、`blk_read`、`blk_write`，以 512 字节扇区为单位，数据同样经客户与驱动之间的共享缓冲区传递。
 
 块设备驱动一次处理一个请求：提交给设备后用 `ipc_recv(IPC_FROM_KERNEL)` 只等中断，这期间其他客户的请求留在各自的 `call` 里排队。
 
+它认两种设备，各在一个源文件里，公共的部分（`blk.cpp`：收请求、检查范围）通过 `disk.h` 里的几个函数用它们：
+
+- **virtio-blk**（`virtio_blk.cpp`）：QEMU 里默认用的。
+- **IDE 硬盘**（`ata.cpp`，只有 x86）：老 PC 的硬盘。init 找不到 virtio 磁盘时，把第一个 IDE 通道许可给它：任务文件的 8 个端口 `0x1F0`–`0x1F7`、控制端口 `0x3F6` 和 14 号中断，这些在 PC 上是固定的。驱动复位通道，用 `IDENTIFY` 命令问主盘的型号和容量，没有盘就退出。读写用 PIO 方式：每个扇区的 512 字节通过数据端口一个字一个字地搬。设备每忙完一步发一次中断；驱动另外每 10 毫秒自己看一眼状态，中断丢了也不会一直等下去。每个写请求之后发一次 `FLUSH CACHE`，应答“写好了”时数据已经在盘上。
+
+用哪一种看许可表的样子（IDE 通道是 8 个端口加 1 个端口），不靠试：把 IDE 的端口当成 virtio 的寄存器去写会让硬盘做出谁也不想要的事。`make run DISK_BUS=ide` 和 `make test DISK_BUS=ide` 把 QEMU 的磁盘接成 IDE 硬盘。
+
 `make run` 给 QEMU 挂上 `disk.img`（第一次运行时创建，16MB，`make clean` 不删，三个架构共用）；`make test` 每次用一块新的 2MB 临时磁盘，小到自检可以把它写满来检查“磁盘满”的处理（大于 4MB 的磁盘上这一项会跳过）。`make test` 的环境里磁盘、网卡、回显服务都在，所以自检里出现任何 skipped 也算失败。
 
-当前的限制：一次一个请求，没有并发；每个请求最多 8 个扇区。
+当前的限制：一次一个请求，没有并发；每个请求最多 8 个扇区。IDE：只认第一个通道上的主盘；没有 DMA，数据靠 CPU 一个字一个字地搬；扇区号 28 位，大于 128GB 的盘只用前 128GB；不认分区表，整块盘当成一个设备。

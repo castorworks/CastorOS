@@ -32,10 +32,10 @@
 #define DIR_BLOCKS          2
 #define MAX_BLOCKS          (256u * 1024)   // 最多管理 1GB
 
-static const char MAGIC[8] = { 'C', 'A', 'S', 'T', 'O', 'R', 'F', 'S' };
+static const char MAGIC[FS_DISK_MAGIC_SIZE + 1] = FS_DISK_MAGIC;
 
 struct superblock {
-    char magic[8];
+    char magic[FS_DISK_MAGIC_SIZE];
     uint32_t version;
     uint32_t total_blocks;
     uint32_t fat_start;
@@ -355,7 +355,7 @@ static const struct fs_backend diskfs_backend = {
 
 static bool format(uint32_t total_blocks) {
     memset(&sb, 0, sizeof(sb));
-    memcpy(sb.magic, MAGIC, sizeof(MAGIC));
+    memcpy(sb.magic, MAGIC, FS_DISK_MAGIC_SIZE);
     sb.version = 1;
     sb.total_blocks = total_blocks;
     sb.fat_start = 1;
@@ -385,7 +385,7 @@ static bool format(uint32_t total_blocks) {
     return disk_write(0, block_buf);
 }
 
-/** @return 1 挂载了已有的文件系统，2 新格式化的，0 失败 */
+/** @return 1 挂载了已有的文件系统，2 新格式化的，0 失败，-1 盘上是别的东西 */
 static int mount(void) {
     uint64_t sectors = blk_capacity();
     uint32_t total_blocks = sectors / SECTORS_PER_BLOCK > MAX_BLOCKS
@@ -401,12 +401,19 @@ static int mount(void) {
     }
 
     memcpy(&sb, block_buf, sizeof(sb));
-    bool valid = memcmp(sb.magic, MAGIC, sizeof(MAGIC)) == 0 && sb.version == 1 &&
+    bool valid = memcmp(sb.magic, MAGIC, FS_DISK_MAGIC_SIZE) == 0 && sb.version == 1 &&
                  sb.total_blocks == total_blocks && sb.dir_blocks == DIR_BLOCKS &&
                  sb.fat_start == 1 && sb.dir_start == sb.fat_start + sb.fat_blocks &&
                  sb.data_start == sb.dir_start + sb.dir_blocks &&
                  (size_t)sb.fat_blocks * BLOCK_SIZE == fat_bytes;
     if (!valid) {
+        // 不是我们的文件系统。只有空白的盘（第一块全是 0）才格式化：盘上有别的东西的话
+        // ——真机的硬盘上多半是另一个系统——格式化就把它毁了
+        for (size_t i = 0; i < BLOCK_SIZE; i++) {
+            if (block_buf[i] != 0) {
+                return -1;
+            }
+        }
         return format(total_blocks) ? 2 : 0;
     }
 
@@ -429,6 +436,11 @@ int main() {
         usleep(20000);
     }
     int mounted = mount();
+    if (mounted < 0) {
+        printf("diskfs: the disk holds something else, leaving it untouched "
+               "(to use it: disk erase, then restart)\n");
+        return 1;
+    }
     if (!mounted) {
         printf("diskfs: no usable block device\n");
         return 1;

@@ -62,7 +62,16 @@ static void allow_kbd(void) {
 #endif
 
 static void allow_blk(void) {
-    virtio_allow(VIRTIO_ID_BLOCK);
+    if (virtio_allow(VIRTIO_ID_BLOCK)) {
+        return;
+    }
+#if !defined(ARCH_ARM64)
+    // 没有 virtio 磁盘：PC 的第一个 IDE 通道，它的端口和 14 号中断是固定的。
+    // 上面接没接硬盘由驱动自己去看
+    hw_allow(HW_PORTS, 0x1F0, 8);
+    hw_allow(HW_PORTS, 0x3F6, 1);
+    hw_allow(HW_IRQ, 14, 1);
+#endif
 }
 
 static void allow_net(void) {

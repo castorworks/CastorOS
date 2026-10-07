@@ -26,6 +26,10 @@
 #define FS_SERVICE_NAME         "fs"
 #define FS_DISK_SERVICE_NAME    "diskfs"
 #define FS_DISK_PREFIX          "disk:"
+/** 磁盘上 diskfs 的文件系统以这 8 个字节开头。盘的开头是它，或者第一个 4KB 全是 0（空盘），
+ *  这块盘才是“我们的”：别的盘 diskfs 不格式化，自检也不往上写 */
+#define FS_DISK_MAGIC           "CASTORFS"
+#define FS_DISK_MAGIC_SIZE      8
 #define FS_RAM_PREFIX           "ram:"
 
 /** 路径的最大长度（整条路径，含结尾 NUL） */

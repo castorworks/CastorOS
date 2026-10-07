@@ -213,7 +213,13 @@ ifeq ($(ARCH),arm64)
 else
     VIRTIO_BLK = virtio-blk-pci
 endif
+# DISK_BUS=ide（只有 x86）：磁盘作为 IDE 硬盘接上，而不是 virtio-blk；run 和 test 都认。
+# 真机的硬盘是这种，用它来跑 IDE 驱动
+ifeq ($(DISK_BUS),ide)
+qemu_disk = -drive file=$(1),format=raw,if=ide
+else
 qemu_disk = -drive file=$(1),format=raw,if=none,id=disk0 -device $(VIRTIO_BLK),drive=disk0
+endif
 
 # virtio-net 网卡，接 QEMU 的用户网络（来宾 10.0.2.15，网关 10.0.2.2，DNS 10.0.2.3）
 ifeq ($(ARCH),arm64)

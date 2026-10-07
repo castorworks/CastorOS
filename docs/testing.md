@@ -57,7 +57,7 @@ make test ARCH=x86_64 QEMU_MEMORY=3G   # 给虚拟机更多内存（默认是 QE
 
 ## 持续集成
 
-每次推送到 `main`、每个 PR，GitHub Actions 都会对三个架构各跑一遍 `make test ARCH=<arch>`（`.github/workflows/test.yml`），每个架构再带着两个 CPU 跑一遍（`SMP=2`），另外还有一个只跑 `make lib-test` 的任务。
+每次推送到 `main`、每个 PR，GitHub Actions 都会对三个架构各跑一遍 `make test ARCH=<arch>`（`.github/workflows/test.yml`），每个架构再带着两个 CPU 跑一遍（`SMP=2`），i686 再把磁盘接成 IDE 硬盘跑一遍（`DISK_BUS=ide`），另外还有一个只跑 `make lib-test` 的任务。
 
 - 用的是 macOS 的 runner 和 Homebrew 的交叉编译器（见 [开发环境搭建](setup.md) 的方法一），所以和在 macOS 上本地开发是同一套工具。加了构建依赖的话，workflow 的 `brew install` 一行也要加。
 - 三个架构各是一个独立的任务，一个失败不影响另外两个跑完。
@@ -94,9 +94,11 @@ timeout 20 qemu-system-aarch64 -M virt -cpu cortex-a72 -kernel build/arm64/casto
 
 `make run-iso` 在 QEMU 里走同一条路（BIOS → 光盘上的 GRUB → 内核），写进 U 盘之前先用它看一眼；加 `QEMU_DISPLAY=cocoa` 看屏幕。
 
-真机上能用的是屏幕（VGA 文本模式）、PS/2 键盘和启动映像里的程序。机器有串口的话串口控制台照常可用（COM1，38400 8N1），没有就自动不用。
+真机上能用的是屏幕（VGA 文本模式）、PS/2 键盘、IDE 硬盘和启动映像里的程序。机器有串口的话串口控制台照常可用（COM1，38400 8N1），没有就自动不用。
 
-当前的限制：只支持 BIOS 启动（UEFI 启动的机器没有 VGA 文本模式，屏幕上什么都看不到）；磁盘和网卡只有 virtio 的驱动，真机上 `blk`、`diskfs` 和 `net` 找不到设备直接退出，`disk:` 和网络都用不了；只在 QEMU 里验证过。
+**硬盘上原有的东西。** CastorOS 不认分区表，`disk:` 用的是整块硬盘。启动本身不往一块装着别的系统的硬盘上写任何东西：`diskfs` 只格式化空白的盘，自检在这样的盘上只读。但 `disk erase`（之后重启）会把整块盘交给 `diskfs`，原来的系统和数据就没有了；`disk write` 也是直接写扇区。不想动硬盘的话，不要运行这两个命令。写进真机之前可以先在 QEMU 里用 IDE 硬盘走一遍：`make run DISK_BUS=ide`。
+
+当前的限制：只支持 BIOS 启动（UEFI 启动的机器没有 VGA 文本模式，屏幕上什么都看不到）；硬盘只认 IDE（SATA、NVMe 和 USB 存储都没有驱动）；网卡只有 virtio 的驱动，真机上 `net` 找不到设备直接退出，没有网络；只在 QEMU 里验证过。
 
 ## GDB
 

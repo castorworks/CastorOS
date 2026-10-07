@@ -95,7 +95,7 @@ user/init/     第一个用户进程：启动模块 + 名字服务
 user/console/  终端输入服务
 user/uart/     串口输入驱动
 user/kbd/      PS/2 键盘驱动（x86）
-user/blk/      virtio-blk 块设备驱动
+user/blk/      块设备驱动（virtio-blk，x86 上还有 IDE 硬盘）
 user/net/      网络服务（virtio-net 驱动 + 协议栈）
 user/ramfs/    内存文件系统服务（内嵌启动映像）
 user/diskfs/   磁盘文件系统服务

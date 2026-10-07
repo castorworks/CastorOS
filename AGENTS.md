@@ -132,7 +132,7 @@ CastorOS/
 │   ├── console/            # Terminal input service (module, no hardware): takes characters from uart and kbd, decides who gets them
 │   ├── uart/               # Serial input driver (module, allowed the serial port): hands characters to console
 │   ├── kbd/                # PS/2 keyboard driver (module, allowed the keyboard controller; x86 only): hands characters to console
-│   ├── blk/                # virtio-blk driver (module, allowed the disk): virtio-pci on x86, virtio-mmio on arm64
+│   ├── blk/                # Block device driver (module, allowed the disk): blk.cpp (server), virtio_blk.cpp (virtio-pci on x86, virtio-mmio on arm64), ata.cpp (IDE disk, x86 only)
 │   ├── net/                # Network service (module, allowed the network card): nic.cpp (virtio-net), ip.cpp (Ethernet/ARP/IPv4/ICMP), udp.cpp, tcp.cpp, dhcp.cpp, net.cpp (main loop)
 │   ├── diskfs/             # Persistent file service on the block device (module, no hardware)
 │   ├── ramfs/              # In-memory file service (module, no hardware), holds the boot image
@@ -164,11 +164,16 @@ the name server (`names.h` in `user/lib`).
   `console_input` (`CONSOLE_INPUT`), so keyboard and serial input take the same path from there
 - `user/uart`: serial input driver; exits on a machine without a serial port
 - `user/kbd` (x86 only): PS/2 keyboard driver; translates scancodes to characters
-- `user/blk`: virtio-blk driver; protocol and client in `blk.h`
+- `user/blk`: block device driver, virtio-blk or (x86, when there is no virtio disk) the IDE
+  disk on the first channel; protocol and client in `blk.h`. The two devices are behind
+  `struct disk` (`user/blk/disk.h`)
 - `user/net`: virtio-net driver plus a small ARP/IPv4/ICMP/UDP/TCP stack with a DHCP client;
   protocol and client in `net.h`
 - `user/ramfs`: in-memory file service
-- `user/diskfs`: persistent file service on top of blk; files are addressed with a `disk:` prefix
+- `user/diskfs`: persistent file service on top of blk; files are addressed with a `disk:` prefix.
+  It formats only a blank disk (first 4KB all zero). A disk holding anything else is left
+  untouched, and selftest only reads from it: on a real machine that is someone's data. Keep it
+  that way: nothing that runs at boot may write to a disk that is not blank or diskfs's own.
 - `user/sh`: command line
 
 **Privilege and devices.** Only init is privileged. Every module drops privilege before it
@@ -349,6 +354,7 @@ make test ARCH=arm64
 make test-all                  # all three architectures; non-zero if any of them fails
 make test TEST_TIMEOUT=300     # raise the limit on a busy machine (default 180 seconds)
 make test ARCH=arm64 SMP=4     # give the VM 4 CPUs (default 1, at most 8; all three architectures)
+make test DISK_BUS=ide         # x86: attach the disk as an IDE drive instead of virtio-blk (also for make run)
 make test ARCH=x86_64 QEMU_MEMORY=3G   # more memory for the VM (default is QEMU's 128MB); the
                                # "high physical memory" kernel tests only have content above 1GB
 ```
@@ -382,7 +388,8 @@ something is really broken. Do not run builds and tests in parallel.
 Every push to `main` and every pull request runs `make test` for each architecture on GitHub
 Actions (`.github/workflows/test.yml`, three jobs on macOS runners with the Homebrew cross
 compilers), plus `make lib-test`. The logs of each run (`test.log`, `shell-test.log`) are
-uploaded as artifacts. If you add a build dependency, add it to the workflow's `brew install`
+uploaded as artifacts. Each architecture also runs with `SMP=2`, and i686 once more with
+`DISK_BUS=ide`. If you add a build dependency, add it to the workflow's `brew install`
 line too.
 
 ### Running by Hand

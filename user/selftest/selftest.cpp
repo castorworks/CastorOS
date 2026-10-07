@@ -943,9 +943,24 @@ static void test_block_device(void) {
         return;
     }
 
-    // 在最后 16 个扇区上写一个图案再读回来（跨多个请求），然后恢复原来的内容
     static char saved[16 * BLK_SECTOR_SIZE], out[16 * BLK_SECTOR_SIZE], in[16 * BLK_SECTOR_SIZE];
     uint64_t start = sectors - 16;
+
+    // 盘上是别的东西（真机的硬盘上多半是另一个系统）就一个字节也不写：只读
+    bool ours = blk_read(0, in, 8) == 0 && memcmp(in, FS_DISK_MAGIC, FS_DISK_MAGIC_SIZE) == 0;
+    if (!ours) {
+        ours = true;
+        for (size_t i = 0; i < 8 * BLK_SECTOR_SIZE; i++) {
+            ours = ours && in[i] == 0;
+        }
+    }
+    if (!ours) {
+        report("block device", sectors >= 32 && blk_read(start, in, 16) == 0 && blk_read(sectors, in, 1) == -1,
+               "ok (read only: the disk is not ours)");
+        return;
+    }
+
+    // 在最后 16 个扇区上写一个图案再读回来（跨多个请求），然后恢复原来的内容
     for (size_t i = 0; i < sizeof(out); i++) {
         out[i] = (char)(i * 13 + i / 97);
     }
@@ -966,6 +981,11 @@ static void test_disk_fs(void) {
     // diskfs 要等块设备驱动就绪后才挂载
     for (int i = 0; i < 100 && name_lookup(FS_DISK_SERVICE_NAME) == 0; i++) {
         usleep(20000);
+    }
+    if (name_lookup(FS_DISK_SERVICE_NAME) == 0) {
+        // 有磁盘但没有文件服务：盘上是别的东西，diskfs 不去动它
+        printf("selftest: disk file system: skipped (the disk is not ours)\n");
+        return;
     }
 
     // 跨多个块的文件：写、读回、从中间读、大小、列表、清空、删除

@@ -33,7 +33,7 @@ jobs:
         run: make lib-test
 
   test:
-    name: ${{ matrix.arch }}${{ matrix.smp && format(' ({0} CPUs)', matrix.smp) || '' }}
+    name: ${{ matrix.arch }}${{ matrix.smp && format(' ({0} CPUs)', matrix.smp) || '' }}${{ matrix.disk && format(' ({0} disk)', matrix.disk) || '' }}
     runs-on: macos-latest
     timeout-minutes: 30
     strategy:
@@ -56,6 +56,10 @@ jobs:
           - arch: arm64
             packages: aarch64-elf-gcc
             smp: 2
+          # 磁盘接成 IDE 硬盘而不是 virtio-blk：真机用的那个驱动
+          - arch: i686
+            packages: i686-elf-gcc nasm
+            disk: ide
     env:
       HOMEBREW_NO_AUTO_UPDATE: 1
       HOMEBREW_NO_INSTALL_CLEANUP: 1
@@ -72,7 +76,7 @@ jobs:
       # runner 比开发机慢，而且 QEMU 在上面是纯软件模拟：把等待的上限放宽。
       # 这些只是上限，检查一做完就结束，不会多等。
       - name: Build and test
-        run: make test ARCH=${{ matrix.arch }} TEST_TIMEOUT=600 ${{ matrix.smp && format('SMP={0}', matrix.smp) || '' }}
+        run: make test ARCH=${{ matrix.arch }} TEST_TIMEOUT=600 ${{ matrix.smp && format('SMP={0}', matrix.smp) || '' }} ${{ matrix.disk && format('DISK_BUS={0}', matrix.disk) || '' }}
         env:
           STEP_TIMEOUT: 120
 
@@ -81,6 +85,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-logs-${{ matrix.arch }}${{ matrix.smp && format('-smp{0}', matrix.smp) || '' }}
+          name: test-logs-${{ matrix.arch }}${{ matrix.smp && format('-smp{0}', matrix.smp) || '' }}${{ matrix.disk && format('-{0}', matrix.disk) || '' }}
           path: build/${{ matrix.arch }}-ktest/*.log
           if-no-files-found: ignore
