@@ -23,6 +23,7 @@ brew install i686-elf-gcc i686-elf-binutils
 brew install x86_64-elf-gcc x86_64-elf-binutils
 brew install aarch64-elf-gcc aarch64-elf-binutils
 brew install nasm qemu
+brew install i686-elf-grub xorriso     # 可选：只有 make iso（做真机用的可引导映像）需要
 ```
 
 ## 方法二：从源码编译（Ubuntu / Debian）

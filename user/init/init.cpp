@@ -13,12 +13,17 @@
 #include <stdio.h>
 #include <string.h>
 #include <names.h>
+#include <console.h>
 #include <virtio.h>
 #include <blk.h>
 #include <net.h>
 #include <fs.h>
 
+extern "C" const char console_image_start[], console_image_end[];
 extern "C" const char uart_image_start[], uart_image_end[];
+#if !defined(ARCH_ARM64)
+extern "C" const char kbd_image_start[], kbd_image_end[];
+#endif
 extern "C" const char blk_image_start[], blk_image_end[];
 extern "C" const char net_image_start[], net_image_end[];
 extern "C" const char ramfs_image_start[], ramfs_image_end[];
@@ -47,6 +52,15 @@ static void allow_uart(void) {
 #endif
 }
 
+#if !defined(ARCH_ARM64)
+static void allow_kbd(void) {
+    // PS/2 键盘控制器：数据端口、状态/命令端口和 1 号中断在 PC 上是固定的
+    hw_allow(HW_PORTS, 0x60, 1);
+    hw_allow(HW_PORTS, 0x64, 1);
+    hw_allow(HW_IRQ, 1, 1);
+}
+#endif
+
 static void allow_blk(void) {
     virtio_allow(VIRTIO_ID_BLOCK);
 }
@@ -71,7 +85,11 @@ struct module {
 };
 
 static struct module modules[] = {
-    { "uart", "uart", uart_image_start, uart_image_end, allow_uart, 0, false, 0 },
+    { "console", CONSOLE_SERVICE_NAME, console_image_start, console_image_end, NULL, 0, false, 0 },
+    { "uart", UART_NAME, uart_image_start, uart_image_end, allow_uart, 0, false, 0 },
+#if !defined(ARCH_ARM64)
+    { "kbd", KBD_NAME, kbd_image_start, kbd_image_end, allow_kbd, 0, false, 0 },
+#endif
     { "blk", BLK_SERVICE_NAME, blk_image_start, blk_image_end, allow_blk, 0, false, 0 },
     { "net", NET_SERVICE_NAME, net_image_start, net_image_end, allow_net, 0, false, 0 },
     { "ramfs", FS_SERVICE_NAME, ramfs_image_start, ramfs_image_end, NULL, 0, false, 0 },

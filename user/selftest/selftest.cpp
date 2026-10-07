@@ -9,6 +9,7 @@
 #include <string.h>
 #include <math.h>
 #include <names.h>
+#include <console.h>
 #include <fs.h>
 #include <blk.h>
 #include <net.h>
@@ -758,9 +759,9 @@ static void test_names(void) {
 
     // 模块的服务名是留给 init 启动的那个进程的：别人登记不了，不管那个服务现在在不在
     // （没有磁盘时 blk 和 diskfs 已经退出了，名字也不让给别人）
-    ok = name_register("uart") == -1 && name_register(BLK_SERVICE_NAME) == -1 &&
+    ok = name_register(CONSOLE_SERVICE_NAME) == -1 && name_register(BLK_SERVICE_NAME) == -1 &&
          name_register(NET_SERVICE_NAME) == -1 && name_register(FS_SERVICE_NAME) == -1 &&
-         name_register(FS_DISK_SERVICE_NAME) == -1 && name_lookup("uart") > 0 && name_lookup(FS_SERVICE_NAME) > 0;
+         name_register(FS_DISK_SERVICE_NAME) == -1 && name_lookup(CONSOLE_SERVICE_NAME) > 0 && name_lookup(FS_SERVICE_NAME) > 0;
     report("service names of modules cannot be taken", ok, "refused");
 }
 
@@ -1421,7 +1422,31 @@ static void test_memory_reclaimed(void) {
     }
 }
 
+// selftest restart <名字>：让终端输入的一个模块（console、uart、kbd）像崩溃了一样退出，
+// 等 init 把它重启。重启之后输入还通不通要有人敲键盘才知道：那是 scripts/shell-test.sh 的事
+static int restart_module(const char *name) {
+    int old_pid = name_lookup(name);
+    if (old_pid <= 0 || console_debug_exit(name) != 0) {
+        eprintf("selftest: no module registered as %s\n", name);
+        return 1;
+    }
+    uint64_t start = uptime_ms();
+    while (uptime_ms() - start < 5000) {
+        int new_pid = name_lookup(name);
+        if (new_pid > 0 && new_pid != old_pid) {
+            printf("selftest: %s restarted (pid %d -> %d)\n", name, old_pid, new_pid);
+            return 0;
+        }
+        usleep(20000);
+    }
+    printf("selftest: %s was NOT restarted\n", name);
+    return 1;
+}
+
 int main(int argc, char **argv) {
+    if (argc == 3 && strcmp(argv[1], "restart") == 0) {
+        return restart_module(argv[2]);
+    }
     // 命令行（或 rc）是带着程序名启动我们的
     report("program arguments", argc >= 1 && strcmp(argv[0], "selftest") == 0 && argv[argc] == NULL, "ok");
 

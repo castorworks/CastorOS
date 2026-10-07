@@ -7,17 +7,27 @@
 # QEMU 的全部输出写入 <log>；每项检查在 <results> 里留一行 "shelltest: <名字>: ok|FAILED"，
 # 全部通过时最后一行是 "shelltest: all passed"。命令行没有起来时 <results> 为空。
 # 不按固定时间等待：每一步都等日志里出现预期的那一行（最多 STEP_TIMEOUT 秒）。
+#
+# 环境变量 MONITOR（可选）：QEMU 监视器的管道，QEMU 命令里要有 -monitor pipe:$MONITOR。
+# 有它才检查键盘：监视器的 sendkey 命令在虚拟机的键盘上敲键。
 
 LOG=$1; RESULTS=$2; BOOT_TIMEOUT=$3; shift 3
 STEP_TIMEOUT=${STEP_TIMEOUT:-30}
 FIFO=$LOG.stdin
 
 rm -f "$FIFO"; mkfifo "$FIFO" || exit 1
+if [ -n "$MONITOR" ]; then
+    # QEMU 从 .in 读命令，把应答写到 .out；应答没人读的话管道写满了它会卡住
+    rm -f "$MONITOR.in" "$MONITOR.out"; mkfifo "$MONITOR.in" "$MONITOR.out" || exit 1
+    exec 4<> "$MONITOR.in"
+    cat "$MONITOR.out" > /dev/null &
+    DRAIN_PID=$!
+fi
 : > "$LOG"; : > "$RESULTS"
 "$@" < "$FIFO" > "$LOG" 2>&1 &
 QEMU_PID=$!
 exec 3> "$FIFO"
-trap 'kill $QEMU_PID 2>/dev/null; wait $QEMU_PID 2>/dev/null; exec 3>&-; rm -f "$FIFO"' EXIT
+trap 'kill $QEMU_PID $DRAIN_PID 2>/dev/null; wait $QEMU_PID 2>/dev/null; exec 3>&- 4>&-; rm -f "$FIFO" "$MONITOR.in" "$MONITOR.out"' EXIT
 
 MARK=0          # 日志里的字节位置：expect 只看这之后的输出
 MATCH=          # 最近一次 expect 匹配到的那一行
@@ -39,6 +49,13 @@ expect() {
 
 # send <printf 格式串>：记下当前位置，然后把输入写给串口
 send() { MARK=$(wc -c < "$LOG"); printf "$1" >&3; }
+
+# keys <键名...>：记下当前位置，然后在虚拟机的键盘上敲这些键（键名是 QEMU sendkey 的）
+keys() {
+    MARK=$(wc -c < "$LOG")
+    local key
+    for key in "$@"; do echo "sendkey $key" >&4; sleep 0.1; done
+}
 
 # check <名字> <命令...>：记录一项检查的结果
 check() {
@@ -276,6 +293,31 @@ script_interrupt() {
     ! output | grep -aq '^not reached$'
 }
 check "ctrl-c stops a script" script_interrupt
+
+# ---- 键盘（PC）：敲的键和串口来的输入走同一条路——Shift、退格、Ctrl-C ----
+keyboard_input() {
+    keys e c h o spc shift-k e y s spc x backspace 1 ret; expect '^Keys 1$' || return 1
+    keys s l e e p spc 6 0 ret; expect 'sleep 60$' || return 1
+    sleep 0.5
+    keys ctrl-c; expect '^sleep: killed by signal 2$'
+}
+[ -n "$MONITOR" ] && check "keyboard input" keyboard_input
+
+# ---- 终端输入的模块崩溃了：init 重启它，之后输入照常（selftest restart 让模块退出）----
+# 最后做：每个模块最多被重启 5 次
+serial_after_restart() {
+    send "selftest restart $1\\n"; expect "^selftest: $1 restarted" || return 1
+    send 'echo typed after\n'; expect '^typed after$'
+}
+check "uart driver is restarted" serial_after_restart uart
+check "console service is restarted" serial_after_restart console
+
+keyboard_after_restart() {
+    send 'selftest restart kbd\n'; expect '^selftest: kbd restarted' || return 1
+    expect 'kbd: driver ready' || return 1
+    keys e c h o spc k e y s spc a f t e r ret; expect '^keys after$'
+}
+[ -n "$MONITOR" ] && check "keyboard driver is restarted" keyboard_after_restart
 
 [ $failed -eq 0 ] && echo "shelltest: all passed" >> "$RESULTS"
 exit 0

@@ -10,7 +10,11 @@
 .endm
 
     .section .rodata
+    module console, console_IMAGE
     module uart, uart_IMAGE
+#if !defined(ARCH_ARM64)
+    module kbd, kbd_IMAGE
+#endif
     module blk, blk_IMAGE
     module net, net_IMAGE
     module ramfs, ramfs_IMAGE

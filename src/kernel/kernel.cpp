@@ -9,6 +9,7 @@
 // ============================================================================
 
 #include <drivers/serial.h>
+#include <drivers/screen.h>
 #include <drivers/timer.h>
 
 #include <kernel/version.h>
@@ -201,6 +202,7 @@ void kernel_main(multiboot_info_t *mbi) {
     kernel::KernelLock::enter();    // 执行内核代码的 CPU 都拿着内核锁，启动 CPU 从头就拿着
 
     drivers::Serial::init();  // COM1
+    drivers::Screen::init();  // VGA 文本模式
     print_banner();
 
     hal::Cpu::init();         // GDT + TSS

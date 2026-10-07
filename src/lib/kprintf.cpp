@@ -7,14 +7,16 @@
 #include <lib/kprintf.h>
 #include <lib/string.h>
 #include <drivers/serial.h>
+#include <drivers/screen.h>
 #include <kernel/interrupt.h>
 #include <stdarg.h>
 
 /**
- * 内部字符输出函数
+ * 内部字符输出函数：控制台是串口，有屏幕的机器上同时也是屏幕
  */
 static void output_char(char c) {
     drivers::Serial::putchar(c);
+    drivers::Screen::putchar(c);
 }
 
 /**
@@ -22,6 +24,9 @@ static void output_char(char c) {
  */
 static void output_string(const char *msg) {
     drivers::Serial::print(msg);
+    while (*msg) {
+        drivers::Screen::putchar(*msg++);
+    }
 }
 
 /* 中断处理函数也会打日志，别的 CPU 也会。下面每个公共输出入口都整体独占控制台

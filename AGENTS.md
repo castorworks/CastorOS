@@ -76,6 +76,7 @@ CXXFLAGS = -std=gnu++20 -ffreestanding -O0 -g -Wall -Wextra \
 - QEMU for emulation
 - Cross-compiler toolchain, GCC 10 or newer for `-std=gnu++20`: Homebrew on macOS,
   `scripts/cross-compiler-install.sh` (builds all three targets from source) on Ubuntu/Debian
+- Only for `make iso`: `grub-mkrescue` and `xorriso` (`brew install i686-elf-grub xorriso`)
 
 ### Common Commands
 
@@ -87,7 +88,10 @@ make build-all
 
 make run                # Run in QEMU, serial console on stdio; attaches disk.img (created on
                         # first use) and a virtio-net card on QEMU user networking
+make run QEMU_DISPLAY=cocoa   # Same with QEMU's window: the VGA screen, keys typed there go to the PS/2 keyboard driver (x86)
 make debug              # Same, waiting for GDB on :1234
+make iso                # Bootable image with GRUB for a real PC (x86; needs grub-mkrescue and xorriso)
+make run-iso            # Boot that image in QEMU: BIOS -> GRUB -> kernel
 
 make test               # Build with in-kernel tests (KTEST=1), boot, and check kernel tests + selftest + shell checks
 make test-all
@@ -112,8 +116,8 @@ CastorOS/
 │   │   ├── i686/           # boot, cpu (GDT/IDT), interrupt, mm, task, syscall, hal.cpp
 │   │   ├── x86_64/
 │   │   └── arm64/          # also dtb/ (device tree parser: memory, GIC, timer, UART, device list)
-│   ├── drivers/            # Only serial (debug output) and timer (tick)
-│   │   ├── x86/            # COM1, PIT
+│   ├── drivers/            # Only debug output (serial; on x86 also the screen) and timer (tick)
+│   │   ├── x86/            # COM1, VGA text screen, PIT
 │   │   └── arm/            # PL011, ARM Generic Timer
 │   ├── kernel/             # sched.cpp (scheduler), task.cpp (task table, process lifecycle), smp.cpp (kernel lock, starting the other CPUs), syscall.cpp, ipc.cpp, user_irq.cpp, hw_access.cpp, elf.cpp, ...
 │   │   ├── sync/           # The spinlock
@@ -125,7 +129,9 @@ CastorOS/
 ├── user/                   # User-space programs
 │   ├── lib/                # User library
 │   ├── init/               # First user process (the only privileged one): starts modules, assigns devices, name service
-│   ├── uart/               # Serial input driver (module, allowed the serial port)
+│   ├── console/            # Terminal input service (module, no hardware): takes characters from uart and kbd, decides who gets them
+│   ├── uart/               # Serial input driver (module, allowed the serial port): hands characters to console
+│   ├── kbd/                # PS/2 keyboard driver (module, allowed the keyboard controller; x86 only): hands characters to console
 │   ├── blk/                # virtio-blk driver (module, allowed the disk): virtio-pci on x86, virtio-mmio on arm64
 │   ├── net/                # Network service (module, allowed the network card): nic.cpp (virtio-net), ip.cpp (Ethernet/ARP/IPv4/ICMP), udp.cpp, tcp.cpp, dhcp.cpp, net.cpp (main loop)
 │   ├── diskfs/             # Persistent file service on the block device (module, no hardware)
@@ -153,8 +159,11 @@ the name server (`names.h` in `user/lib`).
 
 **Resident modules** are embedded into init the same way (`user/init/modules.S`):
 
-- `user/uart`: serial input driver; protocol and the `console_read`/`read_line` client in
-  `console.h`
+- `user/console`: terminal input service, no hardware; protocol and the
+  `console_read`/`read_line` client in `console.h`. Input drivers hand it characters with
+  `console_input` (`CONSOLE_INPUT`), so keyboard and serial input take the same path from there
+- `user/uart`: serial input driver; exits on a machine without a serial port
+- `user/kbd` (x86 only): PS/2 keyboard driver; translates scancodes to characters
 - `user/blk`: virtio-blk driver; protocol and client in `blk.h`
 - `user/net`: virtio-net driver plus a small ARP/IPv4/ICMP/UDP/TCP stack with a DHCP client;
   protocol and client in `net.h`
@@ -288,6 +297,9 @@ nowhere else. The kernel Makefile rebuilds all of it when `user/` changes.
   `-mgeneral-regs-only` and they are not saved on kernel entry — so no `float`/`double` in `src/`.
   User programs may use them: the scheduler saves and restores those registers whenever it
   switches user tasks (`hal::UserContext::fp_save` / `fp_restore`, state in `task_t::fp_state`).
+- Console output (`kprintf`, and the `console_write` system call behind user `printf`) goes to
+  the serial port and, on x86, also to the VGA text screen (`drivers::Screen`,
+  `src/drivers/x86/screen.cpp`). The screen is output only; keyboard input is `user/kbd`.
 - Syscall numbers live in `src/include/kernel/syscall.h` and must match `user/lib/include/syscall.h`.
 - Program arguments travel through the argument page at the top of the user stack region
   (`USER_ARGS_ADDR` / `user_args_t` in `kernel/task.h`, mirrored in `user/lib/src/crt0.cpp`).
@@ -345,7 +357,10 @@ The kernel does not power off by itself: `make test` starts QEMU through
 `scripts/shell-test.sh`, waits for `sh: ready` in the log (at most `TEST_TIMEOUT`), then types a
 series of commands into the serial port to check the command line (running programs, background
 jobs, Ctrl-C, `kill`, whether the port of a killed service can be reused, programs reading
-keyboard input, redirection and pipes, directories, quoting, standard error, scripts). Each step waits until
+keyboard input, redirection and pipes, directories, quoting, standard error, scripts; on x86 also
+a few lines typed on the VM's PS/2 keyboard through the QEMU monitor's `sendkey`; at the end
+console, uart and kbd are made to exit with `selftest restart <name>` and input must work
+again after init restarts them). Each step waits until
 the expected output appears (at most `STEP_TIMEOUT` seconds per step, default 30), and QEMU is
 stopped when the steps are done.
 
@@ -387,7 +402,8 @@ make debug                     # QEMU waits for a connection; in another termina
 ```
 
 The console is the serial port; whatever is written to QEMU's standard input reaches sh through
-the uart driver. In sh:
+the uart driver and the console service. On x86 the same output is also on the VGA screen and the PS/2 keyboard works
+(`-display cocoa` instead of `-display none` to see it). In sh:
 
 - `help`, `jobs` and `kill <pid>` are built in; everything else (`ls`, `cat <file>`,
   `write <file> [text]`, ...) is a program.

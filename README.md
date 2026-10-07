@@ -32,6 +32,7 @@ make build-all          # 所有架构
 
 make run                # 在 QEMU 中运行，串口控制台接到当前终端
 make debug              # 同上，等待 GDB 连接 :1234
+make iso                # 带 GRUB 的可引导映像（x86），用来在真机上启动
 
 make test               # 构建带内核测试的版本 (KTEST=1) 并运行：内核测试 + 用户态自检 + 命令行检查
 make test-all           # 所有架构；任何一个失败就返回非零
@@ -46,7 +47,7 @@ make help
 
 ## 运行起来是什么样
 
-内核启动后加载内嵌的 `user/init`：它启动用户态的串口驱动 `user/uart`、块设备驱动 `user/blk`、网络服务 `user/net`、内存文件系统 `user/ramfs`、磁盘文件系统 `user/diskfs` 和命令行 `user/sh`，自己充当名字服务。ramfs 从构建时打好的启动映像里装载文件和程序；sh 先执行 `rc`（运行用户态自检 `selftest`），然后接受命令：
+内核启动后加载内嵌的 `user/init`：它启动用户态的终端输入服务 `user/console`、串口驱动 `user/uart`、键盘驱动 `user/kbd`（x86）、块设备驱动 `user/blk`、网络服务 `user/net`、内存文件系统 `user/ramfs`、磁盘文件系统 `user/diskfs` 和命令行 `user/sh`，自己充当名字服务。ramfs 从构建时打好的启动映像里装载文件和程序；sh 先执行 `rc`（运行用户态自检 `selftest`），然后接受命令：
 
 ```text
 > ls
@@ -76,7 +77,7 @@ HTTP/1.1 200 OK
 
 带 `disk:` 前缀的文件在磁盘（`disk.img`，`make run` 第一次运行时创建）上，重启后还在；磁盘上的程序同样可以直接运行（`disk:hello`）。
 
-这些都发生在用户态：键盘输入经串口中断 → uart 驱动 → IPC 到达 sh；文件操作经 IPC 和共享缓冲区交给文件服务，磁盘文件再经块设备服务到 virtio-blk 驱动；网络请求交给 `user/net`（virtio-net 驱动加 ARP/IPv4/ICMP/UDP/TCP 协议栈，启动时用 DHCP 取地址，接 QEMU 的用户网络）；运行程序是从文件服务读出 ELF 后 `fork` + `exec`，这一行的其余部分作为参数传给 `main(argc, argv)`。
+这些都发生在用户态：键盘输入经串口中断 → uart 驱动 → console 服务 → IPC 到达 sh（PC 的键盘则是键盘中断 → kbd 驱动 → console 服务）；文件操作经 IPC 和共享缓冲区交给文件服务，磁盘文件再经块设备服务到 virtio-blk 驱动；网络请求交给 `user/net`（virtio-net 驱动加 ARP/IPv4/ICMP/UDP/TCP 协议栈，启动时用 DHCP 取地址，接 QEMU 的用户网络）；运行程序是从文件服务读出 ELF 后 `fork` + `exec`，这一行的其余部分作为参数传给 `main(argc, argv)`。
 
 ## 目录
 
@@ -84,14 +85,16 @@ HTTP/1.1 200 OK
 src/arch/      架构相关代码 (i686, x86_64, arm64)
 src/mm/        物理页 (PMM)、通用页表、地址空间与写时复制 (VMM)、内核堆
 src/kernel/    调度、系统调用、IPC、中断转发、ELF 加载、自旋锁
-src/drivers/   内核里仅有的两个驱动：串口（调试输出）和时钟
+src/drivers/   内核里仅有的驱动：调试输出（串口，x86 上还有 VGA 屏幕）和时钟
 src/lib/       kprintf / klog / 字符串 / C++ 运行时
 src/include/   头文件（按子系统分目录）
 src/tests/     内核测试 (KTEST=1)
 
 user/lib/      用户态库
 user/init/     第一个用户进程：启动模块 + 名字服务
+user/console/  终端输入服务
 user/uart/     串口输入驱动
+user/kbd/      PS/2 键盘驱动（x86）
 user/blk/      virtio-blk 块设备驱动
 user/net/      网络服务（virtio-net 驱动 + 协议栈）
 user/ramfs/    内存文件系统服务（内嵌启动映像）

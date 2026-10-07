@@ -317,7 +317,7 @@ void irq_disable_line(uint8_t irq) {
 
 ## 定时器中断
 
-定时器每 10ms 产生一次中断（x86 上是 PIT，把 1193182Hz 的基础频率分频到 100Hz；arm64 上是 Generic Timer）。它是内核里仅有的两个驱动之一（另一个是只做输出的串口），做三件事：
+定时器每 10ms 产生一次中断（x86 上是 PIT，把 1193182Hz 的基础频率分频到 100Hz；arm64 上是 Generic Timer）。它是内核里仅有的两类驱动之一（另一类只做输出：串口，x86 上还有屏幕），做三件事：
 
 1. 累加开机以来的时间（`uptime_ms`、`nanosleep`、`timer_set` 都靠它）。
 2. 唤醒睡眠时间到了的任务，给定时器到期的进程发 `IPC_LABEL_TIMER` 消息。

@@ -16,9 +16,28 @@
 /* 串口输出锁 */
 static sync::Spinlock serial_lock;
 
+/* 这台机器有串口吗？没有的话什么都不输出（发送前要等“发送缓冲区空”，
+ * 不存在的端口上那一位可能永远不来） */
+static bool present;
+
+/** 暂存寄存器写什么读回什么；端口后面没有串口时读回来的不是写进去的 */
+static bool probe(void) {
+    outb(COM1 + 7, 0x5A);
+    if (inb(COM1 + 7) != 0x5A) {
+        return false;
+    }
+    outb(COM1 + 7, 0xA5);
+    return inb(COM1 + 7) == 0xA5;
+}
+
 void drivers::Serial::init() {
     serial_lock.init();
-    
+
+    present = probe();
+    if (!present) {
+        return;
+    }
+
     outb(COM1 + 1, 0x00);  // 禁用中断
     outb(COM1 + 3, 0x80);  // 启用 DLAB（Divisor Latch Access Bit）
     outb(COM1 + 0, 0x03);  // 波特率 38400（低字节）
@@ -38,11 +57,17 @@ static void serial_putchar_nolock(char c) {
 }
 
 void drivers::Serial::putchar(char c) {
+    if (!present) {
+        return;
+    }
     sync::SpinlockIrqGuard guard(serial_lock);
     serial_putchar_nolock(c);
 }
 
 void drivers::Serial::print(const char *msg) {
+    if (!present) {
+        return;
+    }
     sync::SpinlockIrqGuard guard(serial_lock);
     
     while (*msg) {

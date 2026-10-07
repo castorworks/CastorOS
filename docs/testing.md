@@ -6,7 +6,7 @@
 |----|--------|----------|--------|
 | 内核测试 | `src/tests`（`ktest` 框架） | 内核内部的模块：各架构的 HAL、内存管理（PMM、VMM、写时复制、堆）、任务和 fork/exec、系统调用的出错路径、硬件许可、自旋锁、内核库 | `make test`，只在 `KTEST=1` 时编入，开机时在 init 启动之前运行 |
 | 用户态自检 | `user/selftest` | 一个程序能观察到的行为：系统调用、IPC、文件、磁盘、网络 | `make test`，开机时由 `rc` 运行 |
-| 命令行检查 | `scripts/shell-test.sh` | 需要有人敲键盘才能测的行为：后台任务、Ctrl-C、`kill`、重定向和管道、目录、引号、脚本 | `make test`，宿主机通过串口输入命令 |
+| 命令行检查 | `scripts/shell-test.sh` | 需要有人敲键盘才能测的行为：后台任务、Ctrl-C、`kill`、重定向和管道、目录、引号、脚本 | `make test`，宿主机通过串口输入命令（x86 上还在虚拟机的键盘上敲键） |
 | 用户库的宿主机测试 | `user/lib/tests/lib_test.cpp` | 用户库里不依赖内核的部分：`printf` 一族、字符串、数学函数 | `make lib-test`，几秒钟，不需要交叉编译器和 QEMU |
 
 加检查时按这张表选地方：纯库代码放宿主机测试（最快）；程序能观察到的放自检；要输入的放命令行检查。新的内核测试模块要在 `src/tests/framework/test_runner.cpp` 里登记，没登记的模块不会运行。
@@ -33,7 +33,7 @@ make test ARCH=x86_64 QEMU_MEMORY=3G   # 给虚拟机更多内存（默认是 QE
 内核不会自己关机，所以 `make test` 通过 `scripts/shell-test.sh` 来控制 QEMU：
 
 1. 启动 QEMU，等日志里出现 `sh: ready`（以 `TEST_TIMEOUT` 为上限）。到这里内核测试和用户态自检都已经跑完。
-2. 向串口输入一串命令，检查命令行的行为：运行程序、后台任务、Ctrl-C、`kill`、被终止的服务的端口能否重用、程序读键盘输入、重定向和管道、目录、引号、标准错误、脚本。每一步等到预期的输出出现为止（每步最多 `STEP_TIMEOUT` 秒，默认 30）。
+2. 向串口输入一串命令，检查命令行的行为：运行程序、后台任务、Ctrl-C、`kill`、被终止的服务的端口能否重用、程序读键盘输入、重定向和管道、目录、引号、标准错误、脚本。x86 上最后还通过 QEMU 的监视器（`sendkey` 命令）在虚拟机的键盘上敲几行，检查键盘驱动。最后让 console、uart 和 kbd 依次像崩溃了一样退出（`selftest restart <名字>`），检查 init 重启它们之后输入照常。每一步等到预期的输出出现为止（每步最多 `STEP_TIMEOUT` 秒，默认 30）。
 3. 做完就结束 QEMU，汇总各模块的 `Total/Passed/Failed tests` 计数。
 
 出现下面任何一种情况，`make test` 返回非零：
@@ -66,7 +66,7 @@ make test ARCH=x86_64 QEMU_MEMORY=3G   # 给虚拟机更多内存（默认是 QE
 
 ## 手动运行
 
-`make run` 在 QEMU 里运行当前架构，带上磁盘 `disk.img`（第一次运行时创建）和一块接 QEMU 用户网络的 virtio-net 网卡。控制台是串口，接到当前终端；命令行能做什么见 [启动映像和命令行](reference/shell.md)。
+`make run` 在 QEMU 里运行当前架构，带上磁盘 `disk.img`（第一次运行时创建）和一块接 QEMU 用户网络的 virtio-net 网卡。控制台是串口，接到当前终端；命令行能做什么见 [启动映像和命令行](reference/shell.md)。x86 上内核的输出同时写到 VGA 屏幕：`make run QEMU_DISPLAY=cocoa`（macOS；Linux 上是 `gtk` 或 `sdl`）打开 QEMU 的窗口就能看到，在窗口里敲的键走 PS/2 键盘驱动。
 
 直接调用 QEMU 的话，最少只需要 `-kernel`：
 
@@ -86,7 +86,17 @@ timeout 20 qemu-system-aarch64 -M virt -cpu cortex-a72 -kernel build/arm64/casto
 # arm64：同上，设备名换成 virtio-blk-device / virtio-net-device
 ```
 
-向 QEMU 的标准输入写入的内容经 uart 驱动送到 sh，所以也可以用管道喂命令；Ctrl-C 是字节 `0x03`，Ctrl-D 是 `0x04`。
+向 QEMU 的标准输入写入的内容经 uart 驱动和 console 服务送到 sh，所以也可以用管道喂命令；Ctrl-C 是字节 `0x03`，Ctrl-D 是 `0x04`。
+
+## 在真机上运行
+
+`qemu -kernel` 是 QEMU 自己把内核装进内存，真机上要有引导程序来做这件事。`make iso`（i686 或 x86_64）做一个带 GRUB 的可引导映像 `build/<arch>/castor.iso`：刻成光盘，或者原样写进 U 盘（`dd if=build/i686/castor.iso of=/dev/<U 盘>`，会覆盖整个 U 盘），从它启动。init 和所有模块都嵌在内核映像里，映像里除了 GRUB 只有这一个文件。需要 `grub-mkrescue` 和 `xorriso`（macOS：`brew install i686-elf-grub xorriso`）。
+
+`make run-iso` 在 QEMU 里走同一条路（BIOS → 光盘上的 GRUB → 内核），写进 U 盘之前先用它看一眼；加 `QEMU_DISPLAY=cocoa` 看屏幕。
+
+真机上能用的是屏幕（VGA 文本模式）、PS/2 键盘和启动映像里的程序。机器有串口的话串口控制台照常可用（COM1，38400 8N1），没有就自动不用。
+
+当前的限制：只支持 BIOS 启动（UEFI 启动的机器没有 VGA 文本模式，屏幕上什么都看不到）；磁盘和网卡只有 virtio 的驱动，真机上 `blk`、`diskfs` 和 `net` 找不到设备直接退出，`disk:` 和网络都用不了；只在 QEMU 里验证过。
 
 ## GDB
 

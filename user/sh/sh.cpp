@@ -1,6 +1,6 @@
 // sh - 一个很小的命令行
 //
-// 由 init 启动（非特权）。输入来自 uart 驱动。除了几个内置命令，一行的第一个词
+// 由 init 启动（非特权）。输入来自 console 服务。除了几个内置命令，一行的第一个词
 // 被当作文件服务里的程序：读出它的 ELF 映像，fork 之后带着这一行的参数 exec。
 // 行尾加 & 让程序在后台运行；前台程序运行期间按 Ctrl-C 终止它。
 // cmd < in > out 2> err 把程序的标准输入/输出/错误输出换成文件，cmd1 | cmd2 把前一个的输出
@@ -67,7 +67,7 @@ static void *load_file(const char *name, size_t *size) {
 #define SIGINT      2
 #define SIGKILL     9
 
-static int uart = 0;            // uart 驱动的 PID
+static int console = 0;         // console 服务的 PID
 
 // ============================================================================
 // 输入
@@ -80,9 +80,9 @@ static size_t pending_len = 0;
 /** 从驱动读输入放进 pending，最多等 timeout_ms 毫秒（0 = 一直等）。@return 驱动还在不在 */
 static bool fetch_input(uint32_t timeout_ms) {
     struct ipc_msg m = {};
-    m.label = UART_READ;
+    m.label = CONSOLE_READ;
     m.data[0] = timeout_ms;
-    if (ipc_call(uart, &m) != 0 || (long)m.data[0] < 0) {
+    if (ipc_call(console, &m) != 0 || (long)m.data[0] < 0) {
         return false;
     }
     const char *in = (const char *)&m.data[1];
@@ -106,26 +106,26 @@ static bool take_ctrl_c(void) {
 
 /** 告诉驱动谁在前台（0 = 没有）。设置之前，把已经读来还没处理的输入退回去留给它 */
 static void set_foreground(int pid) {
-    if (uart <= 0) {
+    if (console <= 0) {
         return;
     }
     struct ipc_msg m;
     for (size_t done = 0; pid != 0 && done < pending_len; ) {
-        size_t n = pending_len - done < UART_READ_MAX ? pending_len - done : UART_READ_MAX;
+        size_t n = pending_len - done < CONSOLE_READ_MAX ? pending_len - done : CONSOLE_READ_MAX;
         m = {};
-        m.label = UART_UNREAD;
+        m.label = CONSOLE_UNREAD;
         m.data[0] = n;
         memcpy(&m.data[1], pending + done, n);
-        ipc_call(uart, &m);
+        ipc_call(console, &m);
         done += n;
     }
     if (pid != 0) {
         pending_len = 0;
     }
     m = {};
-    m.label = UART_SET_FOREGROUND;
+    m.label = CONSOLE_SET_FOREGROUND;
     m.data[0] = (uint64_t)pid;
-    ipc_call(uart, &m);
+    ipc_call(console, &m);
 }
 
 // ============================================================================
@@ -314,7 +314,7 @@ static void run_pipeline(struct stage *stages, int count, bool background) {
             int running = 0;
             for (int i = 0; i < count; i++) {
                 if (!stages[i].exited) {
-                    stages[i].exited = waitpid(stages[i].pid, &stages[i].status, uart > 0 ? WNOHANG : 0)
+                    stages[i].exited = waitpid(stages[i].pid, &stages[i].status, console > 0 ? WNOHANG : 0)
                                        == stages[i].pid;
                     running += !stages[i].exited;
                 }
@@ -322,10 +322,10 @@ static void run_pipeline(struct stage *stages, int count, bool background) {
             if (running == 0) {
                 break;
             }
-            if (uart > 0 && !fetch_input(20)) {
-                uart = 0;           // 驱动没了：退回到单纯地等
+            if (console > 0 && !fetch_input(20)) {
+                console = 0;           // 服务没了：退回到单纯地等
             }
-            if (uart > 0 && !interrupted && take_ctrl_c()) {
+            if (console > 0 && !interrupted && take_ctrl_c()) {
                 printf("^C\n");
                 // 从管道的最后一段往前杀。反过来的话，前一段一死，后一段读到"输入结束"
                 // 就自己正常退出了（它可能正在另一个 CPU 上运行，比我们的下一个 kill 快），
@@ -683,7 +683,7 @@ static void run_script_command(char **argv, int argc, bool background) {
     }
     int pid = fork();
     if (pid == 0) {
-        uart = 0;
+        console = 0;
         pending_len = 0;
         memset(jobs, 0, sizeof(jobs));
         run_script(args, count);
@@ -699,17 +699,17 @@ static void run_script_command(char **argv, int argc, bool background) {
     printf("[%d] %s\n", pid, args[0]);
 }
 
-/** 找到 uart 驱动，登记为终端的主人。驱动重启之后（init 会重启它）要重新来一遍 */
-static bool attach_uart(void) {
-    uart = name_wait("uart");
+/** 找到 console 服务，登记为终端的主人。它重启之后（init 会重启它）要重新来一遍 */
+static bool attach_console(void) {
+    console = name_wait(CONSOLE_SERVICE_NAME);
     struct ipc_msg attach = {};
-    attach.label = UART_ATTACH;
-    return uart > 0 && ipc_call(uart, &attach) == 0 && attach.data[0] == 0;
+    attach.label = CONSOLE_ATTACH;
+    return console > 0 && ipc_call(console, &attach) == 0 && attach.data[0] == 0;
 }
 
 int main(int argc, char **argv) {
-    if (!attach_uart()) {
-        printf("sh: cannot use the uart driver\n");
+    if (!attach_console()) {
+        printf("sh: cannot use the console service\n");
         return 1;
     }
     // 启动脚本。命令行自己崩溃后被 init 重启时不再执行：那是开机时做一次的事
@@ -719,7 +719,7 @@ int main(int argc, char **argv) {
         char *rc_argv[] = { rc_name };
         run_script(rc_argv, 1);
     }
-    printf("sh: ready, reading commands from uart (pid %d); try help\n> ", uart);
+    printf("sh: ready, reading commands from console (pid %d); try help\n> ", console);
 
     static char line[128];
     size_t len = 0;
@@ -729,8 +729,8 @@ int main(int argc, char **argv) {
             int running = reap_jobs();
             if (!fetch_input(running > 0 ? 200 : 0)) {
                 // 驱动不在了。init 会重启它：等新的那个出现，重新登记
-                printf("sh: uart driver is gone, waiting for a new one\n");
-                if (!attach_uart()) {
+                printf("sh: console service is gone, waiting for a new one\n");
+                if (!attach_console()) {
                     return 1;
                 }
                 printf("> ");

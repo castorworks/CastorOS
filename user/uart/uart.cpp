@@ -1,19 +1,16 @@
 // uart - 用户态串口输入驱动
 //
-// 内核只用串口做调试输出（kprintf / console_write）；接收方向完全在这里：
-// 认领串口中断，把收到的字节存进缓冲区，通过 IPC 交给读者。
-// 读者有两个：终端的主人（命令行）和它指定的前台进程，协议见 <console.h>。
+// 内核只用串口做调试输出（kprintf / console_write）；接收方向完全在这里：认领串口中断，
+// 把收到的字节交给 console 服务（console_input，见 <console.h>）。终端的输入归谁由它管，
+// 本进程只管把字节从硬件里读出来。
 // x86 是 16550，通过 I/O 端口访问；arm64 是 PL011，寄存器用 map_device 映射进自己的
 // 地址空间。设备在哪里、用哪个中断不写在这里：init 许可给本进程的端口（或设备内存）
 // 和中断线就是它的设备（hw_find）。
 
 #include <syscall.h>
 #include <stdio.h>
-#include <string.h>
 #include <names.h>
 #include <console.h>
-
-static int uart_irq;
 
 #if defined(ARCH_ARM64)
 
@@ -67,6 +64,7 @@ static char hw_rx_byte(void) {
 #define UART_RBR        0           // 接收缓冲
 #define UART_IER        1           // 中断使能
 #define UART_LSR        5           // 线路状态
+#define UART_SCR        7           // 暂存寄存器：写什么读回什么，没有别的作用
 #define UART_IER_RX     0x01
 #define UART_LSR_DR     0x01        // 有数据可读
 
@@ -82,6 +80,11 @@ static uint32_t reg_read(uint32_t off) {
 
 static bool hw_init(const struct hw_range *where) {
     uart_base = (uint32_t)where->start;
+    // 这台机器有串口吗？没有的话端口读回来的不是写进去的（通常全是 1）
+    if (io_write(uart_base + UART_SCR, 1, 0x5A) != 0 || reg_read(UART_SCR) != 0x5A ||
+        io_write(uart_base + UART_SCR, 1, 0xA5) != 0 || reg_read(UART_SCR) != 0xA5) {
+        return false;
+    }
     return io_write(uart_base + UART_IER, 1, UART_IER_RX) == 0;
 }
 
@@ -99,217 +102,56 @@ static char hw_rx_byte(void) {
 
 #endif
 
-// 环形缓冲区
-#define RING_SIZE 256
-struct ring {
-    char buf[RING_SIZE];
-    uint32_t head;      // 下一个写入位置
-    uint32_t tail;      // 下一个读取位置
-};
-
-static bool ring_empty(const struct ring *r) {
-    return r->head == r->tail;
-}
-
-static void ring_put(struct ring *r, char c) {
-    uint32_t next = (r->head + 1) % RING_SIZE;
-    if (next != r->tail) {      // 满了就丢弃
-        r->buf[r->head] = c;
-        r->head = next;
-    }
-}
-
-static char ring_get(struct ring *r) {
-    char c = r->buf[r->tail];
-    r->tail = (r->tail + 1) % RING_SIZE;
-    return c;
-}
-
-// 在等输入的读者
-struct reader {
-    int pid;            // 0 表示没有人在等
-    uint64_t deadline;  // 最晚等到什么时候（开机以来的毫秒数），0 表示一直等
-};
-
-static int owner = 0;           // 终端的主人（命令行）
-static int foreground = 0;      // 主人指定的前台进程，0 表示没有
-
-static struct ring owner_input;         // 给主人的输入
-static struct ring program_input;       // 给前台进程的输入
-static struct reader owner_reader;
-static struct reader program_reader;
-
-// 一个新到的字节该给谁：有前台进程时归它，但 Ctrl-C 总是给主人
-static void route(char c) {
-    ring_put(foreground != 0 && c != CONSOLE_CTRL_C ? &program_input : &owner_input, c);
-}
-
-static void drain_hw(void) {
+/** 读走硬件里所有的字节，交给 console */
+static void drain(void) {
+    char bytes[CONSOLE_READ_MAX];
+    uint32_t n = 0;
     hw_irq_clear();
     while (hw_rx_ready()) {
-        route(hw_rx_byte());
-    }
-}
-
-static void reply_value(int pid, long value) {
-    struct ipc_msg m = {};
-    m.data[0] = (uint64_t)value;
-    ipc_reply(pid, &m);
-}
-
-// 有数据时应答在等的读者。by_line：一次最多给到一行的结尾（换行或 Ctrl-D）为止，
-// 这样程序读完自己要的那几行就退出时，后面的输入还在我们这里，可以还给主人
-static void serve(struct reader *reader, struct ring *input, bool by_line) {
-    if (reader->pid == 0 || ring_empty(input)) {
-        return;
-    }
-    struct ipc_msg m = {};
-    m.label = UART_READ;
-    char *out = (char *)&m.data[1];
-    uint32_t n = 0;
-    while (n < UART_READ_MAX && !ring_empty(input)) {
-        char c = ring_get(input);
-        out[n++] = c;
-        if (by_line && (c == '\n' || c == '\r' || c == CONSOLE_CTRL_D)) {
-            break;
+        bytes[n++] = hw_rx_byte();
+        if (n == CONSOLE_READ_MAX) {
+            console_input(bytes, n);
+            n = 0;
         }
     }
-    m.data[0] = n;
-    ipc_reply(reader->pid, &m);
-    reader->pid = 0;
-}
-
-// 读者等到时间了就告诉它没有输入。@return 它还要等多少毫秒，0 表示不用为它定时
-static uint64_t check_deadline(struct reader *reader, uint64_t now) {
-    if (reader->pid == 0 || reader->deadline == 0) {
-        return 0;
-    }
-    if (now >= reader->deadline) {
-        reply_value(reader->pid, 0);
-        reader->pid = 0;
-        return 0;
-    }
-    return reader->deadline - now;
-}
-
-static void set_foreground(int pid) {
-    if (pid != 0) {
-        // 主人还没读走的输入是敲给这个程序的；Ctrl-C 留给主人
-        struct ring rest = {};
-        while (!ring_empty(&owner_input)) {
-            char c = ring_get(&owner_input);
-            ring_put(c == CONSOLE_CTRL_C ? &rest : &program_input, c);
-        }
-        owner_input = rest;
-    } else {
-        // 前台进程结束了：它没读完的输入还给主人，在等的读者（多半已经不在了）不再等
-        if (program_reader.pid != 0) {
-            reply_value(program_reader.pid, -1);
-            program_reader.pid = 0;
-        }
-        owner_input = program_input;
-        program_input = {};
-    }
-    foreground = pid;
-}
-
-static void handle_request(const struct ipc_msg *m) {
-    int sender = (int)m->sender;
-    switch (m->label) {
-    case UART_READ: {
-        struct reader *reader = sender == owner ? &owner_reader
-                              : sender == foreground ? &program_reader : NULL;
-        if (!reader) {
-            reply_value(sender, -1);
-            return;
-        }
-        reader->pid = sender;
-        reader->deadline = m->data[0] ? uptime_ms() + m->data[0] : 0;
-        return;
-    }
-    case UART_ATTACH:
-        if (owner != 0 && owner != sender && kill(owner, 0) == 0) {
-            reply_value(sender, -1);
-            return;
-        }
-        owner = sender;
-        owner_reader.pid = 0;
-        set_foreground(0);
-        reply_value(sender, 0);
-        return;
-    case UART_SET_FOREGROUND:
-        if (sender != owner) {
-            reply_value(sender, -1);
-            return;
-        }
-        set_foreground((int)m->data[0]);
-        reply_value(sender, 0);
-        return;
-    case UART_UNREAD: {
-        if (sender != owner || m->data[0] > UART_READ_MAX) {
-            reply_value(sender, -1);
-            return;
-        }
-        const char *in = (const char *)&m->data[1];
-        for (uint32_t i = 0; i < (uint32_t)m->data[0]; i++) {
-            ring_put(in[i] == CONSOLE_CTRL_C ? &owner_input : &program_input, in[i]);
-        }
-        reply_value(sender, 0);
-        return;
-    }
-    default:
-        return;     // 不认识的请求：不应答
+    if (n > 0) {
+        console_input(bytes, n);
     }
 }
 
 int main() {
     struct hw_range where, irq;
-    if (!hw_find(UART_HW_KIND, 0, &where) || !hw_find(HW_IRQ, 0, &irq)) {
-        printf("uart: no serial port found\n");
+    if (!hw_find(UART_HW_KIND, 0, &where) || !hw_find(HW_IRQ, 0, &irq) || !hw_init(&where)) {
+        printf("uart: no serial port\n");
         return 1;
     }
-    uart_irq = (int)irq.start;
+    int uart_irq = (int)irq.start;
     if (irq_claim(uart_irq) != 0) {
         printf("uart: cannot claim IRQ %d\n", uart_irq);
         return 1;
     }
-    if (!hw_init(&where)) {
-        printf("uart: cannot access the device\n");
-        return 1;
-    }
-    drain_hw();
-    if (name_register("uart") != 0) {
+    if (name_register(UART_NAME) != 0) {
         printf("uart: cannot register name\n");
         return 1;
     }
     printf("uart: driver ready (pid %d, irq %d)\n", getpid(), uart_irq);
+    drain();        // 认领之前就到了的字节
 
     struct ipc_msg m;
     for (;;) {
         if (ipc_recv(IPC_ANY, &m) != 0) {
             continue;
         }
-
-        if (m.sender == IPC_KERNEL) {
-            if (m.label == IPC_LABEL_IRQ) {
-                drain_hw();
-                irq_ack(uart_irq);
-            }
-            // IPC_LABEL_TIMER：下面统一检查读者是否超时
-        } else {
-            handle_request(&m);
+        if (m.sender == IPC_KERNEL && m.label == IPC_LABEL_IRQ) {
+            drain();
+            irq_ack(uart_irq);
         }
-
-        serve(&owner_reader, &owner_input, false);
-        serve(&program_reader, &program_input, true);
-
-        // 带着超时在等的读者：到时间了就应答，否则让定时器到时候叫醒我们
-        uint64_t now = uptime_ms();
-        uint64_t a = check_deadline(&owner_reader, now);
-        uint64_t b = check_deadline(&program_reader, now);
-        uint64_t next = a != 0 && (b == 0 || a < b) ? a : b;
-        if (next != 0) {
-            timer_set((uint32_t)next);
+        if (m.sender != IPC_KERNEL && m.label == CONSOLE_DEBUG_EXIT) {
+            struct ipc_msg done = {};
+            ipc_reply((int)m.sender, &done);
+            printf("uart: exiting on request (CONSOLE_DEBUG_EXIT)\n");
+            exit(1);
         }
+        // 别的请求：没有这样的请求，不应答
     }
 }

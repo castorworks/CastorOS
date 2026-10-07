@@ -17,7 +17,7 @@
 | [系统调用表](reference/syscalls.md) | 32 个系统调用的编号、参数和权限要求 |
 | [进程间通信](reference/ipc.md) | 同步消息传递、超时、共享内存、名字服务 |
 | [特权与硬件访问](reference/hardware.md) | 特权、许可表、I/O 端口、设备内存、DMA、设备中断 |
-| [用户态驱动](reference/drivers.md) | 串口驱动 uart、virtio 的公共部分、块设备驱动 blk |
+| [用户态驱动](reference/drivers.md) | 终端输入服务 console、串口驱动 uart、键盘驱动 kbd、virtio 的公共部分、块设备驱动 blk |
 | [文件服务](reference/fs.md) | 协议、路径和目录、ramfs 和 diskfs、磁盘格式 |
 | [网络](reference/net.md) | 客户端接口、协议栈、DHCP、TCP、在 QEMU 里使用 |
 | [启动映像和命令行](reference/shell.md) | 运行程序、后台任务、键盘输入、重定向和管道、脚本、程序参数 |

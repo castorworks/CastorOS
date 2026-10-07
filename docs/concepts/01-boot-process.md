@@ -170,7 +170,8 @@ higher_half:
 void kernel_main(multiboot_info_t *mbi) {
     cxx_global_ctors_init();      // C++ 全局构造函数
 
-    drivers::Serial::init();      // 串口：内核唯一的输出设备
+    drivers::Serial::init();      // 串口：内核的输出设备
+    drivers::Screen::init();      // 屏幕（VGA 文本模式）：同一份输出也写到这里
     print_banner();
 
     hal::Cpu::init();             // GDT + TSS

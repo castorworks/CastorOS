@@ -151,7 +151,7 @@ OBJECTS = $(ASM_OBJECTS) $(C_OBJECTS) $(INIT_OBJECT)
 # 构建
 # ============================================================================
 
-.PHONY: all clean clean-all run debug test run-test test-all build-all check init info sources compile-db help
+.PHONY: all clean clean-all run debug iso run-iso test run-test test-all build-all check init info sources compile-db help
 
 all: $(BOOT_IMAGE)
 
@@ -202,7 +202,10 @@ check: $(BOOT_IMAGE)
 
 # QEMU_MEMORY=4G 之类：给虚拟机的内存（不写就是 QEMU 的默认值 128MB），run 和 test 都认
 # SMP=2 之类：给虚拟机几个 CPU（不写就是 1 个，内核最多用 8 个）
-QEMU_BASE = $(QEMU) $(QEMU_MACHINE) $(if $(QEMU_MEMORY),-m $(QEMU_MEMORY)) $(if $(SMP),-smp $(SMP)) -kernel $(BOOT_IMAGE) -serial stdio -display none
+# QEMU_DISPLAY=cocoa 之类：打开 QEMU 的窗口（不写就没有窗口）。x86 上窗口里是 VGA 屏幕，
+# 在窗口里敲的键走 PS/2 键盘驱动；arm64 没有屏幕
+QEMU_DISPLAY ?= none
+QEMU_BASE = $(QEMU) $(QEMU_MACHINE) $(if $(QEMU_MEMORY),-m $(QEMU_MEMORY)) $(if $(SMP),-smp $(SMP)) -kernel $(BOOT_IMAGE) -serial stdio -display $(QEMU_DISPLAY)
 
 # virtio 设备：x86 挂在 PCI 上，arm64 挂在 virtio-mmio 上
 ifeq ($(ARCH),arm64)
@@ -226,6 +229,11 @@ DISK ?= disk.img
 DISK_SIZE_MB ?= 16
 # make test 用的磁盘：每次重新创建（2MB，小到 selftest 可以把它写满）
 TEST_DISK = $(BUILD_DIR)/test-disk.img
+# make test 在 x86 上还要在虚拟机的键盘上敲键：通过 QEMU 的监视器（一对管道，
+# scripts/shell-test.sh 创建），arm64 没有键盘
+ifneq ($(ARCH),arm64)
+    TEST_MONITOR = $(BUILD_DIR)/monitor
+endif
 
 QEMU_RUN = $(QEMU_BASE) $(call qemu_disk,$(DISK)) $(QEMU_NET)
 
@@ -239,6 +247,34 @@ run: $(BOOT_IMAGE) $(DISK)
 debug: $(BOOT_IMAGE) $(DISK)
 	$(QEMU_RUN) -s -S
 
+# ============================================================================
+# 可引导的光盘映像（真机用）
+# ============================================================================
+# qemu -kernel 是 QEMU 自己把内核装进内存；真机上要有引导程序来做这件事。make iso 做一个
+# 带 GRUB 的映像：刻成光盘，或者原样写进 U 盘（dd），用 BIOS 方式启动的 PC 都能从它启动。
+# init 和所有模块都嵌在内核映像里，GRUB 只需要加载这一个文件。
+# 需要 grub-mkrescue（Homebrew 的 i686-elf-grub 里叫 i686-elf-grub-mkrescue）和 xorriso。
+ISO = $(BUILD_DIR)/castor.iso
+ISO_ROOT = $(BUILD_DIR)/iso
+GRUB_MKRESCUE ?= $(shell command -v i686-elf-grub-mkrescue || command -v grub-mkrescue)
+
+iso: $(ISO)
+
+$(ISO): $(BOOT_IMAGE)
+ifeq ($(ARCH),arm64)
+	$(error make iso is for PCs: use ARCH=i686 or ARCH=x86_64)
+endif
+	@test -n "$(GRUB_MKRESCUE)" || { echo "grub-mkrescue not found (macOS: brew install i686-elf-grub xorriso)"; exit 1; }
+	@rm -rf $(ISO_ROOT) && mkdir -p $(ISO_ROOT)/boot/grub
+	@cp $(BOOT_IMAGE) $(ISO_ROOT)/boot/castor
+	@printf 'set timeout=0\nmenuentry "CastorOS" {\n    multiboot /boot/castor\n}\n' > $(ISO_ROOT)/boot/grub/grub.cfg
+	@$(GRUB_MKRESCUE) -o $@ $(ISO_ROOT) 2> $(BUILD_DIR)/iso.log || { cat $(BUILD_DIR)/iso.log; exit 1; }
+	@echo "✓ Bootable image: $@"
+
+# 像真机那样启动：BIOS -> 光盘上的 GRUB -> 内核
+run-iso: $(ISO)
+	$(QEMU) $(if $(QEMU_MEMORY),-m $(QEMU_MEMORY)) $(if $(SMP),-smp $(SMP)) -cdrom $(ISO) -serial stdio -display $(QEMU_DISPLAY)
+
 # 构建带内核测试的版本并运行：等命令行就绪后，scripts/shell-test.sh 再向串口输入一串命令，
 # 检查命令行的行为（后台任务、Ctrl-C、kill）。完整日志写入 $(BUILD_DIR)/test.log，
 # 命令行检查的结果写入 $(BUILD_DIR)/shell-test.log，这里只汇总。
@@ -248,8 +284,8 @@ test:
 run-test: $(BOOT_IMAGE)
 	@echo "━━━ $(ARCH): running kernel tests, user-space selftest and shell checks ━━━"
 	@dd if=/dev/zero of=$(TEST_DISK) bs=1048576 count=2 2>/dev/null
-	@scripts/shell-test.sh $(BUILD_DIR)/test.log $(BUILD_DIR)/shell-test.log $(TEST_TIMEOUT) \
-	     $(QEMU_BASE) $(call qemu_disk,$(TEST_DISK)) $(QEMU_NET)
+	@MONITOR=$(TEST_MONITOR) scripts/shell-test.sh $(BUILD_DIR)/test.log $(BUILD_DIR)/shell-test.log $(TEST_TIMEOUT) \
+	     $(QEMU_BASE) $(call qemu_disk,$(TEST_DISK)) $(QEMU_NET) $(if $(TEST_MONITOR),-monitor pipe:$(TEST_MONITOR))
 	@grep -a "FAILED" $(BUILD_DIR)/shell-test.log || true
 	@awk 'function num(key,  s) { if (!match($$0, key ": *[0-9]+")) return 0; \
 	         s = substr($$0, RSTART, RLENGTH); sub(/.*: */, "", s); return s + 0 } \
@@ -312,8 +348,9 @@ help:
 	@echo ""
 	@echo "  all (default)  Build the kernel with user/init embedded"
 	@echo "  build-all      Build all architectures"
-	@echo "  run            Run in QEMU (serial console on stdio)"
+	@echo "  run            Run in QEMU (serial console on stdio; QEMU_DISPLAY=cocoa opens the screen)"
 	@echo "  debug          Run in QEMU waiting for GDB on :1234"
+	@echo "  iso            Bootable image with GRUB, for a real PC (CD or USB stick); run-iso boots it in QEMU"
 	@echo "  test           Build with in-kernel tests (KTEST=1), boot, and check the results"
 	@echo "  test-all       test for every architecture"
 	@echo "  lib-test       Run the user library's host-side tests (no cross compiler or QEMU needed)"
