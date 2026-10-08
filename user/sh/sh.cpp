@@ -550,6 +550,7 @@ static void run_command(char *line) {
             printf("  cmd 2> file            write error messages to a file\n");
             printf("  cmd | cmd              feed one program's output to the next, e.g.: ls | grep sh | wc\n");
             printf("a text file is run as a script, one command per line; $1-$9 are its arguments\n");
+            printf("poweroff switches the machine off, reboot restarts it\n");
             return;
         }
         if (strcmp(st->argv[0], "jobs") == 0) {
