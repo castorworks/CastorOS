@@ -22,7 +22,7 @@ void pci_write(pci_dev_t dev, uint32_t off, uint32_t value) {
     io_write(PCI_CONFIG_DATA, 4, value);
 }
 
-bool pci_find_class(uint32_t class_code, pci_dev_t *dev) {
+bool pci_find_class(uint32_t class_code, uint32_t index, pci_dev_t *dev) {
     for (uint32_t device = 0; device < 32; device++) {
         if ((pci_read(PCI_DEV(device, 0), PCI_ID) & 0xFFFF) == 0xFFFF) {
             continue;
@@ -31,7 +31,8 @@ bool pci_find_class(uint32_t class_code, pci_dev_t *dev) {
         uint32_t functions = pci_read(PCI_DEV(device, 0), PCI_HEADER) & (1u << 23) ? 8 : 1;
         for (uint32_t function = 0; function < functions; function++) {
             pci_dev_t d = PCI_DEV(device, function);
-            if ((pci_read(d, PCI_ID) & 0xFFFF) != 0xFFFF && (pci_read(d, PCI_CLASS) >> 8) == class_code) {
+            if ((pci_read(d, PCI_ID) & 0xFFFF) != 0xFFFF && (pci_read(d, PCI_CLASS) >> 8) == class_code &&
+                index-- == 0) {
                 *dev = d;
                 return true;
             }

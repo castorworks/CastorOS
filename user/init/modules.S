@@ -14,6 +14,7 @@
     module uart, uart_IMAGE
 #if !defined(ARCH_ARM64)
     module kbd, kbd_IMAGE
+    module usbkbd, usbkbd_IMAGE
 #endif
     module blk, blk_IMAGE
     module net, net_IMAGE

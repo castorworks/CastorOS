@@ -6,7 +6,7 @@ ASM_SOURCES = modules.S
 
 MODULE_NAMES = console uart blk net ramfs diskfs sh
 ifneq ($(ARCH),arm64)
-MODULE_NAMES += kbd         # PS/2 键盘只有 PC 有
+MODULE_NAMES += kbd usbkbd  # 键盘（PS/2 和 USB）只有 PC 有
 endif
 MODULES = $(foreach m,$(MODULE_NAMES),../$(m)/build/$(ARCH)/$(m).elf)
 ASM_DEFINES = $(foreach m,$(MODULE_NAMES),-D$(m)_IMAGE='"../$(m)/build/$(ARCH)/$(m).stripped.elf"')

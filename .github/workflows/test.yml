@@ -64,6 +64,15 @@ jobs:
           - arch: i686
             packages: i686-elf-gcc nasm
             disk: usb
+          # 接上 USB 键盘：敲的键走 usbkbd
+          - arch: i686
+            packages: i686-elf-gcc nasm
+            kbd: usb
+          # U 盘和 USB 键盘在同一个 USB 2.0 控制器的口上，键盘由伙伴控制器接手（真机上是这样）
+          - arch: i686
+            packages: i686-elf-gcc nasm
+            disk: usb
+            kbd: usb
           # 不接磁盘：根在内存里（从光盘启动、或者磁盘上没有这个系统时是这样）
           - arch: i686
             packages: i686-elf-gcc nasm
@@ -84,7 +93,7 @@ jobs:
       # runner 比开发机慢，而且 QEMU 在上面是纯软件模拟：把等待的上限放宽。
       # 这些只是上限，检查一做完就结束，不会多等。
       - name: Build and test
-        run: make test ARCH=${{ matrix.arch }} TEST_TIMEOUT=600 ${{ matrix.smp && format('SMP={0}', matrix.smp) || '' }} ${{ matrix.disk && format('DISK_BUS={0}', matrix.disk) || '' }} ${{ matrix.live && 'LIVE=1' || '' }}
+        run: make test ARCH=${{ matrix.arch }} TEST_TIMEOUT=600 ${{ matrix.smp && format('SMP={0}', matrix.smp) || '' }} ${{ matrix.disk && format('DISK_BUS={0}', matrix.disk) || '' }} ${{ matrix.live && 'LIVE=1' || '' }} ${{ matrix.kbd && format('KBD={0}', matrix.kbd) || '' }}
         env:
           STEP_TIMEOUT: 120
 

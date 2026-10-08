@@ -47,7 +47,7 @@ make help
 
 ## 运行起来是什么样
 
-内核启动后加载内嵌的 `user/init`：它启动用户态的终端输入服务 `user/console`、串口驱动 `user/uart`、键盘驱动 `user/kbd`（x86）、块设备驱动 `user/blk`、网络服务 `user/net`、内存文件系统 `user/ramfs`、磁盘文件系统 `user/diskfs` 和命令行 `user/sh`，自己充当名字服务。文件都在一棵目录树里（`/bin`、`/etc`、`/home`、`/tmp`……），根在磁盘上；sh 先执行 `/etc/rc`（运行用户态自检 `selftest`），然后接受命令：
+内核启动后加载内嵌的 `user/init`：它启动用户态的终端输入服务 `user/console`、串口驱动 `user/uart`、键盘驱动 `user/kbd` 和 `user/usbkbd`（x86）、块设备驱动 `user/blk`、网络服务 `user/net`、内存文件系统 `user/ramfs`、磁盘文件系统 `user/diskfs` 和命令行 `user/sh`，自己充当名字服务。文件都在一棵目录树里（`/bin`、`/etc`、`/home`、`/tmp`……），根在磁盘上；sh 先执行 `/etc/rc`（运行用户态自检 `selftest`），然后接受命令：
 
 ```text
 > ls /
@@ -77,7 +77,7 @@ HTTP/1.1 200 OK
 
 除了 `/tmp`（在内存里），整棵树都在磁盘上（`make run` 用的是 `disk-<arch>.img`），改的东西重启后还在。没有磁盘、或者磁盘上没有这个系统时，根退回到内存里，用的是内核带着的那一份。`make iso` 做出的系统映像可以原样写进一台 PC 的硬盘或者 U 盘，从它启动。
 
-这些都发生在用户态：键盘输入经串口中断 → uart 驱动 → console 服务 → IPC 到达 sh（PC 的键盘则是键盘中断 → kbd 驱动 → console 服务）；文件操作经 IPC 和共享缓冲区交给文件服务，磁盘文件再经块设备服务到 virtio-blk 驱动；网络请求交给 `user/net`（virtio-net 驱动加 ARP/IPv4/ICMP/UDP/TCP 协议栈，启动时用 DHCP 取地址，接 QEMU 的用户网络）；运行程序是从文件服务读出 ELF 后 `fork` + `exec`，这一行的其余部分作为参数传给 `main(argc, argv)`。
+这些都发生在用户态：键盘输入经串口中断 → uart 驱动 → console 服务 → IPC 到达 sh（PC 的键盘则是键盘中断 → kbd 或 usbkbd 驱动 → console 服务）；文件操作经 IPC 和共享缓冲区交给文件服务，磁盘文件再经块设备服务到 virtio-blk 驱动；网络请求交给 `user/net`（virtio-net 驱动加 ARP/IPv4/ICMP/UDP/TCP 协议栈，启动时用 DHCP 取地址，接 QEMU 的用户网络）；运行程序是从文件服务读出 ELF 后 `fork` + `exec`，这一行的其余部分作为参数传给 `main(argc, argv)`。
 
 ## 目录
 
@@ -95,6 +95,7 @@ user/init/     第一个用户进程：启动模块 + 名字服务
 user/console/  终端输入服务
 user/uart/     串口输入驱动
 user/kbd/      PS/2 键盘驱动（x86）
+user/usbkbd/   USB 键盘驱动（x86）
 user/blk/      块设备驱动（virtio-blk，x86 上还有 IDE 硬盘和 USB 2.0 的 U 盘）
 user/net/      网络服务（virtio-net 驱动 + 协议栈）
 user/ramfs/    内存文件系统服务（/tmp；没有磁盘时也是根，内嵌启动映像）

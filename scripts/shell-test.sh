@@ -10,10 +10,16 @@
 #
 # 环境变量 MONITOR（可选）：QEMU 监视器的管道，QEMU 命令里要有 -monitor pipe:$MONITOR。
 # 有它才检查键盘：监视器的 sendkey 命令在虚拟机的键盘上敲键。
+# 环境变量 KBD_DRIVER（可选）：敲的键到的是哪个驱动，kbd（PS/2，不写就是它）或 usbkbd
+# （虚拟机上接了 USB 键盘时，QEMU 把键送给它）。
 
 LOG=$1; RESULTS=$2; BOOT_TIMEOUT=$3; shift 3
 STEP_TIMEOUT=${STEP_TIMEOUT:-30}
 FIFO=$LOG.stdin
+KBD_DRIVER=${KBD_DRIVER:-kbd}
+# 这个驱动可以收键了的那一行。USB 键盘要等驱动在端口上认出它
+KBD_READY='kbd: driver ready'
+[ "$KBD_DRIVER" = usbkbd ] && KBD_READY='usbkbd: keyboard ready'
 
 rm -f "$FIFO"; mkfifo "$FIFO" || exit 1
 if [ -n "$MONITOR" ]; then
@@ -322,6 +328,7 @@ check "ctrl-c stops a script" script_interrupt
 
 # ---- 键盘（PC）：敲的键和串口来的输入走同一条路——Shift、退格、Ctrl-C ----
 keyboard_input() {
+    MARK=0; expect "$KBD_READY" || return 1
     keys e c h o spc shift-k e y s spc x backspace 1 ret; expect '^Keys 1$' || return 1
     keys s l e e p spc 6 0 ret; expect 'sleep 60$' || return 1
     sleep 0.5
@@ -339,8 +346,8 @@ check "uart driver is restarted" serial_after_restart uart
 check "console service is restarted" serial_after_restart console
 
 keyboard_after_restart() {
-    send 'selftest restart kbd\n'; expect '^selftest: kbd restarted' || return 1
-    expect 'kbd: driver ready' || return 1
+    send "selftest restart $KBD_DRIVER\\n"; expect "^selftest: $KBD_DRIVER restarted" || return 1
+    expect "$KBD_READY" || return 1
     keys e c h o spc k e y s spc a f t e r ret; expect '^keys after$'
 }
 [ -n "$MONITOR" ] && check "keyboard driver is restarted" keyboard_after_restart

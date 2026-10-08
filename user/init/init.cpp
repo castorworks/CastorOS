@@ -24,6 +24,7 @@ extern "C" const char console_image_start[], console_image_end[];
 extern "C" const char uart_image_start[], uart_image_end[];
 #if !defined(ARCH_ARM64)
 extern "C" const char kbd_image_start[], kbd_image_end[];
+extern "C" const char usbkbd_image_start[], usbkbd_image_end[];
 #endif
 extern "C" const char blk_image_start[], blk_image_end[];
 extern "C" const char net_image_start[], net_image_end[];
@@ -60,9 +61,53 @@ static void allow_kbd(void) {
     hw_allow(HW_PORTS, 0x64, 1);
     hw_allow(HW_IRQ, 1, 1);
 }
-#endif
 
-#if !defined(ARCH_ARM64)
+// UHCI 控制器（USB 1.1，键盘接在它上面）：在 PCI 上按类别找，一台机器上常有好几个。
+// 它的寄存器是一段端口（第 4 个 BAR，32 个）
+#define PCI_CLASS_UHCI          0x0C0300
+#define UHCI_BAR                4
+#define UHCI_PORT_COUNT         32
+#define UHCI_MAX                4       // 最多许可这么多个（usbkbd 也只管这么多）
+#define UHCI_REG_USBCMD         0x00
+#define UHCI_REG_USBINTR        0x04
+// 配置空间里固件和系统之间交接用的寄存器（16 位）
+#define UHCI_LEGACY_SUPPORT     0xC0
+#define UHCI_LEGACY_CLEAR       0x8F00  // 关掉固件的那些中断，清掉它们留下的状态
+#define UHCI_LEGACY_IRQ_ENABLE  0x2000  // 控制器的中断送到它的中断线上（而不是送给固件）
+
+static void allow_usbkbd(void) {
+    uint32_t lines = 0;         // 用到的中断线，每条一位
+    pci_dev_t dev;
+    for (uint32_t index = 0; index < UHCI_MAX && pci_find_class(PCI_CLASS_UHCI, index, &dev); index++) {
+        uint32_t bar = pci_read(dev, PCI_BAR0 + UHCI_BAR * 4);
+        uint32_t base = bar & 0xFFFCu;
+        if (!(bar & 1) || base == 0) {
+            continue;
+        }
+        // 打开端口的访问和总线主控（控制器要自己读写内存）；驱动碰不到配置空间
+        pci_write(dev, PCI_COMMAND, pci_read(dev, PCI_COMMAND) | PCI_COMMAND_IO | PCI_COMMAND_MASTER);
+        // 从固件手里把控制器拿过来。固件可能正用着它，把 USB 键盘装成 PS/2 键盘给没有驱动的
+        // 系统用：靠的是控制器一有事就打断系统、转去执行固件。把这些关掉，让控制器停下来
+        // （上一个驱动如果是崩溃的，它还在照着已经被收回的内存收发），再让它的中断走中断线
+        uint32_t legacy = pci_read(dev, UHCI_LEGACY_SUPPORT) & 0xFFFF0000u;
+        pci_write(dev, UHCI_LEGACY_SUPPORT, legacy | UHCI_LEGACY_CLEAR);
+        io_write(base + UHCI_REG_USBCMD, 2, 0);
+        io_write(base + UHCI_REG_USBINTR, 2, 0);
+        pci_write(dev, UHCI_LEGACY_SUPPORT, legacy | UHCI_LEGACY_IRQ_ENABLE);
+
+        hw_allow(HW_PORTS, base, UHCI_PORT_COUNT);
+        uint32_t line = pci_read(dev, PCI_INTERRUPT) & 0xFF;
+        if (line != 0 && line < 16) {
+            lines |= 1u << line;
+        }
+    }
+    // 几个控制器常常共用一条中断线：每条只许可一次
+    for (uint32_t line = 1; line < 16; line++) {
+        if (lines & (1u << line)) {
+            hw_allow(HW_IRQ, line, 1);
+        }
+    }
+}
 
 // EHCI 控制器：在 PCI 上按类别找。它的寄存器在一段设备内存里（第 0 个 BAR）
 #define PCI_CLASS_EHCI          0x0C0320
@@ -73,7 +118,7 @@ static void allow_kbd(void) {
 
 static void allow_ehci(void) {
     pci_dev_t dev;
-    if (!pci_find_class(PCI_CLASS_EHCI, &dev)) {
+    if (!pci_find_class(PCI_CLASS_EHCI, 0, &dev)) {
         return;
     }
     uint32_t bar = pci_read(dev, PCI_BAR0);
@@ -160,6 +205,7 @@ static struct module modules[] = {
     { "uart", UART_NAME, uart_image_start, uart_image_end, allow_uart, 0, false, 0 },
 #if !defined(ARCH_ARM64)
     { "kbd", KBD_NAME, kbd_image_start, kbd_image_end, allow_kbd, 0, false, 0 },
+    { "usbkbd", USBKBD_NAME, usbkbd_image_start, usbkbd_image_end, allow_usbkbd, 0, false, 0 },
 #endif
     { "blk", BLK_SERVICE_NAME, blk_image_start, blk_image_end, allow_blk, 0, false, 0 },
     { "net", NET_SERVICE_NAME, net_image_start, net_image_end, allow_net, 0, false, 0 },

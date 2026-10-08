@@ -203,7 +203,7 @@ check: $(BOOT_IMAGE)
 # QEMU_MEMORY=4G 之类：给虚拟机的内存（不写就是 QEMU 的默认值 128MB），run 和 test 都认
 # SMP=2 之类：给虚拟机几个 CPU（不写就是 1 个，内核最多用 8 个）
 # QEMU_DISPLAY=cocoa 之类：打开 QEMU 的窗口（不写就没有窗口）。x86 上窗口里是 VGA 屏幕，
-# 在窗口里敲的键走 PS/2 键盘驱动；arm64 没有屏幕
+# 在窗口里敲的键走 PS/2 键盘驱动（KBD=usb 时走 USB 键盘驱动）；arm64 没有屏幕
 QEMU_DISPLAY ?= none
 QEMU_BASE = $(QEMU) $(QEMU_MACHINE) $(if $(QEMU_MEMORY),-m $(QEMU_MEMORY)) $(if $(SMP),-smp $(SMP)) -kernel $(BOOT_IMAGE) -serial stdio -display $(QEMU_DISPLAY)
 
@@ -215,10 +215,23 @@ else
 endif
 # DISK_BUS=ide 或 usb（只有 x86）：磁盘作为 IDE 硬盘、或者插在 USB 2.0 口上的 U 盘接上，
 # 而不是 virtio-blk；run 和 test 都认。真机上是这两种，用它们来跑那两个驱动
+# KBD=usb（只有 x86）：再接一个 USB 键盘；run 和 test 都认。之后在 QEMU 窗口里敲的键（和
+# make test 敲的键）到的是它，不是 PS/2 键盘。它插在一个 USB 1.1 控制器的口上；和
+# DISK_BUS=usb 一起用时，键盘和 U 盘插在同一个 USB 2.0 控制器的口上，键盘由它的伙伴控制器
+# 接手：真机上是这样的（usb_version=1：QEMU 的键盘默认是高速设备，真键盘不是）
+QEMU_EHCI = usb-ehci,id=ehci
+ifeq ($(KBD),usb)
+ifeq ($(DISK_BUS)$(LIVE),usb)
+QEMU_EHCI = ich9-usb-ehci1,id=ehci -device ich9-usb-uhci1,masterbus=ehci.0,firstport=0
+QEMU_KBD = -device usb-kbd,bus=ehci.0,usb_version=1
+else
+QEMU_KBD = -device piix3-usb-uhci,id=uhci -device usb-kbd,bus=uhci.0
+endif
+endif
 ifeq ($(DISK_BUS),ide)
 qemu_disk = -drive file=$(1),format=raw,if=ide
 else ifeq ($(DISK_BUS),usb)
-qemu_disk = -device usb-ehci,id=ehci -drive file=$(1),format=raw,if=none,id=disk0 -device usb-storage,bus=ehci.0,drive=disk0
+qemu_disk = -device $(QEMU_EHCI) -drive file=$(1),format=raw,if=none,id=disk0 -device usb-storage,bus=ehci.0,drive=disk0
 else
 qemu_disk = -drive file=$(1),format=raw,if=none,id=disk0 -device $(VIRTIO_BLK),drive=disk0
 endif
@@ -255,7 +268,7 @@ ifneq ($(ARCH),arm64)
     TEST_MONITOR = $(BUILD_DIR)/monitor
 endif
 
-QEMU_RUN = $(QEMU_BASE) $(call qemu_disk,$(DISK)) $(QEMU_NET)
+QEMU_RUN = $(QEMU_BASE) $(call qemu_disk,$(DISK)) $(QEMU_NET) $(QEMU_KBD)
 
 disk: $(BOOT_IMAGE) $(MKDISKFS)
 	@$(MKDISKFS) $(DISK) $(DISK_SIZE_MB) $(ROOT_TREE)
@@ -321,8 +334,8 @@ test:
 run-test: $(BOOT_IMAGE) $(MKDISKFS)
 	@echo "━━━ $(ARCH): running kernel tests, user-space selftest and shell checks$(if $(LIVE), (no disk: root in memory)) ━━━"
 	@rm -f $(TEST_DISK) && $(MKDISKFS) $(TEST_DISK) $(TEST_DISK_SIZE_MB) $(ROOT_TREE) > /dev/null
-	@MONITOR=$(TEST_MONITOR) scripts/shell-test.sh $(BUILD_DIR)/test.log $(BUILD_DIR)/shell-test.log $(TEST_TIMEOUT) \
-	     $(QEMU_BASE) $(if $(LIVE),,$(call qemu_disk,$(TEST_DISK))) $(QEMU_NET) $(if $(TEST_MONITOR),-monitor pipe:$(TEST_MONITOR))
+	@MONITOR=$(TEST_MONITOR) KBD_DRIVER=$(if $(QEMU_KBD),usbkbd,kbd) scripts/shell-test.sh $(BUILD_DIR)/test.log $(BUILD_DIR)/shell-test.log $(TEST_TIMEOUT) \
+	     $(QEMU_BASE) $(if $(LIVE),,$(call qemu_disk,$(TEST_DISK))) $(QEMU_NET) $(QEMU_KBD) $(if $(TEST_MONITOR),-monitor pipe:$(TEST_MONITOR))
 	@grep -a "FAILED" $(BUILD_DIR)/shell-test.log || true
 	@awk -v live=$(if $(LIVE),1,0) 'function num(key,  s) { if (!match($$0, key ": *[0-9]+")) return 0; \
 	         s = substr($$0, RSTART, RLENGTH); sub(/.*: */, "", s); return s + 0 } \
@@ -386,6 +399,7 @@ help:
 	@echo "  all (default)  Build the kernel with user/init embedded"
 	@echo "  build-all      Build all architectures"
 	@echo "  run            Run in QEMU (serial console on stdio; QEMU_DISPLAY=cocoa opens the screen)"
+	@echo "  run KBD=usb    x86: also attach a USB keyboard (test KBD=usb checks its driver)"
 	@echo "  debug          Run in QEMU waiting for GDB on :1234"
 	@echo "  iso            System image for a real PC: GRUB, kernel and the root file system; write it to a hard disk"
 	@echo "  run-iso/run-cd/run-usb  Boot that image in QEMU as a hard disk / as a CD (root in memory) / from a USB stick"

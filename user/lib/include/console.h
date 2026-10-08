@@ -3,7 +3,7 @@
 
 // 控制台输入：console 服务的 IPC 协议，以及程序读键盘输入用的函数。
 //
-// 输入有两个来源：串口，和 PC 上的键盘。它们各有自己的驱动（uart、kbd），收到的字符用
+// 输入有两个来源：串口，和 PC 上的键盘。它们各有自己的驱动（uart，键盘是 kbd 和 usbkbd），收到的字符用
 // CONSOLE_INPUT 交给 console，从那里起不分来源。console 自己不碰硬件。
 //
 // console 把输入分给两个读者。"终端的主人"是命令行：它用 CONSOLE_ATTACH 登记自己，
@@ -34,22 +34,23 @@ enum {
      */
     CONSOLE_UNREAD = 4,
     /**
-     * 输入设备的驱动专用（登记了 UART_NAME 或 KBD_NAME 的进程）：设备收到的字符。
+     * 输入设备的驱动专用（登记了 UART_NAME、KBD_NAME 或 USBKBD_NAME 的进程）：设备收到的字符。
      * data[0] = 字节数 (<= CONSOLE_READ_MAX)，字节在 data[1] 开始的内存里。应答: data[0] = 0 / -1
      */
     CONSOLE_INPUT = 5,
     /**
      * 调试：收到的进程应答之后立刻退出（像崩溃了一样），用来验证 init 会重启它、别的进程会
-     * 重新找到它。console 和两个输入设备的驱动都认这个请求。应答: data[0] = 0
+     * 重新找到它。console 和输入设备的驱动都认这个请求。应答: data[0] = 0
      */
     CONSOLE_DEBUG_EXIT = 6,
 };
 
 /** console 服务登记的名字 */
 #define CONSOLE_SERVICE_NAME "console"
-/** 串口驱动、键盘驱动登记的名字。它们不提供服务，登记是为了让 console 认得它们 */
+/** 串口驱动、PS/2 键盘驱动、USB 键盘驱动登记的名字。它们不提供服务，登记是为了让 console 认得它们 */
 #define UART_NAME       "uart"
 #define KBD_NAME        "kbd"
+#define USBKBD_NAME     "usbkbd"
 
 #define CONSOLE_READ_MAX   32
 
@@ -76,7 +77,7 @@ long console_read_line(char *buf, size_t size);
 long console_input(const char *chars, size_t n);
 
 /**
- * 调试：让登记了 name（CONSOLE_SERVICE_NAME、UART_NAME 或 KBD_NAME）的进程退出。
+ * 调试：让登记了 name（CONSOLE_SERVICE_NAME 或一个输入设备驱动的名字）的进程退出。
  * @return 0 成功，-1 = 没有这个进程
  */
 int console_debug_exit(const char *name);

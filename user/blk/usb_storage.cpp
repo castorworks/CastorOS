@@ -14,31 +14,14 @@
 #include <stdio.h>
 #include <string.h>
 #include <blk.h>
+#include <usb.h>
 #include "disk.h"
 #include "ehci.h"
-
-// 标准的设备请求
-#define REQ_CLEAR_FEATURE       1
-#define REQ_SET_ADDRESS         5
-#define REQ_GET_DESCRIPTOR      6
-#define REQ_SET_CONFIGURATION   9
-#define TYPE_TO_DEVICE          0x00
-#define TYPE_FROM_DEVICE        0x80
-#define TYPE_TO_ENDPOINT        0x02
-#define TYPE_CLASS_TO_INTERFACE 0x21
-#define FEATURE_ENDPOINT_HALT   0
-
-#define DESC_CONFIGURATION      2
-#define DESC_INTERFACE          4
-#define DESC_ENDPOINT           5
 
 #define CLASS_MASS_STORAGE      0x08
 #define SUBCLASS_SCSI           0x06
 #define PROTOCOL_BULK_ONLY      0x50
 #define REQ_MASS_STORAGE_RESET  0xFF
-
-#define ENDPOINT_IN             0x80    // 端点地址的最高位：方向
-#define ENDPOINT_TYPE_BULK      2
 
 // 仅批量传输的两个包
 #define CBW_SIGNATURE   0x43425355u
@@ -89,14 +72,14 @@ static uint32_t get_le32(const uint8_t *p) {
 
 /** 设备把一个批量端点挂起了（它用这个表示“这一步不行”）：两边都解除 */
 static void clear_halt(bool in) {
-    ehci_control(TYPE_TO_ENDPOINT, REQ_CLEAR_FEATURE, FEATURE_ENDPOINT_HALT, in ? endpoint_in : endpoint_out,
+    ehci_control(USB_TYPE_TO_ENDPOINT, USB_REQ_CLEAR_FEATURE, USB_FEATURE_ENDPOINT_HALT, in ? endpoint_in : endpoint_out,
                  NULL, 0);
     ehci_bulk_reset(in);
 }
 
 /** 命令、数据、状态三步走乱了的时候，让设备回到“等一个新命令”的状态 */
 static void reset_recovery(void) {
-    if (ehci_control(TYPE_CLASS_TO_INTERFACE, REQ_MASS_STORAGE_RESET, 0, interface, NULL, 0) < 0) {
+    if (ehci_control(USB_TYPE_CLASS_TO_INTERFACE, REQ_MASS_STORAGE_RESET, 0, interface, NULL, 0) < 0) {
         dead = true;            // 连控制端点都不通了：设备被拔掉了，或者彻底乱了
         return;
     }
@@ -216,15 +199,16 @@ static bool find_storage(const uint8_t *desc, uint32_t total, uint8_t *config, u
         if (off + d[0] > total) {
             break;
         }
-        if (d[1] == DESC_INTERFACE && d[0] >= 9) {
+        if (d[1] == USB_DESC_INTERFACE && d[0] >= 9) {
             if (have_in && have_out) {
                 break;              // 上一个接口已经齐了
             }
             in_storage = d[5] == CLASS_MASS_STORAGE && d[6] == SUBCLASS_SCSI && d[7] == PROTOCOL_BULK_ONLY;
             interface = d[2];
             have_in = have_out = false;
-        } else if (d[1] == DESC_ENDPOINT && d[0] >= 7 && in_storage && (d[3] & 3) == ENDPOINT_TYPE_BULK) {
-            if (d[2] & ENDPOINT_IN) {
+        } else if (d[1] == USB_DESC_ENDPOINT && d[0] >= 7 && in_storage &&
+                   (d[3] & USB_ENDPOINT_TYPE_MASK) == USB_ENDPOINT_TYPE_BULK) {
+            if (d[2] & USB_ENDPOINT_IN) {
                 endpoint_in = d[2] & 0x0F;
                 have_in = true;
             } else {
@@ -245,7 +229,7 @@ static bool attach(int port) {
     // 刚复位的设备在地址 0 上：给它一个自己的地址（之后它要缓一下）
     ehci_set_address(0);
     uint8_t assigned = (uint8_t)(port + 1);
-    if (ehci_control(TYPE_TO_DEVICE, REQ_SET_ADDRESS, assigned, 0, NULL, 0) < 0) {
+    if (ehci_control(USB_TYPE_TO_DEVICE, USB_REQ_SET_ADDRESS, assigned, 0, NULL, 0) < 0) {
         return false;
     }
     usleep(20000);
@@ -253,20 +237,20 @@ static bool attach(int port) {
 
     // 配置描述符：先读开头 9 个字节，里面有连同接口、端点描述符在内的总长度，再读全
     static uint8_t desc[512];
-    if (ehci_control(TYPE_FROM_DEVICE, REQ_GET_DESCRIPTOR, DESC_CONFIGURATION << 8, 0, desc, 9) < 9) {
+    if (ehci_control(USB_TYPE_FROM_DEVICE, USB_REQ_GET_DESCRIPTOR, USB_DESC_CONFIGURATION << 8, 0, desc, 9) < 9) {
         return false;
     }
     uint32_t total = (uint32_t)desc[2] | ((uint32_t)desc[3] << 8);
     if (total > sizeof(desc)) {
         total = sizeof(desc);
     }
-    long got = ehci_control(TYPE_FROM_DEVICE, REQ_GET_DESCRIPTOR, DESC_CONFIGURATION << 8, 0, desc, (uint16_t)total);
+    long got = ehci_control(USB_TYPE_FROM_DEVICE, USB_REQ_GET_DESCRIPTOR, USB_DESC_CONFIGURATION << 8, 0, desc, (uint16_t)total);
     uint8_t config;
     uint16_t max_packet = 512;
     if (got < 9 || !find_storage(desc, (uint32_t)got, &config, &max_packet)) {
         return false;           // 不是 U 盘（或者是我们不认识的那种）
     }
-    if (ehci_control(TYPE_TO_DEVICE, REQ_SET_CONFIGURATION, config, 0, NULL, 0) < 0) {
+    if (ehci_control(USB_TYPE_TO_DEVICE, USB_REQ_SET_CONFIGURATION, config, 0, NULL, 0) < 0) {
         return false;
     }
     address = assigned;
@@ -283,7 +267,14 @@ bool usb_open(struct disk *disk) {
     if (!ehci_open()) {
         return false;
     }
+    // 每个端口都要复位一遍，找到了 U 盘也一样：低速和全速的设备（键盘）是在复位时认出来、
+    // 让给伙伴控制器的，不走这一步它们就一直挂在这个不会和它们说话的控制器上
+    bool found = false;
     for (int port = 0; port < ehci_ports(); port++) {
+        if (found) {
+            ehci_port_reset(port);
+            continue;
+        }
         uint64_t sectors = 0;
         dead = false;
         if (attach(port) && scsi_start(&sectors)) {
@@ -292,8 +283,11 @@ bool usb_open(struct disk *disk) {
             disk->irq = ehci_irq();
             disk->read = usb_read;
             disk->write = usb_write;
-            return true;
+            found = true;
         }
+    }
+    if (found) {
+        return true;
     }
     ehci_close();       // 没有 U 盘：让控制器歇着
     return false;

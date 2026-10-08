@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <keys.h>
 
 static int checks, failures;
 
@@ -179,7 +180,24 @@ static void test_math(void) {
     }
 }
 
+// 键盘驱动共用的：一个键在 Shift、Caps Lock、Ctrl 下产生的字符
+static void test_keys(void) {
+    CHECK(key_char('a', 'A', false, false, false) == 'a');
+    CHECK(key_char('a', 'A', true, false, false) == 'A');
+    CHECK(key_char('a', 'A', false, true, false) == 'A');
+    CHECK(key_char('a', 'A', true, true, false) == 'a');        // Caps Lock 和 Shift 互相抵消
+    CHECK(key_char('1', '!', false, true, false) == '1');       // Caps Lock 只影响字母
+    CHECK(key_char('1', '!', true, true, false) == '!');
+    CHECK(key_char('c', 'C', false, false, true) == 0x03);      // Ctrl-C
+    CHECK(key_char('d', 'D', true, false, true) == 0x04);
+    CHECK(key_char('[', '{', false, false, true) == 0x1B);      // Ctrl-[ 是 ESC
+    CHECK(key_char('2', '@', true, false, true) == 0x00);       // Ctrl-@
+    CHECK(key_char('1', '!', false, false, true) == '1');       // 别的键 Ctrl 不起作用
+    CHECK(key_char('\n', '\n', false, false, true) == '\n');
+}
+
 int main() {
+    test_keys();
     test_math();
     test_format_strings();
     test_format_integers();

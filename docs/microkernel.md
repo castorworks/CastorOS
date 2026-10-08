@@ -29,11 +29,12 @@ CastorOS 的内核只保留五件事：CPU/中断、内存管理、任务调度�
 
 `user/init` 是第一个用户进程，负责启动模块并充当名字服务。内核保证它的 PID 是 1（普通任务从 2 开始编号），用户态把这个 PID 当作名字服务的固定地址。构建内核时先编译出 `user/init/build/<arch>/init.elf`，去掉调试信息（`init.stripped.elf`）后由 `src/kernel/init_image.S` 用 `.incbin` 嵌进内核映像，不需要磁盘或文件系统。
 
-init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/init/modules.S`），启动方式是 `fork` + `exec`。有特权的只有 init 自己：每个模块都是放弃特权之后才启动的。驱动在放弃之前由 init 把它的设备许可给它（见 [特权与硬件访问](reference/hardware.md)），之后只碰得到这一个设备。目前有八个（arm64 上没有 `kbd`，是七个）：
+init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/init/modules.S`），启动方式是 `fork` + `exec`。有特权的只有 init 自己：每个模块都是放弃特权之后才启动的。驱动在放弃之前由 init 把它的设备许可给它（见 [特权与硬件访问](reference/hardware.md)），之后只碰得到这一个设备。目前有九个（arm64 上没有 `kbd` 和 `usbkbd`，是七个）：
 
 - `user/console`：终端输入服务，不碰硬件。输入设备的驱动把字符送到这里，终端的输入归谁由它管。
 - `user/uart`：串口输入驱动，得到串口的寄存器和中断线。收到的字节交给 console。没有串口时直接退出。
 - `user/kbd`：PS/2 键盘驱动（只有 x86），得到键盘控制器的两个端口和中断线。敲出来的字符交给 console。
+- `user/usbkbd`：USB 键盘驱动（只有 x86），得到机器上 USB 1.1 控制器（UHCI）的寄存器和中断线。敲出来的字符同样交给 console。没有这种控制器时直接退出。
 - `user/blk`：块设备驱动（virtio-blk；x86 上没有 virtio 磁盘时是第一个 IDE 通道上的硬盘，和插在 USB 2.0 口上的 U 盘），得到磁盘的寄存器和中断线。没有磁盘时直接退出。
 - `user/net`：网络服务（virtio-net 驱动加协议栈：ARP、IPv4、ICMP、UDP、TCP，启动时用 DHCP 取地址），得到网卡的寄存器和中断线。没有网卡时它直接退出。
 - `user/ramfs`：内存文件系统服务，不碰硬件。`/tmp` 在它上面；启动映像嵌在它里面，根不在磁盘上时整棵目录树都归它。
@@ -77,7 +78,7 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 | [系统调用表](reference/syscalls.md) | 32 个系统调用的编号、参数和权限要求 |
 | [进程间通信](reference/ipc.md) | 同步消息传递、超时、共享内存、名字服务 |
 | [特权与硬件访问](reference/hardware.md) | 特权、许可表、I/O 端口、设备内存、DMA、设备中断 |
-| [用户态驱动](reference/drivers.md) | 终端输入服务 console、串口驱动 uart、键盘驱动 kbd、virtio 的公共部分、块设备驱动 blk |
+| [用户态驱动](reference/drivers.md) | 终端输入服务 console、串口驱动 uart、键盘驱动 kbd 和 usbkbd、virtio 的公共部分、块设备驱动 blk |
 | [文件服务](reference/fs.md) | 协议、路径和目录、ramfs 和 diskfs、磁盘格式 |
 | [网络](reference/net.md) | 客户端接口、协议栈、DHCP、TCP、在 QEMU 里使用 |
 | [启动映像和命令行](reference/shell.md) | 运行程序、后台任务、键盘输入、重定向和管道、脚本、程序参数 |

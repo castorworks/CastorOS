@@ -4,7 +4,7 @@
 // 前台进程，协议见 <console.h>。输出不经过这里：那是内核的 console_write。
 //
 // 本进程不碰硬件。输入是输入设备的驱动送来的（CONSOLE_INPUT）：串口的驱动 uart，PC 上
-// 还有键盘的驱动 kbd。两边来的字符进同一个缓冲区，从这里起没有区别。
+// 还有键盘的驱动 kbd（PS/2）和 usbkbd（USB）。它们来的字符进同一个缓冲区，从这里起没有区别。
 
 #include <syscall.h>
 #include <stdio.h>
@@ -121,15 +121,16 @@ static void set_foreground(int pid) {
 
 /** sender 是输入设备的驱动吗？它们的名字是 init 留给它们的，别的进程登记不了 */
 static bool is_input_driver(int sender) {
-    static const char *const names[] = { UART_NAME, KBD_NAME };
-    static int drivers[2];
-    for (int i = 0; i < 2; i++) {
+    static const char *const names[] = { UART_NAME, KBD_NAME, USBKBD_NAME };
+    const int count = sizeof(names) / sizeof(names[0]);
+    static int drivers[count];
+    for (int i = 0; i < count; i++) {
         if (sender == drivers[i]) {
             return true;
         }
     }
     // 第一次见到它，或者它被重启过
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < count; i++) {
         drivers[i] = name_lookup(names[i]);
         if (sender == drivers[i]) {
             return true;

@@ -1436,7 +1436,7 @@ static void test_memory_reclaimed(void) {
     }
 }
 
-// selftest restart <名字>：让终端输入的一个模块（console、uart、kbd）像崩溃了一样退出，
+// selftest restart <名字>：让终端输入的一个模块（console、uart、kbd、usbkbd）像崩溃了一样退出，
 // 等 init 把它重启。重启之后输入还通不通要有人敲键盘才知道：那是 scripts/shell-test.sh 的事
 static int restart_module(const char *name) {
     int old_pid = name_lookup(name);

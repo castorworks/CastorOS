@@ -91,6 +91,7 @@ make run                # Run in QEMU, serial console on stdio; attaches disk-<a
                         # file system: system files refreshed on every run, your own files kept)
                         # and a virtio-net card on QEMU user networking
 make run QEMU_DISPLAY=cocoa   # Same with QEMU's window: the VGA screen, keys typed there go to the PS/2 keyboard driver (x86)
+make run KBD=usb QEMU_DISPLAY=cocoa   # x86: also attach a USB keyboard; keys typed in the window then go to usbkbd
 make debug              # Same, waiting for GDB on :1234
 make iso                # System image for a real PC (x86; needs grub-mkrescue and xorriso): GRUB and
                         # the kernel, followed by a partition holding the root file system. Written
@@ -135,9 +136,10 @@ CastorOS/
 ├── user/                   # User-space programs
 │   ├── lib/                # User library
 │   ├── init/               # First user process (the only privileged one): starts modules, assigns devices, name service
-│   ├── console/            # Terminal input service (module, no hardware): takes characters from uart and kbd, decides who gets them
+│   ├── console/            # Terminal input service (module, no hardware): takes characters from uart, kbd and usbkbd, decides who gets them
 │   ├── uart/               # Serial input driver (module, allowed the serial port): hands characters to console
 │   ├── kbd/                # PS/2 keyboard driver (module, allowed the keyboard controller; x86 only): hands characters to console
+│   ├── usbkbd/             # USB keyboard driver (module, allowed the UHCI controllers; x86 only): uhci.cpp (USB 1.1 host controller), usbkbd.cpp (ports, HID boot keyboard): hands characters to console
 │   ├── blk/                # Block device driver (module, allowed the disk): blk.cpp (server), virtio_blk.cpp (virtio-pci on x86, virtio-mmio on arm64); x86 only: ata.cpp (IDE disk), ehci.cpp (USB 2.0 host controller) + usb_storage.cpp (USB stick)
 │   ├── net/                # Network service (module, allowed the network card): nic.cpp (virtio-net), ip.cpp (Ethernet/ARP/IPv4/ICMP), udp.cpp, tcp.cpp, dhcp.cpp, net.cpp (main loop)
 │   ├── diskfs/             # File service on the block device (module, no hardware): the root file system
@@ -171,6 +173,13 @@ the name server (`names.h` in `user/lib`).
   `console_input` (`CONSOLE_INPUT`), so keyboard and serial input take the same path from there
 - `user/uart`: serial input driver; exits on a machine without a serial port
 - `user/kbd` (x86 only): PS/2 keyboard driver; translates scancodes to characters
+- `user/usbkbd` (x86 only): USB keyboard driver on the machine's UHCI controllers (up to 4, all
+  in this one process). USB devices come and go and UHCI raises no interrupt for that, so it
+  looks at every port four times a second; that is also how it gets a keyboard that the EHCI
+  driver in `blk` released to the companion controller after boot. Standard USB requests and
+  descriptor types shared with `blk` are in `usb.h`; how Shift, Caps Lock and Ctrl act on a key
+  is shared with `kbd` in `keys.h`. While it waits (`uhci_sleep`) it keeps acknowledging
+  interrupts: its line is usually shared with other drivers and must not stay masked.
 - `user/blk`: block device driver, virtio-blk or (x86, when there is no virtio disk) the IDE
   disk on the first channel and a USB stick on a USB 2.0 port; protocol and client in `blk.h`.
   It can serve several disks at once, numbered from 0 (`blk_select`). The devices are behind
@@ -326,7 +335,7 @@ nowhere else. The kernel Makefile rebuilds all of it when `user/` changes.
   switches user tasks (`hal::UserContext::fp_save` / `fp_restore`, state in `task_t::fp_state`).
 - Console output (`kprintf`, and the `console_write` system call behind user `printf`) goes to
   the serial port and, on x86, also to the VGA text screen (`drivers::Screen`,
-  `src/drivers/x86/screen.cpp`). The screen is output only; keyboard input is `user/kbd`. It
+  `src/drivers/x86/screen.cpp`). The screen is output only; keyboard input is `user/kbd` and `user/usbkbd`. It
   understands three escape sequences (colour, cursor position, clear screen) and drops the rest.
 - Syscall numbers live in `src/include/kernel/syscall.h` and must match `user/lib/include/syscall.h`.
 - Program arguments travel through the argument page at the top of the user stack region
@@ -379,6 +388,8 @@ make test TEST_TIMEOUT=300     # raise the limit on a busy machine (default 180 
 make test ARCH=arm64 SMP=4     # give the VM 4 CPUs (default 1, at most 8; all three architectures)
 make test DISK_BUS=ide         # x86: attach the disk as an IDE drive instead of virtio-blk (also for make run)
 make test DISK_BUS=usb         # x86: attach it as a USB stick on an EHCI controller
+make test KBD=usb              # x86: attach a USB keyboard (UHCI); the typed keys then exercise usbkbd instead of kbd.
+                               # With DISK_BUS=usb the keyboard and the stick share one EHCI controller with a companion
 make test LIVE=1               # no disk: the root is in memory; the disk-related selftest checks may be skipped
 make test ARCH=x86_64 QEMU_MEMORY=3G   # more memory for the VM (default is QEMU's 128MB); the
                                # "high physical memory" kernel tests only have content above 1GB
@@ -390,7 +401,7 @@ series of commands into the serial port to check the command line (running progr
 jobs, Ctrl-C, `kill`, whether the port of a killed service can be reused, programs reading
 keyboard input, redirection and pipes, directories, quoting, standard error, scripts; on x86 also
 a few lines typed on the VM's PS/2 keyboard through the QEMU monitor's `sendkey`; at the end
-console, uart and kbd are made to exit with `selftest restart <name>` and input must work
+console, uart and the keyboard driver are made to exit with `selftest restart <name>` and input must work
 again after init restarts them). Each step waits until
 the expected output appears (at most `STEP_TIMEOUT` seconds per step, default 30), and QEMU is
 stopped when the steps are done.
@@ -415,7 +426,7 @@ Every push to `main` and every pull request runs `make test` for each architectu
 Actions (`.github/workflows/test.yml`, three jobs on macOS runners with the Homebrew cross
 compilers), plus `make lib-test`. The logs of each run (`test.log`, `shell-test.log`) are
 uploaded as artifacts. Each architecture also runs with `SMP=2`, and i686 once more with
-`DISK_BUS=ide`, `DISK_BUS=usb` and `LIVE=1`. If you add a build dependency, add it to the workflow's `brew install`
+`DISK_BUS=ide`, `DISK_BUS=usb`, `LIVE=1`, `KBD=usb` and `DISK_BUS=usb KBD=usb`. If you add a build dependency, add it to the workflow's `brew install`
 line too.
 
 ### Running by Hand

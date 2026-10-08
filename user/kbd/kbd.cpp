@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <names.h>
 #include <console.h>
+#include <keys.h>
 
 // 状态端口的位
 #define STATUS_OUTPUT_FULL  0x01    // 数据端口里有一个字节等着读
@@ -160,16 +161,7 @@ static char translate(uint8_t code) {
         return 0;
     }
 
-    bool shift = shift_left || shift_right;
-    char c = shift ? shifted[key] : plain[key];
-    bool letter = plain[key] >= 'a' && plain[key] <= 'z';
-    if (letter && caps_lock) {
-        c = shift ? plain[key] : shifted[key];      // Caps Lock 只影响字母，和 Shift 互相抵消
-    }
-    if (ctrl && (letter || (c >= '@' && c <= '_'))) {
-        c &= 0x1F;                                  // Ctrl-C 是 0x03，Ctrl-D 是 0x04
-    }
-    return c;
+    return key_char(plain[key], shifted[key], shift_left || shift_right, caps_lock, ctrl);
 }
 
 /** 读走控制器里所有的扫描码，产生的字符交出去 */

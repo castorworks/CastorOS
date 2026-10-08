@@ -35,10 +35,10 @@ uint32_t pci_read(pci_dev_t dev, uint32_t off);
 void pci_write(pci_dev_t dev, uint32_t off, uint32_t value);
 
 /**
- * 找类别是 class_code（类别 << 16 | 子类别 << 8 | 编程接口）的第一个设备功能。
- * @return 没有返回 false
+ * 找类别是 class_code（类别 << 16 | 子类别 << 8 | 编程接口）的第 index 个设备功能（从 0 开始）。
+ * @return 没有这么多个返回 false
  */
-bool pci_find_class(uint32_t class_code, pci_dev_t *dev);
+bool pci_find_class(uint32_t class_code, uint32_t index, pci_dev_t *dev);
 
 /**
  * 量出 dev 的第 bar 个 BAR 占多大（端口数或字节数）：全写 1 再读回来，设备不译码的低位
