@@ -33,6 +33,7 @@ static_assert(DISKFS_NAME_MAX == FS_NAME_MAX && DISKFS_SECTOR_SIZE == BLK_SECTOR
 #define superblock          diskfs_superblock
 #define dir_entry           diskfs_dir_entry
 
+static int fs_disk;                         // 文件系统在第几块盘上
 static uint64_t fs_start;                   // 文件系统从磁盘的第几个扇区开始（在分区里时不是 0）
 static struct superblock sb;
 static uint32_t *fat;                       // 内存里的 FAT，sb.total_blocks 项
@@ -353,7 +354,7 @@ static uint32_t le32(const uint8_t *p) {
  * 在磁盘上找我们的文件系统：它占着整块盘，或者在分区表的某个分区里（系统映像写进硬盘后
  * 是这样：前面是引导程序和内核）。认的是分区开头的内容，不是分区类型。
  */
-static bool find_fs(void) {
+static bool find_fs_on_selected_disk(void) {
     uint64_t sectors = blk_capacity();
     if (probe(0, sectors)) {
         return true;
@@ -370,6 +371,18 @@ static bool find_fs(void) {
         uint64_t count = le32(entry + MBR_ENTRY_SECTORS);
         if (entry[MBR_ENTRY_TYPE] != 0 && start != 0 && start < sectors && count <= sectors - start &&
             probe(start, count)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/** 一块盘一块盘地找（机器上可能既有硬盘又插着 U 盘）；找到的那块留作选中的 */
+static bool find_fs(void) {
+    int disks = blk_count();
+    for (fs_disk = 0; fs_disk < disks; fs_disk++) {
+        blk_select(fs_disk);
+        if (find_fs_on_selected_disk()) {
             return true;
         }
     }
@@ -405,7 +418,7 @@ int main() {
         return 1;
     }
     if (!mount()) {
-        printf("diskfs: no CastorOS file system on the disk, leaving it untouched\n");
+        printf("diskfs: no CastorOS file system on any disk, leaving them untouched\n");
         return 1;
     }
 
@@ -413,8 +426,8 @@ int main() {
     for (int i = 0; i < (int)MAX_FILES; i++) {
         count += dir[i].name[0] != '\0';
     }
-    printf("diskfs: ready (pid %d), %u blocks at sector %u, %d files\n", getpid(), sb.total_blocks,
-           (uint32_t)fs_start, count);
+    printf("diskfs: ready (pid %d), %u blocks at sector %u of disk %d, %d files\n", getpid(),
+           sb.total_blocks, (uint32_t)fs_start, fs_disk, count);
 
     fs_serve(FS_DISK_SERVICE_NAME, &diskfs_backend);
     printf("diskfs: cannot register name\n");

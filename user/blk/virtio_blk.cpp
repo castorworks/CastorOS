@@ -29,6 +29,11 @@ static volatile uint8_t *req_status;
 static char *req_data;
 static uint64_t req_hdr_phys, req_status_phys, req_data_phys;
 
+static void virtio_blk_on_irq(void) {
+    virtio_irq_ack(&dev);
+    irq_ack(dev.irq);
+}
+
 static bool device_init(uint64_t *capacity) {
     if (!virtio_open(&dev, VIRTIO_ID_BLOCK)) {
         return false;
@@ -52,6 +57,7 @@ static bool device_init(uint64_t *capacity) {
         printf("blk: cannot claim IRQ %d\n", dev.irq);
         return false;
     }
+    disk_on_irq(dev.irq, virtio_blk_on_irq);
 
     virtio_driver_ok(&dev);
     *capacity = (uint64_t)virtio_config_read32(&dev, 0) | ((uint64_t)virtio_config_read32(&dev, 4) << 32);
@@ -107,11 +113,6 @@ static bool virtio_blk_write(uint64_t sector, uint32_t count, const char *buf) {
     return do_request(VIRTIO_BLK_T_OUT, sector, count);
 }
 
-static void virtio_blk_stray_irq(void) {
-    virtio_irq_ack(&dev);
-    irq_ack(dev.irq);
-}
-
 bool virtio_blk_open(struct disk *disk) {
     if (!device_init(&disk->capacity)) {
         return false;
@@ -120,6 +121,5 @@ bool virtio_blk_open(struct disk *disk) {
     disk->irq = dev.irq;
     disk->read = virtio_blk_read;
     disk->write = virtio_blk_write;
-    disk->stray_irq = virtio_blk_stray_irq;
     return true;
 }

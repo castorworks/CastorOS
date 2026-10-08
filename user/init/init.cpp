@@ -15,6 +15,7 @@
 #include <names.h>
 #include <console.h>
 #include <virtio.h>
+#include <pci.h>
 #include <blk.h>
 #include <net.h>
 #include <fs.h>
@@ -61,6 +62,65 @@ static void allow_kbd(void) {
 }
 #endif
 
+#if !defined(ARCH_ARM64)
+
+// EHCI 控制器：在 PCI 上按类别找。它的寄存器在一段设备内存里（第 0 个 BAR）
+#define PCI_CLASS_EHCI          0x0C0320
+#define EHCI_CAP_HCCPARAMS      0x08    // 第 8-15 位：配置空间里“扩展能力”的偏移
+#define EHCI_LEGACY_SUPPORT     1       // 那个扩展能力的编号：固件和系统之间交接控制器用的
+#define EHCI_LEGACY_BIOS_OWNED  (1u << 16)
+#define EHCI_LEGACY_OS_OWNED    (1u << 24)
+
+static void allow_ehci(void) {
+    pci_dev_t dev;
+    if (!pci_find_class(PCI_CLASS_EHCI, &dev)) {
+        return;
+    }
+    uint32_t bar = pci_read(dev, PCI_BAR0);
+    uint32_t size = pci_bar_size(dev, 0);
+    if ((bar & 1) || size == 0) {
+        return;
+    }
+    uintptr_t base = bar & ~0xFu;
+    // 打开设备内存的访问和总线主控（控制器要自己读写内存）；驱动碰不到配置空间
+    pci_write(dev, PCI_COMMAND, pci_read(dev, PCI_COMMAND) | PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER);
+
+    volatile uint32_t *regs = (volatile uint32_t *)map_device(base & ~(uintptr_t)0xFFF, 0x1000);
+    if (regs == MAP_FAILED) {
+        return;
+    }
+    volatile uint32_t *cap = (volatile uint32_t *)((char *)regs + (base & 0xFFF));
+    // 从固件手里把控制器要过来：固件可能正用着它（让 USB 键盘、U 盘在没有驱动时也能用）。
+    // 在交接用的寄存器里举手“系统要了”，等固件放手；它一直不放就直接拿走。然后关掉它的
+    // 那些会打断系统的中断
+    uint32_t next = (cap[EHCI_CAP_HCCPARAMS / 4] >> 8) & 0xFF;
+    for (int guard = 0; next >= 0x40 && guard < 16; guard++) {
+        uint32_t value = pci_read(dev, next);
+        if ((value & 0xFF) == EHCI_LEGACY_SUPPORT) {
+            pci_write(dev, next, value | EHCI_LEGACY_OS_OWNED);
+            for (int i = 0; i < 100 && (pci_read(dev, next) & EHCI_LEGACY_BIOS_OWNED); i++) {
+                usleep(10000);
+            }
+            pci_write(dev, next, (pci_read(dev, next) & ~EHCI_LEGACY_BIOS_OWNED) | EHCI_LEGACY_OS_OWNED);
+            pci_write(dev, next + 4, 0);
+        }
+        next = (value >> 8) & 0xFF;
+    }
+    // 让控制器停下来。上一个驱动如果是崩溃的，控制器还在照着它的（已经被收回的）内存收发
+    uint32_t caplength = cap[0] & 0xFF;
+    volatile uint32_t *usbcmd = (volatile uint32_t *)((char *)cap + caplength);
+    *usbcmd = *usbcmd & ~1u;
+    munmap((void *)regs, 0x1000);
+
+    hw_allow(HW_MEMORY, base, size);
+    uint32_t line = pci_read(dev, PCI_INTERRUPT) & 0xFF;
+    if (line != 0 && line < 16) {
+        hw_allow(HW_IRQ, line, 1);
+    }
+}
+
+#endif
+
 static void allow_blk(void) {
     if (virtio_allow(VIRTIO_ID_BLOCK)) {
         return;
@@ -71,6 +131,8 @@ static void allow_blk(void) {
     hw_allow(HW_PORTS, 0x1F0, 8);
     hw_allow(HW_PORTS, 0x3F6, 1);
     hw_allow(HW_IRQ, 14, 1);
+    // 还有 USB 2.0 的控制器（上面可能插着 U 盘），如果机器有的话
+    allow_ehci();
 #endif
 }
 

@@ -5,8 +5,11 @@
 
 // 块设备服务：协议和客户端接口。
 //
-// 驱动进程以 "blk" 登记（目前是 user/blk，virtio-blk）。数据经客户与驱动之间的
-// 共享缓冲区传递，和文件服务的做法一样：客户第一次使用时把缓冲区 mem_grant 给驱动。
+// 驱动进程以 "blk" 登记（user/blk）。数据经客户与驱动之间的共享缓冲区传递，和文件服务的
+// 做法一样：客户第一次使用时把缓冲区 mem_grant 给驱动。
+//
+// 驱动可以同时管着几块盘（PC 上的硬盘和 U 盘），从 0 编号。下面的函数读写的是“选中的”
+// 那一块，一开始是 0 号；blk_select 换一块。
 
 #define BLK_SERVICE_NAME    "blk"
 
@@ -17,12 +20,18 @@
 
 // 请求的 label。应答的 data[0] 是结果（0 成功，负数失败，按 int64_t 解释）
 enum {
-    BLK_INFO  = 1,  // 应答 data[1]: 扇区总数
-    BLK_READ  = 2,  // data[0]: 起始扇区, data[1]: 扇区数 (<= 8)。内容在缓冲区
-    BLK_WRITE = 3,  // data[0]: 起始扇区, data[1]: 扇区数 (<= 8)；缓冲区: 内容
+    BLK_INFO  = 1,  // data[0]: 哪块盘。应答 data[1]: 扇区总数, data[2]: 一共有几块盘
+    BLK_READ  = 2,  // data[0]: 起始扇区, data[1]: 扇区数 (<= 8), data[2]: 哪块盘。内容在缓冲区
+    BLK_WRITE = 3,  // data[0]: 起始扇区, data[1]: 扇区数 (<= 8), data[2]: 哪块盘；缓冲区: 内容
 };
 
-/** 磁盘的扇区总数；没有块设备服务时返回 0 */
+/** 一共有几块盘；没有块设备服务时返回 0 */
+int blk_count(void);
+
+/** 之后的 blk_capacity / blk_read / blk_write 用第 disk 块盘 */
+void blk_select(int disk);
+
+/** 选中的那块盘的扇区总数；没有块设备服务（或者没有这块盘）时返回 0 */
 uint64_t blk_capacity(void);
 
 /** 读/写 count 个扇区（任意数量，库会拆成多个请求）。@return 0 成功，-1 失败 */

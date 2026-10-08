@@ -56,10 +56,14 @@ jobs:
           - arch: arm64
             packages: aarch64-elf-gcc
             smp: 2
-          # 磁盘接成 IDE 硬盘而不是 virtio-blk：真机用的那个驱动
+          # 磁盘接成 IDE 硬盘而不是 virtio-blk：真机用的驱动
           - arch: i686
             packages: i686-elf-gcc nasm
             disk: ide
+          # 磁盘是插在 USB 2.0 口上的 U 盘
+          - arch: i686
+            packages: i686-elf-gcc nasm
+            disk: usb
           # 不接磁盘：根在内存里（从光盘启动、或者磁盘上没有这个系统时是这样）
           - arch: i686
             packages: i686-elf-gcc nasm

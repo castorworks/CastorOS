@@ -1,8 +1,9 @@
 // disk - 直接读写块设备扇区的小工具
 //
-//   disk                    显示容量
+//   disk                    列出每块盘的容量
 //   disk read <sector>      把扇区开头的文字打印出来
 //   disk write <sector> <words...>   把文字写到扇区开头
+//   disk <n> read ... / disk <n> write ...   对第 n 块盘做（不写就是第 0 块）
 
 #include <stdio.h>
 #include <string.h>
@@ -10,16 +11,33 @@
 
 static char sector_buf[BLK_SECTOR_SIZE];
 
+#define USAGE "usage: disk [n] read <sector> | disk [n] write <sector> <words...>\n"
+
 int main(int argc, char **argv) {
-    uint64_t sectors = blk_capacity();
-    if (sectors == 0) {
+    int disks = blk_count();
+    if (disks == 0) {
         eprintf("disk: no block device\n");
         return 1;
     }
+    // 第一个参数是数字的话，它是磁盘的编号
+    if (argc >= 2 && argv[1][0] >= '0' && argv[1][0] <= '9') {
+        int which = atoi(argv[1]);
+        if (which >= disks) {
+            eprintf("disk: there is no disk %d\n", which);
+            return 1;
+        }
+        blk_select(which);
+        argv++;
+        argc--;
+    }
     if (argc < 3) {
-        printf("%u sectors of %d bytes (%u MB)\n", (uint32_t)sectors, BLK_SECTOR_SIZE,
-               (uint32_t)(sectors / 2048));
-        eprintf("usage: disk read <sector> | disk write <sector> <words...>\n");
+        for (int i = 0; i < disks; i++) {
+            blk_select(i);
+            uint64_t sectors = blk_capacity();
+            printf("disk %d: %u sectors of %d bytes (%u MB)\n", i, (uint32_t)sectors, BLK_SECTOR_SIZE,
+                   (uint32_t)(sectors / 2048));
+        }
+        eprintf(USAGE);
         return 0;
     }
 
@@ -53,6 +71,6 @@ int main(int argc, char **argv) {
         }
         return 0;
     }
-    eprintf("usage: disk read <sector> | disk write <sector> <words...>\n");
+    eprintf(USAGE);
     return 1;
 }

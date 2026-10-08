@@ -3,6 +3,7 @@
  */
 
 #include <virtio.h>
+#include <pci.h>
 #include <syscall.h>
 #include <stdio.h>
 
@@ -148,8 +149,6 @@ void virtio_irq_ack(struct virtio_dev *dev) { reg_write(dev, MMIO_INT_ACK, reg_r
 #else /* i686, x86_64 */
 
 // virtio-pci (legacy)：寄存器在 BAR0 指向的 I/O 端口里
-#define PCI_CONFIG_ADDRESS  0xCF8
-#define PCI_CONFIG_DATA     0xCFC
 #define PCI_VENDOR_VIRTIO   0x1AF4
 
 #define VPCI_HOST_FEATURES  0x00    // 32 位
@@ -168,19 +167,10 @@ static uint32_t port_read(uint32_t port, int width) {
     return v;
 }
 
-static uint32_t pci_read(uint32_t dev, uint32_t off) {
-    io_write(PCI_CONFIG_ADDRESS, 4, 0x80000000u | (dev << 11) | (off & 0xFC));
-    return port_read(PCI_CONFIG_DATA, 4);
-}
-
-static void pci_write(uint32_t dev, uint32_t off, uint32_t value) {
-    io_write(PCI_CONFIG_ADDRESS, 4, 0x80000000u | (dev << 11) | (off & 0xFC));
-    io_write(PCI_CONFIG_DATA, 4, value);
-}
-
 static bool transport_allow(uint32_t device_id) {
-    // 只扫描 0 号总线上各设备的 0 号功能：QEMU 把设备都放在这里
-    for (uint32_t slot = 0; slot < 32; slot++) {
+    // 只扫描 0 号总线上各设备的 0 号功能：QEMU 把 virtio 设备都放在这里
+    for (uint32_t device = 0; device < 32; device++) {
+        pci_dev_t slot = PCI_DEV(device, 0);
         uint32_t id = pci_read(slot, 0x00);
         uint32_t pci_device = id >> 16;
         // legacy/transitional 设备：设备号 0x1000-0x103F，子系统号才是 virtio 的设备类型
@@ -193,15 +183,9 @@ static bool transport_allow(uint32_t device_id) {
             printf("virtio: pci device has no I/O port BAR (need a legacy/transitional device)\n");
             return false;
         }
-        // BAR 占多少个端口：全写 1 再读回来，设备不译码的低位读出来是 0。量的时候先关掉
-        // 设备的端口译码，免得它在这一瞬间响应别处的端口
-        uint32_t command = pci_read(slot, 0x04);
-        pci_write(slot, 0x04, command & ~0x1u);
-        pci_write(slot, 0x10, 0xFFFFFFFFu);
-        uint32_t io_size = (~(pci_read(slot, 0x10) & ~3u) + 1) & 0xFFFF;
-        pci_write(slot, 0x10, bar0);
+        uint32_t io_size = pci_bar_size(slot, 0);
         // 打开端口访问和总线主控（设备要自己读写内存）：驱动碰不到配置空间，这一步得在这里做
-        pci_write(slot, 0x04, command | 0x5);
+        pci_write(slot, PCI_COMMAND, pci_read(slot, PCI_COMMAND) | PCI_COMMAND_IO | PCI_COMMAND_MASTER);
         // 复位设备。上一个驱动如果是崩溃的，设备还在往它的（已经被收回的）内存里读写：
         // 在新驱动启动之前先让它停下来
         io_write((bar0 & ~3u) + VPCI_STATUS, 1, 0);

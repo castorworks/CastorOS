@@ -49,16 +49,42 @@ static int blk_call(struct ipc_msg *m) {
     return -1;
 }
 
-uint64_t blk_capacity(void) {
+static int blk_disk = 0;        // 选中的那块盘
+
+/** 问驱动选中的那块盘有多大、一共有几块盘 */
+static bool blk_info(uint64_t *capacity, int *count) {
     if (!blk_connect()) {
-        return 0;
+        return false;
     }
     struct ipc_msg m = {};
     m.label = BLK_INFO;
+    m.data[0] = (uint64_t)blk_disk;
     if (blk_call(&m) != 0 || m.data[0] != 0) {
-        return 0;
+        return false;
     }
-    return m.data[1];
+    *capacity = m.data[1];
+    *count = (int)m.data[2];
+    return true;
+}
+
+void blk_select(int disk) {
+    blk_disk = disk;
+}
+
+int blk_count(void) {
+    // 0 号盘总是有的（有驱动的话）：问它
+    int selected = blk_disk, count = 0;
+    uint64_t capacity;
+    blk_disk = 0;
+    bool ok = blk_info(&capacity, &count);
+    blk_disk = selected;
+    return ok ? count : 0;
+}
+
+uint64_t blk_capacity(void) {
+    uint64_t capacity = 0;
+    int count;
+    return blk_info(&capacity, &count) ? capacity : 0;
 }
 
 /** 读或写：每次最多一个缓冲区的量 */
@@ -77,6 +103,7 @@ static int blk_transfer(uint32_t label, uint64_t sector, char *buf, uint32_t cou
         m.label = label;
         m.data[0] = sector;
         m.data[1] = n;
+        m.data[2] = (uint64_t)blk_disk;
         if (blk_call(&m) != 0 || m.data[0] != 0) {
             return -1;
         }

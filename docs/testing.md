@@ -57,7 +57,7 @@ make test ARCH=x86_64 QEMU_MEMORY=3G   # 给虚拟机更多内存（默认是 QE
 
 ## 持续集成
 
-每次推送到 `main`、每个 PR，GitHub Actions 都会对三个架构各跑一遍 `make test ARCH=<arch>`（`.github/workflows/test.yml`），每个架构再带着两个 CPU 跑一遍（`SMP=2`），i686 再把磁盘接成 IDE 硬盘跑一遍（`DISK_BUS=ide`）、不接磁盘跑一遍（`LIVE=1`），另外还有一个只跑 `make lib-test` 的任务。
+每次推送到 `main`、每个 PR，GitHub Actions 都会对三个架构各跑一遍 `make test ARCH=<arch>`（`.github/workflows/test.yml`），每个架构再带着两个 CPU 跑一遍（`SMP=2`），i686 再把磁盘接成 IDE 硬盘（`DISK_BUS=ide`）、接成 U 盘（`DISK_BUS=usb`）各跑一遍，不接磁盘跑一遍（`LIVE=1`），另外还有一个只跑 `make lib-test` 的任务。
 
 - 用的是 macOS 的 runner 和 Homebrew 的交叉编译器（见 [开发环境搭建](setup.md) 的方法一），所以和在 macOS 上本地开发是同一套工具。加了构建依赖的话，workflow 的 `brew install` 一行也要加。
 - 三个架构各是一个独立的任务，一个失败不影响另外两个跑完。
@@ -90,18 +90,19 @@ timeout 20 qemu-system-aarch64 -M virt -cpu cortex-a72 -kernel build/arm64/casto
 
 ## 在真机上运行
 
-`qemu -kernel` 是 QEMU 自己把内核装进内存，真机上要有引导程序来做这件事。`make iso`（i686 或 x86_64）做出完整的系统映像 `build/<arch>/castor.iso`：前面是 GRUB 和内核，后面跟着一个 16MB 的分区，里面是根文件系统。需要 `grub-mkrescue` 和 `xorriso`（macOS：`brew install i686-elf-grub xorriso`）。它有两种用法：
+`qemu -kernel` 是 QEMU 自己把内核装进内存，真机上要有引导程序来做这件事。`make iso`（i686 或 x86_64）做出完整的系统映像 `build/<arch>/castor.iso`：前面是 GRUB 和内核，后面跟着一个 16MB 的分区，里面是根文件系统。需要 `grub-mkrescue` 和 `xorriso`（macOS：`brew install i686-elf-grub xorriso`）。它有三种用法：
 
+- **写进 U 盘**：把映像原样写到 U 盘上（`dd if=build/i686/castor.iso of=/dev/<那个 U 盘>`，会覆盖整个 U 盘），插在机器的 USB 2.0 口上，从 U 盘启动。根在 U 盘的那个分区上，改的东西都留得下来；机器自己的硬盘不受影响。机器的固件不能从 U 盘启动的话，用光盘启动、U 盘插着：内核是从光盘来的，根照样在 U 盘上。
 - **写进硬盘**：把映像原样写到机器的硬盘上（`dd if=build/i686/castor.iso of=/dev/<那块硬盘>`），从硬盘启动。根在硬盘的那个分区上，改的东西都留得下来。**这会覆盖整块硬盘，上面原有的系统和数据就没有了。** 硬盘要接在能运行 `dd` 的机器上写：拆下来接转接线，或者在那台机器上用别的系统的启动盘来写。
-- **刻成光盘**：从光盘启动。光盘上的分区读不到（没有光驱的驱动），根在内存里，用的是内核带着的那一份文件，什么都留不下来。这样启动不往硬盘上写任何东西，适合先看一眼硬件认得对不对。
+- **刻成光盘**：从光盘启动。光盘上的分区读不到（没有光驱的驱动），没有插着系统 U 盘的话根在内存里，用的是内核带着的那一份文件，什么都留不下来。这样启动不往硬盘上写任何东西，适合先看一眼硬件认得对不对。
 
-`make run-iso` 在 QEMU 里把映像当硬盘启动（BIOS → 硬盘上的 GRUB → 内核，根在分区上；运行时改的东西写回映像文件），`make run-cd` 把它当光盘启动；加 `QEMU_DISPLAY=cocoa` 看屏幕。写进真机之前先用它们各走一遍。
+`make run-iso` 在 QEMU 里把映像当硬盘启动（BIOS → 硬盘上的 GRUB → 内核，根在分区上；运行时改的东西写回映像文件），`make run-usb` 把它当 U 盘启动，`make run-cd` 把它当光盘启动；加 `QEMU_DISPLAY=cocoa` 看屏幕。写进真机之前先用它们各走一遍。
 
-真机上能用的是屏幕（VGA 文本模式）、PS/2 键盘和 IDE 硬盘。机器有串口的话串口控制台照常可用（COM1，38400 8N1），没有就自动不用。
+真机上能用的是屏幕（VGA 文本模式）、PS/2 键盘、IDE 硬盘和 USB 2.0 口上的 U 盘。机器有串口的话串口控制台照常可用（COM1，38400 8N1），没有就自动不用。
 
-**硬盘上原有的东西。** 系统启动时不往一块不是它自己的硬盘上写任何东西：`diskfs` 从不格式化，找不到自己的文件系统就退出；自检只在整块盘都是我们的文件系统时才做写入测试，否则只读。会写硬盘的只有 `disk write`（直接写扇区），以及根在硬盘上时对文件的正常修改。
+**盘上原有的东西。** 系统启动时不往一块不是它自己的盘上写任何东西：`diskfs` 从不格式化，找不到自己的文件系统就退出；自检只在整块盘都是我们的文件系统时才做写入测试，否则只读。会写盘的只有 `disk write`（直接写扇区，不写编号时写的是第 0 块盘，机器有硬盘的话那就是硬盘），以及对根所在的那块盘上文件的正常修改。
 
-当前的限制：只支持 BIOS 启动（UEFI 启动的机器没有 VGA 文本模式，屏幕上什么都看不到）；硬盘只认 IDE（SATA、NVMe 和 USB 存储都没有驱动），所以从 U 盘启动时根只能在内存里；根分区的大小是做映像时定的（`ROOT_SIZE_MB`，默认 16），不会随硬盘变大；系统里没有把自己装到硬盘上的命令；网卡只有 virtio 的驱动，真机上 `net` 找不到设备直接退出，没有网络；只在 QEMU 里验证过。
+当前的限制：只支持 BIOS 启动（UEFI 启动的机器没有 VGA 文本模式，屏幕上什么都看不到）；硬盘只认 IDE（SATA 和 NVMe 没有驱动）；U 盘要直接插在 USB 2.0 口上（见 [用户态驱动](reference/drivers.md#usb-20-和-u-盘) 的限制）；根分区的大小是做映像时定的（`ROOT_SIZE_MB`，默认 16），不会随硬盘变大；系统里没有把自己装到硬盘上的命令；网卡只有 virtio 的驱动，真机上 `net` 找不到设备直接退出，没有网络；只在 QEMU 里验证过。
 
 ## GDB
 

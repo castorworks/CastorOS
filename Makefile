@@ -151,7 +151,7 @@ OBJECTS = $(ASM_OBJECTS) $(C_OBJECTS) $(INIT_OBJECT)
 # 构建
 # ============================================================================
 
-.PHONY: all clean clean-all disk run debug iso run-iso run-cd test run-test test-all build-all check init info sources compile-db help
+.PHONY: all clean clean-all disk run debug iso run-iso run-cd run-usb test run-test test-all build-all check init info sources compile-db help
 
 all: $(BOOT_IMAGE)
 
@@ -213,10 +213,12 @@ ifeq ($(ARCH),arm64)
 else
     VIRTIO_BLK = virtio-blk-pci
 endif
-# DISK_BUS=ide（只有 x86）：磁盘作为 IDE 硬盘接上，而不是 virtio-blk；run 和 test 都认。
-# 真机的硬盘是这种，用它来跑 IDE 驱动
+# DISK_BUS=ide 或 usb（只有 x86）：磁盘作为 IDE 硬盘、或者插在 USB 2.0 口上的 U 盘接上，
+# 而不是 virtio-blk；run 和 test 都认。真机上是这两种，用它们来跑那两个驱动
 ifeq ($(DISK_BUS),ide)
 qemu_disk = -drive file=$(1),format=raw,if=ide
+else ifeq ($(DISK_BUS),usb)
+qemu_disk = -device usb-ehci,id=ehci -drive file=$(1),format=raw,if=none,id=disk0 -device usb-storage,bus=ehci.0,drive=disk0
 else
 qemu_disk = -drive file=$(1),format=raw,if=none,id=disk0 -device $(VIRTIO_BLK),drive=disk0
 endif
@@ -295,13 +297,18 @@ endif
 	@echo "✓ System image: $@"
 
 # 像真机那样启动。run-iso：映像就是硬盘（BIOS -> 硬盘上的 GRUB -> 内核，根在硬盘的分区上；
-# 运行时改的东西写回映像文件）。run-cd：映像是光盘，根在内存里
+# 运行时改的东西写回映像文件）。run-cd：映像是光盘，根在内存里。run-usb：映像在 U 盘上
 QEMU_ISO = $(QEMU) $(if $(QEMU_MEMORY),-m $(QEMU_MEMORY)) $(if $(SMP),-smp $(SMP)) -serial stdio -display $(QEMU_DISPLAY)
 run-iso: $(ISO)
 	$(QEMU_ISO) -drive file=$(ISO),format=raw,if=ide
 
 run-cd: $(ISO)
 	$(QEMU_ISO) -cdrom $(ISO)
+
+# 映像写在 U 盘上，从 U 盘启动：BIOS -> U 盘上的 GRUB -> 内核，根在 U 盘的分区上
+run-usb: $(ISO)
+	$(QEMU_ISO) -device usb-ehci,id=ehci -drive file=$(ISO),format=raw,if=none,id=stick \
+	     -device usb-storage,bus=ehci.0,drive=stick,bootindex=0
 
 # 构建带内核测试的版本并运行：等命令行就绪后，scripts/shell-test.sh 再向串口输入一串命令，
 # 检查命令行的行为（后台任务、Ctrl-C、kill）。完整日志写入 $(BUILD_DIR)/test.log，
@@ -381,7 +388,7 @@ help:
 	@echo "  run            Run in QEMU (serial console on stdio; QEMU_DISPLAY=cocoa opens the screen)"
 	@echo "  debug          Run in QEMU waiting for GDB on :1234"
 	@echo "  iso            System image for a real PC: GRUB, kernel and the root file system; write it to a hard disk"
-	@echo "  run-iso/run-cd Boot that image in QEMU as a hard disk (root on disk) / as a CD (root in memory)"
+	@echo "  run-iso/run-cd/run-usb  Boot that image in QEMU as a hard disk / as a CD (root in memory) / from a USB stick"
 	@echo "  test           Build with in-kernel tests (KTEST=1), boot, and check the results"
 	@echo "  test-all       test for every architecture"
 	@echo "  lib-test       Run the user library's host-side tests (no cross compiler or QEMU needed)"

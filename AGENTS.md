@@ -97,6 +97,7 @@ make iso                # System image for a real PC (x86; needs grub-mkrescue a
                         # to a hard disk as is, the machine boots from it with its root on that disk
 make run-iso            # Boot that image in QEMU as a hard disk: BIOS -> GRUB -> kernel, root on the partition
 make run-cd             # Boot it as a CD: the partition cannot be read, the root is in memory
+make run-usb            # Boot it from a USB stick: BIOS -> GRUB -> kernel, root on the stick
 
 make test               # Build with in-kernel tests (KTEST=1), boot, and check kernel tests + selftest + shell checks
 make test-all
@@ -137,7 +138,7 @@ CastorOS/
 │   ├── console/            # Terminal input service (module, no hardware): takes characters from uart and kbd, decides who gets them
 │   ├── uart/               # Serial input driver (module, allowed the serial port): hands characters to console
 │   ├── kbd/                # PS/2 keyboard driver (module, allowed the keyboard controller; x86 only): hands characters to console
-│   ├── blk/                # Block device driver (module, allowed the disk): blk.cpp (server), virtio_blk.cpp (virtio-pci on x86, virtio-mmio on arm64), ata.cpp (IDE disk, x86 only)
+│   ├── blk/                # Block device driver (module, allowed the disk): blk.cpp (server), virtio_blk.cpp (virtio-pci on x86, virtio-mmio on arm64); x86 only: ata.cpp (IDE disk), ehci.cpp (USB 2.0 host controller) + usb_storage.cpp (USB stick)
 │   ├── net/                # Network service (module, allowed the network card): nic.cpp (virtio-net), ip.cpp (Ethernet/ARP/IPv4/ICMP), udp.cpp, tcp.cpp, dhcp.cpp, net.cpp (main loop)
 │   ├── diskfs/             # File service on the block device (module, no hardware): the root file system
 │   ├── ramfs/              # In-memory file service (module, no hardware): /tmp, and the whole tree (from the boot image it holds) when there is no root on disk
@@ -171,8 +172,12 @@ the name server (`names.h` in `user/lib`).
 - `user/uart`: serial input driver; exits on a machine without a serial port
 - `user/kbd` (x86 only): PS/2 keyboard driver; translates scancodes to characters
 - `user/blk`: block device driver, virtio-blk or (x86, when there is no virtio disk) the IDE
-  disk on the first channel; protocol and client in `blk.h`. The two devices are behind
-  `struct disk` (`user/blk/disk.h`)
+  disk on the first channel and a USB stick on a USB 2.0 port; protocol and client in `blk.h`.
+  It can serve several disks at once, numbered from 0 (`blk_select`). The devices are behind
+  `struct disk` (`user/blk/disk.h`). Several devices live in this one process, so a backend
+  never calls `ipc_recv` itself to wait for its interrupt: it registers a handler with
+  `disk_on_irq` right after `irq_claim` and waits with `disk_wait`, which hands each interrupt
+  to the device it belongs to. PCI configuration space access for init is in `pci.h`.
 - `user/net`: virtio-net driver plus a small ARP/IPv4/ICMP/UDP/TCP stack with a DHCP client;
   protocol and client in `net.h`
 - `user/ramfs`: in-memory file service
@@ -373,6 +378,7 @@ make test-all                  # all three architectures; non-zero if any of the
 make test TEST_TIMEOUT=300     # raise the limit on a busy machine (default 180 seconds)
 make test ARCH=arm64 SMP=4     # give the VM 4 CPUs (default 1, at most 8; all three architectures)
 make test DISK_BUS=ide         # x86: attach the disk as an IDE drive instead of virtio-blk (also for make run)
+make test DISK_BUS=usb         # x86: attach it as a USB stick on an EHCI controller
 make test LIVE=1               # no disk: the root is in memory; the disk-related selftest checks may be skipped
 make test ARCH=x86_64 QEMU_MEMORY=3G   # more memory for the VM (default is QEMU's 128MB); the
                                # "high physical memory" kernel tests only have content above 1GB
@@ -409,7 +415,7 @@ Every push to `main` and every pull request runs `make test` for each architectu
 Actions (`.github/workflows/test.yml`, three jobs on macOS runners with the Homebrew cross
 compilers), plus `make lib-test`. The logs of each run (`test.log`, `shell-test.log`) are
 uploaded as artifacts. Each architecture also runs with `SMP=2`, and i686 once more with
-`DISK_BUS=ide` and once with `LIVE=1`. If you add a build dependency, add it to the workflow's `brew install`
+`DISK_BUS=ide`, `DISK_BUS=usb` and `LIVE=1`. If you add a build dependency, add it to the workflow's `brew install`
 line too.
 
 ### Running by Hand

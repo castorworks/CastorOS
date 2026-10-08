@@ -95,13 +95,8 @@ static bool wait_idle(void) {
         if (idle || uptime_ms() >= deadline) {
             break;
         }
-        timer_set(10);
-        struct ipc_msg m;
-        if (ipc_recv(IPC_FROM_KERNEL, &m) == 0 && m.label == IPC_LABEL_IRQ) {
-            take_irq();
-        }
+        disk_wait(10);
     }
-    timer_set(0);
     return idle;
 }
 
@@ -170,10 +165,6 @@ static bool ata_write(uint64_t sector, uint32_t count, const char *buf) {
     return wait_ready(false);
 }
 
-static void ata_stray_irq(void) {
-    take_irq();
-}
-
 /** 复位通道，向主盘要它的身份信息。@return 那里有一块能用的硬盘 */
 static bool identify(uint16_t *id) {
     if (reg_read(REG_STATUS) == 0xFF) {
@@ -223,6 +214,7 @@ bool ata_open(struct disk *disk) {
         printf("blk: cannot claim IRQ %d\n", ata_irq);
         return false;
     }
+    disk_on_irq(ata_irq, take_irq);
 
     static uint16_t id[BLK_SECTOR_SIZE / 2];
     if (!identify(id)) {
@@ -250,6 +242,5 @@ bool ata_open(struct disk *disk) {
     disk->irq = ata_irq;
     disk->read = ata_read;
     disk->write = ata_write;
-    disk->stray_irq = ata_stray_irq;
     return true;
 }
