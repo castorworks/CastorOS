@@ -4,7 +4,7 @@
 // 被当作文件服务里的程序：读出它的 ELF 映像，fork 之后带着这一行的参数 exec。
 // 行尾加 & 让程序在后台运行；前台程序运行期间按 Ctrl-C 终止它。
 // cmd < in > out 2> err 把程序的标准输入/输出/错误输出换成文件，cmd1 | cmd2 把前一个的输出
-// 接到后一个的输入；引号里的内容原样作为参数。
+// 接到后一个的输入；引号里的内容原样作为参数。提示符下按 Tab 补全命令名和路径。
 // 不是 ELF 映像的文件当作脚本，逐行执行；启动时先执行脚本 /etc/rc。
 //
 // sh 是终端的主人（见 <console.h>）：程序在前台运行期间，键盘输入归那个程序，
@@ -381,6 +381,7 @@ enum {
 struct token {
     int kind;
     const char *text;   // TOK_WORD：词的内容（引号已经去掉）
+    const char *source; // 它在这一行里从哪里开始
 };
 
 /**
@@ -391,11 +392,16 @@ struct token {
  * 没有转义字符，也没有变量。
  *
  * @param text 至少 strlen(line) + MAX_TOKENS 字节
+ * @param open_quote 不是 NULL 时，这一行可以停在一对引号的中间（还没敲完的一行）：
+ *        最后一个词到行尾为止，这里得到那个还开着的引号，没有就是 0
  * @return 切出来的个数；引号没有配对或者太多时返回 -1
  */
-static int tokenize(const char *line, struct token *tokens, char *text) {
+static int tokenize(const char *line, struct token *tokens, char *text, char *open_quote = NULL) {
     int count = 0;
     const char *src = line;
+    if (open_quote) {
+        *open_quote = 0;
+    }
 
     for (;;) {
         while (*src == ' ' || *src == '\t') {
@@ -409,6 +415,7 @@ static int tokenize(const char *line, struct token *tokens, char *text) {
         }
         struct token *tok = &tokens[count++];
         tok->text = NULL;
+        tok->source = src;
 
         // 运算符。"2>" 只有在一个词的开头才是运算符（a2>b 里的 2 属于前面的词）
         if (src[0] == '2' && src[1] == '>') {
@@ -444,7 +451,10 @@ static int tokenize(const char *line, struct token *tokens, char *text) {
             }
         }
         if (quote) {
-            return -1;
+            if (!open_quote) {
+                return -1;
+            }
+            *open_quote = quote;
         }
         *text++ = '\0';
     }
@@ -530,6 +540,7 @@ static void run_command(char *line) {
             printf("builtins: help, jobs, kill <pid>, cd [directory], pwd\n");
             printf("anything else runs a program from the file service with the rest of the\n");
             printf("line as its arguments, e.g.: ls, cat <file>, write <file>, ping <ip>, hello\n");
+            printf("  Tab                    complete the command or path being typed; twice lists the choices\n");
             printf("  \"two words\"            quotes (\" or ') keep spaces and | & < > in an argument\n");
             printf("  cmd &                  run in the background; Ctrl-C stops the foreground program\n");
             printf("  cmd < file > file      read input from / write output to a file (>> appends)\n");
@@ -703,6 +714,237 @@ static void run_script_command(char **argv, int argc, bool background) {
     printf("[%d] %s\n", pid, args[0]);
 }
 
+// ============================================================================
+// 补全
+// ============================================================================
+//
+// 提示符下按 Tab：把行尾的那个词补全。词在命令的位置上（行首、| 后面）时，候选是内置命令和
+// /bin 里的程序；在别的位置上是路径（cd 后面只有目录），kill 后面是后台任务的 PID。
+// 候选只有一个时补完整，后面跟一个空格（目录跟的是 '/'，好接着补下一级）；有多个时补到
+// 它们共同的开头，补不动了再按一次 Tab 把它们列出来。
+
+#define MAX_LISTED      64      // 列得出来的候选个数；再多的只计数
+#define SCREEN_COLUMNS  80
+
+static const char *const BUILTINS[] = { "help", "jobs", "kill", "cd", "pwd" };
+
+struct matches {
+    int count;
+    char common[FS_NAME_MAX];                   // 所有候选共同的开头
+    bool is_dir;                                // 只有一个候选时：它是不是目录
+    int listed;
+    char names[MAX_LISTED][FS_NAME_MAX + 1];    // 按字母顺序；目录带着结尾的 '/'
+};
+
+/** name 以 prefix 开头的话，算作一个候选 */
+static void add_match(struct matches *m, const char *prefix, const char *name, bool is_dir) {
+    if (strncmp(name, prefix, strlen(prefix)) != 0) {
+        return;
+    }
+    // 插到按字母顺序该在的位置。已经有了（内置命令和 /bin 里的程序同名）就不再算一次
+    char shown[FS_NAME_MAX + 1];
+    snprintf(shown, sizeof(shown), "%s%s", name, is_dir ? "/" : "");
+    int at = 0;
+    while (at < m->listed && strcmp(m->names[at], shown) < 0) {
+        at++;
+    }
+    if (at < m->listed && strcmp(m->names[at], shown) == 0) {
+        return;
+    }
+    if (m->listed < MAX_LISTED) {
+        memmove(m->names[at + 1], m->names[at], (size_t)(m->listed - at) * sizeof(m->names[0]));
+        strcpy(m->names[at], shown);
+        m->listed++;
+    }
+
+    if (m->count++ == 0) {
+        strcpy(m->common, name);
+    } else {
+        size_t same = 0;
+        while (m->common[same] && m->common[same] == name[same]) {
+            same++;
+        }
+        m->common[same] = '\0';
+    }
+    m->is_dir = is_dir;
+}
+
+enum { MATCH_ANY, MATCH_DIRS, MATCH_FILES };
+
+/** 目录 dir（"" 是当前目录）里名字以 prefix 开头的成员 */
+static void match_files(struct matches *m, const char *dir, const char *prefix, int which) {
+    char name[FS_NAME_MAX];
+    bool is_dir;
+    for (int i = 0; fs_list(dir, i, name, NULL, &is_dir) == 0; i++) {
+        if (which == MATCH_ANY || (which == MATCH_DIRS) == is_dir) {
+            add_match(m, prefix, name, is_dir);
+        }
+    }
+}
+
+/** 把候选分栏列出来 */
+static void list_matches(const struct matches *m) {
+    size_t width = 0;
+    for (int i = 0; i < m->listed; i++) {
+        size_t n = strlen(m->names[i]);
+        width = n > width ? n : width;
+    }
+    width += 2;
+    int columns = SCREEN_COLUMNS / width > 0 ? (int)(SCREEN_COLUMNS / width) : 1;
+
+    printf("\n");
+    for (int i = 0; i < m->listed; i++) {
+        printf("%s", m->names[i]);
+        if ((i + 1) % columns == 0 || i == m->listed - 1) {
+            printf("\n");
+        } else {
+            for (size_t n = strlen(m->names[i]); n < width; n++) {
+                printf(" ");
+            }
+        }
+    }
+    if (m->count > m->listed) {
+        printf("(and %d more)\n", m->count - m->listed);
+    }
+}
+
+/**
+ * 把一个词写成命令行上的样子：里面有空格、运算符或引号字符时用引号括起来。
+ * @param quote 用户自己已经打开的引号，0 = 没有
+ * @param closed 词完整了，把引号合上；否则留着，接着敲的字还在引号里
+ * @return 写了多少个字符；写不成（放不下，或者词里有用来括它的那种引号）返回 -1
+ */
+static long quote_word(const char *word, char quote, bool closed, char *out, size_t size) {
+    for (const char *p = word; *p && !quote; p++) {
+        if (strchr(" |&<>'\"", *p)) {
+            quote = strchr(word, '"') ? '\'' : '"';
+        }
+    }
+    size_t len = strlen(word);
+    if ((quote && strchr(word, quote)) || len + 3 > size) {
+        return -1;
+    }
+    size_t n = 0;
+    if (quote) {
+        out[n++] = quote;
+    }
+    memcpy(out + n, word, len);
+    n += len;
+    if (quote && closed) {
+        out[n++] = quote;
+    }
+    out[n] = '\0';
+    return (long)n;
+}
+
+/**
+ * 补全 line（长 *len，容量 size）行尾的那个词；改了的部分在屏幕上跟着改。
+ * @param list 补不动时把候选列出来，再重新显示提示符和这一行
+ * @return 有不止一个候选，而且已经补不动了：再按一次 Tab 该列出它们
+ */
+static bool complete(char *line, size_t *len, size_t size, bool list) {
+    static struct token tokens[MAX_TOKENS];
+    static char text[256 + MAX_TOKENS];
+    static struct matches m;
+
+    line[*len] = '\0';
+    char quote = 0;
+    int ntok = tokenize(line, tokens, text, &quote);
+    if (ntok < 0) {
+        return false;
+    }
+
+    // 要补的词是行尾的那个；行尾是空格或运算符时，它是一个还没开始敲的词
+    bool fresh = ntok == 0 || tokens[ntok - 1].kind != TOK_WORD || (!quote && line[*len - 1] == ' ');
+    int at = fresh ? ntok : ntok - 1;
+    const char *word = fresh ? "" : tokens[at].text;
+    size_t start = fresh ? *len : (size_t)(tokens[at].source - line);
+
+    // 它前面有什么：这一段管道的命令（重定向的文件名不算），它是不是紧跟着一个重定向运算符
+    const char *command = NULL;
+    bool after_redirect = false;
+    for (int i = 0; i < at; i++) {
+        int kind = tokens[i].kind;
+        if (kind == TOK_BACKGROUND) {
+            return false;       // & 后面不该再有东西
+        }
+        if (kind == TOK_PIPE) {
+            command = NULL;
+        } else if (kind == TOK_WORD && !after_redirect && !command) {
+            command = tokens[i].text;
+        }
+        after_redirect = kind != TOK_WORD && kind != TOK_PIPE;
+    }
+
+    // 词里最后一个 '/' 之前（含）是目录，在那个目录里找；之后是要补的名字
+    size_t dir_len = strlen(word);
+    while (dir_len > 0 && word[dir_len - 1] != '/') {
+        dir_len--;
+    }
+    const char *prefix = word + dir_len;
+    static char dir[sizeof(text)];
+    memcpy(dir, word, dir_len);
+    dir[dir_len] = '\0';
+
+    m.count = m.listed = 0;
+    if (after_redirect || (!command && dir_len > 0)) {
+        match_files(&m, dir, prefix, MATCH_ANY);
+    } else if (!command) {
+        // 命令：只是一个名字时，命令行到内置命令和 /bin 里找它
+        for (size_t i = 0; i < sizeof(BUILTINS) / sizeof(BUILTINS[0]); i++) {
+            add_match(&m, word, BUILTINS[i], false);
+        }
+        match_files(&m, BIN_DIR, word, MATCH_FILES);
+    } else if (strcmp(command, "kill") == 0) {
+        for (int i = 0; i < MAX_JOBS; i++) {
+            char pid[16];
+            snprintf(pid, sizeof(pid), "%d", jobs[i].pid);
+            if (jobs[i].pid != 0) {
+                add_match(&m, word, pid, false);
+            }
+        }
+    } else {
+        match_files(&m, dir, prefix, strcmp(command, "cd") == 0 ? MATCH_DIRS : MATCH_ANY);
+    }
+    if (m.count == 0) {
+        return false;
+    }
+
+    // 新的词：目录部分照旧，名字换成候选共同的开头。只有一个候选时它就完整了：
+    // 目录后面跟 '/'，别的合上引号、跟一个空格
+    static char full[sizeof(text) + FS_NAME_MAX + 1];
+    bool finished = m.count == 1 && !m.is_dir;
+    snprintf(full, sizeof(full), "%s%s%s", dir, m.common, m.count == 1 && m.is_dir ? "/" : "");
+    static char shown[sizeof(full) + 4];
+    long n = quote_word(full, quote, finished, shown, sizeof(shown) - 1);
+    if (n >= 0 && finished) {
+        shown[n++] = ' ';
+        shown[n] = '\0';
+    }
+
+    if (n >= 0 && start + (size_t)n < size && strcmp(shown, line + start) != 0) {
+        // 屏幕上只改不一样的那一段：通常只是在行尾接着写，要加引号时才会回头改
+        size_t same = 0;
+        while (line[start + same] && line[start + same] == shown[same]) {
+            same++;
+        }
+        for (size_t i = start + same; i < *len; i++) {
+            console_write("\b \b", 3);
+        }
+        console_write(shown + same, (size_t)n - same);
+        strcpy(line + start, shown);
+        *len = start + (size_t)n;
+        return false;
+    }
+
+    if (m.count > 1 && list) {
+        list_matches(&m);
+        console_write("> ", 2);
+        console_write(line, *len);
+    }
+    return m.count > 1;
+}
+
 /** 找到 console 服务，登记为终端的主人。它重启之后（init 会重启它）要重新来一遍 */
 static bool attach_console(void) {
     console = name_wait(CONSOLE_SERVICE_NAME);
@@ -727,6 +969,7 @@ int main(int argc, char **argv) {
 
     static char line[128];
     size_t len = 0;
+    bool tab_stuck = false;     // 上一个键是 Tab，而且它没补出东西来
     for (;;) {
         // 没有待处理的输入就去等：有后台任务时带着超时等，好及时报告它们结束
         if (pending_len == 0) {
@@ -744,6 +987,12 @@ int main(int argc, char **argv) {
 
         char c = pending[0];
         memmove(pending, pending + 1, --pending_len);
+
+        if (c == '\t') {
+            tab_stuck = complete(line, &len, sizeof(line), tab_stuck);
+            continue;
+        }
+        tab_stuck = false;
 
         if (c == '\r' || c == '\n') {
             console_write("\n", 1);

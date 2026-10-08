@@ -405,7 +405,8 @@ The kernel does not power off by itself: `make test` starts QEMU through
 `scripts/shell-test.sh`, waits for `sh: ready` in the log (at most `TEST_TIMEOUT`), then types a
 series of commands into the serial port to check the command line (running programs, background
 jobs, Ctrl-C, `kill`, whether the port of a killed service can be reused, programs reading
-keyboard input, redirection and pipes, directories, quoting, standard error, scripts; on x86 also
+keyboard input, redirection and pipes, directories, quoting, standard error, scripts, Tab
+completion; on x86 also
 a few lines typed on the VM's PS/2 keyboard through the QEMU monitor's `sendkey`; at the end
 console, uart and the keyboard driver are made to exit with `selftest restart <name>` and input must work
 again after init restarts them). Each step waits until
@@ -461,6 +462,8 @@ the uart driver and the console service. On x86 the same output is also on the V
   While a foreground program runs, input belongs to it; Ctrl-D (0x04) at the start of a line
   means end of input.
 - `cmd < in > out 2> err`, `cmd >> out`, `cmd1 | cmd2` and `"arguments with spaces"` work.
+- Tab completes the word at the end of the line: a command name (builtins and `/bin`), a path,
+  a directory after `cd`, a job's PID after `kill`. A second Tab lists the candidates.
 - A text file is run as a script; `$1`-`$9` are its arguments.
 
 ### Troubleshooting

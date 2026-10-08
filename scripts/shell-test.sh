@@ -326,10 +326,40 @@ script_interrupt() {
 }
 check "ctrl-c stops a script" script_interrupt
 
+# ---- Tab 补全：命令名、路径、重定向和管道后面的词；按两次列出候选 ----
+completion() {
+    send 'cd /\n'; expect '> $' || return 1
+    send 'wr\t/tm\tcomp.txt piped\n'; expect 'write /tmp/comp.txt piped$' || return 1    # 唯一的候选：补完，跟一个空格；目录跟 /
+    send 'cat /tmp/comp.txt | gr\tpiped > /tm\tcomp2.txt\n'; expect '> $' || return 1
+    send 'cat /tmp/comp2.txt\n'; expect '^piped$' || return 1
+    send 'ec\t tabbed\n'; expect '^tabbed$' || return 1           # echo 和 echod：补到共同的开头，不跟空格
+    send 'ec\t\t\t'; expect '^echo +echod$' && expect '^> echo$' || return 1   # 补不动了再按一次：列出来，这一行还在
+    send ' relisted\n'; expect '^relisted$' || return 1
+    send 'pw\t\n'; expect '^/$' || return 1                       # 内置命令
+    send 'cd /u\ts\td\t\n'; expect 'cd /usr/share/doc/$' || return 1
+    send 'cat pa\t| grep current\n'; expect 'from the current directory$' || return 1    # 相对当前目录
+    send 'cd pa\t\n'; expect '^cd: pa: not a directory$' || return 1      # cd 后面只补目录，paths.txt 不算
+    send 'cd /\n'; expect '> $'
+}
+check "tab completion" completion
+
+# ---- 补全带空格的名字时加上引号；kill 后面补后台任务的 PID ----
+completion_quotes() {
+    send 'mkdir "/tmp/two words"\n'; expect '> $' || return 1
+    send 'write "/tmp/two words/a file" quoted\n'; expect '> $' || return 1
+    send 'cat /tmp/tw\ta\t\n'; expect '^quoted$' || return 1
+    send "cat '/tmp/two w\\ta\\t\\n"; expect '^quoted$' || return 1       # 用户自己开的引号照他的来
+    send 'rm "/tmp/two words/a file" "/tmp/two words" /tmp/comp.txt /tmp/comp2.txt\n'; expect '> $' || return 1
+    send 'sleep 60 &\n'; expect '\[[0-9]+\] sleep$' || return 1
+    send 'kill \t\n'; expect '^sleep: killed by signal 9$'
+}
+check "tab completion: quotes and kill" completion_quotes
+
 # ---- 键盘（PC）：敲的键和串口来的输入走同一条路——Shift、退格、Ctrl-C ----
 keyboard_input() {
     MARK=0; expect "$KBD_READY" || return 1
     keys e c h o spc shift-k e y s spc x backspace 1 ret; expect '^Keys 1$' || return 1
+    keys h e l l tab ret; expect '^hello from pid' || return 1         # Tab 键：补全
     keys s l e e p spc 6 0 ret; expect 'sleep 60$' || return 1
     sleep 0.5
     keys ctrl-c; expect '^sleep: killed by signal 2$'
