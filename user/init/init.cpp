@@ -28,6 +28,7 @@ extern "C" const char uart_image_start[], uart_image_end[];
 extern "C" const char kbd_image_start[], kbd_image_end[];
 extern "C" const char usbkbd_image_start[], usbkbd_image_end[];
 #endif
+extern "C" const char pwrbtn_image_start[], pwrbtn_image_end[];
 extern "C" const char blk_image_start[], blk_image_end[];
 extern "C" const char net_image_start[], net_image_end[];
 extern "C" const char ramfs_image_start[], ramfs_image_end[];
@@ -168,6 +169,23 @@ static void allow_ehci(void) {
 
 #endif
 
+static void allow_pwrbtn(void) {
+    // 电源键在哪里是固件告诉内核的：arm64 上它接在设备树里的 GPIO 控制器上（设备内存），
+    // PC 上它在 ACPI 电源管理的事件寄存器里（一段端口）
+    struct device_info dev;
+#if defined(ARCH_ARM64)
+    if (device_find("arm,pl061", 0, &dev) == 0 && dev.has_irq) {
+        hw_allow(HW_MEMORY, (uintptr_t)dev.base, (uintptr_t)(dev.size ? dev.size : 0x1000));
+        hw_allow(HW_IRQ, dev.irq, 1);
+    }
+#else
+    if (device_find("acpi,power-button", 0, &dev) == 0 && dev.has_irq) {
+        hw_allow(HW_PORTS, (uintptr_t)dev.base, (uintptr_t)dev.size);
+        hw_allow(HW_IRQ, dev.irq, 1);
+    }
+#endif
+}
+
 static void allow_blk(void) {
     if (virtio_allow(VIRTIO_ID_BLOCK)) {
         return;
@@ -254,6 +272,7 @@ static struct module modules[] = {
     { "kbd", KBD_NAME, kbd_image_start, kbd_image_end, allow_kbd, 0, false, 0 },
     { "usbkbd", USBKBD_NAME, usbkbd_image_start, usbkbd_image_end, allow_usbkbd, 0, false, 0 },
 #endif
+    { "pwrbtn", POWER_BUTTON_NAME, pwrbtn_image_start, pwrbtn_image_end, allow_pwrbtn, 0, false, 0 },
     { "blk", BLK_SERVICE_NAME, blk_image_start, blk_image_end, allow_blk, 0, false, 0 },
     { "net", NET_SERVICE_NAME, net_image_start, net_image_end, allow_net, 0, false, 0 },
     { "ramfs", FS_SERVICE_NAME, ramfs_image_start, ramfs_image_end, NULL, 0, false, 0 },

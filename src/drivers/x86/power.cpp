@@ -12,6 +12,8 @@
 #include <drivers/x86/power.h>
 #include <drivers/x86/acpi.h>
 #include <hal/hal.h>
+#include <kernel/syscall.h>
+#include <lib/string.h>
 
 #define KBC_STATUS          0x64    // 键盘控制器：读是状态，写是命令
 #define KBC_INPUT_FULL      0x02    // 状态：上一条命令它还没取走
@@ -31,6 +33,21 @@ namespace drivers {
 
 void Power::off() {
     Acpi::power_off();
+}
+
+bool Power::find_device(struct device_info *info) {
+    uint16_t port;
+    uint32_t length, irq;
+    if (strcmp(info->compatible, "acpi,power-button") != 0 || info->index != 0 ||
+        !Acpi::power_button(&port, &length, &irq)) {
+        return false;
+    }
+    info->base = port;
+    info->size = length;
+    info->irq = irq;
+    info->has_irq = 1;
+    strcpy(info->name, "acpi-power-button");
+    return true;
 }
 
 void Power::reboot() {

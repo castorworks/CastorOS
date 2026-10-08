@@ -63,11 +63,13 @@ struct fadt {
     uint8_t acpi_disable;
     uint8_t s4bios_request;
     uint8_t pstate_control;
-    uint32_t pm1a_event;
+    uint32_t pm1a_event;        // 电源管理的事件寄存器块所在的端口：前一半是状态，后一半是使能
     uint32_t pm1b_event;
     uint32_t pm1a_control;      // 电源管理的控制寄存器（16 位）所在的端口
     uint32_t pm1b_control;      // 有的机器有第二个，同样的值也要写给它；没有就是 0
-    uint8_t unused[40];         // 定时器、通用事件等等，这里用不到
+    uint8_t unused[16];         // 定时器、通用事件等等，这里用不到
+    uint8_t pm1_event_length;   // 事件寄存器块有几个字节
+    uint8_t unused2[23];
     uint32_t flags;
     struct {                    // 复位寄存器：往这个地址写 reset_value，机器就复位
         uint8_t space;          // 它在哪种地址空间里
@@ -80,6 +82,7 @@ struct fadt {
 } __attribute__((packed));
 
 #define FADT_LENGTH_V1          116     // 最早的 FADT 到 flags 为止，没有复位寄存器
+#define FADT_FLAG_NO_POWER_BUTTON (1u << 4)     // flags 里：电源键不是固定事件（要解释 AML 才用得了）
 #define FADT_FLAG_RESET         (1u << 10)      // flags 里：有复位寄存器
 #define ACPI_SPACE_IO           1       // 地址空间：I/O 端口
 
@@ -250,6 +253,20 @@ static void io_delay(uint32_t writes) {
     }
 }
 
+/**
+ * 电源管理还在固件手里的话（开机时常常如此），让它交出来：不交的话往控制寄存器里写的不算，
+ * 电源键按下时中断也不来（固件自己收走了）。
+ */
+static void take_power_management(uint16_t control, uint32_t smi_command, uint8_t acpi_enable) {
+    if (!(hal::Port::read16(control) & PM1_SCI_ENABLE) && smi_command != 0 &&
+        smi_command <= 0xFFFF && acpi_enable != 0) {
+        hal::Port::write8((uint16_t)smi_command, acpi_enable);
+        for (int i = 0; i < 3000 && !(hal::Port::read16(control) & PM1_SCI_ENABLE); i++) {
+            io_delay(1000);
+        }
+    }
+}
+
 namespace drivers {
 
 uint32_t Acpi::cpu_apic_ids(uint8_t *ids, uint32_t max) {
@@ -335,14 +352,7 @@ void Acpi::power_off() {
     uint16_t control_a = (uint16_t)pm1a;
     uint16_t control_b = (uint16_t)pm1b;
 
-    // 电源管理还在固件手里的话（开机时常常如此），先让它交出来：不交的话写了也不算
-    if (!(hal::Port::read16(control_a) & PM1_SCI_ENABLE) && smi_command != 0 &&
-        smi_command <= 0xFFFF && acpi_enable != 0) {
-        hal::Port::write8((uint16_t)smi_command, acpi_enable);
-        for (int i = 0; i < 3000 && !(hal::Port::read16(control_a) & PM1_SCI_ENABLE); i++) {
-            io_delay(1000);
-        }
-    }
+    take_power_management(control_a, smi_command, acpi_enable);
 
     // 先写进入哪种状态，再置"现在就进入"的那一位
     uint16_t a = (uint16_t)((hal::Port::read16(control_a) & ~(PM1_SLEEP_TYPE_MASK | PM1_SLEEP_ENABLE)) |
@@ -356,6 +366,30 @@ void Acpi::power_off() {
     }
     hal::Port::write16(control_a, a | PM1_SLEEP_ENABLE);
     io_delay(1000000);      // 电源不是立刻断的；过了这么久还在运行就是没成
+}
+
+bool Acpi::power_button(uint16_t *port, uint32_t *length, uint32_t *irq) {
+    struct fadt *fadt = (struct fadt *)find_table("FACP", FADT_LENGTH_V1);
+    if (!fadt) {
+        return false;
+    }
+    uint32_t event = fadt->pm1a_event, control = fadt->pm1a_control;
+    uint32_t event_length = fadt->pm1_event_length;
+    uint32_t sci = fadt->sci_interrupt;
+    uint32_t smi_command = fadt->smi_command;
+    uint8_t acpi_enable = fadt->acpi_enable;
+    bool fixed = !(fadt->flags & FADT_FLAG_NO_POWER_BUTTON);
+    kfree(fadt);
+    // 状态和使能各至少 2 个字节；中断线要是老式中断控制器上的一条
+    if (!fixed || event == 0 || event > 0xFFFF || event_length < 4 || control == 0 || control > 0xFFFF ||
+        sci == 0 || sci >= 16) {
+        return false;
+    }
+    take_power_management((uint16_t)control, smi_command, acpi_enable);
+    *port = (uint16_t)event;
+    *length = event_length;
+    *irq = sci;
+    return true;
 }
 
 void Acpi::reset() {

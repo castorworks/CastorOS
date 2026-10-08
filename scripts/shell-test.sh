@@ -9,9 +9,11 @@
 # 不按固定时间等待：每一步都等日志里出现预期的那一行（最多 STEP_TIMEOUT 秒）。
 #
 # 环境变量 MONITOR（可选）：QEMU 监视器的管道，QEMU 命令里要有 -monitor pipe:$MONITOR。
-# 有它才检查键盘：监视器的 sendkey 命令在虚拟机的键盘上敲键。
+# 有它才检查键盘和电源键：监视器的 sendkey 命令在虚拟机的键盘上敲键，system_powerdown 按电源键。
 # 环境变量 KBD_DRIVER（可选）：敲的键到的是哪个驱动，kbd（PS/2，不写就是它）或 usbkbd
-# （虚拟机上接了 USB 键盘时，QEMU 把键送给它）。
+# （虚拟机上接了 USB 键盘时，QEMU 把键送给它）；none 表示这台虚拟机没有键盘。
+# 环境变量 POWER_OFF（可选）：最后怎么关机，button（按电源键，要有监视器）或 command
+# （敲 poweroff，不写就是它）。
 
 LOG=$1; RESULTS=$2; BOOT_TIMEOUT=$3; shift 3
 STEP_TIMEOUT=${STEP_TIMEOUT:-30}
@@ -393,7 +395,8 @@ keyboard_input() {
     sleep 0.5
     keys ctrl-c; expect '^sleep: killed by signal 2$'
 }
-[ -n "$MONITOR" ] && check "keyboard input" keyboard_input
+has_keyboard() { [ -n "$MONITOR" ] && [ "$KBD_DRIVER" != none ]; }
+has_keyboard && check "keyboard input" keyboard_input
 
 # ---- 终端输入的模块崩溃了：init 重启它，之后输入照常（selftest restart 让模块退出）----
 # 最后做：每个模块最多被重启 5 次
@@ -409,7 +412,7 @@ keyboard_after_restart() {
     expect "$KBD_READY" || return 1
     keys e c h o spc k e y s spc a f t e r ret; expect '^keys after$'
 }
-[ -n "$MONITOR" ] && check "keyboard driver is restarted" keyboard_after_restart
+has_keyboard && check "keyboard driver is restarted" keyboard_after_restart
 
 # ---- 重启：机器复位，重新启动到命令行；根在磁盘上时，重启前写的文件还在 ----
 on_disk() { grep -aq 'diskfs: ready' "$LOG"; }
@@ -424,16 +427,27 @@ reboot_machine() {
 }
 check "reboot" reboot_machine
 
-# ---- 关机：QEMU 自己退出 ----
-power_off() {
-    send 'poweroff\n'; expect '^init: powering off$' || return 1
+# ---- 关机：敲 poweroff，或者按电源键（电源键驱动请 init 关机）；QEMU 自己退出 ----
+qemu_exits() {
     local deadline=$((SECONDS + STEP_TIMEOUT))
     while kill -0 $QEMU_PID 2>/dev/null; do
         [ $SECONDS -ge $deadline ] && return 1
         sleep 0.2
     done
 }
-check "power off" power_off
+
+power_off() {
+    send 'poweroff\n'; expect '^init: powering off$' && qemu_exits
+}
+
+power_button() {
+    MARK=0; expect "pwrbtn: driver ready" || return 1
+    MARK=$(wc -c < "$LOG"); echo system_powerdown >&4
+    expect 'pwrbtn: power button pressed$' && expect 'init: powering off$' && qemu_exits
+}
+
+if [ "$POWER_OFF" = button ] && [ -n "$MONITOR" ]; then check "power button" power_button
+else check "power off" power_off; fi
 
 [ $failed -eq 0 ] && echo "shelltest: all passed" >> "$RESULTS"
 exit 0

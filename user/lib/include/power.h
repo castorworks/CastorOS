@@ -9,6 +9,9 @@
 
 #include <syscall.h>
 
+/** 电源键驱动（user/pwrbtn）登记的名字。它不提供服务，登记只是告诉 init 它找到了电源键 */
+#define POWER_BUTTON_NAME   "pwrbtn"
+
 /** 请求的 label（和 names.h 里名字服务的那几个发给同一个进程，所以不能重号）。data[0]: POWER_OFF 或 POWER_REBOOT */
 #define POWER_REQUEST   16
 

@@ -272,10 +272,13 @@ DISK_SIZE_MB ?= 16
 # make test 用的磁盘：每次重新做（4MB，小到 selftest 可以把它写满）
 TEST_DISK = $(BUILD_DIR)/test-disk.img
 TEST_DISK_SIZE_MB = 4
-# make test 在 x86 上还要在虚拟机的键盘上敲键：通过 QEMU 的监视器（一对管道，
-# scripts/shell-test.sh 创建），arm64 没有键盘
-ifneq ($(ARCH),arm64)
-    TEST_MONITOR = $(BUILD_DIR)/monitor
+# make test 还要按虚拟机的电源键、在 x86 上还要在它的键盘上敲键（arm64 没有键盘）：通过
+# QEMU 的监视器（一对管道，scripts/shell-test.sh 创建）
+TEST_MONITOR = $(BUILD_DIR)/monitor
+ifeq ($(ARCH),arm64)
+    TEST_KBD_DRIVER = none
+else
+    TEST_KBD_DRIVER = $(if $(QEMU_KBD),usbkbd,kbd)
 endif
 
 QEMU_RUN = $(QEMU_BASE) $(call qemu_disk,$(DISK)) $(QEMU_NET) $(QEMU_KBD)
@@ -337,15 +340,16 @@ run-usb: $(ISO)
 # 检查命令行的行为（后台任务、Ctrl-C、kill）。完整日志写入 $(BUILD_DIR)/test.log，
 # 命令行检查的结果写入 $(BUILD_DIR)/shell-test.log，这里只汇总。
 # LIVE=1：不接磁盘。根就在内存里（从光盘启动、或者磁盘上没有我们的系统时是这样），
-# 自检里和磁盘有关的几项跳过不算失败。
+# 自检里和磁盘有关的几项跳过不算失败。最后关机的那一步平时是按电源键，LIVE=1 时是敲 poweroff，
+# 两条路就都有测试在走。
 test:
 	@$(MAKE) --no-print-directory run-test ARCH=$(ARCH) KTEST=1
 
 run-test: $(BOOT_IMAGE) $(MKDISKFS)
 	@echo "━━━ $(ARCH): running kernel tests, user-space selftest and shell checks$(if $(LIVE), (no disk: root in memory)) ━━━"
 	@rm -f $(TEST_DISK) && $(MKDISKFS) $(TEST_DISK) $(TEST_DISK_SIZE_MB) $(ROOT_TREE) > /dev/null
-	@MONITOR=$(TEST_MONITOR) KBD_DRIVER=$(if $(QEMU_KBD),usbkbd,kbd) scripts/shell-test.sh $(BUILD_DIR)/test.log $(BUILD_DIR)/shell-test.log $(TEST_TIMEOUT) \
-	     $(QEMU_BASE) $(if $(LIVE),,$(call qemu_disk,$(TEST_DISK))) $(QEMU_NET) $(QEMU_KBD) $(if $(TEST_MONITOR),-monitor pipe:$(TEST_MONITOR))
+	@MONITOR=$(TEST_MONITOR) KBD_DRIVER=$(TEST_KBD_DRIVER) POWER_OFF=$(if $(LIVE),command,button) scripts/shell-test.sh $(BUILD_DIR)/test.log $(BUILD_DIR)/shell-test.log $(TEST_TIMEOUT) \
+	     $(QEMU_BASE) $(if $(LIVE),,$(call qemu_disk,$(TEST_DISK))) $(QEMU_NET) $(QEMU_KBD) -monitor pipe:$(TEST_MONITOR)
 	@grep -a "FAILED" $(BUILD_DIR)/shell-test.log || true
 	@awk -v live=$(if $(LIVE),1,0) 'function num(key,  s) { if (!match($$0, key ": *[0-9]+")) return 0; \
 	         s = substr($$0, RSTART, RLENGTH); sub(/.*: */, "", s); return s + 0 } \

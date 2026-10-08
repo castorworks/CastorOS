@@ -141,6 +141,7 @@ CastorOS/
 │   ├── uart/               # Serial input driver (module, allowed the serial port): hands characters to console
 │   ├── kbd/                # PS/2 keyboard driver (module, allowed the keyboard controller; x86 only): hands characters to console
 │   ├── usbkbd/             # USB keyboard driver (module, allowed the UHCI controllers; x86 only): uhci.cpp (USB 1.1 host controller), usbkbd.cpp (ports, hubs, HID boot keyboard): hands characters to console
+│   ├── pwrbtn/             # Power button driver (module, allowed the button's registers): asks init to power off. acpi_button.cpp (x86), gpio_button.cpp (arm64, PL061)
 │   ├── blk/                # Block device driver (module, allowed the disk): blk.cpp (server), virtio_blk.cpp (virtio-pci on x86, virtio-mmio on arm64); x86 only: ata.cpp (IDE disk), ehci.cpp (USB 2.0 host controller) + usb_storage.cpp (USB stick)
 │   ├── net/                # Network service (module, allowed the network card): nic.cpp (the card; virtio_net.cpp, and on x86 e1000.cpp for Intel gigabit cards, behind `struct nic` in nic.h), ip.cpp (Ethernet/ARP/IPv4/ICMP), udp.cpp, tcp.cpp, dhcp.cpp, net.cpp (main loop)
 │   ├── diskfs/             # File service on the block device (module, no hardware): the root file system
@@ -186,6 +187,10 @@ the name server (`names.h` in `user/lib`).
   descriptor types shared with `blk` are in `usb.h`; how Shift, Caps Lock and Ctrl act on a key
   is shared with `kbd` in `keys.h`, and so are the escape sequences both send for the arrow keys. While it waits (`uhci_sleep`) it keeps acknowledging
   interrupts: its line is usually shared with other drivers and must not stay masked.
+- `user/pwrbtn`: power button driver; on a press it sends init the same request as `poweroff`.
+  Where the button is comes from the firmware through `device_find`: `arm,pl061` (the GPIO
+  controller, device tree) on arm64, and on x86 `acpi,power-button`, the only device x86
+  answers for (`base` is an I/O port: the ACPI PM1 event block). Exits on a machine without one
 - `user/blk`: block device driver, virtio-blk or (x86, when there is no virtio disk) the IDE
   disk on the first channel and a USB stick on a USB 2.0 port; protocol and client in `blk.h`.
   It can serve several disks at once, numbered from 0 (`blk_select`). The devices are behind
@@ -421,11 +426,13 @@ series of commands into the serial port to check the command line (running progr
 jobs, Ctrl-C, `kill`, whether the port of a killed service can be reused, programs reading
 keyboard input, redirection and pipes, directories, quoting, standard error, scripts, line
 editing and history, Tab completion; on x86 also
-a few lines typed on the VM's PS/2 keyboard through the QEMU monitor's `sendkey`; at the end
+a few lines typed on the VM's PS/2 keyboard through the QEMU monitor's `sendkey` (all three
+architectures get a monitor; arm64 has no keyboard); at the end
 console, uart and the keyboard driver are made to exit with `selftest restart <name>` and input must work
 again after init restarts them; last of all `reboot`, after which the machine must come back
-to the command line with a file written before still on the disk, and `poweroff`, after which
-QEMU must exit by itself). Each step waits until
+to the command line with a file written before still on the disk, and a press of the power
+button through the monitor's `system_powerdown`, after which QEMU must exit by itself; with
+`LIVE=1` that last step types `poweroff` instead, so both ways are tested). Each step waits until
 the expected output appears (at most `STEP_TIMEOUT` seconds per step, default 30). Because of
 the reboot the kernel tests and the selftest run twice in one `make test`.
 

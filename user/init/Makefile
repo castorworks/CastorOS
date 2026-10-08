@@ -4,7 +4,7 @@ TARGET = init
 SOURCES = init.cpp
 ASM_SOURCES = modules.S
 
-MODULE_NAMES = console uart blk net ramfs diskfs sh
+MODULE_NAMES = console uart pwrbtn blk net ramfs diskfs sh
 ifneq ($(ARCH),arm64)
 MODULE_NAMES += kbd usbkbd  # 键盘（PS/2 和 USB）只有 PC 有
 endif

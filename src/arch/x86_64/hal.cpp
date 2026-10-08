@@ -127,11 +127,11 @@ const char *hal_arch_name(void) {
 }
 
 /**
- * x86 没有固件给的设备表：设备由驱动自己探测（扫 PCI 配置空间）
+ * x86 没有固件给的设备表：设备由 init 自己探测（扫 PCI 配置空间）。唯一的例外是电源键，
+ * 它在哪里写在 ACPI 的表里
  */
 bool hal::Platform::find_device(struct device_info *info) {
-    (void)info;
-    return false;
+    return drivers::Power::find_device(info);
 }
 
 bool hal::Platform::port_read(uint16_t port, uint32_t width, uint32_t *value) {

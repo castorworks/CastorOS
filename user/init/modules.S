@@ -16,6 +16,7 @@
     module kbd, kbd_IMAGE
     module usbkbd, usbkbd_IMAGE
 #endif
+    module pwrbtn, pwrbtn_IMAGE
     module blk, blk_IMAGE
     module net, net_IMAGE
     module ramfs, ramfs_IMAGE

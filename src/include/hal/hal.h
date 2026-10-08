@@ -833,7 +833,8 @@ public:
      * @brief Look up a platform device by its "compatible" string
      *
      * info->compatible and info->index select the device; the rest is filled in.
-     * Machines that discover devices by probing (x86 PCI) have no such table.
+     * Machines that discover devices by probing (x86 PCI) have no such table; the one
+     * device x86 answers for is the ACPI power button ("acpi,power-button", base = I/O port).
      *
      * @return true if there is such a device
      */

@@ -30,7 +30,7 @@
 | 25 | `uptime_ms(ms*)` | 开机以来的毫秒数 |
 | 26 | `timer_set(ms)` | 一次性定时器：到期时收到内核发来的 `IPC_LABEL_TIMER` 消息；0 取消 |
 | 27 | `mem_free_pages()` | ⚡ 还没有分配出去的物理页数；自检用它检查进程退出后内存全部归还 |
-| 28 | `device_find(info*)` | 按型号（设备树的 `compatible`）查平台设备的寄存器地址和中断号，仅特权进程 |
+| 28 | `device_find(info*)` | 按型号（设备树的 `compatible`）查平台设备的寄存器地址和中断号，仅特权进程。x86 上只认电源键（`"acpi,power-button"`，得到的是端口号） |
 | 29 | `hw_allow(kind, start, count)` | 往自己的许可表里加一条：一段 I/O 端口、一段设备内存或者几条中断线。仅特权进程 |
 | 30 | `hw_allowed(index, range*)` | ⚡ 读自己许可表里的第 `index` 条；驱动据此得知自己的设备在哪里 |
 | 31 | `cpu_info(count*)` | ⚡ 返回调用者此刻在哪个 CPU 上运行（从 0 开始），`*count` 得到正在运行的 CPU 个数。见 [多个 CPU](smp.md) |

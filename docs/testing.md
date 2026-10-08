@@ -36,7 +36,7 @@ make test ARCH=x86_64 QEMU_MEMORY=3G   # 给虚拟机更多内存（默认是 QE
 
 1. 启动 QEMU，等日志里出现 `sh: ready`（以 `TEST_TIMEOUT` 为上限）。到这里内核测试和用户态自检都已经跑完。
 2. 向串口输入一串命令，检查命令行的行为：运行程序、后台任务、Ctrl-C、`kill`、被终止的服务的端口能否重用、程序读键盘输入、重定向和管道、目录、引号、标准错误、脚本、行编辑和历史、Tab 补全。x86 上最后还通过 QEMU 的监视器（`sendkey` 命令）在虚拟机的键盘上敲几行，检查键盘驱动（PS/2 的 `kbd`；`KBD=usb` 时 QEMU 把键送给 USB 键盘，检查的是 `usbkbd`）。最后让 console、uart 和键盘驱动依次像崩溃了一样退出（`selftest restart <名字>`），检查 init 重启它们之后输入照常。每一步等到预期的输出出现为止（每步最多 `STEP_TIMEOUT` 秒，默认 30）。
-3. 最后敲 `reboot`，等机器复位后重新启动到命令行（内核测试和自检因此会再跑一遍），检查重启前写在磁盘上的文件还在；再敲 `poweroff`，QEMU 应该自己退出。
+3. 最后敲 `reboot`，等机器复位后重新启动到命令行（内核测试和自检因此会再跑一遍），检查重启前写在磁盘上的文件还在；再通过 QEMU 的监视器按电源键（`system_powerdown`），电源键的驱动请 init 关机，QEMU 应该自己退出。`LIVE=1` 时这一步改成敲 `poweroff`，两条路就都有测试在走。
 4. 汇总各模块的 `Total/Passed/Failed tests` 计数（没能自己退出的 QEMU 在这里被结束掉）。
 
 出现下面任何一种情况，`make test` 返回非零：

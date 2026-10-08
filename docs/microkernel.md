@@ -29,12 +29,13 @@ CastorOS 的内核只保留五件事：CPU/中断、内存管理、任务调度�
 
 `user/init` 是第一个用户进程，负责启动模块并充当名字服务。内核保证它的 PID 是 1（普通任务从 2 开始编号），用户态把这个 PID 当作名字服务的固定地址。构建内核时先编译出 `user/init/build/<arch>/init.elf`，去掉调试信息（`init.stripped.elf`）后由 `src/kernel/init_image.S` 用 `.incbin` 嵌进内核映像，不需要磁盘或文件系统。
 
-init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/init/modules.S`），启动方式是 `fork` + `exec`。有特权的只有 init 自己：每个模块都是放弃特权之后才启动的。驱动在放弃之前由 init 把它的设备许可给它（见 [特权与硬件访问](reference/hardware.md)），之后只碰得到这一个设备。目前有九个（arm64 上没有 `kbd` 和 `usbkbd`，是七个）：
+init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/init/modules.S`），启动方式是 `fork` + `exec`。有特权的只有 init 自己：每个模块都是放弃特权之后才启动的。驱动在放弃之前由 init 把它的设备许可给它（见 [特权与硬件访问](reference/hardware.md)），之后只碰得到这一个设备。目前有十个（arm64 上没有 `kbd` 和 `usbkbd`，是八个）：
 
 - `user/console`：终端输入服务，不碰硬件。输入设备的驱动把字符送到这里，终端的输入归谁由它管。
 - `user/uart`：串口输入驱动，得到串口的寄存器和中断线。收到的字节交给 console。没有串口时直接退出。
 - `user/kbd`：PS/2 键盘驱动（只有 x86），得到键盘控制器的两个端口和中断线。敲出来的字符交给 console。
 - `user/usbkbd`：USB 键盘驱动（只有 x86），得到机器上 USB 1.1 控制器（UHCI）的寄存器和中断线。敲出来的字符同样交给 console。没有这种控制器时直接退出。
+- `user/pwrbtn`：电源键驱动，得到电源键的寄存器和中断线。按下时请 init 关机。机器上没有电源键时直接退出。
 - `user/blk`：块设备驱动（virtio-blk；x86 上没有 virtio 磁盘时是第一个 IDE 通道上的硬盘，和插在 USB 2.0 口上的 U 盘），得到磁盘的寄存器和中断线。没有磁盘时直接退出。
 - `user/net`：网络服务（网卡驱动——virtio-net，x86 上没有它时是 Intel 千兆网卡——加协议栈：ARP、IPv4、ICMP、UDP、TCP，启动时用 DHCP 取地址），得到网卡的寄存器和中断线。没有网卡时它直接退出。
 - `user/ramfs`：内存文件系统服务，不碰硬件。`/tmp` 在它上面；启动映像嵌在它里面，根不在磁盘上时整棵目录树都归它。
@@ -47,7 +48,7 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 
 驱动重启有一个没法在这里解决的窗口：驱动死了，设备不知道，还在往驱动原来的内存（已经被内核收回）里读写，直到 init 发现并在重新许可设备时把它复位（`virtio_allow`）。没有 IOMMU 就拦不住这段时间里的写入。
 
-**关机和重启。** 让机器断电或复位的系统调用（`power`，见 [特权与硬件访问](reference/hardware.md)）要特权，所以这件事归 init：`poweroff` 和 `reboot` 两个程序只是给它发一条请求（`power.h` 的 `power_request`）。内核不知道文件系统，`power` 调用了立刻就做，所以 init 先让磁盘上的内容停稳：
+**关机和重启。** 让机器断电或复位的系统调用（`power`，见 [特权与硬件访问](reference/hardware.md)）要特权，所以这件事归 init：`poweroff` 和 `reboot` 两个程序只是给它发一条请求（`power.h` 的 `power_request`），按电源键时电源键的驱动发的也是这一条。内核不知道文件系统，`power` 调用了立刻就做，所以 init 先让磁盘上的内容停稳：
 
 1. 请 `diskfs` 停下来（`FS_STOP`）。它一次处理一个请求，应答了这一条就说明手上没有做到一半的修改；应答之后它退出，从此没有人再经它写盘。
 2. 请 `blk` 停下来（`BLK_STOP`）。它让每块盘把自己缓存里的内容写到介质上，应答，退出。
