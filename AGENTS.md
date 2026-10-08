@@ -465,7 +465,7 @@ the uart driver and the console service. On x86 the same output is also on the V
   means end of input.
 - `cmd < in > out 2> err`, `cmd >> out`, `cmd1 | cmd2` and `"arguments with spaces"` work.
 - The line being typed can be edited: left/right (with Ctrl: by word), Home/End, Delete, Ctrl-K /
-  Ctrl-U / Ctrl-W; at the prompt up/down recall earlier lines and Ctrl-R searches them.
+  Ctrl-U / Ctrl-W and Ctrl-Y to paste what they removed; at the prompt up/down recall earlier lines and Ctrl-R searches them.
 - Tab completes the word before the cursor: a command name (builtins and `/bin`), a path,
   a directory after `cd`, a job's PID after `kill`. A second Tab lists the candidates.
 - A text file is run as a script; `$1`-`$9` are its arguments.

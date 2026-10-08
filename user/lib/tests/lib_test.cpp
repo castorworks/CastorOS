@@ -352,6 +352,13 @@ static void test_line_editor_words_and_search(void) {
     CHECK(type(&e, "two three" "\033[1;5D" "\x0b") == 0 && shows(&e, "one  two ", 9));      // Ctrl-K
     CHECK(type(&e, "\033[1;5D" "\x15") == 0 && shows(&e, "two ", 0));                       // Ctrl-U
     CHECK(type(&e, "\x15" "\x17" "\033[F" "\x0b") == 0 && shows(&e, "two ", 4));            // 没有可删的
+    // Ctrl-Y：贴回刚删掉的；连着删的几次合在一起，中间隔了别的键就只有最后一次的
+    CHECK(type(&e, "\x15" "a b c" "\x17\x17" "\x01\x19") == 0 && shows(&e, "b ca ", 3));
+    CHECK(type(&e, "\033\x7f" "\033\x7f" "\x19\x19") == 0 && shows(&e, "b cb ca ", 6));       // Alt-退格也算；可以贴几次
+    CHECK(type(&e, "\x01\x0b" "x" "\x19") == 0 && shows(&e, "xb cb ca ", 9));
+    CHECK(type(&e, "\033[1;5D\033[1;5D" "\x0b" "\x15" "\x19") == 0 && shows(&e, "xb cb ca ", 9));  // 往前删的接在前面
+    CHECK(type(&e, "\x17" LEFT "\x17" "\x19") == 0 && shows(&e, "xb cb ", 5));     // 隔了别的键：只有后一次的
+    type(&e, "\x15\x0b");
     line_edit_reset(&e);
     memset(screen, 0, sizeof(screen));
     screen_cursor = 0;

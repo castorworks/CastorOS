@@ -342,9 +342,10 @@ line_editing() {
     send 'echo one two\033b\033[1;5DX\033f\033fY\n'; expect '^Xone twoY$' || return 1  # 按词移动：Alt-B、Ctrl-左、Alt-F
     send 'echo keep cut\033b\013\n'; expect '^keep$' || return 1                  # Ctrl-K 删到行尾
     send 'bad echo word gone\027\001\033f\033f\033b\025\n'; expect '^word$' || return 1   # Ctrl-W 删一个词，Ctrl-U 删到行首
+    send 'echo moved here\027\001\033f \031\n'; expect '^here moved$' || return 1   # Ctrl-Y 把删掉的贴到别处
     send '\022fir'; expect "\(search\)'fir': echo first" || return 1              # Ctrl-R 在历史里找
     send '\n'; expect '^first$' || return 1
-    send '\022echo \022\022'; expect "\(search\)'echo ': echo keep" || return 1   # 再按：更早的
+    send '\022echo \022\022'; expect "\(search\)'echo ': echo word" || return 1   # 再按：更早的
     send '\007echo gave up\n'; expect '^gave up$'                                 # Ctrl-G 放弃
 }
 check "line editing and history" line_editing

@@ -32,6 +32,7 @@ void line_edit_init(struct line_editor *e, char *buf, size_t size, struct line_h
 void line_edit_reset(struct line_editor *e) {
     e->len = e->cursor = 0;
     e->escape = ESC_NONE;
+    e->killed = e->killing = false;
     if (e->size > 0) {
         e->text[0] = '\0';
     }
@@ -85,6 +86,30 @@ static void move(struct line_editor *e, size_t to) {
 /** 删掉 [from, to)，光标留在 from */
 static void erase(struct line_editor *e, size_t from, size_t to) {
     line_edit_replace(e, from, to - from, "", 0, from);
+}
+
+// Ctrl-K、Ctrl-U、Ctrl-W 删掉的内容，Ctrl-Y 贴回来。整个进程一份：程序每读一行用的是一个新的
+// 编辑器，上一行删的这一行也贴得出来
+static char killed_text[LINE_HISTORY_LINE];
+static size_t killed_len;
+
+/**
+ * 删掉 [from, to) 并记下来。连着删的几次合成一段：backward 是往光标前面删的，接在已有的前面
+ */
+static void kill(struct line_editor *e, size_t from, size_t to, bool backward) {
+    size_t n = to - from;
+    e->killing = true;
+    if (!e->killed || killed_len + n > sizeof(killed_text)) {
+        killed_len = 0;
+    }
+    if (n <= sizeof(killed_text)) {
+        if (backward) {
+            memmove(killed_text + n, killed_text, killed_len);
+        }
+        memcpy(backward ? killed_text : killed_text + killed_len, e->text + from, n);
+        killed_len += n;
+    }
+    erase(e, from, to);
 }
 
 /** 光标左边 / 右边那个词的开头 / 结尾：先越过空格，再越过词 */
@@ -263,7 +288,18 @@ static void escape_key(struct line_editor *e, char final, int key, int modifier)
     }
 }
 
+static int feed(struct line_editor *e, char c);
+
 int line_edit_feed(struct line_editor *e, char c) {
+    int key = feed(e, c);
+    if (e->escape == ESC_NONE) {    // 一个键处理完了（转义序列是几个字节一个键）
+        e->killed = e->killing;
+        e->killing = false;
+    }
+    return key;
+}
+
+static int feed(struct line_editor *e, char c) {
     if (e->history && e->history->searching && search_key(e, c)) {
         return 0;
     }
@@ -275,7 +311,7 @@ int line_edit_feed(struct line_editor *e, char c) {
         switch (c) {
         case 'b':   move(e, word_left(e)); break;
         case 'f':   move(e, word_right(e)); break;
-        case 0x7F:  erase(e, word_left(e), e->cursor); break;
+        case 0x7F:  kill(e, word_left(e), e->cursor, true); break;
         }
         return 0;
     }
@@ -324,13 +360,16 @@ int line_edit_feed(struct line_editor *e, char c) {
         }
         return 0;
     case 0x0B:                      // Ctrl-K
-        erase(e, e->cursor, e->len);
+        kill(e, e->cursor, e->len, false);
         return 0;
     case 0x15:                      // Ctrl-U
-        erase(e, 0, e->cursor);
+        kill(e, 0, e->cursor, true);
         return 0;
     case 0x17:                      // Ctrl-W
-        erase(e, word_left(e), e->cursor);
+        kill(e, word_left(e), e->cursor, true);
+        return 0;
+    case 0x19:                      // Ctrl-Y
+        line_edit_replace(e, e->cursor, 0, killed_text, killed_len, e->cursor + killed_len);
         return 0;
     case 0x01:                      // Ctrl-A
         move(e, 0);
