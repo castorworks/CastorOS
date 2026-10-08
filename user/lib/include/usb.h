@@ -14,8 +14,14 @@
 #define USB_TYPE_TO_ENDPOINT        0x02
 #define USB_TYPE_CLASS_TO_INTERFACE 0x21    // 设备种类自己定义的请求，发给一个接口
 
+#define USB_TYPE_CLASS_TO_PORT       0x23    // 集线器的请求，发给它的一个口
+#define USB_TYPE_CLASS_FROM_DEVICE  0xA0
+#define USB_TYPE_CLASS_FROM_PORT    0xA3
+
 // 标准请求
+#define USB_REQ_GET_STATUS          0
 #define USB_REQ_CLEAR_FEATURE       1
+#define USB_REQ_SET_FEATURE         3
 #define USB_REQ_SET_ADDRESS         5
 #define USB_REQ_GET_DESCRIPTOR      6
 #define USB_REQ_SET_CONFIGURATION   9
@@ -26,6 +32,9 @@
 #define USB_DESC_CONFIGURATION      2
 #define USB_DESC_INTERFACE          4
 #define USB_DESC_ENDPOINT           5
+
+// 设备的种类（设备描述符的第 4 个字节；大多数设备这里是 0，种类写在接口描述符里）
+#define USB_CLASS_HUB               9
 
 // 端点描述符：地址的最高位是方向，属性的低两位是传输的种类
 #define USB_ENDPOINT_IN             0x80

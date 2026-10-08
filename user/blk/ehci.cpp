@@ -339,6 +339,10 @@ static void port_write(int port, uint32_t value) {
     op_write(OP_PORTSC + (uint32_t)port * 4, value & ~PORT_CHANGE_BITS);
 }
 
+void ehci_port_release(int port) {
+    port_write(port, port_read(port) | PORT_OWNER);
+}
+
 bool ehci_port_reset(int port) {
     if (!(port_read(port) & PORT_CONNECTED)) {
         return false;
@@ -357,7 +361,7 @@ bool ehci_port_reset(int port) {
     }
     if (!(status & PORT_ENABLED)) {
         // 低速或全速设备（键盘、鼠标）：本控制器不会说它们的话，交给伙伴控制器
-        port_write(port, status | PORT_OWNER);
+        ehci_port_release(port);
         return false;
     }
     return true;

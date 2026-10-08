@@ -68,11 +68,12 @@ jobs:
           - arch: i686
             packages: i686-elf-gcc nasm
             kbd: usb
-          # U 盘和 USB 键盘在同一个 USB 2.0 控制器的口上，键盘由伙伴控制器接手（真机上是这样）
+          # U 盘和 USB 集线器在同一个 USB 2.0 控制器的口上，键盘在集线器后面：集线器由伙伴
+          # 控制器接手（真机上是这样）
           - arch: i686
             packages: i686-elf-gcc nasm
             disk: usb
-            kbd: usb
+            kbd: hub
           # 不接磁盘：根在内存里（从光盘启动、或者磁盘上没有这个系统时是这样）
           - arch: i686
             packages: i686-elf-gcc nasm

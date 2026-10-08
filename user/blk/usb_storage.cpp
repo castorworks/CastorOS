@@ -226,8 +226,16 @@ static bool attach(int port) {
     if (!ehci_port_reset(port)) {
         return false;
     }
-    // 刚复位的设备在地址 0 上：给它一个自己的地址（之后它要缓一下）
     ehci_set_address(0);
+    // 集线器不归这里管：让给伙伴控制器，它在那边按全速工作，后面的键盘由 usbkbd 接手。
+    // 是不是集线器写在设备描述符的开头
+    uint8_t device[8];
+    if (ehci_control(USB_TYPE_FROM_DEVICE, USB_REQ_GET_DESCRIPTOR, USB_DESC_DEVICE << 8, 0, device, 8) == 8 &&
+        device[4] == USB_CLASS_HUB) {
+        ehci_port_release(port);
+        return false;
+    }
+    // 刚复位的设备在地址 0 上：给它一个自己的地址（之后它要缓一下）
     uint8_t assigned = (uint8_t)(port + 1);
     if (ehci_control(USB_TYPE_TO_DEVICE, USB_REQ_SET_ADDRESS, assigned, 0, NULL, 0) < 0) {
         return false;

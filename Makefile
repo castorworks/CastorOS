@@ -216,16 +216,23 @@ endif
 # DISK_BUS=ide 或 usb（只有 x86）：磁盘作为 IDE 硬盘、或者插在 USB 2.0 口上的 U 盘接上，
 # 而不是 virtio-blk；run 和 test 都认。真机上是这两种，用它们来跑那两个驱动
 # KBD=usb（只有 x86）：再接一个 USB 键盘；run 和 test 都认。之后在 QEMU 窗口里敲的键（和
-# make test 敲的键）到的是它，不是 PS/2 键盘。它插在一个 USB 1.1 控制器的口上；和
-# DISK_BUS=usb 一起用时，键盘和 U 盘插在同一个 USB 2.0 控制器的口上，键盘由它的伙伴控制器
-# 接手：真机上是这样的（usb_version=1：QEMU 的键盘默认是高速设备，真键盘不是）
+# make test 敲的键）到的是它，不是 PS/2 键盘。KBD=hub：键盘接在一个集线器后面。
+# 它们插在一个 USB 1.1 控制器的口上；和 DISK_BUS=usb 一起用时，和 U 盘插在同一个 USB 2.0
+# 控制器的口上，由它的伙伴控制器接手：真机上是这样的。
+# usb_version=1：QEMU 的键盘默认是高速设备，真键盘不是
 QEMU_EHCI = usb-ehci,id=ehci
-ifeq ($(KBD),usb)
+ifneq ($(filter usb hub,$(KBD)),)
 ifeq ($(DISK_BUS)$(LIVE),usb)
 QEMU_EHCI = ich9-usb-ehci1,id=ehci -device ich9-usb-uhci1,masterbus=ehci.0,firstport=0
-QEMU_KBD = -device usb-kbd,bus=ehci.0,usb_version=1
+QEMU_KBD_BUS = ehci.0
 else
-QEMU_KBD = -device piix3-usb-uhci,id=uhci -device usb-kbd,bus=uhci.0
+QEMU_KBD = -device piix3-usb-uhci,id=uhci
+QEMU_KBD_BUS = uhci.0
+endif
+ifeq ($(KBD),hub)
+QEMU_KBD += -device usb-hub,bus=$(QEMU_KBD_BUS),port=2 -device usb-kbd,bus=$(QEMU_KBD_BUS),port=2.3,usb_version=1
+else
+QEMU_KBD += -device usb-kbd,bus=$(QEMU_KBD_BUS),usb_version=1
 endif
 endif
 ifeq ($(DISK_BUS),ide)
@@ -399,7 +406,7 @@ help:
 	@echo "  all (default)  Build the kernel with user/init embedded"
 	@echo "  build-all      Build all architectures"
 	@echo "  run            Run in QEMU (serial console on stdio; QEMU_DISPLAY=cocoa opens the screen)"
-	@echo "  run KBD=usb    x86: also attach a USB keyboard (test KBD=usb checks its driver)"
+	@echo "  run KBD=usb    x86: also attach a USB keyboard, KBD=hub: behind a hub (test KBD=... checks the driver)"
 	@echo "  debug          Run in QEMU waiting for GDB on :1234"
 	@echo "  iso            System image for a real PC: GRUB, kernel and the root file system; write it to a hard disk"
 	@echo "  run-iso/run-cd/run-usb  Boot that image in QEMU as a hard disk / as a CD (root in memory) / from a USB stick"

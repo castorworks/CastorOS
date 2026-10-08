@@ -10,8 +10,8 @@
 //   - 队列头（QH）：一串 TD 的头。横着的指针指向下一个队列头，竖着的指针指向自己这一串里
 //     下一个要做的 TD；控制器每做完一个 TD 就把竖着的指针往下挪一格。
 //
-// 这里的安排：每个端口一个队列头（定期问那个端口上的设备有没有数据），加上一个大家共用的
-// 控制传输的队列头，横着连成一串。帧表里每 8 项有一项从串的开头出发，其余的直接从控制
+// 这里的安排：几个定期去问的队列头（每个对着一个设备的一个端点，问它有没有数据），加上
+// 一个大家共用的控制传输的队列头，横着连成一串。帧表里每 8 项有一项从串的开头出发，其余的直接从控制
 // 传输的队列头出发：键盘每 8 毫秒被问一次，控制传输每毫秒都能往前走。
 //
 // 寄存器是一段 I/O 端口，init 许可给本进程的就是（每个控制器一段）。
@@ -96,29 +96,30 @@ struct qh {
 // 每个控制器两页设备看得到的内存（dma_alloc）：第 0 页是帧表，第 1 页放其余的东西
 #define FRAMES              1024
 #define INTERRUPT_EVERY     8           // 每 8 帧问一次中断端点
-enum { QH_CONTROL, QH_INTERRUPT };      // 之后每个端口一个
-#define TD_AREA             64          // 第 1 页里 TD 从这里开始
-enum { TD_INTERRUPT = 0, TD_CONTROL = UHCI_PORTS };     // 每个端口一个，之后是控制传输的
+enum { QH_CONTROL, QH_INTERRUPT };      // 之后是定期去问的，UHCI_INTERRUPT_SLOTS 个
+#define TD_AREA             256         // 第 1 页里 TD 从这里开始
+enum { TD_INTERRUPT = 0, TD_CONTROL = UHCI_INTERRUPT_SLOTS };   // 定期去问的每个一个，之后是控制传输的
 #define CONTROL_TDS         (2 + UHCI_CONTROL_MAX / 8)  // 请求、数据（每个包至少 8 字节）、状态
-#define SETUP_AREA          1280
-#define INTERRUPT_AREA      1344        // 每个端口 UHCI_INTERRUPT_MAX 字节
-#define CONTROL_AREA        2048
+#define SETUP_AREA          1600
+#define INTERRUPT_AREA      1664        // 定期去问的每个 UHCI_INTERRUPT_MAX 字节
+#define CONTROL_AREA        2176
+static_assert((QH_INTERRUPT + UHCI_INTERRUPT_SLOTS) * sizeof(struct qh) <= TD_AREA);
 static_assert(TD_AREA + (TD_CONTROL + CONTROL_TDS) * sizeof(struct td) <= SETUP_AREA);
-static_assert(INTERRUPT_AREA + UHCI_PORTS * UHCI_INTERRUPT_MAX <= CONTROL_AREA);
+static_assert(INTERRUPT_AREA + UHCI_INTERRUPT_SLOTS * UHCI_INTERRUPT_MAX <= CONTROL_AREA);
 static_assert(CONTROL_AREA + UHCI_CONTROL_MAX <= PAGE_SIZE);
 
 struct controller {
     uint32_t io;            // 寄存器的第一个端口
     char *page;             // 第 1 页
     uint32_t page_phys;
-    // 每个端口上定期问的那个端点
+    // 定期去问的端点
     struct {
         bool on;
         bool toggle;        // 下一个包是 DATA0 还是 DATA1：设备每给一次数据换一次
         uint32_t flags;
         uint32_t token;
         uint32_t length;
-    } interrupt[UHCI_PORTS];
+    } interrupt[UHCI_INTERRUPT_SLOTS];
 };
 
 static struct controller controllers[UHCI_MAX_CONTROLLERS];
@@ -362,53 +363,53 @@ long uhci_control(const struct uhci_device *dev, uint8_t request_type, uint8_t r
 // 中断传输
 // ============================================================================
 
-/** 把问一次的 TD 填好，挂到这个端口的队列头上 */
-static void interrupt_arm(struct controller *c, int port) {
-    td_fill(c, TD_INTERRUPT + port, c->interrupt[port].flags | TD_IOC, c->interrupt[port].token,
-            c->interrupt[port].toggle, c->page_phys + INTERRUPT_AREA + (uint32_t)port * UHCI_INTERRUPT_MAX,
-            c->interrupt[port].length);
-    qh_at(c, QH_INTERRUPT + port)->element = td_phys(c, TD_INTERRUPT + port);
+/** 把问一次的 TD 填好，挂到这个位置的队列头上 */
+static void interrupt_arm(struct controller *c, int slot) {
+    td_fill(c, TD_INTERRUPT + slot, c->interrupt[slot].flags | TD_IOC, c->interrupt[slot].token,
+            c->interrupt[slot].toggle, c->page_phys + INTERRUPT_AREA + (uint32_t)slot * UHCI_INTERRUPT_MAX,
+            c->interrupt[slot].length);
+    qh_at(c, QH_INTERRUPT + slot)->element = td_phys(c, TD_INTERRUPT + slot);
 }
 
-void uhci_interrupt_start(const struct uhci_device *dev, int port, uint8_t endpoint, uint16_t max_packet) {
+void uhci_interrupt_start(const struct uhci_device *dev, int slot, uint8_t endpoint, uint16_t max_packet) {
     struct controller *c = &controllers[dev->controller];
-    c->interrupt[port].on = true;
-    c->interrupt[port].toggle = false;      // 配置好的端点从 DATA0 开始
-    c->interrupt[port].flags = dev->low_speed ? TD_LOW_SPEED : 0;
-    c->interrupt[port].token = PID_IN | ((uint32_t)dev->address << TOKEN_ADDRESS_SHIFT) |
+    c->interrupt[slot].on = true;
+    c->interrupt[slot].toggle = false;      // 配置好的端点从 DATA0 开始
+    c->interrupt[slot].flags = dev->low_speed ? TD_LOW_SPEED : 0;
+    c->interrupt[slot].token = PID_IN | ((uint32_t)dev->address << TOKEN_ADDRESS_SHIFT) |
                                ((uint32_t)endpoint << TOKEN_ENDPOINT_SHIFT);
-    c->interrupt[port].length = max_packet == 0 ? 8 : max_packet > UHCI_INTERRUPT_MAX ? UHCI_INTERRUPT_MAX : max_packet;
-    interrupt_arm(c, port);
+    c->interrupt[slot].length = max_packet == 0 ? 8 : max_packet > UHCI_INTERRUPT_MAX ? UHCI_INTERRUPT_MAX : max_packet;
+    interrupt_arm(c, slot);
 }
 
-long uhci_interrupt_poll(int controller, int port, void *data) {
+long uhci_interrupt_poll(int controller, int slot, void *data) {
     struct controller *c = &controllers[controller];
-    if (!c->interrupt[port].on) {
+    if (!c->interrupt[slot].on) {
         return -1;
     }
     // 设备没有数据时回答 NAK，TD 保持 Active，控制器过 8 毫秒再问：这里什么都不用做
-    uint32_t status = td_at(c, TD_INTERRUPT + port)->status;
+    uint32_t status = td_at(c, TD_INTERRUPT + slot)->status;
     if (status & TD_ACTIVE) {
         return -1;
     }
     if (status & TD_ERRORS) {
-        interrupt_arm(c, port);
+        interrupt_arm(c, slot);
         return -2;
     }
     uint32_t n = td_actual(status);
-    memcpy(data, c->page + INTERRUPT_AREA + port * UHCI_INTERRUPT_MAX, n);
-    c->interrupt[port].toggle = !c->interrupt[port].toggle;
-    interrupt_arm(c, port);
+    memcpy(data, c->page + INTERRUPT_AREA + slot * UHCI_INTERRUPT_MAX, n);
+    c->interrupt[slot].toggle = !c->interrupt[slot].toggle;
+    interrupt_arm(c, slot);
     return (long)n;
 }
 
-void uhci_interrupt_stop(int controller, int port) {
+void uhci_interrupt_stop(int controller, int slot) {
     struct controller *c = &controllers[controller];
-    if (!c->interrupt[port].on) {
+    if (!c->interrupt[slot].on) {
         return;
     }
-    c->interrupt[port].on = false;
-    qh_at(c, QH_INTERRUPT + port)->element = LINK_TERMINATE;
+    c->interrupt[slot].on = false;
+    qh_at(c, QH_INTERRUPT + slot)->element = LINK_TERMINATE;
     uhci_sleep(2);          // 控制器可能正做着那个 TD：等它走过这一帧
 }
 
@@ -447,11 +448,11 @@ static bool controller_start(struct controller *c, uint32_t io) {
         return false;
     }
 
-    // 队列头横着连成一串：每个端口的，最后是控制传输的。都还没有要做的事
-    for (int port = 0; port < UHCI_PORTS; port++) {
-        int next = port + 1 < UHCI_PORTS ? QH_INTERRUPT + port + 1 : QH_CONTROL;
-        qh_at(c, QH_INTERRUPT + port)->link = qh_phys(c, next) | LINK_QH;
-        qh_at(c, QH_INTERRUPT + port)->element = LINK_TERMINATE;
+    // 队列头横着连成一串：定期去问的那些，最后是控制传输的。都还没有要做的事
+    for (int slot = 0; slot < UHCI_INTERRUPT_SLOTS; slot++) {
+        int next = slot + 1 < UHCI_INTERRUPT_SLOTS ? QH_INTERRUPT + slot + 1 : QH_CONTROL;
+        qh_at(c, QH_INTERRUPT + slot)->link = qh_phys(c, next) | LINK_QH;
+        qh_at(c, QH_INTERRUPT + slot)->element = LINK_TERMINATE;
     }
     qh_at(c, QH_CONTROL)->link = LINK_TERMINATE;
     qh_at(c, QH_CONTROL)->element = LINK_TERMINATE;

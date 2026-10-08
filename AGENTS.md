@@ -91,7 +91,7 @@ make run                # Run in QEMU, serial console on stdio; attaches disk-<a
                         # file system: system files refreshed on every run, your own files kept)
                         # and a virtio-net card on QEMU user networking
 make run QEMU_DISPLAY=cocoa   # Same with QEMU's window: the VGA screen, keys typed there go to the PS/2 keyboard driver (x86)
-make run KBD=usb QEMU_DISPLAY=cocoa   # x86: also attach a USB keyboard; keys typed in the window then go to usbkbd
+make run KBD=usb QEMU_DISPLAY=cocoa   # x86: also attach a USB keyboard (KBD=hub: behind a hub); keys typed in the window then go to usbkbd
 make debug              # Same, waiting for GDB on :1234
 make iso                # System image for a real PC (x86; needs grub-mkrescue and xorriso): GRUB and
                         # the kernel, followed by a partition holding the root file system. Written
@@ -139,7 +139,7 @@ CastorOS/
 │   ├── console/            # Terminal input service (module, no hardware): takes characters from uart, kbd and usbkbd, decides who gets them
 │   ├── uart/               # Serial input driver (module, allowed the serial port): hands characters to console
 │   ├── kbd/                # PS/2 keyboard driver (module, allowed the keyboard controller; x86 only): hands characters to console
-│   ├── usbkbd/             # USB keyboard driver (module, allowed the UHCI controllers; x86 only): uhci.cpp (USB 1.1 host controller), usbkbd.cpp (ports, HID boot keyboard): hands characters to console
+│   ├── usbkbd/             # USB keyboard driver (module, allowed the UHCI controllers; x86 only): uhci.cpp (USB 1.1 host controller), usbkbd.cpp (ports, hubs, HID boot keyboard): hands characters to console
 │   ├── blk/                # Block device driver (module, allowed the disk): blk.cpp (server), virtio_blk.cpp (virtio-pci on x86, virtio-mmio on arm64); x86 only: ata.cpp (IDE disk), ehci.cpp (USB 2.0 host controller) + usb_storage.cpp (USB stick)
 │   ├── net/                # Network service (module, allowed the network card): nic.cpp (virtio-net), ip.cpp (Ethernet/ARP/IPv4/ICMP), udp.cpp, tcp.cpp, dhcp.cpp, net.cpp (main loop)
 │   ├── diskfs/             # File service on the block device (module, no hardware): the root file system
@@ -176,7 +176,10 @@ the name server (`names.h` in `user/lib`).
 - `user/usbkbd` (x86 only): USB keyboard driver on the machine's UHCI controllers (up to 4, all
   in this one process). USB devices come and go and UHCI raises no interrupt for that, so it
   looks at every port four times a second; that is also how it gets a keyboard that the EHCI
-  driver in `blk` released to the companion controller after boot. Standard USB requests and
+  driver in `blk` released to the companion controller after boot. Hubs are handled as more
+  ports: the three port operations (look, reset, disable) exist once for a controller's own
+  ports and once for a hub's, and everything above them does not tell the two apart. `blk`
+  releases high-speed hubs to the companion controller too, so all hubs end up here. Standard USB requests and
   descriptor types shared with `blk` are in `usb.h`; how Shift, Caps Lock and Ctrl act on a key
   is shared with `kbd` in `keys.h`. While it waits (`uhci_sleep`) it keeps acknowledging
   interrupts: its line is usually shared with other drivers and must not stay masked.
@@ -390,6 +393,7 @@ make test DISK_BUS=ide         # x86: attach the disk as an IDE drive instead of
 make test DISK_BUS=usb         # x86: attach it as a USB stick on an EHCI controller
 make test KBD=usb              # x86: attach a USB keyboard (UHCI); the typed keys then exercise usbkbd instead of kbd.
                                # With DISK_BUS=usb the keyboard and the stick share one EHCI controller with a companion
+make test KBD=hub              # x86: the same with the keyboard behind a USB hub
 make test LIVE=1               # no disk: the root is in memory; the disk-related selftest checks may be skipped
 make test ARCH=x86_64 QEMU_MEMORY=3G   # more memory for the VM (default is QEMU's 128MB); the
                                # "high physical memory" kernel tests only have content above 1GB
@@ -426,7 +430,7 @@ Every push to `main` and every pull request runs `make test` for each architectu
 Actions (`.github/workflows/test.yml`, three jobs on macOS runners with the Homebrew cross
 compilers), plus `make lib-test`. The logs of each run (`test.log`, `shell-test.log`) are
 uploaded as artifacts. Each architecture also runs with `SMP=2`, and i686 once more with
-`DISK_BUS=ide`, `DISK_BUS=usb`, `LIVE=1`, `KBD=usb` and `DISK_BUS=usb KBD=usb`. If you add a build dependency, add it to the workflow's `brew install`
+`DISK_BUS=ide`, `DISK_BUS=usb`, `LIVE=1`, `KBD=usb` and `DISK_BUS=usb KBD=hub`. If you add a build dependency, add it to the workflow's `brew install`
 line too.
 
 ### Running by Hand

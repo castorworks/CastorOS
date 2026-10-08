@@ -28,6 +28,9 @@ int ehci_ports(void);
  */
 bool ehci_port_reset(int port);
 
+/** 把第 port 个端口让给伙伴控制器：上面的设备在那边重新出现，按全速工作 */
+void ehci_port_release(int port);
+
 /** 控制端点接下来和哪个地址的设备说话（刚复位的设备在地址 0） */
 void ehci_set_address(uint8_t address);
 

@@ -6,7 +6,7 @@
 // 实现和原理在 uhci.cpp。
 //
 // 一台机器上常有好几个这样的控制器，每个带两个端口；这里从 0 给它们编号。
-// 不认集线器，所以一个端口上最多一个设备。
+// 端口上可以是集线器，所以一个控制器下面可以有好些设备，各有各的地址。
 
 #include <types.h>
 
@@ -17,7 +17,7 @@
 struct uhci_device {
     int controller;
     uint8_t address;        // 刚复位的设备在地址 0
-    bool low_speed;
+    bool low_speed;         // 低速设备接在全速的集线器后面也行：控制器发包时替它打招呼
     uint8_t max_packet;     // 控制端点的最大包长
 };
 
@@ -61,20 +61,22 @@ long uhci_control(const struct uhci_device *dev, uint8_t request_type, uint8_t r
 
 /** 中断端点一次最多给这么多字节 */
 #define UHCI_INTERRUPT_MAX  64
+/** 每个控制器上同时可以定期去问这么多个端点；用哪一个位置（0 起）由调用者分配 */
+#define UHCI_INTERRUPT_SLOTS 8
 
 /**
- * 开始定期（每 8 毫秒）去问 port 上那个设备的 endpoint 号端点有没有数据（“中断传输”：
- * 名字如此，其实是主机在轮询）。每个端口同时只能问一个端点。
+ * 开始定期（每 8 毫秒）去问设备 dev 的 endpoint 号端点有没有数据（“中断传输”：名字如此，
+ * 其实是主机在轮询），用它所在控制器的第 slot 个位置。
  */
-void uhci_interrupt_start(const struct uhci_device *dev, int port, uint8_t endpoint, uint16_t max_packet);
+void uhci_interrupt_start(const struct uhci_device *dev, int slot, uint8_t endpoint, uint16_t max_packet);
 
 /**
  * 那个端点给数据了吗。给了的话抄到 data（至少 UHCI_INTERRUPT_MAX 字节），接着问下一次。
  * @return 字节数；-1 还没有；-2 这一次出错了（设备被拔掉了，或者它把端点挂起了）
  */
-long uhci_interrupt_poll(int controller, int port, void *data);
+long uhci_interrupt_poll(int controller, int slot, void *data);
 
 /** 不再问了 */
-void uhci_interrupt_stop(int controller, int port);
+void uhci_interrupt_stop(int controller, int slot);
 
 #endif // _USBKBD_UHCI_H_
