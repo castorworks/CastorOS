@@ -377,6 +377,27 @@ static syscall_arg_t sys_cpu_info_wrapper(syscall_arg_t *frame, syscall_arg_t co
     return hal::Cpu::id();
 }
 
+/**
+ * 关机或重启。只有特权进程（init）可以：它先让文件系统和磁盘停稳，再调用这个。
+ * 成功就不返回了；返回 -1 是没有特权、不认识的 action，或者这台机器没有给出办法。
+ */
+static syscall_arg_t sys_power_wrapper(syscall_arg_t *frame, syscall_arg_t action, syscall_arg_t p2,
+                                       syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5) {
+    (void)frame; (void)p2; (void)p3; (void)p4; (void)p5;
+    if (!kernel::Scheduler::current_is_privileged()) return SYSCALL_FAIL;
+    if (action == POWER_OFF) {
+        LOG_INFO_MSG("Power: switching the machine off\n");
+        hal::Platform::power_off();
+    } else if (action == POWER_REBOOT) {
+        LOG_INFO_MSG("Power: resetting the machine\n");
+        hal::Platform::reboot();
+    } else {
+        return SYSCALL_FAIL;
+    }
+    LOG_WARN_MSG("Power: the firmware offers no way to do that\n");
+    return SYSCALL_FAIL;
+}
+
 static syscall_arg_t dispatch(syscall_arg_t syscall_num, syscall_arg_t p1, syscall_arg_t p2,
                               syscall_arg_t p3, syscall_arg_t p4, syscall_arg_t p5,
                               syscall_arg_t *frame) {
@@ -458,6 +479,7 @@ void syscall_init(void) {
     syscall_table[SYS_HW_ALLOW]      = sys_hw_allow_wrapper;
     syscall_table[SYS_HW_ALLOWED]    = sys_hw_allowed_wrapper;
     syscall_table[SYS_CPU_INFO]      = sys_cpu_info_wrapper;
+    syscall_table[SYS_POWER]         = sys_power_wrapper;
 
     /* 不拿内核锁的调用（规矩见 syscall_unlocked 的说明）。
      * 内存：PMM 和页表各有自己的锁，改的是调用者自己的地址空间和堆边界 */

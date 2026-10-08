@@ -40,6 +40,7 @@ enum {
     SYS_HW_ALLOW        = 29,
     SYS_HW_ALLOWED      = 30,
     SYS_CPU_INFO        = 31,
+    SYS_POWER           = 32,
 };
 
 typedef uintptr_t syscall_arg_t;
@@ -254,5 +255,19 @@ int irq_ack(int irq);
 
 /** 放弃特权（不可恢复）。许可表留着 */
 void drop_privilege(void);
+
+// ============================================================================
+// 电源
+// ============================================================================
+
+#define POWER_OFF       0       // 关机
+#define POWER_REBOOT    1       // 重启：机器复位，从固件重新启动
+
+/**
+ * 关机或重启，立刻：内核不知道文件系统，什么都不等。需要特权，所以只有 init 调用它；
+ * 别的程序用 power_request（power.h）请 init 来做，它会先让文件系统和磁盘停稳。
+ * @return 成功不返回；-1 = 没有特权，或者这台机器的固件没有给出办法
+ */
+int power(int action);
 
 #endif // _USERLAND_LIB_SYSCALL_H_

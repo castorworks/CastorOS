@@ -9,6 +9,7 @@
 
 #include <hal/hal.h>
 #include <kernel/hw_access.h>
+#include <drivers/x86/power.h>
 #include <kernel/gdt.h>
 #include <kernel/idt.h>
 #include <kernel/isr.h>
@@ -174,4 +175,12 @@ void hal::Platform::set_user_ports(const struct hw_range *allowed, uint32_t coun
             tss_io_allow((uint32_t)allowed[i].start, (uint32_t)allowed[i].count, allow);
         }
     }
+}
+
+void hal::Platform::power_off() {
+    drivers::Power::off();
+}
+
+void hal::Platform::reboot() {
+    drivers::Power::reboot();
 }

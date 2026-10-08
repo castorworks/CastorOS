@@ -9,9 +9,10 @@ CastorOS is an educational microkernel for learning and experimentation.
 
 - Targets i686, x86_64 and ARM64; all three build, boot and pass the kernel tests in QEMU
 - The kernel contains only CPU/interrupt setup, memory management, scheduling, sync
-  primitives and a 32-call syscall interface (process, memory, debug output, synchronous IPC,
-  shared memory, uptime/timer, and I/O port / device memory / DMA / IRQ access, platform
-  device lookup and per-device hardware permissions for user-space drivers)
+  primitives and a 33-call syscall interface (process, memory, debug output, synchronous IPC,
+  shared memory, uptime/timer, I/O port / device memory / DMA / IRQ access, platform
+  device lookup and per-device hardware permissions for user-space drivers, and power
+  off / reboot)
 - File systems, networking, device drivers and shells are **not** in the kernel; they are
   user-space modules (see `docs/microkernel.md`). Do not add them to `src/`.
 - Higher-half kernel (i686 virtual base 0x80000000)
@@ -35,7 +36,7 @@ All of them describe the current tree and are kept in sync with the code; there 
 of outdated documents (the old development log, `docs/history/`, was deleted and lives in git
 history only). When a change alters behaviour, limits or an interface, update the matching page in
 `docs/reference/` (each section ends with its known limits, introduced by “当前的限制”). The
-number of system calls (32) is stated in this file, `docs/microkernel.md`,
+number of system calls (33) is stated in this file, `docs/microkernel.md`,
 `docs/reference/syscalls.md`, `docs/README.md` and `docs/concepts/07-system-calls.md`; change
 them together. Writing conventions (one paragraph per line, no hard wraps in Chinese text, one fact
 in one place) are listed at the end of `docs/README.md`.
@@ -123,8 +124,8 @@ CastorOS/
 │   │   ├── i686/           # boot, cpu (GDT/IDT), interrupt, mm, task, syscall, hal.cpp
 │   │   ├── x86_64/
 │   │   └── arm64/          # also dtb/ (device tree parser: memory, GIC, timer, UART, device list)
-│   ├── drivers/            # Only debug output (serial; on x86 also the screen) and timer (tick)
-│   │   ├── x86/            # COM1, VGA text screen, PIT
+│   ├── drivers/            # Only debug output (serial; on x86 also the screen), timer (tick) and, on x86, power off / reset
+│   │   ├── x86/            # COM1, VGA text screen, PIT, ACPI tables (CPU list, power off), reset
 │   │   └── arm/            # PL011, ARM Generic Timer
 │   ├── kernel/             # sched.cpp (scheduler), task.cpp (task table, process lifecycle), smp.cpp (kernel lock, starting the other CPUs), syscall.cpp, ipc.cpp, user_irq.cpp, hw_access.cpp, elf.cpp, ...
 │   │   ├── sync/           # The spinlock
@@ -135,7 +136,7 @@ CastorOS/
 │   └── tests/              # Kernel unit tests (KTEST=1)
 ├── user/                   # User-space programs
 │   ├── lib/                # User library
-│   ├── init/               # First user process (the only privileged one): starts modules, assigns devices, name service
+│   ├── init/               # First user process (the only privileged one): starts modules, assigns devices, name service, power off / reboot
 │   ├── console/            # Terminal input service (module, no hardware): takes characters from uart, kbd and usbkbd, decides who gets them
 │   ├── uart/               # Serial input driver (module, allowed the serial port): hands characters to console
 │   ├── kbd/                # PS/2 keyboard driver (module, allowed the keyboard controller; x86 only): hands characters to console
@@ -146,7 +147,7 @@ CastorOS/
 │   ├── ramfs/              # In-memory file service (module, no hardware): /tmp, and the whole tree (from the boot image it holds) when there is no root on disk
 │   ├── sh/                 # Command line (module, no hardware): runs programs, background jobs, Ctrl-C
 │   ├── selftest/           # User-space self-checks, in /bin, run from /etc/rc at boot
-│   ├── ls/ cat/ cp/ rm/ mv/ mkdir/ echo/ write/ grep/ wc/ sleep/ clear/ disk/ ping/ ifconfig/ dns/ http/ echod/ hello/   # Programs, installed in /bin
+│   ├── ls/ cat/ cp/ rm/ mv/ mkdir/ echo/ write/ grep/ wc/ sleep/ clear/ disk/ ping/ ifconfig/ dns/ http/ echod/ poweroff/ reboot/ hello/   # Programs, installed in /bin
 │   ├── bootfs/             # Static files of the system's tree (etc/rc, usr/share/doc/)
 │   ├── program.mk          # Shared build rules for user programs
 │   ├── arch.mk             # Compiler and flags shared by the user library and all programs
@@ -227,6 +228,17 @@ ports a process is allowed are opened in the TSS I/O permission bitmap while it 
 `io_read`/`io_write` in the user library execute `in`/`out` directly for those ports and only
 fall back to the system call for the rest.
 
+**Power off and reboot.** The `power` system call acts at once and needs privilege, so only
+init calls it; `poweroff` and `reboot` just send init a request (`power_request` in `power.h`).
+init first asks diskfs to stop (`FS_STOP`: it replies between requests and exits, so nothing is
+half-written), then blk (`BLK_STOP`: every disk flushes its own cache, then it exits), then calls
+`power`; from then on modules that exit are not restarted. It does this in a forked child, not
+in its own main loop: init must never wait for a reply from a service, because that service may
+be waiting for init to answer a name lookup. A new service that keeps state on disk must be
+stopped there too, before blk. In the kernel, `hal::Platform::power_off()` / `reboot()` return
+only when the firmware offers no way (x86: ACPI for power-off, `src/drivers/x86/acpi.cpp`, and
+a chain of reset methods in `power.cpp`; arm64: PSCI).
+
 **Shared code.** Both file services share the protocol in `fs.h` and the server skeleton in
 `fs_server.h`, which also owns the directory rules (a backend only stores a flat table of full
 paths). The current directory, relative paths, `.` and `..` are resolved in the client library
@@ -236,7 +248,7 @@ share `virtio.h`; servers that take a shared buffer from each client use `client
 **Programs in /bin.** Other programs (`user/selftest`, `user/ls`, `user/cat`,
 `user/cp`, `user/rm`, `user/mv`, `user/mkdir`, `user/echo`, `user/write`, `user/grep`, `user/wc`,
 `user/clear`, `user/disk`, `user/ping`, `user/ifconfig`, `user/dns`, `user/http`, `user/echod`, `user/sleep`,
-`user/hello`) are the programs in `BOOT_PROGRAMS` (`user/ramfs/Makefile`); they are installed in
+`user/poweroff`, `user/reboot`, `user/hello`) are the programs in `BOOT_PROGRAMS` (`user/ramfs/Makefile`); they are installed in
 `/bin` of the tree. sh looks a bare command name up in `/bin` (a program or script elsewhere
 needs a path, e.g. `./tool`), runs it with fork + exec, and runs `/etc/rc` (which starts
 `selftest`) at boot.
@@ -386,7 +398,7 @@ nowhere else. The kernel Makefile rebuilds all of it when `user/` changes.
 ### Running Tests
 
 ```bash
-make test                      # i686: build the KTEST=1 kernel and run it; ends when the shell checks are done (usually ten-odd seconds)
+make test                      # i686: build the KTEST=1 kernel and run it; ends when the shell checks are done (about a minute: it reboots once on the way)
 make test ARCH=x86_64
 make test ARCH=arm64
 make test-all                  # all three architectures; non-zero if any of them fails
@@ -403,7 +415,7 @@ make test ARCH=x86_64 QEMU_MEMORY=3G   # more memory for the VM (default is QEMU
                                # "high physical memory" kernel tests only have content above 1GB
 ```
 
-The kernel does not power off by itself: `make test` starts QEMU through
+`make test` starts QEMU through
 `scripts/shell-test.sh`, waits for `sh: ready` in the log (at most `TEST_TIMEOUT`), then types a
 series of commands into the serial port to check the command line (running programs, background
 jobs, Ctrl-C, `kill`, whether the port of a killed service can be reused, programs reading
@@ -411,9 +423,11 @@ keyboard input, redirection and pipes, directories, quoting, standard error, scr
 editing and history, Tab completion; on x86 also
 a few lines typed on the VM's PS/2 keyboard through the QEMU monitor's `sendkey`; at the end
 console, uart and the keyboard driver are made to exit with `selftest restart <name>` and input must work
-again after init restarts them). Each step waits until
-the expected output appears (at most `STEP_TIMEOUT` seconds per step, default 30), and QEMU is
-stopped when the steps are done.
+again after init restarts them; last of all `reboot`, after which the machine must come back
+to the command line with a file written before still on the disk, and `poweroff`, after which
+QEMU must exit by itself). Each step waits until
+the expected output appears (at most `STEP_TIMEOUT` seconds per step, default 30). Because of
+the reboot the kernel tests and the selftest run twice in one `make test`.
 
 - Full log: `build/<arch>-ktest/test.log`
 - Shell check results: `build/<arch>-ktest/shell-test.log`, one line per check,

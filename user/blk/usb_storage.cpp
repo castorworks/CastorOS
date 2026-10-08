@@ -37,6 +37,7 @@
 #define SCSI_READ_CAPACITY      0x25
 #define SCSI_READ_10            0x28
 #define SCSI_WRITE_10           0x2A
+#define SCSI_SYNCHRONIZE_CACHE  0x35
 
 static uint8_t address;         // 设备的地址
 static uint8_t interface;
@@ -134,6 +135,12 @@ static bool usb_write(uint64_t sector, uint32_t count, const char *buf) {
     put_be32(command + 2, (uint32_t)sector);
     command[8] = (uint8_t)count;
     return scsi(command, sizeof(command), false, (void *)buf, count * BLK_SECTOR_SIZE) == 0;
+}
+
+/** U 盘可以先应答"写好了"再慢慢往闪存里写：关机前让它写完（全部扇区，写完才应答） */
+static void usb_flush(void) {
+    uint8_t command[10] = { SCSI_SYNCHRONIZE_CACHE };
+    scsi(command, sizeof(command), false, NULL, 0);
 }
 
 /** 等 U 盘准备好，问它是谁、有多大。@return 是一块 512 字节扇区的盘，*sectors 是它的扇区数 */
@@ -291,6 +298,7 @@ bool usb_open(struct disk *disk) {
             disk->irq = ehci_irq();
             disk->read = usb_read;
             disk->write = usb_write;
+            disk->flush = usb_flush;
             found = true;
         }
     }

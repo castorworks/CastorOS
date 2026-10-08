@@ -31,6 +31,10 @@
 #include <tests/arch/arch_types_test.h>
 #include <tests/pbt/pbt.h>
 
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
+#include <tests/arch/acpi_test.h>
+#endif
+
 #ifdef ARCH_X86_64
 #include <tests/arch/x86_64/isr64_test.h>
 #include <tests/arch/x86_64/paging64_test.h>
@@ -272,6 +276,10 @@ static const test_entry_t test_suite[] = {
     TEST_ENTRY("Architecture Type Size Tests", run_arch_types_tests),
     TEST_ENTRY("HAL Property Tests", run_hal_tests),
     
+#if defined(ARCH_I686) || defined(ARCH_X86_64)
+    TEST_ENTRY("ACPI Table Tests", run_acpi_tests),
+#endif
+
 #ifdef ARCH_I686
     TEST_ENTRY("i686 User Mode Transition Tests", run_usermode_tests),
 #endif

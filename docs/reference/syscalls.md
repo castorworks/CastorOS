@@ -1,6 +1,6 @@
 # 系统调用表
 
-内核一共有 32 个系统调用。编号在 `src/include/kernel/syscall.h`，用户态在 `user/lib/include/syscall.h` 里有一份相同的定义，包装函数在 `user/lib/src/syscall.cpp`。陷入内核的方式、参数校验和返回值的约定见 [概念：系统调用](../concepts/07-system-calls.md)。
+内核一共有 33 个系统调用。编号在 `src/include/kernel/syscall.h`，用户态在 `user/lib/include/syscall.h` 里有一份相同的定义，包装函数在 `user/lib/src/syscall.cpp`。陷入内核的方式、参数校验和返回值的约定见 [概念：系统调用](../concepts/07-system-calls.md)。
 
 标了 ⚡ 的调用不拿内核锁就运行，几个 CPU 上的进程可以同时在里面（见 [多个 CPU](smp.md) 的“不拿内核锁的系统调用”）；其余的调用同一时刻只有一个 CPU 在执行。
 
@@ -34,9 +34,10 @@
 | 29 | `hw_allow(kind, start, count)` | 往自己的许可表里加一条：一段 I/O 端口、一段设备内存或者几条中断线。仅特权进程 |
 | 30 | `hw_allowed(index, range*)` | ⚡ 读自己许可表里的第 `index` 条；驱动据此得知自己的设备在哪里 |
 | 31 | `cpu_info(count*)` | ⚡ 返回调用者此刻在哪个 CPU 上运行（从 0 开始），`*count` 得到正在运行的 CPU 个数。见 [多个 CPU](smp.md) |
+| 32 | `power(action)` | 关机（`POWER_OFF`）或重启（`POWER_REBOOT`），成功不返回；这台机器的固件没有给出办法时返回 -1。仅特权进程 |
 
 各组调用的详细说明：
 
 - 13–17、25–26（IPC、共享内存、定时器）：[进程间通信](ipc.md)
-- 18–24、28–30（端口、设备内存、中断、DMA、许可表）：[特权与硬件访问](hardware.md)
+- 18–24、28–30、32（端口、设备内存、中断、DMA、许可表、关机和重启）：[特权与硬件访问](hardware.md)
 - 2（`exec` 的参数块怎么到达 `main`）：[启动映像和命令行](shell.md#程序参数)

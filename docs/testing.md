@@ -14,7 +14,7 @@
 ## 运行测试
 
 ```bash
-make test                      # i686：构建 KTEST=1 内核并运行，命令行检查做完即结束（通常十几秒）
+make test                      # i686：构建 KTEST=1 内核并运行，命令行检查做完即结束（一分钟左右：中间重启一次）
 make test ARCH=x86_64
 make test ARCH=arm64
 make test-all                  # 三个架构都跑完，有任何一个失败就返回非零
@@ -32,11 +32,12 @@ make test ARCH=x86_64 QEMU_MEMORY=3G   # 给虚拟机更多内存（默认是 QE
 
 ### make test 做了什么
 
-内核不会自己关机，所以 `make test` 通过 `scripts/shell-test.sh` 来控制 QEMU：
+`make test` 通过 `scripts/shell-test.sh` 来控制 QEMU：
 
 1. 启动 QEMU，等日志里出现 `sh: ready`（以 `TEST_TIMEOUT` 为上限）。到这里内核测试和用户态自检都已经跑完。
 2. 向串口输入一串命令，检查命令行的行为：运行程序、后台任务、Ctrl-C、`kill`、被终止的服务的端口能否重用、程序读键盘输入、重定向和管道、目录、引号、标准错误、脚本、行编辑和历史、Tab 补全。x86 上最后还通过 QEMU 的监视器（`sendkey` 命令）在虚拟机的键盘上敲几行，检查键盘驱动（PS/2 的 `kbd`；`KBD=usb` 时 QEMU 把键送给 USB 键盘，检查的是 `usbkbd`）。最后让 console、uart 和键盘驱动依次像崩溃了一样退出（`selftest restart <名字>`），检查 init 重启它们之后输入照常。每一步等到预期的输出出现为止（每步最多 `STEP_TIMEOUT` 秒，默认 30）。
-3. 做完就结束 QEMU，汇总各模块的 `Total/Passed/Failed tests` 计数。
+3. 最后敲 `reboot`，等机器复位后重新启动到命令行（内核测试和自检因此会再跑一遍），检查重启前写在磁盘上的文件还在；再敲 `poweroff`，QEMU 应该自己退出。
+4. 汇总各模块的 `Total/Passed/Failed tests` 计数（没能自己退出的 QEMU 在这里被结束掉）。
 
 出现下面任何一种情况，`make test` 返回非零：
 

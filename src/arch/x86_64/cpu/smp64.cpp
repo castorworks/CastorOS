@@ -72,9 +72,8 @@ uint32_t hal::Cpu::start_secondaries() {
         return 0;
     }
 
-    /* Which CPUs are there? The firmware's ACPI table says. Without it (not found, or
-     * not in memory the kernel has mapped) fall back to trying APIC IDs in order,
-     * which costs a wait for the first one that is not there. */
+    /* Which CPUs are there? The firmware's ACPI table says. Without it fall back to
+     * trying APIC IDs in order, which costs a wait for the first one that is not there. */
     uint8_t apic_ids[MAX_CPUS];
     uint32_t listed = drivers::Acpi::cpu_apic_ids(apic_ids, MAX_CPUS);
     if (listed == 1) {

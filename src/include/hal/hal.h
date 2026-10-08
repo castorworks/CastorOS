@@ -859,6 +859,15 @@ public:
      * ports with in/out instead of a system call each time. Nothing to do elsewhere.
      */
     static void set_user_ports(const struct hw_range *allowed, uint32_t count, bool allow);
+
+    /**
+     * @brief Switch the machine off, or reset it so that it boots again
+     *
+     * Neither returns when it works. They return when the firmware offers no way to
+     * do it (x86: no usable ACPI tables for power-off; arm64: no PSCI in the device tree).
+     */
+    static void power_off();
+    static void reboot();
 };
 
 } // namespace hal

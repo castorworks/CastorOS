@@ -63,8 +63,15 @@ enum {
     // 多个 CPU
     SYS_CPU_INFO        = 31,  // cpu_info(count*)：返回调用者此刻在哪个 CPU 上运行，*count 得到正在运行的 CPU 个数
 
+    // 电源
+    SYS_POWER           = 32,  // power(action)：关机或重启，成功不返回（需要特权）
+
     SYS_MAX
 };
+
+/* power 的 action（与 user/lib/include/syscall.h 保持一致） */
+#define POWER_OFF       0       /**< 关机 */
+#define POWER_REBOOT    1       /**< 重启：机器复位，从固件重新启动 */
 
 /**
  * device_find 的参数和结果。调用者填 compatible 和 index，内核填其余的。

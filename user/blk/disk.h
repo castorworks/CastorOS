@@ -20,6 +20,8 @@ struct disk {
     /** 读/写 count 个扇区（1..BLK_BUF_SIZE / BLK_SECTOR_SIZE），等设备做完。@return 成功了没有 */
     bool (*read)(uint64_t sector, uint32_t count, char *buf);
     bool (*write)(uint64_t sector, uint32_t count, const char *buf);
+    /** 让设备把自己缓存里还没写到介质上的内容写下去（关机前调用）。NULL：写完就已经在介质上了 */
+    void (*flush)(void);
 };
 
 // 中断（blk.cpp）。本进程里可能有不止一个设备，内核发来的中断消息要按中断线分给它们。

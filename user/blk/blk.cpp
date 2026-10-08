@@ -105,6 +105,20 @@ int main() {
             continue;
         }
 
+        if (m.label == BLK_STOP) {
+            // 要关机了：一次只处理一个请求，所以这时没有写到一半的。断电之前盘上要有全部内容
+            for (int i = 0; i < disk_count; i++) {
+                if (disks[i].flush) {
+                    disks[i].flush();
+                }
+            }
+            struct ipc_msg stopped = {};
+            stopped.label = BLK_STOP;
+            ipc_reply(m.sender, &stopped);
+            printf("blk: stopped\n");
+            return 0;
+        }
+
         struct ipc_msg reply = {};
         reply.label = m.label;
         int64_t result = -1;

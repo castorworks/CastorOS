@@ -321,7 +321,9 @@ extern "C" struct secondary_boot_args secondary_boot;
 extern "C" uint64_t secondary_entry_address;    /* physical: the boot code is linked there */
 extern "C" void arm64_secondary_start(void);
 
-#define PSCI_CPU_ON     0xC4000003ULL       /* SMC64 function id */
+#define PSCI_CPU_ON         0xC4000003ULL   /* SMC64 function id */
+#define PSCI_SYSTEM_OFF     0x84000008ULL
+#define PSCI_SYSTEM_RESET   0x84000009ULL
 
 /** Call the firmware (PSCI). The device tree says which instruction traps into it */
 static int64_t psci_call(uint32_t method, uint64_t function, uint64_t arg1, uint64_t arg2, uint64_t arg3) {
@@ -337,6 +339,22 @@ static int64_t psci_call(uint32_t method, uint64_t function, uint64_t arg1, uint
                          "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
     }
     return (int64_t)x0;
+}
+
+/* Switching off and resetting are firmware calls too. Without PSCI in the device
+ * tree there is nobody to ask */
+void hal::Platform::power_off() {
+    const dtb_info_t *dtb = dtb_get_info();
+    if (dtb && dtb->psci_method != DTB_PSCI_NONE) {
+        psci_call(dtb->psci_method, PSCI_SYSTEM_OFF, 0, 0, 0);
+    }
+}
+
+void hal::Platform::reboot() {
+    const dtb_info_t *dtb = dtb_get_info();
+    if (dtb && dtb->psci_method != DTB_PSCI_NONE) {
+        psci_call(dtb->psci_method, PSCI_SYSTEM_RESET, 0, 0, 0);
+    }
 }
 
 /* The software-generated interrupt kick_others() sends. Nothing to do when it

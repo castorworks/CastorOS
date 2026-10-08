@@ -1,18 +1,20 @@
 // init - 第一个用户进程
 //
 // 以 ELF 映像的形式嵌入内核（src/kernel/init_image.S），由内核在启动时加载。
-// 它做四件事：
+// 它做五件事：
 //   1. 启动模块（映像带在自己身上，见 modules.S）
 //   2. 分配设备：只有 init 有特权。模块启动前都先放弃特权；驱动在放弃之前由 init 把
 //      它的设备（端口或设备内存、中断线）记进许可表，之后它只碰得到这一个设备
 //   3. 充当名字服务：服务进程把名字登记到这里，客户按名字查到它的 PID（协议见 names.h）。
 //      模块的服务名是留给它的：只有 init 启动的那个进程能登记，别的进程冒充不了
 //   4. 看着模块：工作着的模块退出了（崩溃、被杀）就重启它，驱动重启时重新许可它的设备
+//   5. 关机和重启：别的进程请它来做（power.h）。它先让文件系统和磁盘停稳，再让内核断电或复位
 
 #include <syscall.h>
 #include <stdio.h>
 #include <string.h>
 #include <names.h>
+#include <power.h>
 #include <console.h>
 #include <virtio.h>
 #include <pci.h>
@@ -295,6 +297,9 @@ static struct module *module_of_service(const char *name) {
     return NULL;
 }
 
+/** 正在关机或重启：从这时起退出的模块不再重启 */
+static bool shutting_down;
+
 // fork 之后用模块的 ELF 映像替换子进程。驱动的子进程在放弃特权之前先把设备许可给自己。
 // 重启的模块多带一个参数 "restarted"（命令行靠它知道不用再执行一遍启动脚本）
 static void start_module(struct module *m) {
@@ -329,12 +334,12 @@ static void start_module(struct module *m) {
 /**
  * 一个模块退出了。重启它，如果它是真的工作过之后才退出的：登记过服务名的模块是这样，
  * 没有服务名的模块（命令行）总是这样。一启动就发现没有自己的设备、没登记就退出的驱动
- * （没有磁盘时的 blk）不重启——再启动一次结果也一样。
+ * （没有磁盘时的 blk）不重启——再启动一次结果也一样。关机的过程中退出的也不重启。
  */
 static void module_exited(struct module *m) {
     bool worked = m->service == NULL || m->registered;
     m->pid = 0;
-    if (!worked) {
+    if (!worked || shutting_down) {
         settle(m, 0);
         return;
     }
@@ -415,6 +420,52 @@ static bool register_name(const char *name, int pid) {
     return false;
 }
 
+// ============================================================================
+// 关机和重启
+// ============================================================================
+
+/** 请一个模块的服务停下来（请求的含义见它的协议：应答之后退出），等它应答 */
+static void stop_service(const char *service, uint32_t label) {
+    struct module *m = module_of_service(service);
+    if (m && m->pid != 0 && m->registered) {
+        struct ipc_msg stop = {};
+        stop.label = label;
+        ipc_call(m->pid, &stop);
+    }
+}
+
+/**
+ * 关机或重启。在 fork 出来的子进程里运行（特权还在），不在 init 自己身上：要等别的服务
+ * 应答，而那个服务可能正好在等 init 应答它查名字的请求，两边就都等不到了。
+ *
+ * 断电之前磁盘上要有全部内容，而且不能有做到一半的修改。先停文件系统：它一次处理一个请求，
+ * 应答了停止的请求就说明手上没有别的了，之后它不在了，也就没有人再经它写盘。再停块设备
+ * 驱动，它在退出之前让磁盘把自己的缓存落盘。别的进程不用管：它们留不下什么。
+ */
+static void power_down(int action) {
+    printf("init: %s\n", action == POWER_REBOOT ? "rebooting" : "powering off");
+    stop_service(FS_DISK_SERVICE_NAME, FS_STOP);
+    stop_service(BLK_SERVICE_NAME, BLK_STOP);
+    power(action);
+    // 内核说这台机器的固件没有给出办法。文件系统已经停了，能做的只剩下告诉人
+    printf("init: this machine cannot %s by itself; it is now safe to switch it off\n",
+           action == POWER_REBOOT ? "reboot" : "power off");
+    exit(1);
+}
+
+/** 处理一个关机或重启的请求。@return 接下了没有（接下了就不应答：请求者一直等到机器停下） */
+static bool power_requested(uint64_t action) {
+    if (shutting_down || (action != POWER_OFF && action != POWER_REBOOT)) {
+        return false;
+    }
+    int pid = fork();
+    if (pid == 0) {
+        power_down((int)action);
+    }
+    shutting_down = pid > 0;
+    return shutting_down;
+}
+
 int main() {
     printf("init: started, pid=%d\n", getpid());
 
@@ -432,6 +483,15 @@ int main() {
         if (m.sender == IPC_KERNEL) {
             // 定时器：上面已经看过有没有模块退出了，定下一次
             timer_set(REAP_INTERVAL_MS);
+            continue;
+        }
+
+        if (m.label == POWER_REQUEST) {
+            if (!power_requested(m.data[0])) {
+                struct ipc_msg refused = {};
+                refused.label = POWER_REQUEST;
+                ipc_reply(m.sender, &refused);
+            }
             continue;
         }
 

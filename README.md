@@ -75,7 +75,7 @@ HTTP/1.1 200 OK
 
 命令行支持重定向和管道：`cmd > file`、`cmd < file`、`cmd 2> file`、`cmd1 | cmd2`（如 `ls | grep sh | wc`），`"带 空格"` 的参数用引号。文本文件可以当脚本运行（每行一条命令，`$1`-`$9` 是参数）。行尾加 `&` 让程序在后台运行（`jobs` 查看，`kill <pid>` 终止），Ctrl-C 终止前台程序。
 
-除了 `/tmp`（在内存里），整棵树都在磁盘上（`make run` 用的是 `disk-<arch>.img`），改的东西重启后还在。没有磁盘、或者磁盘上没有这个系统时，根退回到内存里，用的是内核带着的那一份。`make iso` 做出的系统映像可以原样写进一台 PC 的硬盘或者 U 盘，从它启动。
+除了 `/tmp`（在内存里），整棵树都在磁盘上（`make run` 用的是 `disk-<arch>.img`），改的东西重启后还在。`poweroff` 关机（QEMU 随之退出），`reboot` 重启。没有磁盘、或者磁盘上没有这个系统时，根退回到内存里，用的是内核带着的那一份。`make iso` 做出的系统映像可以原样写进一台 PC 的硬盘或者 U 盘，从它启动。
 
 这些都发生在用户态：键盘输入经串口中断 → uart 驱动 → console 服务 → IPC 到达 sh（PC 的键盘则是键盘中断 → kbd 或 usbkbd 驱动 → console 服务）；文件操作经 IPC 和共享缓冲区交给文件服务，磁盘文件再经块设备服务到 virtio-blk 驱动；网络请求交给 `user/net`（virtio-net 驱动加 ARP/IPv4/ICMP/UDP/TCP 协议栈，启动时用 DHCP 取地址，接 QEMU 的用户网络）；运行程序是从文件服务读出 ELF 后 `fork` + `exec`，这一行的其余部分作为参数传给 `main(argc, argv)`。
 

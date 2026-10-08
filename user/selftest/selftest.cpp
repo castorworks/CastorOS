@@ -205,7 +205,7 @@ static void test_timer(void) {
 
 static void test_privilege(void) {
     // 本程序没有特权，也没有被许可任何设备：不能访问设备寄存器，不能认领中断，
-    // 拿不到 DMA 内存，查不到设备在哪里，也不能给自己加许可
+    // 拿不到 DMA 内存，查不到设备在哪里，不能给自己加许可，也不能让机器断电或复位
     int pid = fork();
     if (pid == 0) {
         uint32_t v;
@@ -219,7 +219,8 @@ static void test_privilege(void) {
              device_find("arm,pl011", 0, &info) == -1 && device_find("virtio,mmio", 0, &info) == -1 &&
              hw_allowed(0, &range) == -1 && !hw_find(HW_IRQ, 0, &range) &&
              hw_allow(HW_PORTS, 0x80, 1) == -1 && hw_allow(HW_IRQ, 5, 1) == -1 &&
-             io_read(0x80, 1, &v) == -1 && irq_claim(5) == -1 ? 0 : 1);
+             io_read(0x80, 1, &v) == -1 && irq_claim(5) == -1 &&
+             power(POWER_OFF) == -1 && power(POWER_REBOOT) == -1 ? 0 : 1);
     }
     int status = 0;
     waitpid(pid, &status, 0);

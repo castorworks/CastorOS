@@ -93,8 +93,8 @@ uint32_t hal::Cpu::start_secondaries() {
         return 0;
     }
 
-    // 机器上有哪些 CPU？固件的 ACPI 表里写着。读不到（没找到，或者表所在的内存内核没有
-    // 映射）就退回去按顺序试 APIC ID，代价是要白等第一个不存在的
+    // 机器上有哪些 CPU？固件的 ACPI 表里写着。读不到就退回去按顺序试 APIC ID，
+    // 代价是要白等第一个不存在的
     uint8_t apic_ids[MAX_CPUS];
     uint32_t listed = drivers::Acpi::cpu_apic_ids(apic_ids, MAX_CPUS);
     if (listed == 1) {

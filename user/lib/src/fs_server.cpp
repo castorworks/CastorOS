@@ -8,6 +8,7 @@
 #include <clients.h>
 #include <syscall.h>
 #include <string.h>
+#include <stdio.h>
 
 #define MAX_HANDLES     64
 
@@ -271,6 +272,14 @@ int fs_serve(const char *service_name, const struct fs_backend *ops) {
         if (m.label == IPC_LABEL_GRANT) {
             clients_attach(&m);
             continue;       // 授予通知是单向的，不应答
+        }
+
+        if (m.label == FS_STOP) {
+            struct ipc_msg stopped = {};
+            stopped.label = FS_STOP;
+            ipc_reply(m.sender, &stopped);
+            printf("%s: stopped\n", service_name);
+            exit(0);
         }
 
         struct ipc_msg reply = {};

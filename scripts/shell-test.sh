@@ -1,5 +1,5 @@
 #!/bin/bash
-# 启动 QEMU，等命令行就绪后向串口输入一串命令，检查命令行的行为（后台任务、Ctrl-C、kill、程序读键盘输入、重定向和管道、引号、标准错误、脚本）。
+# 启动 QEMU，等命令行就绪后向串口输入一串命令，检查命令行的行为（后台任务、Ctrl-C、kill、程序读键盘输入、重定向和管道、引号、标准错误、脚本），最后重启一次、关机。
 # 由 make test 调用：
 #
 #   scripts/shell-test.sh <log> <results> <boot-timeout-seconds> <qemu command...>
@@ -410,6 +410,30 @@ keyboard_after_restart() {
     keys e c h o spc k e y s spc a f t e r ret; expect '^keys after$'
 }
 [ -n "$MONITOR" ] && check "keyboard driver is restarted" keyboard_after_restart
+
+# ---- 重启：机器复位，重新启动到命令行；根在磁盘上时，重启前写的文件还在 ----
+on_disk() { grep -aq 'diskfs: ready' "$LOG"; }
+
+reboot_machine() {
+    send 'write /home/kept.txt kept across the reboot\n'; expect '> $' || return 1
+    send 'reboot\n'; expect '^init: rebooting$' || return 1
+    if on_disk; then expect 'diskfs: stopped$' && expect 'blk: stopped$' || return 1; fi
+    expect 'sh: ready' "$BOOT_TIMEOUT" || return 1
+    send 'echo up again\n'; expect '^up again$' || return 1
+    if on_disk; then send 'cat /home/kept.txt\n'; expect '^kept across the reboot$'; fi
+}
+check "reboot" reboot_machine
+
+# ---- 关机：QEMU 自己退出 ----
+power_off() {
+    send 'poweroff\n'; expect '^init: powering off$' || return 1
+    local deadline=$((SECONDS + STEP_TIMEOUT))
+    while kill -0 $QEMU_PID 2>/dev/null; do
+        [ $SECONDS -ge $deadline ] && return 1
+        sleep 0.2
+    done
+}
+check "power off" power_off
 
 [ $failed -eq 0 ] && echo "shelltest: all passed" >> "$RESULTS"
 exit 0

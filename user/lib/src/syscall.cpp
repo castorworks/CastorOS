@@ -282,6 +282,10 @@ void drop_privilege(void) {
     syscall0(SYS_DROP_PRIVILEGE);
 }
 
+int power(int action) {
+    return (int)syscall1(SYS_POWER, (syscall_arg_t)action);
+}
+
 int hw_allow(uint32_t kind, uintptr_t start, uintptr_t count) {
 #if defined(ARCH_I686) || defined(ARCH_X86_64)
     direct_ports_count = -1;        // 许可表要变了：下次访问端口时重新查
