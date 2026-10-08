@@ -262,7 +262,7 @@ static void test_line_editor(void) {
     CHECK(type(&e, "\033[F" "\033[3~") == 0 && shows(&e, "llo", 3));            // End；行尾 Delete 不动
     CHECK(type(&e, "\033[H") == 0 && shows(&e, "llo", 0));                      // Home
     CHECK(type(&e, "\x05" "\x01" "\033[4~" "\033[1~" "\033OC") == 0 && shows(&e, "llo", 1));   // 别的写法
-    CHECK(type(&e, "\033[1;5C" "\033x" "\x02") == 0 && shows(&e, "llo", 2));    // 带修饰键的照样走；不认识的丢掉
+    CHECK(type(&e, "\033[1;2C" "\033x" "\x02") == 0 && shows(&e, "llo", 2));    // 带 Shift 的照样走；不认识的丢掉
     // 要调用者决定的键
     CHECK(type(&e, "\t") == '\t' && type(&e, "\x03") == 0x03 && type(&e, "\x04") == 0x04 && shows(&e, "llo", 2));
     // 满了：多的不要
@@ -308,20 +308,97 @@ static void test_line_editor(void) {
     CHECK(history.count == LINE_HISTORY_MAX && strcmp(history.lines[0], "n0") == 0);
     CHECK(type(&e, UP) == 0 && shows(&e, "n15", 3));
 
-    // 没有历史的编辑器：上下键什么也不做
+    // 没有历史的编辑器：上下键和 Ctrl-R 什么也不做
     struct line_editor plain_editor;
     char small[8];
     line_edit_init(&plain_editor, small, sizeof(small), NULL);
     memset(screen, 0, sizeof(screen));
     screen_cursor = 0;
-    CHECK(type(&plain_editor, "ab" UP DOWN) == 0 && shows(&plain_editor, "ab", 2));
+    CHECK(type(&plain_editor, "ab" UP DOWN "\x12") == 0 && shows(&plain_editor, "ab", 2));
 
     CHECK(strcmp(key_sequence(EDIT_KEY_UP), UP) == 0 && strcmp(key_sequence(EDIT_KEY_DELETE), "\033[3~") == 0);
+}
+
+/** 查找的时候屏幕上是不是这一行，光标在它的末尾 */
+static bool screen_is(const char *want) {
+    size_t n = strlen(screen);
+    while (n > strlen(want) && screen[n - 1] == ' ') {
+        n--;
+    }
+    return n == strlen(want) && memcmp(screen, want, n) == 0 && screen_cursor == n;
+}
+
+#define CTRL_R  "\x12"
+
+static void test_line_editor_words_and_search(void) {
+    static struct line_history history;
+    static char buf[64];
+    struct line_editor e;
+    line_edit_init(&e, buf, sizeof(buf), &history);
+    memset(screen, 0, sizeof(screen));
+    screen_cursor = 0;
+
+    // 按词移动：Ctrl-左右、Alt-左右、Alt-B / Alt-F
+    CHECK(type(&e, "one  two three") == 0 && shows(&e, "one  two three", 14));
+    CHECK(type(&e, "\033[1;5D") == 0 && shows(&e, "one  two three", 9));
+    CHECK(type(&e, "\033" "b") == 0 && shows(&e, "one  two three", 5));
+    CHECK(type(&e, "\033[1;3D" "\033[1;5D") == 0 && shows(&e, "one  two three", 0));
+    CHECK(type(&e, "\033[1;5C") == 0 && shows(&e, "one  two three", 3));
+    CHECK(type(&e, "\033" "f") == 0 && shows(&e, "one  two three", 8));
+    CHECK(type(&e, "\033[1;3C" "\033[1;5C") == 0 && shows(&e, "one  two three", 14));
+    // 删一个词、删到行尾、删到行首
+    CHECK(type(&e, "\x17") == 0 && shows(&e, "one  two ", 9));                  // Ctrl-W
+    CHECK(type(&e, "\033\x7f") == 0 && shows(&e, "one  ", 5));                  // Alt-退格：连同词后面的空格
+    CHECK(type(&e, "two three" "\033[1;5D" "\x0b") == 0 && shows(&e, "one  two ", 9));      // Ctrl-K
+    CHECK(type(&e, "\033[1;5D" "\x15") == 0 && shows(&e, "two ", 0));                       // Ctrl-U
+    CHECK(type(&e, "\x15" "\x17" "\033[F" "\x0b") == 0 && shows(&e, "two ", 4));            // 没有可删的
+    line_edit_reset(&e);
+    memset(screen, 0, sizeof(screen));
+    screen_cursor = 0;
+
+    const char *lines[] = { "ls /bin\n", "cat notes\n", "echo one\n", "cat other\n" };
+    for (const char *line : lines) {
+        type(&e, line);
+        line_edit_reset(&e);
+    }
+
+    // Ctrl-R：边敲边找最近的；再按找更早的；找不到时上一次找到的留着
+    CHECK(type(&e, "xy" CTRL_R) == 0 && screen_is("(search)'': xy"));
+    CHECK(type(&e, "c") == 0 && screen_is("(search)'c': cat other"));
+    CHECK(type(&e, "at n") == 0 && screen_is("(search)'cat n': cat notes"));
+    CHECK(type(&e, "\x7f\x7f") == 0 && screen_is("(search)'cat': cat other"));
+    CHECK(type(&e, CTRL_R) == 0 && screen_is("(search)'cat': cat notes"));
+    CHECK(type(&e, CTRL_R) == 0 && screen_is("(not found)'cat': cat notes"));
+    CHECK(type(&e, "z") == 0 && screen_is("(not found)'catz': cat notes"));
+    // 回车：留下找到的那一行
+    int newlines = screen_newlines;
+    CHECK(type(&e, "\n") == '\n' && strcmp(buf, "cat notes") == 0 && screen_newlines == newlines + 1);
+    line_edit_reset(&e);
+    // 别的键：找到的那一行留下来接着编辑，这个键照常起作用；之后上下键从它那里接着翻
+    CHECK(type(&e, CTRL_R "ls" LEFT) == 0 && shows(&e, "ls /bin", 6));
+    CHECK(type(&e, DOWN) == 0 && shows(&e, "cat notes", 9));
+    line_edit_reset(&e);
+    memset(screen, 0, sizeof(screen));
+    screen_cursor = 0;
+    // Ctrl-G：放弃，回到找之前敲的那一行；Ctrl-C 和 Tab 交给调用者
+    CHECK(type(&e, "half" LEFT CTRL_R "echo") == 0 && screen_is("(search)'echo': echo one"));
+    CHECK(type(&e, "\x07") == 0 && shows(&e, "half", 4));
+    CHECK(type(&e, CTRL_R "ls\t") == '\t' && shows(&e, "ls /bin", 7));
+    CHECK(type(&e, CTRL_R "ec\x03") == 0x03 && shows(&e, "echo one", 8));       // 新的一次查找从最近的一行找起
+    line_edit_reset(&e);
+    memset(screen, 0, sizeof(screen));
+    screen_cursor = 0;
+    // 什么都没敲就结束：原来的行和光标都不变
+    CHECK(type(&e, "abc" LEFT CTRL_R) == 0 && screen_is("(search)'': abc"));
+    CHECK(type(&e, LEFT) == 0 && shows(&e, "abc", 1));
+
+    CHECK(strcmp(key_sequence(EDIT_KEY_WORD_LEFT), "\033[1;5D") == 0);
 }
 
 int main() {
     test_keys();
     test_line_editor();
+    test_line_editor_words_and_search();
     test_math();
     test_format_strings();
     test_format_integers();

@@ -20,6 +20,8 @@ enum {
     EDIT_KEY_HOME,
     EDIT_KEY_END,
     EDIT_KEY_DELETE,
+    EDIT_KEY_WORD_RIGHT,    // Ctrl 加右、左方向键：移动一个词
+    EDIT_KEY_WORD_LEFT,
 };
 
 /**

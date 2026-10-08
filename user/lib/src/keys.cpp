@@ -15,7 +15,7 @@ char key_char(char plain, char shifted, bool shift, bool caps_lock, bool ctrl) {
 
 const char *key_sequence(int edit_key) {
     static const char *const sequences[] = {
-        "\033[A", "\033[B", "\033[C", "\033[D", "\033[H", "\033[F", "\033[3~",
+        "\033[A", "\033[B", "\033[C", "\033[D", "\033[H", "\033[F", "\033[3~", "\033[1;5C", "\033[1;5D",
     };
     return sequences[edit_key];
 }

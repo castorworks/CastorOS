@@ -338,7 +338,14 @@ line_editing() {
     send 'write /tmp/edited\n'; sleep 0.5                                         # 程序读输入时也能改
     send 'lne\033[D\033[Di\033[A\n\004'; expect '> $' || return 1
     send 'cat /tmp/edited\n'; expect '^line$' || return 1
-    send 'rm /tmp/edited\n'; expect '> $'
+    send 'rm /tmp/edited\n'; expect '> $' || return 1
+    send 'echo one two\033b\033[1;5DX\033f\033fY\n'; expect '^Xone twoY$' || return 1  # 按词移动：Alt-B、Ctrl-左、Alt-F
+    send 'echo keep cut\033b\013\n'; expect '^keep$' || return 1                  # Ctrl-K 删到行尾
+    send 'bad echo word gone\027\001\033f\033f\033b\025\n'; expect '^word$' || return 1   # Ctrl-W 删一个词，Ctrl-U 删到行首
+    send '\022fir'; expect "\(search\)'fir': echo first" || return 1              # Ctrl-R 在历史里找
+    send '\n'; expect '^first$' || return 1
+    send '\022echo \022\022'; expect "\(search\)'echo ': echo keep" || return 1   # 再按：更早的
+    send '\007echo gave up\n'; expect '^gave up$'                                 # Ctrl-G 放弃
 }
 check "line editing and history" line_editing
 
@@ -378,6 +385,8 @@ keyboard_input() {
     keys h e l l tab ret; expect '^hello from pid' || return 1         # Tab 键：补全
     keys e c h o spc k y left e ret; expect '^key$' || return 1       # 方向键：左移了再插入
     keys x home delete up end 2 ret; expect '^key2$' || return 1      # Home、Delete、上（上一行）、End
+    keys e c h o spc a spc b ctrl-left x ret; expect '^a xb$' || return 1     # Ctrl-左：移动一个词
+    keys ctrl-r y 2 ret; expect '^key2$' || return 1                  # Ctrl-R：在历史里找
     keys s l e e p spc 6 0 ret; expect 'sleep 60$' || return 1
     sleep 0.5
     keys ctrl-c; expect '^sleep: killed by signal 2$'

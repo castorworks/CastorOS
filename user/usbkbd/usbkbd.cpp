@@ -160,8 +160,8 @@ static const char *translate(uint8_t key, uint8_t mods) {
     switch (key) {
     case KEY_UP:        return key_sequence(EDIT_KEY_UP);
     case KEY_DOWN:      return key_sequence(EDIT_KEY_DOWN);
-    case KEY_RIGHT:     return key_sequence(EDIT_KEY_RIGHT);
-    case KEY_LEFT:      return key_sequence(EDIT_KEY_LEFT);
+    case KEY_RIGHT:     return key_sequence(mods & MOD_CTRL ? EDIT_KEY_WORD_RIGHT : EDIT_KEY_RIGHT);
+    case KEY_LEFT:      return key_sequence(mods & MOD_CTRL ? EDIT_KEY_WORD_LEFT : EDIT_KEY_LEFT);
     case KEY_HOME:      return key_sequence(EDIT_KEY_HOME);
     case KEY_END:       return key_sequence(EDIT_KEY_END);
     case KEY_DELETE:    return key_sequence(EDIT_KEY_DELETE);
