@@ -346,7 +346,8 @@ line_editing() {
     send '\022fir'; expect "\(search\)'fir': echo first" || return 1              # Ctrl-R 在历史里找
     send '\n'; expect '^first$' || return 1
     send '\022echo \022\022'; expect "\(search\)'echo ': echo word" || return 1   # 再按：更早的
-    send '\007echo gave up\n'; expect '^gave up$'                                 # Ctrl-G 放弃
+    send '\007echo gave up\n'; expect '^gave up$' || return 1                     # Ctrl-G 放弃
+    send 'echo one two\027\001\013echo \031\033y\n'; expect '^two$'                # Alt-Y 把贴的换成更早删的
 }
 check "line editing and history" line_editing
 

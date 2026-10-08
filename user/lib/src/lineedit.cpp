@@ -7,6 +7,7 @@
 #include <stdio.h>
 
 enum { ESC_NONE, ESC_START, ESC_PARAMS };   // 不在转义序列里 / 刚读到 ESC / 读到了 ESC [
+enum { ACTION_OTHER, ACTION_KILL, ACTION_YANK };    // 一个键做的事：删一段、贴、别的
 
 static void put(const char *s, size_t n) {
     if (n > 0) {
@@ -32,7 +33,7 @@ void line_edit_init(struct line_editor *e, char *buf, size_t size, struct line_h
 void line_edit_reset(struct line_editor *e) {
     e->len = e->cursor = 0;
     e->escape = ESC_NONE;
-    e->killed = e->killing = false;
+    e->last_action = e->action = ACTION_OTHER;
     if (e->size > 0) {
         e->text[0] = '\0';
     }
@@ -88,28 +89,65 @@ static void erase(struct line_editor *e, size_t from, size_t to) {
     line_edit_replace(e, from, to - from, "", 0, from);
 }
 
-// Ctrl-K、Ctrl-U、Ctrl-W 删掉的内容，Ctrl-Y 贴回来。整个进程一份：程序每读一行用的是一个新的
-// 编辑器，上一行删的这一行也贴得出来
-static char killed_text[LINE_HISTORY_LINE];
-static size_t killed_len;
+// Ctrl-K、Ctrl-U、Ctrl-W 删掉的内容，最近的几段：Ctrl-Y 贴回最近的一段，Alt-Y 换成更早的。
+// 整个进程一份：程序每读一行用的是一个新的编辑器，上一行删的这一行也贴得出来
+#define KILLED_MAX  8
+static struct {
+    char text[LINE_HISTORY_LINE];
+    size_t len;
+} killed[KILLED_MAX];
+static int killed_count;
+static int killed_newest;       // 最近的一段在 killed 的哪一格
 
 /**
  * 删掉 [from, to) 并记下来。连着删的几次合成一段：backward 是往光标前面删的，接在已有的前面
  */
 static void kill(struct line_editor *e, size_t from, size_t to, bool backward) {
     size_t n = to - from;
-    e->killing = true;
-    if (!e->killed || killed_len + n > sizeof(killed_text)) {
-        killed_len = 0;
+    if (n == 0) {
+        e->action = e->last_action;     // 没有可删的：不算打断，也不占一段
+        return;
     }
-    if (n <= sizeof(killed_text)) {
-        if (backward) {
-            memmove(killed_text + n, killed_text, killed_len);
+    e->action = ACTION_KILL;
+    if (n <= sizeof(killed[0].text)) {
+        // 不是接着上一次删的（或者合起来放不下）：另起一段，满了挤掉最早的
+        if (e->last_action != ACTION_KILL || killed_count == 0 ||
+            killed[killed_newest].len + n > sizeof(killed[0].text)) {
+            killed_newest = (killed_newest + 1) % KILLED_MAX;
+            killed_count += killed_count < KILLED_MAX;
+            killed[killed_newest].len = 0;
         }
-        memcpy(backward ? killed_text : killed_text + killed_len, e->text + from, n);
-        killed_len += n;
+        char *text = killed[killed_newest].text;
+        size_t len = killed[killed_newest].len;
+        if (backward) {
+            memmove(text + n, text, len);
+        }
+        memcpy(backward ? text : text + len, e->text + from, n);
+        killed[killed_newest].len = len + n;
     }
     erase(e, from, to);
+}
+
+/**
+ * 把往回数第 back 段删掉的内容放到 [pos, pos + remove)：Ctrl-Y 是插入（remove 为 0），
+ * Alt-Y 是换掉刚贴的那一段
+ */
+static void yank(struct line_editor *e, size_t pos, size_t remove, int back) {
+    e->action = ACTION_YANK;
+    if (killed_count == 0) {
+        return;
+    }
+    int slot = (killed_newest + KILLED_MAX - back) % KILLED_MAX;
+    size_t len = killed[slot].len;
+    if (line_edit_replace(e, pos, remove, killed[slot].text, len, pos + len)) {
+        e->yank_pos = pos;
+        e->yank_len = len;
+        e->yank_back = back;
+    } else if (remove == 0) {
+        e->yank_len = 0;                // 放不下，什么也没贴：Alt-Y 没有可换的
+        e->yank_pos = pos;
+        e->yank_back = back;
+    }
 }
 
 /** 光标左边 / 右边那个词的开头 / 结尾：先越过空格，再越过词 */
@@ -293,8 +331,8 @@ static int feed(struct line_editor *e, char c);
 int line_edit_feed(struct line_editor *e, char c) {
     int key = feed(e, c);
     if (e->escape == ESC_NONE) {    // 一个键处理完了（转义序列是几个字节一个键）
-        e->killed = e->killing;
-        e->killing = false;
+        e->last_action = e->action;
+        e->action = ACTION_OTHER;
     }
     return key;
 }
@@ -312,6 +350,11 @@ static int feed(struct line_editor *e, char c) {
         case 'b':   move(e, word_left(e)); break;
         case 'f':   move(e, word_right(e)); break;
         case 0x7F:  kill(e, word_left(e), e->cursor, true); break;
+        case 'y':                   // Alt-Y：只在刚贴过之后
+            if (e->last_action == ACTION_YANK && killed_count > 0) {
+                yank(e, e->yank_pos, e->yank_len, (e->yank_back + 1) % killed_count);
+            }
+            break;
         }
         return 0;
     }
@@ -369,7 +412,7 @@ static int feed(struct line_editor *e, char c) {
         kill(e, word_left(e), e->cursor, true);
         return 0;
     case 0x19:                      // Ctrl-Y
-        line_edit_replace(e, e->cursor, 0, killed_text, killed_len, e->cursor + killed_len);
+        yank(e, e->cursor, 0, 0);
         return 0;
     case 0x01:                      // Ctrl-A
         move(e, 0);

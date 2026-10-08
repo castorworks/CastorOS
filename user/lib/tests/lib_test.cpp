@@ -359,6 +359,25 @@ static void test_line_editor_words_and_search(void) {
     CHECK(type(&e, "\033[1;5D\033[1;5D" "\x0b" "\x15" "\x19") == 0 && shows(&e, "xb cb ca ", 9));  // 往前删的接在前面
     CHECK(type(&e, "\x17" LEFT "\x17" "\x19") == 0 && shows(&e, "xb cb ", 5));     // 隔了别的键：只有后一次的
     type(&e, "\x15\x0b");
+    // 没有可删的不冲掉记着的；Alt-Y：把刚贴的换成更早删的一段，再按再往前
+    CHECK(type(&e, "\x0b\x15" "\x19") == 0 && shows(&e, "xb cb ", 6));
+    type(&e, "\x15" "aa" "\x15" "x\x7f" "bb" "\x15" "x\x7f" "cc" "\x15");
+    CHECK(type(&e, "<>" LEFT "\x19") == 0 && shows(&e, "<cc>", 3));
+    CHECK(type(&e, "\033y") == 0 && shows(&e, "<bb>", 3));
+    CHECK(type(&e, "\033y") == 0 && shows(&e, "<aa>", 3));
+    CHECK(type(&e, LEFT "\033y") == 0 && shows(&e, "<aa>", 2));                 // 中间隔了别的键：Alt-Y 不起作用
+    CHECK(type(&e, "\x19" "\033y" "\033[C" "\033y") == 0 && shows(&e, "<abba>", 5));
+    // 记满 8 段之后转一圈回到最近的
+    type(&e, "\x01\x0b");
+    for (int i = 0; i < 9; i++) {
+        char keys[8];
+        snprintf(keys, sizeof(keys), "k%d\x15x\x7f", i);
+        type(&e, keys);
+    }
+    CHECK(type(&e, "\x19") == 0 && shows(&e, "k8", 2));
+    CHECK(type(&e, "\033y\033y\033y\033y\033y\033y\033y") == 0 && shows(&e, "k1", 2));
+    CHECK(type(&e, "\033y") == 0 && shows(&e, "k8", 2));
+    type(&e, "\x15");
     line_edit_reset(&e);
     memset(screen, 0, sizeof(screen));
     screen_cursor = 0;

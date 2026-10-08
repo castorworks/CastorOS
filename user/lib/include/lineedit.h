@@ -15,6 +15,8 @@
 //   Ctrl-K，Ctrl-U                  删到行尾、删到行首
 //   Ctrl-W / Alt-退格               删光标前面的一个词
 //   Ctrl-Y                          把上面三种键刚删掉的内容贴在光标处（连着删的几次合在一起）
+//   Alt-Y                           紧跟在 Ctrl-Y 后面：把刚贴的换成更早删掉的一段，再按再往前，
+//                                   记着最近 8 段，转一圈回到最近的
 //   别的可见字符                    插在光标处
 // 给了历史（line_history）的话还有：
 //   上、下方向键                    翻以前的行
@@ -52,8 +54,10 @@ struct line_editor {
     int escape;                     // 转义序列读到哪里了
     int param[2];                   // 转义序列里的数字：键的编号、修饰键
     int params;                     // 读到第几个数字了
-    bool killed;                    // 上一个键是删一段的键：接着再删的，和它删的合在一起
-    bool killing;                   // 正在处理的这个键是
+    int last_action;                // 上一个键是删一段的键（接着再删的和它删的合在一起）、是贴的键
+    int action;                     // （Alt-Y 换的是它贴的那一段），还是别的；正在处理的这个键是哪种
+    size_t yank_pos, yank_len;      // 刚贴的那一段在哪里
+    int yank_back;                  // 它是往回数第几段，0 = 最近删的
 };
 
 /** 开始用 buf（size 字节）编辑一行；history 可以是 NULL */
