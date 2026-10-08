@@ -44,6 +44,14 @@
 #define KEY_CAPS_LOCK       0x3A
 #define KEY_ENTER           0x1C
 #define KEY_SLASH           0x35
+// 下面几个只在带 PREFIX_EXTENDED 时是这些键（不带时是小键盘上的数字）
+#define KEY_HOME            0x47
+#define KEY_UP              0x48
+#define KEY_LEFT            0x4B
+#define KEY_RIGHT           0x4D
+#define KEY_END             0x4F
+#define KEY_DOWN            0x50
+#define KEY_DELETE          0x53
 #define PREFIX_EXTENDED     0xE0    // 后面跟着的是“扩展键”的扫描码（右 Ctrl、方向键、小键盘回车……）
 
 // 扫描码 -> 字符，下标是扫描码；0 表示这个键不产生字符
@@ -124,11 +132,15 @@ static void set_leds(void) {
     }
 }
 
-/** 一个扫描码产生的字符；不产生字符（修饰键、松开、不认识的键）返回 0 */
-static char translate(uint8_t code) {
+/**
+ * 一个扫描码产生的字符：一般是一个，方向键这样的编辑键是一串（见 keys.h）。
+ * 不产生字符（修饰键、松开、不认识的键）返回空串
+ */
+static const char *translate(uint8_t code) {
+    static char one[2];
     if (code == PREFIX_EXTENDED) {
         extended = true;
-        return 0;
+        return "";
     }
     bool was_extended = extended;
     extended = false;
@@ -137,31 +149,43 @@ static char translate(uint8_t code) {
     uint8_t key = code & (uint8_t)~KEY_RELEASED;
 
     if (was_extended) {
-        // 扩展键里只认右 Ctrl、小键盘的回车和斜杠。带前缀的 Shift 是键盘为方向键等
-        // 自动插入的假按键，不能当成真的 Shift
+        // 扩展键里认右 Ctrl、小键盘的回车和斜杠、方向键和它们上面那几个编辑键。带前缀的
+        // Shift 是键盘为方向键等自动插入的假按键，不能当成真的 Shift
         if (key == KEY_CTRL) {
             ctrl = pressed;
-            return 0;
+            return "";
         }
-        return !pressed ? 0 : key == KEY_ENTER ? '\n' : key == KEY_SLASH ? '/' : 0;
+        switch (pressed ? key : 0) {
+        case KEY_ENTER:     return "\n";
+        case KEY_SLASH:     return "/";
+        case KEY_UP:        return key_sequence(EDIT_KEY_UP);
+        case KEY_DOWN:      return key_sequence(EDIT_KEY_DOWN);
+        case KEY_RIGHT:     return key_sequence(EDIT_KEY_RIGHT);
+        case KEY_LEFT:      return key_sequence(EDIT_KEY_LEFT);
+        case KEY_HOME:      return key_sequence(EDIT_KEY_HOME);
+        case KEY_END:       return key_sequence(EDIT_KEY_END);
+        case KEY_DELETE:    return key_sequence(EDIT_KEY_DELETE);
+        }
+        return "";
     }
 
     switch (key) {
-    case KEY_CTRL:          ctrl = pressed; return 0;
-    case KEY_LEFT_SHIFT:    shift_left = pressed; return 0;
-    case KEY_RIGHT_SHIFT:   shift_right = pressed; return 0;
+    case KEY_CTRL:          ctrl = pressed; return "";
+    case KEY_LEFT_SHIFT:    shift_left = pressed; return "";
+    case KEY_RIGHT_SHIFT:   shift_right = pressed; return "";
     case KEY_CAPS_LOCK:
         if (pressed) {
             caps_lock = !caps_lock;
             set_leds();
         }
-        return 0;
+        return "";
     }
     if (!pressed || key >= sizeof(plain) - 1) {
-        return 0;
+        return "";
     }
 
-    return key_char(plain[key], shifted[key], shift_left || shift_right, caps_lock, ctrl);
+    one[0] = key_char(plain[key], shifted[key], shift_left || shift_right, caps_lock, ctrl);
+    return one;
 }
 
 /** 读走控制器里所有的扫描码，产生的字符交出去 */
@@ -177,9 +201,8 @@ static void drain(void) {
         if (st & STATUS_FROM_MOUSE) {
             continue;
         }
-        char c = translate(code);
-        if (c != 0) {
-            chars[n++] = c;
+        for (const char *c = translate(code); *c; c++) {
+            chars[n++] = *c;
             if (n == CONSOLE_READ_MAX) {
                 console_input(chars, n);
                 n = 0;

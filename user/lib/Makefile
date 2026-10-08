@@ -73,7 +73,7 @@ $(BUILD_DIR)/arch/%.o: $(ARCH_SRC_DIR)/%.S
 
 HOST_CXX ?= c++
 HOST_TEST = build/host/lib_test
-HOST_TEST_SOURCES = tests/lib_test.cpp src/stdio.cpp src/string.cpp src/math.cpp src/keys.cpp
+HOST_TEST_SOURCES = tests/lib_test.cpp src/stdio.cpp src/string.cpp src/math.cpp src/keys.cpp src/lineedit.cpp
 
 .PHONY: host-test
 host-test: $(HOST_TEST)

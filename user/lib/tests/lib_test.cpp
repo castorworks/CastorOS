@@ -1,5 +1,5 @@
 // 用户库的宿主机测试：把库里不依赖内核的部分（printf 一族、字符串函数）用宿主机的编译器
-// 编译，直接在开发机上运行。几秒钟就有结果，不用交叉编译，也不用启动 QEMU。
+// 编译，直接在开发机上运行（行编辑也在内：它只要一个输出字符的函数）。几秒钟就有结果，不用交叉编译，也不用启动 QEMU。
 //
 //   make lib-test          （顶层 Makefile；或者 make -C user/lib host-test）
 //
@@ -10,6 +10,7 @@
 #include <string.h>
 #include <math.h>
 #include <keys.h>
+#include <lineedit.h>
 
 static int checks, failures;
 
@@ -196,8 +197,131 @@ static void test_keys(void) {
     CHECK(key_char('\n', '\n', false, false, true) == '\n');
 }
 
+// ---- 行编辑：编辑器写出来的东西喂给一块假的屏幕，屏幕上的内容和光标要跟缓冲区一致 ----
+
+static char screen[512];        // 当前这一行
+static size_t screen_cursor;
+static int screen_newlines;
+
+ssize_t console_write(const void *buf, size_t count) {
+    const char *s = (const char *)buf;
+    for (size_t i = 0; i < count; i++) {
+        if (s[i] == '\n') {
+            memset(screen, 0, sizeof(screen));
+            screen_cursor = 0;
+            screen_newlines++;
+        } else if (s[i] == '\b') {
+            screen_cursor -= screen_cursor > 0;
+        } else {
+            screen[screen_cursor++] = s[i];
+        }
+    }
+    return (ssize_t)count;
+}
+
+/** 屏幕上是不是这一行（末尾擦掉留下的空格不算），光标在不在 cursor */
+static bool shows(const struct line_editor *e, const char *want, size_t cursor) {
+    size_t n = strlen(screen);
+    while (n > 0 && screen[n - 1] == ' ' && n > strlen(want)) {
+        n--;
+    }
+    return strcmp(e->text, want) == 0 && e->len == strlen(want) && e->cursor == cursor &&
+           n == strlen(want) && memcmp(screen, want, n) == 0 && screen_cursor == cursor;
+}
+
+/** 喂一串字节，返回最后一个字节的结果 */
+static int type(struct line_editor *e, const char *keys) {
+    int key = 0;
+    for (; *keys; keys++) {
+        key = line_edit_feed(e, *keys);
+    }
+    return key;
+}
+
+#define UP      "\033[A"
+#define DOWN    "\033[B"
+#define RIGHT   "\033[C"
+#define LEFT    "\033[D"
+
+static void test_line_editor(void) {
+    static struct line_history history;
+    static char buf[16];
+    struct line_editor e;
+    line_edit_init(&e, buf, sizeof(buf), &history);
+    memset(screen, 0, sizeof(screen));
+    screen_cursor = 0;
+
+    // 插入、退格、左右移动、在中间改
+    CHECK(type(&e, "helo") == 0 && shows(&e, "helo", 4));
+    CHECK(type(&e, LEFT "l") == 0 && shows(&e, "hello", 4));
+    CHECK(type(&e, RIGHT RIGHT RIGHT "!") == 0 && shows(&e, "hello!", 6));      // 到头了不再往右
+    CHECK(type(&e, "\x7f") == 0 && shows(&e, "hello", 5));
+    CHECK(type(&e, LEFT LEFT LEFT "\b") == 0 && shows(&e, "hllo", 1));
+    CHECK(type(&e, LEFT LEFT LEFT "\b") == 0 && shows(&e, "hllo", 0));          // 行首：退格和左都不动
+    CHECK(type(&e, "\033[3~") == 0 && shows(&e, "llo", 0));                     // Delete
+    CHECK(type(&e, "\033[F" "\033[3~") == 0 && shows(&e, "llo", 3));            // End；行尾 Delete 不动
+    CHECK(type(&e, "\033[H") == 0 && shows(&e, "llo", 0));                      // Home
+    CHECK(type(&e, "\x05" "\x01" "\033[4~" "\033[1~" "\033OC") == 0 && shows(&e, "llo", 1));   // 别的写法
+    CHECK(type(&e, "\033[1;5C" "\033x" "\x02") == 0 && shows(&e, "llo", 2));    // 带修饰键的照样走；不认识的丢掉
+    // 要调用者决定的键
+    CHECK(type(&e, "\t") == '\t' && type(&e, "\x03") == 0x03 && type(&e, "\x04") == 0x04 && shows(&e, "llo", 2));
+    // 满了：多的不要
+    CHECK(type(&e, "0123456789abcdef") == 0 && shows(&e, "ll0123456789abo", 14));
+    CHECK(!line_edit_replace(&e, 0, 1, "xx", 2, 0) && shows(&e, "ll0123456789abo", 14));
+    // 替换一段：补全用的
+    CHECK(line_edit_replace(&e, 2, 12, "x y", 3, 5) && shows(&e, "llx yo", 5));
+    CHECK(line_edit_replace(&e, 0, 3, "llama", 5, 5) && shows(&e, "llama yo", 5));
+    CHECK(line_edit_replace(&e, 0, 8, "", 0, 0) && shows(&e, "", 0));
+
+    // 回车：换行，记进历史；空行和重复的不记
+    int newlines = screen_newlines;
+    CHECK(type(&e, "one\r") == '\n' && strcmp(buf, "one") == 0 && screen_newlines == newlines + 1);
+    line_edit_reset(&e);
+    CHECK(type(&e, "\n") == '\n' && e.len == 0);
+    line_edit_reset(&e);
+    type(&e, "two\n");
+    line_edit_reset(&e);
+    type(&e, "two\n");
+    line_edit_reset(&e);
+    CHECK(history.count == 2);
+
+    // 上下翻历史；翻回来时敲了一半的那一行还在；翻出来的可以改，改的不写回历史
+    CHECK(type(&e, "th" UP) == 0 && shows(&e, "two", 3));
+    CHECK(type(&e, UP) == 0 && shows(&e, "one", 3));
+    CHECK(type(&e, UP) == 0 && shows(&e, "one", 3));        // 没有更早的了
+    CHECK(type(&e, DOWN DOWN) == 0 && shows(&e, "th", 2));
+    CHECK(type(&e, DOWN) == 0 && shows(&e, "th", 2));
+    CHECK(type(&e, UP UP "s\n") == '\n' && strcmp(buf, "ones") == 0 && history.count == 3);
+    line_edit_reset(&e);
+    CHECK(type(&e, UP UP UP) == 0 && shows(&e, "one", 3));
+    line_edit_reset(&e);
+    memset(screen, 0, sizeof(screen));
+    screen_cursor = 0;
+
+    // 记满了挤掉最早的
+    for (int i = 0; i < LINE_HISTORY_MAX; i++) {
+        char line[8];
+        snprintf(line, sizeof(line), "n%d\n", i);
+        type(&e, line);
+        line_edit_reset(&e);
+    }
+    CHECK(history.count == LINE_HISTORY_MAX && strcmp(history.lines[0], "n0") == 0);
+    CHECK(type(&e, UP) == 0 && shows(&e, "n15", 3));
+
+    // 没有历史的编辑器：上下键什么也不做
+    struct line_editor plain_editor;
+    char small[8];
+    line_edit_init(&plain_editor, small, sizeof(small), NULL);
+    memset(screen, 0, sizeof(screen));
+    screen_cursor = 0;
+    CHECK(type(&plain_editor, "ab" UP DOWN) == 0 && shows(&plain_editor, "ab", 2));
+
+    CHECK(strcmp(key_sequence(EDIT_KEY_UP), UP) == 0 && strcmp(key_sequence(EDIT_KEY_DELETE), "\033[3~") == 0);
+}
+
 int main() {
     test_keys();
+    test_line_editor();
     test_math();
     test_format_strings();
     test_format_integers();

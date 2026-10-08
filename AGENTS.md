@@ -170,7 +170,9 @@ the name server (`names.h` in `user/lib`).
 
 - `user/console`: terminal input service, no hardware; protocol and the
   `console_read`/`read_line` client in `console.h`. Input drivers hand it characters with
-  `console_input` (`CONSOLE_INPUT`), so keyboard and serial input take the same path from there
+  `console_input` (`CONSOLE_INPUT`), so keyboard and serial input take the same path from there.
+  Echo and line editing happen in the process that reads: `lineedit.h` in `user/lib` (cursor
+  movement, history), used by both the sh prompt and `console_read_line`, and tested on the host
 - `user/uart`: serial input driver; exits on a machine without a serial port
 - `user/kbd` (x86 only): PS/2 keyboard driver; translates scancodes to characters
 - `user/usbkbd` (x86 only): USB keyboard driver on the machine's UHCI controllers (up to 4, all
@@ -181,7 +183,7 @@ the name server (`names.h` in `user/lib`).
   ports and once for a hub's, and everything above them does not tell the two apart. `blk`
   releases high-speed hubs to the companion controller too, so all hubs end up here. Standard USB requests and
   descriptor types shared with `blk` are in `usb.h`; how Shift, Caps Lock and Ctrl act on a key
-  is shared with `kbd` in `keys.h`. While it waits (`uhci_sleep`) it keeps acknowledging
+  is shared with `kbd` in `keys.h`, and so are the escape sequences both send for the arrow keys. While it waits (`uhci_sleep`) it keeps acknowledging
   interrupts: its line is usually shared with other drivers and must not stay masked.
 - `user/blk`: block device driver, virtio-blk or (x86, when there is no virtio disk) the IDE
   disk on the first channel and a USB stick on a USB 2.0 port; protocol and client in `blk.h`.
@@ -376,7 +378,7 @@ nowhere else. The kernel Makefile rebuilds all of it when `user/` changes.
   shell-test.sh must not assume a line starts at column 0 unless the shell is known to be idle:
   output of background programs follows the `> ` prompt.
 - **Host-side library tests**: the parts of `user/lib` that do not need the kernel (printf
-  family, string and math functions) are also tested on the host. `make lib-test` compiles them
+  family, string and math functions, the line editor) are also tested on the host. `make lib-test` compiles them
   with the host compiler and runs `user/lib/tests/lib_test.cpp` in a couple of seconds, with no
   cross compiler and no QEMU. Add checks there for pure library code; it is the fastest loop
   there is.
@@ -405,8 +407,8 @@ The kernel does not power off by itself: `make test` starts QEMU through
 `scripts/shell-test.sh`, waits for `sh: ready` in the log (at most `TEST_TIMEOUT`), then types a
 series of commands into the serial port to check the command line (running programs, background
 jobs, Ctrl-C, `kill`, whether the port of a killed service can be reused, programs reading
-keyboard input, redirection and pipes, directories, quoting, standard error, scripts, Tab
-completion; on x86 also
+keyboard input, redirection and pipes, directories, quoting, standard error, scripts, line
+editing and history, Tab completion; on x86 also
 a few lines typed on the VM's PS/2 keyboard through the QEMU monitor's `sendkey`; at the end
 console, uart and the keyboard driver are made to exit with `selftest restart <name>` and input must work
 again after init restarts them). Each step waits until
@@ -462,7 +464,9 @@ the uart driver and the console service. On x86 the same output is also on the V
   While a foreground program runs, input belongs to it; Ctrl-D (0x04) at the start of a line
   means end of input.
 - `cmd < in > out 2> err`, `cmd >> out`, `cmd1 | cmd2` and `"arguments with spaces"` work.
-- Tab completes the word at the end of the line: a command name (builtins and `/bin`), a path,
+- The line being typed can be edited: left/right, Home/End, Delete; at the prompt up/down recall
+  earlier lines.
+- Tab completes the word before the cursor: a command name (builtins and `/bin`), a path,
   a directory after `cd`, a job's PID after `kill`. A second Tab lists the candidates.
 - A text file is run as a script; `$1`-`$9` are its arguments.
 

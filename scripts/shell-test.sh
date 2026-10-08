@@ -326,6 +326,22 @@ script_interrupt() {
 }
 check "ctrl-c stops a script" script_interrupt
 
+# ---- 行编辑：方向键移动光标在中间改，Home / End / Delete；上下键翻以前的行 ----
+line_editing() {
+    send 'echo hllo\033[D\033[D\033[De\n'; expect '^hello$' || return 1
+    send 'Xecho home\033[H\033[3~\033[F!\n'; expect '^home!$' || return 1
+    send 'echo first\n'; expect '^first$' || return 1
+    send 'echo second\n'; expect '^second$' || return 1
+    send '\033[A\033[A\n'; expect '^first$' || return 1
+    send 'echo typed\033[A\033[B again\n'; expect '^typed again$' || return 1     # 翻回来：敲了一半的还在
+    send 'ec hi\033[D\033[D\033[D\t\n'; expect '^hi$' || return 1                 # 补全光标前面的词，后面的留着
+    send 'write /tmp/edited\n'; sleep 0.5                                         # 程序读输入时也能改
+    send 'lne\033[D\033[Di\033[A\n\004'; expect '> $' || return 1
+    send 'cat /tmp/edited\n'; expect '^line$' || return 1
+    send 'rm /tmp/edited\n'; expect '> $'
+}
+check "line editing and history" line_editing
+
 # ---- Tab 补全：命令名、路径、重定向和管道后面的词；按两次列出候选 ----
 completion() {
     send 'cd /\n'; expect '> $' || return 1
@@ -360,6 +376,8 @@ keyboard_input() {
     MARK=0; expect "$KBD_READY" || return 1
     keys e c h o spc shift-k e y s spc x backspace 1 ret; expect '^Keys 1$' || return 1
     keys h e l l tab ret; expect '^hello from pid' || return 1         # Tab 键：补全
+    keys e c h o spc k y left e ret; expect '^key$' || return 1       # 方向键：左移了再插入
+    keys x home delete up end 2 ret; expect '^key2$' || return 1      # Home、Delete、上（上一行）、End
     keys s l e e p spc 6 0 ret; expect 'sleep 60$' || return 1
     sleep 0.5
     keys ctrl-c; expect '^sleep: killed by signal 2$'

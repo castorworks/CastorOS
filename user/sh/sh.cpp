@@ -4,7 +4,8 @@
 // 被当作文件服务里的程序：读出它的 ELF 映像，fork 之后带着这一行的参数 exec。
 // 行尾加 & 让程序在后台运行；前台程序运行期间按 Ctrl-C 终止它。
 // cmd < in > out 2> err 把程序的标准输入/输出/错误输出换成文件，cmd1 | cmd2 把前一个的输出
-// 接到后一个的输入；引号里的内容原样作为参数。提示符下按 Tab 补全命令名和路径。
+// 接到后一个的输入；引号里的内容原样作为参数。提示符下敲的一行可以移动光标修改，上下
+// 方向键翻以前敲过的行（<lineedit.h>），按 Tab 补全命令名和路径。
 // 不是 ELF 映像的文件当作脚本，逐行执行；启动时先执行脚本 /etc/rc。
 //
 // sh 是终端的主人（见 <console.h>）：程序在前台运行期间，键盘输入归那个程序，
@@ -19,6 +20,7 @@
 #include <names.h>
 #include <fs.h>
 #include <console.h>
+#include <lineedit.h>
 
 // ============================================================================
 // 运行程序
@@ -540,6 +542,7 @@ static void run_command(char *line) {
             printf("builtins: help, jobs, kill <pid>, cd [directory], pwd\n");
             printf("anything else runs a program from the file service with the rest of the\n");
             printf("line as its arguments, e.g.: ls, cat <file>, write <file>, ping <ip>, hello\n");
+            printf("  arrow keys             left/right move in the line, up/down recall earlier lines\n");
             printf("  Tab                    complete the command or path being typed; twice lists the choices\n");
             printf("  \"two words\"            quotes (\" or ') keep spaces and | & < > in an argument\n");
             printf("  cmd &                  run in the background; Ctrl-C stops the foreground program\n");
@@ -718,7 +721,7 @@ static void run_script_command(char **argv, int argc, bool background) {
 // 补全
 // ============================================================================
 //
-// 提示符下按 Tab：把行尾的那个词补全。词在命令的位置上（行首、| 后面）时，候选是内置命令和
+// 提示符下按 Tab：把光标前面的那个词补全。词在命令的位置上（行首、| 后面）时，候选是内置命令和
 // /bin 里的程序；在别的位置上是路径（cd 后面只有目录），kill 后面是后台任务的 PID。
 // 候选只有一个时补完整，后面跟一个空格（目录跟的是 '/'，好接着补下一级）；有多个时补到
 // 它们共同的开头，补不动了再按一次 Tab 把它们列出来。
@@ -838,27 +841,31 @@ static long quote_word(const char *word, char quote, bool closed, char *out, siz
 }
 
 /**
- * 补全 line（长 *len，容量 size）行尾的那个词；改了的部分在屏幕上跟着改。
+ * 补全正在编辑的这一行里光标前面的那个词。
  * @param list 补不动时把候选列出来，再重新显示提示符和这一行
  * @return 有不止一个候选，而且已经补不动了：再按一次 Tab 该列出它们
  */
-static bool complete(char *line, size_t *len, size_t size, bool list) {
+static bool complete(struct line_editor *edit, bool list) {
     static struct token tokens[MAX_TOKENS];
     static char text[256 + MAX_TOKENS];
     static struct matches m;
 
-    line[*len] = '\0';
+    // 只看光标之前的部分：要补的是它结尾的那个词，光标后面的原样留着
+    static char line[256];
+    size_t len = edit->cursor < sizeof(line) - 1 ? edit->cursor : sizeof(line) - 1;
+    memcpy(line, edit->text, len);
+    line[len] = '\0';
     char quote = 0;
     int ntok = tokenize(line, tokens, text, &quote);
     if (ntok < 0) {
         return false;
     }
 
-    // 要补的词是行尾的那个；行尾是空格或运算符时，它是一个还没开始敲的词
-    bool fresh = ntok == 0 || tokens[ntok - 1].kind != TOK_WORD || (!quote && line[*len - 1] == ' ');
+    // 要补的词是结尾的那个；结尾是空格或运算符时，它是一个还没开始敲的词
+    bool fresh = ntok == 0 || tokens[ntok - 1].kind != TOK_WORD || (!quote && line[len - 1] == ' ');
     int at = fresh ? ntok : ntok - 1;
     const char *word = fresh ? "" : tokens[at].text;
-    size_t start = fresh ? *len : (size_t)(tokens[at].source - line);
+    size_t start = fresh ? len : (size_t)(tokens[at].source - line);
 
     // 它前面有什么：这一段管道的命令（重定向的文件名不算），它是不是紧跟着一个重定向运算符
     const char *command = NULL;
@@ -922,25 +929,15 @@ static bool complete(char *line, size_t *len, size_t size, bool list) {
         shown[n] = '\0';
     }
 
-    if (n >= 0 && start + (size_t)n < size && strcmp(shown, line + start) != 0) {
-        // 屏幕上只改不一样的那一段：通常只是在行尾接着写，要加引号时才会回头改
-        size_t same = 0;
-        while (line[start + same] && line[start + same] == shown[same]) {
-            same++;
-        }
-        for (size_t i = start + same; i < *len; i++) {
-            console_write("\b \b", 3);
-        }
-        console_write(shown + same, (size_t)n - same);
-        strcpy(line + start, shown);
-        *len = start + (size_t)n;
+    if (n >= 0 && strcmp(shown, line + start) != 0 &&
+        line_edit_replace(edit, start, len - start, shown, (size_t)n, start + (size_t)n)) {
         return false;
     }
 
     if (m.count > 1 && list) {
         list_matches(&m);
         console_write("> ", 2);
-        console_write(line, *len);
+        line_edit_show(edit);
     }
     return m.count > 1;
 }
@@ -967,8 +964,10 @@ int main(int argc, char **argv) {
     }
     printf("sh: ready, reading commands from console (pid %d); try help\n> ", console);
 
-    static char line[128];
-    size_t len = 0;
+    static char line[256];
+    static struct line_history history;
+    struct line_editor edit;
+    line_edit_init(&edit, line, sizeof(line), &history);
     bool tab_stuck = false;     // 上一个键是 Tab，而且它没补出东西来
     for (;;) {
         // 没有待处理的输入就去等：有后台任务时带着超时等，好及时报告它们结束
@@ -988,31 +987,22 @@ int main(int argc, char **argv) {
         char c = pending[0];
         memmove(pending, pending + 1, --pending_len);
 
-        if (c == '\t') {
-            tab_stuck = complete(line, &len, sizeof(line), tab_stuck);
+        int key = line_edit_feed(&edit, c);
+        if (key == '\t') {
+            tab_stuck = complete(&edit, tab_stuck);
             continue;
         }
         tab_stuck = false;
 
-        if (c == '\r' || c == '\n') {
-            console_write("\n", 1);
-            line[len] = '\0';
+        if (key == '\n') {
             interrupted_by_user = false;
             run_command(line);
-            len = 0;
+            line_edit_reset(&edit);
             reap_jobs();
             console_write("> ", 2);
-        } else if (c == CTRL_C) {
+        } else if (key == CTRL_C) {
             console_write("^C\n> ", 5);     // 放弃正在输入的这一行
-            len = 0;
-        } else if (c == 0x7F || c == '\b') {
-            if (len > 0) {
-                len--;
-                console_write("\b \b", 3);
-            }
-        } else if ((unsigned char)c >= 0x20 && len < sizeof(line) - 1) {
-            line[len++] = c;
-            console_write(&c, 1);
+            line_edit_reset(&edit);
         }
     }
 }

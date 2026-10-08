@@ -57,6 +57,13 @@
 #define KEY_FIRST               0x04    // 再往前的编号不是键
 #define KEY_CAPS_LOCK           0x39
 #define KEY_KEYPAD_FIRST        0x54
+#define KEY_HOME                0x4A
+#define KEY_DELETE              0x4C
+#define KEY_END                 0x4D
+#define KEY_RIGHT               0x4F
+#define KEY_LEFT                0x50
+#define KEY_DOWN                0x51
+#define KEY_UP                  0x52
 
 // 键的编号 -> 字符，从 KEY_FIRST 开始：字母、数字、回车到空格、符号
 static const char plain[] =
@@ -131,10 +138,12 @@ static void flush(void) {
     }
 }
 
-static void emit(char c) {
-    pending[pending_count++] = c;
-    if (pending_count == CONSOLE_READ_MAX) {
-        flush();
+static void emit(const char *chars) {
+    for (; *chars; chars++) {
+        pending[pending_count++] = *chars;
+        if (pending_count == CONSOLE_READ_MAX) {
+            flush();
+        }
     }
 }
 
@@ -142,15 +151,30 @@ static void emit(char c) {
 // 报告 -> 字符
 // ============================================================================
 
-/** 编号是 key 的键在修饰键 mods 下产生的字符；不产生字符返回 0 */
-static char translate(uint8_t key, uint8_t mods) {
+/**
+ * 编号是 key 的键在修饰键 mods 下产生的字符：一般是一个，方向键这样的编辑键是一串（见
+ * keys.h）。不产生字符返回空串
+ */
+static const char *translate(uint8_t key, uint8_t mods) {
+    static char one[2];
+    switch (key) {
+    case KEY_UP:        return key_sequence(EDIT_KEY_UP);
+    case KEY_DOWN:      return key_sequence(EDIT_KEY_DOWN);
+    case KEY_RIGHT:     return key_sequence(EDIT_KEY_RIGHT);
+    case KEY_LEFT:      return key_sequence(EDIT_KEY_LEFT);
+    case KEY_HOME:      return key_sequence(EDIT_KEY_HOME);
+    case KEY_END:       return key_sequence(EDIT_KEY_END);
+    case KEY_DELETE:    return key_sequence(EDIT_KEY_DELETE);
+    }
     if (key >= KEY_KEYPAD_FIRST && key < KEY_KEYPAD_FIRST + sizeof(keypad) - 1) {
-        return keypad[key - KEY_KEYPAD_FIRST];
+        one[0] = keypad[key - KEY_KEYPAD_FIRST];
+    } else if (key < KEY_FIRST || key >= KEY_CAPS_LOCK) {
+        return "";
+    } else {
+        one[0] = key_char(plain[key - KEY_FIRST], shifted[key - KEY_FIRST], mods & MOD_SHIFT, caps_lock,
+                          mods & MOD_CTRL);
     }
-    if (key < KEY_FIRST || key >= KEY_CAPS_LOCK) {
-        return 0;
-    }
-    return key_char(plain[key - KEY_FIRST], shifted[key - KEY_FIRST], mods & MOD_SHIFT, caps_lock, mods & MOD_CTRL);
+    return one;
 }
 
 static void set_leds(const struct device *p) {
@@ -185,9 +209,9 @@ static void report(struct device *p, const uint8_t *r) {
             set_leds(p);
             continue;
         }
-        char c = translate(key, p->mods);
-        if (c != 0) {
-            emit(c);
+        const char *chars = translate(key, p->mods);
+        if (*chars) {
+            emit(chars);
             p->repeat_key = key;
             p->repeat_at = uptime_ms() + REPEAT_DELAY_MS;
         }
@@ -201,10 +225,7 @@ static void report(struct device *p, const uint8_t *r) {
 /** 按住不放的键到时候了就再出一个字符 */
 static void repeat(struct device *p) {
     if (p->repeat_key != 0 && uptime_ms() >= p->repeat_at) {
-        char c = translate(p->repeat_key, p->mods);     // 修饰键可能变了：按现在的算
-        if (c != 0) {
-            emit(c);
-        }
+        emit(translate(p->repeat_key, p->mods));        // 修饰键可能变了：按现在的算
         p->repeat_at = uptime_ms() + REPEAT_INTERVAL_MS;
     }
 }

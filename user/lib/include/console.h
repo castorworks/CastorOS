@@ -64,7 +64,7 @@ enum {
 long console_read(char *buf, size_t len, uint32_t timeout_ms);
 
 /**
- * 从键盘读一行：回显，支持退格，回车结束。结果不含换行符，以 '\0' 结尾。
+ * 从键盘读一行：回显，可以移动光标修改（见 <lineedit.h>），回车结束。结果不含换行符，以 '\0' 结尾。
  * 程序一般不直接用它，而是用 <stdio.h> 的 read_line / read_input（标准输入可能被重定向）。
  * @return 这一行的长度；-1 = 输入结束（行首的 Ctrl-D，或者没有输入可读）
  */

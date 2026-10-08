@@ -1,6 +1,7 @@
 // 控制台输入的客户端：向 console 服务读字节，在此之上提供按行读取
 
 #include <console.h>
+#include <lineedit.h>
 #include <syscall.h>
 #include <string.h>
 #include <names.h>
@@ -42,35 +43,25 @@ long console_read(char *buf, size_t len, uint32_t timeout_ms) {
 }
 
 long console_read_line(char *buf, size_t size) {
-    size_t len = 0;
+    struct line_editor edit;
+    line_edit_init(&edit, buf, size, NULL);
     for (;;) {
         char c;
         if (console_read(&c, 1, 0) != 1) {
             break;
         }
-        if (c == '\r' || c == '\n') {
-            console_write("\n", 1);
-            buf[len] = '\0';
-            return (long)len;
+        int key = line_edit_feed(&edit, c);
+        if (key == '\n') {
+            return (long)edit.len;
         }
-        if (c == CONSOLE_CTRL_D) {
-            if (len == 0) {
+        if (key == CONSOLE_CTRL_D) {
+            if (edit.len == 0) {
                 return -1;
             }
             break;              // 行中间的 Ctrl-D：把已经输入的部分交出去
         }
-        if (c == 0x7F || c == '\b') {
-            if (len > 0) {
-                len--;
-                console_write("\b \b", 3);
-            }
-        } else if ((unsigned char)c >= 0x20 && len + 1 < size) {
-            buf[len++] = c;
-            console_write(&c, 1);
-        }
     }
-    buf[len] = '\0';
-    return len > 0 ? (long)len : -1;
+    return edit.len > 0 ? (long)edit.len : -1;
 }
 
 long console_input(const char *chars, size_t n) {
