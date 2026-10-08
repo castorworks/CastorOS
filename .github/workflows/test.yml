@@ -33,7 +33,7 @@ jobs:
         run: make lib-test
 
   test:
-    name: ${{ matrix.arch }}${{ matrix.smp && format(' ({0} CPUs)', matrix.smp) || '' }}${{ matrix.disk && format(' ({0} disk)', matrix.disk) || '' }}${{ matrix.live && ' (no disk)' || '' }}
+    name: ${{ matrix.arch }}${{ matrix.smp && format(' ({0} CPUs)', matrix.smp) || '' }}${{ matrix.disk && format(' ({0} disk)', matrix.disk) || '' }}${{ matrix.live && ' (no disk)' || '' }}${{ matrix.net && format(' ({0} network card)', matrix.net) || '' }}
     runs-on: macos-latest
     timeout-minutes: 30
     strategy:
@@ -74,6 +74,10 @@ jobs:
             packages: i686-elf-gcc nasm
             disk: usb
             kbd: hub
+          # 网卡换成 Intel 的千兆网卡：真机用的驱动
+          - arch: i686
+            packages: i686-elf-gcc nasm
+            net: e1000
           # 不接磁盘：根在内存里（从光盘启动、或者磁盘上没有这个系统时是这样）
           - arch: i686
             packages: i686-elf-gcc nasm
@@ -94,7 +98,7 @@ jobs:
       # runner 比开发机慢，而且 QEMU 在上面是纯软件模拟：把等待的上限放宽。
       # 这些只是上限，检查一做完就结束，不会多等。
       - name: Build and test
-        run: make test ARCH=${{ matrix.arch }} TEST_TIMEOUT=600 ${{ matrix.smp && format('SMP={0}', matrix.smp) || '' }} ${{ matrix.disk && format('DISK_BUS={0}', matrix.disk) || '' }} ${{ matrix.live && 'LIVE=1' || '' }} ${{ matrix.kbd && format('KBD={0}', matrix.kbd) || '' }}
+        run: make test ARCH=${{ matrix.arch }} TEST_TIMEOUT=600 ${{ matrix.smp && format('SMP={0}', matrix.smp) || '' }} ${{ matrix.disk && format('DISK_BUS={0}', matrix.disk) || '' }} ${{ matrix.live && 'LIVE=1' || '' }} ${{ matrix.kbd && format('KBD={0}', matrix.kbd) || '' }} ${{ matrix.net && format('NET={0}', matrix.net) || '' }}
         env:
           STEP_TIMEOUT: 120
 
@@ -103,6 +107,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-logs-${{ matrix.arch }}${{ matrix.smp && format('-smp{0}', matrix.smp) || '' }}${{ matrix.disk && format('-{0}', matrix.disk) || '' }}${{ matrix.live && '-live' || '' }}
+          name: test-logs-${{ matrix.arch }}${{ matrix.smp && format('-smp{0}', matrix.smp) || '' }}${{ matrix.disk && format('-{0}', matrix.disk) || '' }}${{ matrix.live && '-live' || '' }}${{ matrix.net && format('-{0}', matrix.net) || '' }}
           path: build/${{ matrix.arch }}-ktest/*.log
           if-no-files-found: ignore

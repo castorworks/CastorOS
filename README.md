@@ -97,7 +97,7 @@ user/uart/     串口输入驱动
 user/kbd/      PS/2 键盘驱动（x86）
 user/usbkbd/   USB 键盘驱动（x86）
 user/blk/      块设备驱动（virtio-blk，x86 上还有 IDE 硬盘和 USB 2.0 的 U 盘）
-user/net/      网络服务（virtio-net 驱动 + 协议栈）
+user/net/      网络服务（网卡驱动 + 协议栈；网卡是 virtio-net，x86 上还有 Intel 千兆网卡）
 user/ramfs/    内存文件系统服务（/tmp；没有磁盘时也是根，内嵌启动映像）
 user/diskfs/   磁盘文件系统服务（根文件系统）
 user/sh/       命令行

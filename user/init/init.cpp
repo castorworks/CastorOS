@@ -181,8 +181,53 @@ static void allow_blk(void) {
 #endif
 }
 
+#if !defined(ARCH_ARM64)
+
+// Intel 的千兆网卡（82540 一族）：在 PCI 上的以太网卡里按厂商号和设备号认。
+// 它的寄存器在一段设备内存里（第 0 个 BAR）
+#define PCI_CLASS_ETHERNET      0x020000
+#define PCI_VENDOR_INTEL        0x8086
+#define E1000_CTRL_RESET        (1u << 26)      // 控制寄存器（偏移 0）里的复位位
+
+static void allow_e1000(void) {
+    // 82540EM（QEMU 模拟的那个）、82545EM，和笔记本上的 82540EP 的几个变种
+    static const uint16_t devices[] = { 0x100E, 0x100F, 0x1015, 0x1016, 0x1017, 0x101E };
+    pci_dev_t dev;
+    for (uint32_t index = 0; pci_find_class(PCI_CLASS_ETHERNET, index, &dev); index++) {
+        uint32_t id = pci_read(dev, PCI_ID);
+        bool ours = false;
+        for (size_t i = 0; i < sizeof(devices) / sizeof(devices[0]); i++) {
+            ours = ours || ((id & 0xFFFF) == PCI_VENDOR_INTEL && (id >> 16) == devices[i]);
+        }
+        uint32_t bar = pci_read(dev, PCI_BAR0);
+        uint32_t size = pci_bar_size(dev, 0);
+        if (!ours || (bar & 1) || size == 0) {
+            continue;
+        }
+        uintptr_t base = bar & ~0xFu;
+        // 打开设备内存的访问和总线主控（网卡要自己读写内存）；驱动碰不到配置空间
+        pci_write(dev, PCI_COMMAND, pci_read(dev, PCI_COMMAND) | PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER);
+        // 复位网卡。上一个驱动如果是崩溃的，网卡还在往它的（已经被收回的）内存里写收到的帧
+        volatile uint32_t *regs = (volatile uint32_t *)map_device(base, 0x1000);
+        if (regs != MAP_FAILED) {
+            regs[0] = regs[0] | E1000_CTRL_RESET;
+            munmap((void *)regs, 0x1000);
+        }
+        hw_allow(HW_MEMORY, base, size);
+        hw_allow(HW_IRQ, pci_read(dev, PCI_INTERRUPT) & 0xFF, 1);
+        return;
+    }
+}
+
+#endif
+
 static void allow_net(void) {
-    virtio_allow(VIRTIO_ID_NET);
+    if (virtio_allow(VIRTIO_ID_NET)) {
+        return;
+    }
+#if !defined(ARCH_ARM64)
+    allow_e1000();
+#endif
 }
 
 // ============================================================================

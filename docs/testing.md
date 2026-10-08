@@ -59,7 +59,7 @@ make test ARCH=x86_64 QEMU_MEMORY=3G   # 给虚拟机更多内存（默认是 QE
 
 ## 持续集成
 
-每次推送到 `main`、每个 PR，GitHub Actions 都会对三个架构各跑一遍 `make test ARCH=<arch>`（`.github/workflows/test.yml`），每个架构再带着两个 CPU 跑一遍（`SMP=2`），i686 再把磁盘接成 IDE 硬盘（`DISK_BUS=ide`）、接成 U 盘（`DISK_BUS=usb`）各跑一遍，不接磁盘跑一遍（`LIVE=1`），接上 USB 键盘跑两遍（`KBD=usb`，以及 `KBD=hub` 和 `DISK_BUS=usb` 一起：集线器和 U 盘在同一个 USB 2.0 控制器的口上，键盘在集线器后面），另外还有一个只跑 `make lib-test` 的任务。
+每次推送到 `main`、每个 PR，GitHub Actions 都会对三个架构各跑一遍 `make test ARCH=<arch>`（`.github/workflows/test.yml`），每个架构再带着两个 CPU 跑一遍（`SMP=2`），i686 再把磁盘接成 IDE 硬盘（`DISK_BUS=ide`）、接成 U 盘（`DISK_BUS=usb`）各跑一遍，不接磁盘跑一遍（`LIVE=1`）、把网卡换成 Intel 千兆网卡跑一遍（`NET=e1000`），接上 USB 键盘跑两遍（`KBD=usb`，以及 `KBD=hub` 和 `DISK_BUS=usb` 一起：集线器和 U 盘在同一个 USB 2.0 控制器的口上，键盘在集线器后面），另外还有一个只跑 `make lib-test` 的任务。
 
 - 用的是 macOS 的 runner 和 Homebrew 的交叉编译器（见 [开发环境搭建](setup.md) 的方法一），所以和在 macOS 上本地开发是同一套工具。加了构建依赖的话，workflow 的 `brew install` 一行也要加。
 - 三个架构各是一个独立的任务，一个失败不影响另外两个跑完。
@@ -100,11 +100,11 @@ timeout 20 qemu-system-aarch64 -M virt -cpu cortex-a72 -kernel build/arm64/casto
 
 `make run-iso` 在 QEMU 里把映像当硬盘启动（BIOS → 硬盘上的 GRUB → 内核，根在分区上；运行时改的东西写回映像文件），`make run-usb` 把它当 U 盘启动，`make run-cd` 把它当光盘启动；加 `QEMU_DISPLAY=cocoa` 看屏幕。写进真机之前先用它们各走一遍。
 
-真机上能用的是屏幕（VGA 文本模式）、PS/2 键盘、USB 键盘、IDE 硬盘和 USB 2.0 口上的 U 盘。机器有串口的话串口控制台照常可用（COM1，38400 8N1），没有就自动不用。
+真机上能用的是屏幕（VGA 文本模式）、PS/2 键盘、USB 键盘、IDE 硬盘、USB 2.0 口上的 U 盘和 Intel 千兆有线网卡。机器有串口的话串口控制台照常可用（COM1，38400 8N1），没有就自动不用。
 
 **盘上原有的东西。** 系统启动时不往一块不是它自己的盘上写任何东西：`diskfs` 从不格式化，找不到自己的文件系统就退出；自检只在整块盘都是我们的文件系统时才做写入测试，否则只读。会写盘的只有 `disk write`（直接写扇区，不写编号时写的是第 0 块盘，机器有硬盘的话那就是硬盘），以及对根所在的那块盘上文件的正常修改。
 
-当前的限制：只支持 BIOS 启动（UEFI 启动的机器没有 VGA 文本模式，屏幕上什么都看不到）；硬盘只认 IDE（SATA 和 NVMe 没有驱动）；U 盘要直接插在 USB 2.0 口上（见 [用户态驱动](reference/drivers.md#usb-20-和-u-盘) 的限制）；USB 键盘要开机前插好（可以接在集线器后面），机器的 USB 1.1 控制器要是 UHCI（见 [同一页](reference/drivers.md#usb-键盘usbkbd) 的限制）；根分区的大小是做映像时定的（`ROOT_SIZE_MB`，默认 16），不会随硬盘变大；系统里没有把自己装到硬盘上的命令；网卡只有 virtio 的驱动，真机上 `net` 找不到设备直接退出，没有网络；只在 QEMU 里验证过。
+当前的限制：只支持 BIOS 启动（UEFI 启动的机器没有 VGA 文本模式，屏幕上什么都看不到）；硬盘只认 IDE（SATA 和 NVMe 没有驱动）；U 盘要直接插在 USB 2.0 口上（见 [用户态驱动](reference/drivers.md#usb-20-和-u-盘) 的限制）；USB 键盘要开机前插好（可以接在集线器后面），机器的 USB 1.1 控制器要是 UHCI（见 [同一页](reference/drivers.md#usb-键盘usbkbd) 的限制）；根分区的大小是做映像时定的（`ROOT_SIZE_MB`，默认 16），不会随硬盘变大；系统里没有把自己装到硬盘上的命令；有线网卡只认 Intel 千兆的 82540 一族（见 [网络](reference/net.md#intel-千兆网卡) 的限制），别的网卡 `net` 找不到设备直接退出，没有网络；没有无线网卡的驱动；只在 QEMU 里验证过。
 
 ## GDB
 

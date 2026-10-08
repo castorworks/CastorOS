@@ -244,8 +244,11 @@ qemu_disk = -drive file=$(1),format=raw,if=none,id=disk0 -device $(VIRTIO_BLK),d
 endif
 
 # virtio-net 网卡，接 QEMU 的用户网络（来宾 10.0.2.15，网关 10.0.2.2，DNS 10.0.2.3）
+# NET=e1000（只有 x86）：换成 Intel 的千兆网卡，真机上是这种；run 和 test 都认
 ifeq ($(ARCH),arm64)
     VIRTIO_NET = virtio-net-device
+else ifeq ($(NET),e1000)
+    VIRTIO_NET = e1000
 else
     VIRTIO_NET = virtio-net-pci
 endif

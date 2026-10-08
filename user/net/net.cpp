@@ -137,7 +137,7 @@ static void client_gone(int pid) {
 
 int main() {
     if (!nic_init()) {
-        printf("net: no usable virtio-net device\n");
+        printf("net: no usable network card\n");
         return 1;
     }
     clients_init(NET_BUF_SIZE, client_gone);
@@ -145,7 +145,7 @@ int main() {
         printf("net: cannot register name\n");
         return 1;
     }
-    printf("net: ready (pid %d, irq %d), %02x:%02x:%02x:%02x:%02x:%02x\n", getpid(), nic_irq_line(),
+    printf("net: ready (pid %d, %s, irq %d), %02x:%02x:%02x:%02x:%02x:%02x\n", getpid(), nic_kind(), nic_irq_line(),
            my_mac[0], my_mac[1], my_mac[2], my_mac[3], my_mac[4], my_mac[5]);
     dhcp_start();
     timer_set(TICK_MS);

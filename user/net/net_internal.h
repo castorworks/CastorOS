@@ -40,11 +40,12 @@ extern uint8_t my_mac[6];
 /** 应答一个阻塞在请求里的客户：data[0] = result, data[1] = d1, data[2] = d2 */
 void reply_client(int pid, uint32_t label, int64_t result, uint64_t d1, uint64_t d2);
 
-// ---- nic.cpp：网卡驱动 ----
+// ---- nic.cpp：网卡（哪种设备见 nic.h） ----
 
 /** 打开许可给本进程的网卡，读出 MAC，建好收发队列。@return 没有可用的网卡返回 false */
 bool nic_init(void);
-/** 网卡的中断号（只用来打印） */
+/** 网卡的种类和中断号（只用来打印） */
+const char *nic_kind(void);
 int nic_irq_line(void);
 /** 收到了网卡的中断消息：撤销中断，把收到的帧交给 eth_input，重新打开中断线 */
 void nic_interrupt(void);
