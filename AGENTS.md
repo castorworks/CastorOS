@@ -138,7 +138,7 @@ CastorOS/
 │   ├── ramfs/              # In-memory file service (module, no hardware), holds the boot image
 │   ├── sh/                 # Command line (module, no hardware): runs programs, background jobs, Ctrl-C
 │   ├── selftest/           # User-space self-checks, in the boot image, run from rc at boot
-│   ├── ls/ cat/ cp/ rm/ mv/ mkdir/ echo/ write/ grep/ wc/ sleep/ disk/ ping/ ifconfig/ dns/ http/ echod/ hello/   # Programs in the boot image
+│   ├── ls/ cat/ cp/ rm/ mv/ mkdir/ echo/ write/ grep/ wc/ sleep/ clear/ disk/ ping/ ifconfig/ dns/ http/ echod/ hello/   # Programs in the boot image
 │   ├── bootfs/             # Static files for the boot image (rc, readme.txt, docs/)
 │   ├── program.mk          # Shared build rules for user programs
 │   ├── arch.mk             # Compiler and flags shared by the user library and all programs
@@ -198,7 +198,7 @@ share `virtio.h`; servers that take a shared buffer from each client use `client
 
 **Programs in the boot image.** Other programs (`user/selftest`, `user/ls`, `user/cat`,
 `user/cp`, `user/rm`, `user/mv`, `user/mkdir`, `user/echo`, `user/write`, `user/grep`, `user/wc`,
-`user/disk`, `user/ping`, `user/ifconfig`, `user/dns`, `user/http`, `user/echod`, `user/sleep`,
+`user/clear`, `user/disk`, `user/ping`, `user/ifconfig`, `user/dns`, `user/http`, `user/echod`, `user/sleep`,
 `user/hello`) go into the boot image: a ustar archive of `user/bootfs/` (subdirectories become
 directories) plus the programs in `BOOT_PROGRAMS` (`user/ramfs/Makefile`), embedded in ramfs and
 unpacked at startup. sh runs them with fork + exec, and runs the `rc` file (which starts
@@ -304,7 +304,8 @@ nowhere else. The kernel Makefile rebuilds all of it when `user/` changes.
   switches user tasks (`hal::UserContext::fp_save` / `fp_restore`, state in `task_t::fp_state`).
 - Console output (`kprintf`, and the `console_write` system call behind user `printf`) goes to
   the serial port and, on x86, also to the VGA text screen (`drivers::Screen`,
-  `src/drivers/x86/screen.cpp`). The screen is output only; keyboard input is `user/kbd`.
+  `src/drivers/x86/screen.cpp`). The screen is output only; keyboard input is `user/kbd`. It
+  understands three escape sequences (colour, cursor position, clear screen) and drops the rest.
 - Syscall numbers live in `src/include/kernel/syscall.h` and must match `user/lib/include/syscall.h`.
 - Program arguments travel through the argument page at the top of the user stack region
   (`USER_ARGS_ADDR` / `user_args_t` in `kernel/task.h`, mirrored in `user/lib/src/crt0.cpp`).

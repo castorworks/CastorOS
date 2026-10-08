@@ -56,6 +56,7 @@ init 要启动的模块用同样的办法嵌在 init 自己的映像里（`user/
 - `user/write`：`write <file> <text>` 把参数写成文件的一行；不带文字时从标准输入读，每行写进文件（键盘输入时行首 Ctrl-D 结束）。
 - `user/disk`：显示磁盘容量、直接读写扇区。
 - `user/ping`、`user/ifconfig`、`user/dns`、`user/http`、`user/echod`：网络工具。
+- `user/clear`：清屏。输出两个转义序列（光标回左上角、清屏），串口另一头的终端和内核的屏幕驱动都认。
 - `user/hello`：最小的示例程序，打印自己的 PID 和参数。
 
 加一个程序只需要：在 `user/` 下建目录写好 Makefile，把名字加进 `user/ramfs/Makefile` 的 `BOOT_PROGRAMS`。不用改 init，也不用改内核。

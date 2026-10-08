@@ -76,6 +76,10 @@ check "run a program" run_program
 unknown_command() { send 'nosuchprogram\n'; expect '^nosuchprogram: unknown command'; }
 check "unknown command" unknown_command
 
+# ---- clear 输出的是清屏的转义序列（output 只去掉颜色的，这两个留着）----
+clear_screen() { send 'clear\n'; expect $'\x1b\\[H\x1b\\[2J'; }
+check "clear" clear_screen
+
 # ---- 后台任务：启动后提示符马上可用，jobs 能看到它，结束时有报告 ----
 background_job() {
     send 'sleep 2 &\n'; expect '\[[0-9]+\] sleep$' || return 1

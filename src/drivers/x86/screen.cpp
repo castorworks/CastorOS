@@ -118,6 +118,17 @@ static bool in_escape(char c) {
                 for (uint32_t i = 0; i <= csi_count && i < CSI_MAX_PARAMS; i++) {
                     set_graphics(csi_params[i]);
                 }
+            } else if (c == 'H') {
+                // 移动光标：参数是行;列，从 1 数起，不写就是 1
+                uint32_t r = csi_params[0], cl = csi_count >= 1 ? csi_params[1] : 0;
+                row = r == 0 ? 0 : (r > VGA_ROWS ? VGA_ROWS : r) - 1;
+                col = cl == 0 ? 0 : (cl > VGA_COLS ? VGA_COLS : cl) - 1;
+                move_cursor();
+            } else if (c == 'J' && csi_params[0] == 2) {
+                // 清掉整个屏幕，光标不动
+                for (uint32_t r = 0; r < VGA_ROWS; r++) {
+                    clear_row(r);
+                }
             }
             escape = Escape::NONE;
         }

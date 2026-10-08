@@ -101,7 +101,7 @@ user/ramfs/    内存文件系统服务（内嵌启动映像）
 user/diskfs/   磁盘文件系统服务
 user/sh/       命令行
 user/selftest/ 用户态自检程序（在启动映像里）
-user/ls/ cat/ cp/ rm/ mv/ mkdir/ echo/ write/ grep/ wc/ sleep/ disk/ ping/ ifconfig/ dns/ http/ echod/ hello/
+user/ls/ cat/ cp/ rm/ mv/ mkdir/ echo/ write/ grep/ wc/ sleep/ clear/ disk/ ping/ ifconfig/ dns/ http/ echod/ hello/
                小程序（在启动映像里）
 user/bootfs/   启动映像里的静态文件
 
