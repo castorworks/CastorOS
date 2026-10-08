@@ -5,32 +5,29 @@
 
 // 文件服务：协议和客户端接口。
 //
-// 有两个实现同一套协议的服务进程，客户端按文件名的前缀选择：
-//   - 没有前缀：登记为 "fs" 的 user/ramfs（内存文件系统，开机时从启动映像装载）
-//   - "disk:" 前缀：登记为 "diskfs" 的 user/diskfs（磁盘文件系统，内容跨重启保留）
-// 例如 fs_open("hello", 0) 和 fs_open("disk:notes.txt", FS_O_CREATE)。
+// 文件都在一棵目录树里，用路径来指，各段之间用 '/' 隔开：
+//   "/bin/ls"     从根写起
+//   "notes/a"     从当前目录写起；"." 是所在的目录，".." 是上一级
+//
+// 树后面有两个实现同一套协议的服务进程，哪条路径归谁由这个客户端库决定：
+//   - 登记为 "diskfs" 的 user/diskfs：磁盘上的文件系统，内容跨重启保留
+//   - 登记为 "fs" 的 user/ramfs：内存里的文件系统，开机时从内核带着的启动映像装载
+// 磁盘上有我们的文件系统时，根在磁盘上，只有 /tmp 这棵子树在内存里（重启就没了）。
+// 没有时（没有磁盘，或者盘上是别的东西），整棵树都在内存里，内容就是启动映像：系统
+// 照样能用，只是什么都留不下来。
 //
 // 文件名、读写的数据都不放在消息里，而是放在客户与服务之间的一块共享缓冲区：
 // 客户第一次使用时用 mem_grant 把缓冲区共享给服务，之后每个请求只在消息里
 // 带参数，内容在缓冲区里。
 //
-// 文件用路径来指，各段之间用 '/' 隔开：
-//   "disk:a/b"、"ram:a/b"   从磁盘 / 内存文件系统的根写起
-//   "/a/b"                  从当前目录所在的那个文件系统的根写起
-//   "a/b"                   从当前目录写起；"." 是所在的目录，".." 是上一级
-// 当前目录（fs_chdir / fs_getcwd）是每个进程自己的，一开始是内存文件系统的根；命令行
-// 启动程序时把自己的当前目录传给它。当前目录和 "."、".." 都由这个客户端库处理掉，
-// 服务看到的永远是从根写起的完整路径。文件只能建在已经存在的目录里（根目录总是存在），
-// 目录用 fs_mkdir 建，空了才能删。
+// 当前目录（fs_chdir / fs_getcwd）是每个进程自己的，一开始是根；命令行启动程序时把自己的
+// 当前目录传给它。当前目录和 "."、".." 都由这个客户端库处理掉，服务看到的永远是从根写起
+// 的完整路径。文件只能建在已经存在的目录里（根目录总是存在），目录用 fs_mkdir 建，空了才能删。
 
 #define FS_SERVICE_NAME         "fs"
 #define FS_DISK_SERVICE_NAME    "diskfs"
-#define FS_DISK_PREFIX          "disk:"
-/** 磁盘上 diskfs 的文件系统以这 8 个字节开头。盘的开头是它，或者第一个 4KB 全是 0（空盘），
- *  这块盘才是“我们的”：别的盘 diskfs 不格式化，自检也不往上写 */
-#define FS_DISK_MAGIC           "CASTORFS"
-#define FS_DISK_MAGIC_SIZE      8
-#define FS_RAM_PREFIX           "ram:"
+/** 根在磁盘上时，这个目录下面的东西在内存文件系统里 */
+#define FS_TMP_DIR              "tmp"
 
 /** 路径的最大长度（整条路径，含结尾 NUL） */
 #define FS_NAME_MAX     64
@@ -50,7 +47,7 @@ enum {
                     //   应答 data[0]: 0 有这一项 / -1 没有了（或者那不是一个目录），
                     //   data[1]: 文件大小，data[2]: 是不是目录，这一项的名字（不含目录部分）在缓冲区
     FS_MKDIR  = 8,  // 缓冲区: 路径。创建一个目录（它的上一级必须已经存在）
-    FS_RENAME = 9,  // 缓冲区: 原来的路径、'\0'、新的路径。改名或者移到别的目录（同一个文件系统里）；
+    FS_RENAME = 9,  // 缓冲区: 原来的路径、'\0'、新的路径。改名或者移到别的目录（同一个服务里）；
                     //   目录里的东西跟着走。新路径上已经有东西、或者它的上一级不存在时失败
 };
 
@@ -78,8 +75,9 @@ int fs_unlink(const char *name);
 int fs_mkdir(const char *path);
 
 /**
- * 把 from 改名或者移动成 to：两个路径必须在同一个文件系统里。目录连同里面的东西一起移。
- * @return 0 成功；-1 from 不存在、to 已经存在、to 的上一级不存在、跨了文件系统…
+ * 把 from 改名或者移动成 to。目录连同里面的东西一起移。两个路径必须在同一个文件服务里：
+ * /tmp 和别处之间不能直接移（要复制再删）。
+ * @return 0 成功；-1 from 不存在、to 已经存在、to 的上一级不存在、跨了文件服务…
  */
 int fs_rename(const char *from, const char *to);
 
@@ -89,11 +87,11 @@ int fs_rename(const char *from, const char *to);
  */
 int fs_chdir(const char *path);
 
-/** 当前目录，写成从根开始的完整路径："/"、"/docs"、"disk:/notes"。buf 至少 FS_NAME_MAX + 8 字节 */
+/** 当前目录，写成从根开始的完整路径："/"、"/home/notes"。buf 至少 FS_NAME_MAX + 8 字节 */
 void fs_getcwd(char *buf);
 
 /**
- * 当前目录的内部写法（"docs"、"disk:notes"，根是空串）/ 照这种写法直接设置，不检查。
+ * 当前目录的内部写法（"home/notes"，根是空串）/ 照这种写法直接设置，不检查。
  * 命令行用它把自己的当前目录交给它启动的程序（见 stdio.h）。
  */
 const char *fs_cwd_spec(void);
@@ -101,10 +99,10 @@ void fs_set_cwd_spec(const char *spec);
 
 /**
  * 列出目录 dir 的第 index 个成员
- * @param dir 一个目录的路径；"" 是当前目录，"disk:" 是磁盘文件系统的根
- * @param name 至少 FS_NAME_MAX 字节，得到这一项的名字（不含目录部分和前缀）
+ * @param dir 一个目录的路径；"" 是当前目录
+ * @param name 至少 FS_NAME_MAX 字节，得到这一项的名字（不含目录部分）
  * @param size、is_dir 可以是 NULL
- * @return 0 成功，-1 没有这一项（或者 dir 不是一个目录，或者那个文件系统不存在）
+ * @return 0 成功，-1 没有这一项（或者 dir 不是一个目录）
  */
 int fs_list(const char *dir, int index, char *name, uint32_t *size, bool *is_dir);
 

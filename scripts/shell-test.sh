@@ -174,15 +174,15 @@ pipes() {
     send 'cat out1 | wc\n'; expect '^2 3 17$' || return 1
     send 'cat < out1 | grep more | wc > count\n'; expect '> $' || return 1
     send 'cat count\n'; expect '^1 1 5$' || return 1
-    send 'ls | grep selftest\n'; expect '^ *[0-9]+  selftest$' || return 1
+    send 'ls /bin | grep selftest\n'; expect '^ *[0-9]+  selftest$' || return 1
     send 'hello a b | grep argv\n'; expect 'argv\[2\] = b$'
 }
 check "pipes" pipes
 
-# ---- 目录：启动映像里带来的，和现建的 ----
+# ---- 目录：系统自带的，和现建的 ----
 directories() {
-    send 'ls docs\n'; expect '^ *[0-9]+  paths.txt$' || return 1
-    send 'cat docs/paths.txt | grep current\n'; expect '^There is no current directory' || return 1
+    send 'ls /usr/share/doc\n'; expect '^ *[0-9]+  paths.txt$' || return 1
+    send 'cat /usr/share/doc/paths.txt | grep current\n'; expect 'from the current directory$' || return 1
     send 'mkdir box\n'; expect '> $' || return 1
     send 'write box/note hello\n'; expect '> $' || return 1
     send 'ls | grep box\n'; expect '^ +box/$' || return 1
@@ -195,21 +195,41 @@ directories() {
 }
 check "directories" directories
 
+# ---- 目录树：根下面是 Linux 那样的几个目录；/tmp 和别处不在同一个文件服务上 ----
+tree() {
+    send 'ls /\n'; expect '^ +bin/$' && expect '^ +etc/$' && expect '^ +home/$' && expect '^ +tmp/$' &&
+        expect '^ +usr/$' || return 1
+    send 'cat /etc/rc\n'; expect '^selftest$' || return 1
+    send 'write /home/kept.txt on the disk\n'; expect '> $' || return 1
+    send 'write /tmp/scratch.txt in memory\n'; expect '> $' || return 1
+    send 'cat /home/kept.txt /tmp/scratch.txt\n'; expect '^on the disk$' && expect '^in memory$' || return 1
+    send 'cd /tmp\n'; expect '> $' || return 1
+    send 'ls\n'; expect '^ *[0-9]+  scratch.txt$' || return 1
+    send 'cp scratch.txt /home/copy.txt\n'; expect '> $' || return 1
+    send 'cd /home\n'; expect '> $' || return 1
+    send 'cat copy.txt\n'; expect '^in memory$' || return 1
+    send 'rm copy.txt kept.txt /tmp/scratch.txt\n'; expect '> $' || return 1
+    send 'cd /\n'; expect '> $'
+}
+check "directory tree" tree
+
 # ---- 当前目录：cd、pwd；程序从命令行所在的目录开始，换了目录命令照样找得到 ----
 current_directory() {
     send 'pwd\n'; expect '^/$' || return 1
-    send 'cd docs\n'; expect '> $' || return 1
-    send 'pwd\n'; expect '^/docs$' || return 1
+    send 'cd usr/share/doc\n'; expect '> $' || return 1
+    send 'pwd\n'; expect '^/usr/share/doc$' || return 1
     send 'ls\n'; expect '^ *[0-9]+  paths.txt$' || return 1
-    send 'cat paths.txt | grep current\n'; expect '^There is no current directory' || return 1
-    send 'write here.txt inside docs\n'; expect '> $' || return 1
-    send 'cat /docs/here.txt\n'; expect '^inside docs$' || return 1
-    send 'cat ../readme.txt | wc > count\n'; expect '> $' || return 1      # 重定向的文件名也是相对的
+    send 'cat paths.txt | grep current\n'; expect 'from the current directory$' || return 1
+    send 'write here.txt inside doc\n'; expect '> $' || return 1
+    send 'cat /usr/share/doc/here.txt\n'; expect '^inside doc$' || return 1
+    send 'cat ../doc/readme.txt | wc > count\n'; expect '> $' || return 1  # 重定向的文件名也是相对的
     send 'ls | grep count\n'; expect '^ *[0-9]+  count$' || return 1
     send 'cd nosuch\n'; expect '^cd: nosuch: not a directory$' || return 1
     send 'cd ..\n'; expect '> $' || return 1
+    send 'pwd\n'; expect '^/usr/share$' || return 1
+    send 'cd\n'; expect '> $' || return 1
     send 'pwd\n'; expect '^/$' || return 1
-    send 'rm docs/here.txt docs/count\n'; expect '> $'
+    send 'rm usr/share/doc/here.txt usr/share/doc/count\n'; expect '> $'
 }
 check "current directory" current_directory
 
@@ -223,7 +243,7 @@ rename_files() {
     send 'mv new.txt crate\n'; expect '> $' || return 1                # 目标是目录：移进去
     send 'mv crate box2\n'; expect '> $' || return 1                   # 目录连同里面的东西
     send 'cat box2/new.txt\n'; expect '^moved text$' || return 1
-    send 'mv box2/new.txt docs/paths.txt\n'; expect '^mv: cannot move' || return 1    # 不盖掉已有的
+    send 'mv box2/new.txt /usr/share/doc/paths.txt\n'; expect '^mv: cannot move' || return 1    # 不盖掉已有的
     send 'rm box2/new.txt box2\n'; expect '> $'
 }
 check "rename and move" rename_files
@@ -278,20 +298,22 @@ check "standard error" standard_error
 scripts() {
     send 'write greet "echo hello $1"\n'; expect '> $' || return 1
     send "echo 'echo from \$0, second \$2' >> greet\n"; expect '> $' || return 1
-    send 'greet world again\n'; expect '^hello world$' && expect '^from greet, second again$' || return 1
-    send 'write outer "greet nested"\n'; expect '> $' || return 1
-    send 'outer\n'; expect '^hello nested$' || return 1
-    send 'greet later &\n'; expect '(^|> )hello later$' && expect '\] done  greet$' || return 1
-    send 'write forever forever\n'; expect '> $' || return 1
-    send 'forever\n'; expect '^sh: forever: scripts nested too deeply$' || return 1
-    send 'greet | wc\n'; expect 'is a script: it cannot be piped or redirected$'
+    # 只写名字的命令到 /bin 里找；当前目录里的脚本要写成 ./名字
+    send 'greet world\n'; expect '^greet: unknown command' || return 1
+    send './greet world again\n'; expect '^hello world$' && expect '^from ./greet, second again$' || return 1
+    send 'write outer "./greet nested"\n'; expect '> $' || return 1
+    send './outer\n'; expect '^hello nested$' || return 1
+    send './greet later &\n'; expect '(^|> )hello later$' && expect '\] done  ./greet$' || return 1
+    send 'write forever ./forever\n'; expect '> $' || return 1
+    send './forever\n'; expect '^sh: ./forever: scripts nested too deeply$' || return 1
+    send './greet | wc\n'; expect 'is a script: it cannot be piped or redirected$'
 }
 check "scripts" scripts
 
 script_interrupt() {
     send 'write slow "sleep 60"\n'; expect '> $' || return 1
     send 'echo "echo not reached" >> slow\n'; expect '> $' || return 1
-    send 'slow\n'; sleep 0.5
+    send './slow\n'; sleep 0.5
     send '\003'; expect '^sleep: killed by signal 2$' || return 1
     send 'echo after the script\n'; expect '^after the script$' || return 1
     ! output | grep -aq '^not reached$'

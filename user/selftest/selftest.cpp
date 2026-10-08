@@ -10,6 +10,7 @@
 #include <math.h>
 #include <names.h>
 #include <console.h>
+#include <diskfs_format.h>
 #include <fs.h>
 #include <blk.h>
 #include <net.h>
@@ -772,19 +773,19 @@ static void test_fs(void) {
         out[i] = (char)(i * 7 + i / 251);
     }
 
-    int fd = fs_open("selftest.dat", FS_O_CREATE | FS_O_TRUNC);
+    int fd = fs_open("/tmp/selftest.dat", FS_O_CREATE | FS_O_TRUNC);
     int ok = fd >= 0 &&
              fs_write(fd, 0, out, sizeof(out)) == (long)sizeof(out) &&
              fs_read(fd, 0, in, sizeof(in)) == (long)sizeof(in) &&
              memcmp(out, in, sizeof(out)) == 0 &&
              fs_read(fd, 9990, in, 100) == 10 && memcmp(out + 9990, in, 10) == 0 &&
-             fs_open("no-such-file", 0) == -1;
+             fs_open("/tmp/no-such-file", 0) == -1;
 
     // 能在列表里找到它，大小正确
     char name[FS_NAME_MAX];
     uint32_t size = 0;
     int listed = 0;
-    for (int i = 0; fs_list("", i, name, &size, NULL) == 0; i++) {
+    for (int i = 0; fs_list("/tmp", i, name, &size, NULL) == 0; i++) {
         if (strcmp(name, "selftest.dat") == 0 && size == sizeof(out)) {
             listed = 1;
         }
@@ -794,7 +795,7 @@ static void test_fs(void) {
     int child = fork();
     if (child == 0) {
         char byte = 0;
-        int mine = fs_open("selftest.dat", 0);
+        int mine = fs_open("/tmp/selftest.dat", 0);
         exit(mine >= 0 && fs_read(mine, 5000, &byte, 1) == 1 && byte == out[5000] &&
              fs_read(fd, 0, &byte, 1) == -1 ? 0 : 1);
     }
@@ -803,7 +804,7 @@ static void test_fs(void) {
 
     ok = ok && listed && WEXITSTATUS(status) == 0 &&
          fs_close(fd) == 0 && fs_read(fd, 0, in, 1) == -1 &&
-         fs_unlink("selftest.dat") == 0 && fs_open("selftest.dat", 0) == -1;
+         fs_unlink("/tmp/selftest.dat") == 0 && fs_open("/tmp/selftest.dat", 0) == -1;
     report("file service", ok, "ok");
 }
 
@@ -829,14 +830,15 @@ static int dir_count(const char *dir) {
     return n;
 }
 
-// 目录：两个文件服务的规则一样（都在 fs_server 里），root 是 "" 或者 "disk:"
+// 目录：两个文件服务的规则一样（都在 fs_server 里）。root 是在其中做这些检查的目录：
+// "/tmp" 在内存文件服务上，根在磁盘上时 "/home" 在磁盘文件服务上
 static bool check_directories(const char *root) {
     char d[FS_NAME_MAX], sub[FS_NAME_MAX], f1[FS_NAME_MAX], f2[FS_NAME_MAX], deep[FS_NAME_MAX];
-    snprintf(d, sizeof(d), "%sstdir", root);
-    snprintf(sub, sizeof(sub), "%sstdir/sub", root);
-    snprintf(f1, sizeof(f1), "%sstdir/one.txt", root);
-    snprintf(f2, sizeof(f2), "%sstdir/sub/two.txt", root);
-    snprintf(deep, sizeof(deep), "%sstdir/missing/three.txt", root);
+    snprintf(d, sizeof(d), "%s/stdir", root);
+    snprintf(sub, sizeof(sub), "%s/stdir/sub", root);
+    snprintf(f1, sizeof(f1), "%s/stdir/one.txt", root);
+    snprintf(f2, sizeof(f2), "%s/stdir/sub/two.txt", root);
+    snprintf(deep, sizeof(deep), "%s/stdir/missing/three.txt", root);
     char in[16];
 
     // 建目录：上一级得先有；同名的东西已经在了就不行
@@ -861,47 +863,47 @@ static bool check_directories(const char *root) {
     ok = ok && fd >= 0 && fs_read(fd, 0, in, sizeof(in)) == 6 && memcmp(in, "second", 6) == 0 && fs_close(fd) == 0;
 
     // 路径怎么写：多余的 '/' 不算数，"." 是所在的目录，".." 是上一级；根没有上一级
-    static const char *const same[] = { "%s/stdir/one.txt/", "%sstdir/./one.txt", "%sstdir/sub/../one.txt",
-                                        "%sstdir//one.txt", "%sstdir/sub/./../../stdir/one.txt" };
+    static const char *const same[] = { "%s//stdir/one.txt/", "%s/stdir/./one.txt", "%s/stdir/sub/../one.txt",
+                                        "%s/stdir//one.txt", "%s/stdir/sub/./../../stdir/one.txt" };
     char odd[FS_NAME_MAX];
     for (size_t i = 0; i < sizeof(same) / sizeof(same[0]); i++) {
         snprintf(odd, sizeof(odd), same[i], root);
         fd = fs_open(odd, 0);
         ok = ok && fd >= 0 && fs_size(fd) == 3 && fs_close(fd) == 0;
     }
-    snprintf(odd, sizeof(odd), "%sstdir/../../one.txt", root);
+    snprintf(odd, sizeof(odd), "%s/stdir/../../../../one.txt", root);
     ok = ok && fs_open(odd, 0) == -1;
 
-    // 当前目录：换进去之后，不带前缀、不以 '/' 开头的路径从那里算起；
-    // 以 '/' 开头的从同一个文件系统的根算起。不是目录的地方换不进去
+    // 当前目录：换进去之后，不以 '/' 开头的路径从那里算起，以 '/' 开头的照旧从根算起。
+    // 不是目录的地方换不进去
     char cwd[FS_NAME_MAX + 8], want[FS_NAME_MAX + 8];
     ok = ok && fs_chdir(f1) == -1 && fs_chdir(deep) == -1 && fs_chdir(sub) == 0;
     fs_getcwd(cwd);
-    snprintf(want, sizeof(want), "%s/stdir/sub", root[0] ? root : "");
+    snprintf(want, sizeof(want), "%s/stdir/sub", root);
     ok = ok && strcmp(cwd, want) == 0;
     fd = fs_open("two.txt", 0);
     ok = ok && fd >= 0 && fs_size(fd) == 6 && fs_close(fd) == 0;
     fd = fs_open("../one.txt", 0);
     ok = ok && fd >= 0 && fs_size(fd) == 3 && fs_close(fd) == 0;
-    fd = fs_open("/stdir/one.txt", 0);
+    fd = fs_open(f1, 0);
     ok = ok && fd >= 0 && fs_size(fd) == 3 && fs_close(fd) == 0;
     ok = ok && dir_count("") == 1 && dir_count("..") == 2 && fs_open("one.txt", 0) == -1;
-    ok = fs_chdir(FS_RAM_PREFIX) == 0 && ok;        // 回到开始的地方，不管上面成没成
+    ok = fs_chdir("/") == 0 && ok;        // 回到开始的地方，不管上面成没成
     fs_getcwd(cwd);
     ok = ok && strcmp(cwd, "/") == 0;
 
     // 改名和移动：文件改名、移进别的目录；目录连同里面的东西一起移；不能盖掉已有的东西，
     // 不能移到不存在的目录里，不能把目录移进它自己
     char moved[FS_NAME_MAX], d2[FS_NAME_MAX], inside[FS_NAME_MAX];
-    snprintf(moved, sizeof(moved), "%sstdir/sub/moved.txt", root);
-    snprintf(d2, sizeof(d2), "%sstdir2", root);
-    snprintf(inside, sizeof(inside), "%sstdir/sub/deeper", root);
+    snprintf(moved, sizeof(moved), "%s/stdir/sub/moved.txt", root);
+    snprintf(d2, sizeof(d2), "%s/stdir2", root);
+    snprintf(inside, sizeof(inside), "%s/stdir/sub/deeper", root);
     ok = ok && fs_rename(f1, f2) == -1 && fs_rename(f1, deep) == -1 && fs_rename(d, inside) == -1 &&
          fs_rename(f1, moved) == 0 && fs_open(f1, 0) == -1 && dir_count(sub) == 2 && dir_count(d) == 1;
     fd = fs_open(moved, 0);
     ok = ok && fd >= 0 && fs_read(fd, 0, in, sizeof(in)) == 3 && memcmp(in, "one", 3) == 0 && fs_close(fd) == 0;
     ok = ok && fs_rename(d, d2) == 0 && !dir_has(root, "stdir", true) && dir_has(root, "stdir2", true);
-    snprintf(odd, sizeof(odd), "%sstdir2/sub/two.txt", root);
+    snprintf(odd, sizeof(odd), "%s/stdir2/sub/two.txt", root);
     fd = fs_open(odd, 0);
     ok = ok && fd >= 0 && fs_size(fd) == 6 && fs_close(fd) == 0;
     ok = ok && fs_rename(d2, d) == 0 && fs_rename(moved, f1) == 0;      // 放回原处，下面照旧清理
@@ -920,7 +922,7 @@ static void test_fs_client_reclaim(void) {
     for (int i = 0; i < 20; i++) {
         int child = fork();
         if (child == 0) {
-            int fd = fs_open("rc", 0);
+            int fd = fs_open("/etc/rc", 0);
             exit(fd >= 0 && fs_size(fd) > 0 ? 0 : 1);
         }
         int status = 1;
@@ -946,21 +948,17 @@ static void test_block_device(void) {
     static char saved[16 * BLK_SECTOR_SIZE], out[16 * BLK_SECTOR_SIZE], in[16 * BLK_SECTOR_SIZE];
     uint64_t start = sectors - 16;
 
-    // 盘上是别的东西（真机的硬盘上多半是另一个系统）就一个字节也不写：只读
-    bool ours = blk_read(0, in, 8) == 0 && memcmp(in, FS_DISK_MAGIC, FS_DISK_MAGIC_SIZE) == 0;
-    if (!ours) {
-        ours = true;
-        for (size_t i = 0; i < 8 * BLK_SECTOR_SIZE; i++) {
-            ours = ours && in[i] == 0;
-        }
-    }
+    // 只在整块盘都是我们的文件系统时才写。别的盘——上面是另一个系统，或者我们的文件系统只是
+    // 其中一个分区——一个字节也不写：只读
+    bool ours = blk_read(0, in, 1) == 0 && memcmp(in, DISKFS_MAGIC, DISKFS_MAGIC_SIZE) == 0;
     if (!ours) {
         report("block device", sectors >= 32 && blk_read(start, in, 16) == 0 && blk_read(sectors, in, 1) == -1,
-               "ok (read only: the disk is not ours)");
+               "ok (read only: the disk is not all ours)");
         return;
     }
 
-    // 在最后 16 个扇区上写一个图案再读回来（跨多个请求），然后恢复原来的内容
+    // 在最后 16 个扇区上写一个图案再读回来（跨多个请求），然后恢复原来的内容。那里可能是
+    // 文件系统的数据块，所以这一项要在别的进程还没开始写文件时做（开机时是这样）
     for (size_t i = 0; i < sizeof(out); i++) {
         out[i] = (char)(i * 13 + i / 97);
     }
@@ -978,13 +976,9 @@ static void test_disk_fs(void) {
         printf("selftest: disk file system: skipped (no disk)\n");
         return;
     }
-    // diskfs 要等块设备驱动就绪后才挂载
-    for (int i = 0; i < 100 && name_lookup(FS_DISK_SERVICE_NAME) == 0; i++) {
-        usleep(20000);
-    }
-    if (name_lookup(FS_DISK_SERVICE_NAME) == 0) {
-        // 有磁盘但没有文件服务：盘上是别的东西，diskfs 不去动它
-        printf("selftest: disk file system: skipped (the disk is not ours)\n");
+    if (name_settle(FS_DISK_SERVICE_NAME) <= 0) {
+        // 有磁盘但没有文件服务：盘上没有我们的文件系统，diskfs 不去动它
+        printf("selftest: disk file system: skipped (the root is not on the disk)\n");
         return;
     }
 
@@ -993,7 +987,7 @@ static void test_disk_fs(void) {
     for (size_t i = 0; i < sizeof(out); i++) {
         out[i] = (char)(i * 11 + i / 127);
     }
-    const char *path = FS_DISK_PREFIX "selftest.tmp";
+    const char *path = "/home/selftest.tmp";
     int fd = fs_open(path, FS_O_CREATE | FS_O_TRUNC);
     int ok = fd >= 0 &&
              fs_write(fd, 0, out, sizeof(out)) == (long)sizeof(out) &&
@@ -1007,7 +1001,7 @@ static void test_disk_fs(void) {
     char name[FS_NAME_MAX];
     uint32_t size = 0;
     int listed = 0;
-    for (int i = 0; fs_list(FS_DISK_PREFIX, i, name, &size, NULL) == 0; i++) {
+    for (int i = 0; fs_list("/home", i, name, &size, NULL) == 0; i++) {
         if (strcmp(name, "selftest.tmp") == 0 && size == sizeof(out)) {
             listed = 1;
         }
@@ -1018,7 +1012,7 @@ static void test_disk_fs(void) {
     ok = ok && fd >= 0 && fs_size(fd) == 0 && fs_read(fd, 0, in, 10) == 0 && fs_close(fd) == 0 &&
          fs_unlink(path) == 0 && fs_open(path, 0) == -1;
     report("disk file system", ok, "ok");
-    report("directories on disk", check_directories(FS_DISK_PREFIX), "ok");
+    report("directories on disk", check_directories("/home"), "ok");
 }
 
 static void test_disk_full(void) {
@@ -1036,8 +1030,8 @@ static void test_disk_full(void) {
     for (size_t i = 0; i < sizeof(chunk); i++) {
         chunk[i] = (char)i;
     }
-    const char *fill = FS_DISK_PREFIX "selftest.fill";
-    const char *other = FS_DISK_PREFIX "selftest.other";
+    const char *fill = "/home/selftest.fill";
+    const char *other = "/home/selftest.other";
 
     // 一直写到写不下：最后一次是部分写入或失败，之前写进去的都算数
     int fd = fs_open(fill, FS_O_CREATE | FS_O_TRUNC);
@@ -1050,7 +1044,7 @@ static void test_disk_full(void) {
         total += (uint32_t)n;
     }
     uint64_t disk_bytes = sectors * BLK_SECTOR_SIZE;
-    int ok = fd >= 0 && total > disk_bytes / 2 && total < disk_bytes && fs_size(fd) == (long)total &&
+    int ok = fd >= 0 && total > disk_bytes / 8 && total < disk_bytes && fs_size(fd) == (long)total &&
              fs_write(fd, total, chunk, 1) == -1;
 
     // 盘满时别的文件也写不进去；删掉大文件之后空间回来了
@@ -1418,7 +1412,7 @@ static bool churn_processes(int rounds, const void *image, size_t image_size) {
 
 // 进程结束后，它用过的物理内存（页、页表、内核栈）要全部归还
 static void test_memory_reclaimed(void) {
-    int fd = fs_open("sleep", 0);
+    int fd = fs_open("/bin/sleep", 0);
     long size = fd >= 0 ? fs_size(fd) : -1;
     void *image = size > 0 ? mmap(NULL, (size_t)size, PROT_READ | PROT_WRITE,
                                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) : MAP_FAILED;
@@ -1483,8 +1477,9 @@ int main(int argc, char **argv) {
     test_parallel_ipc();
     test_names();
     test_fs();
-    // 启动映像里的子目录（user/bootfs/docs）装载出来也是目录
-    report("directories", check_directories("") && dir_has("", "docs", true) && dir_has("docs", "paths.txt", false),
+    // 系统自带的目录和文件在它们该在的地方（不管根在磁盘上还是在内存里）
+    report("directories", check_directories("/tmp") && dir_has("/usr/share", "doc", true) &&
+           dir_has("/usr/share/doc", "paths.txt", false) && dir_has("/bin", "ls", false) && dir_has("/", "home", true),
            "ok");
     test_fs_client_reclaim();
     test_block_device();

@@ -77,6 +77,7 @@ CXXFLAGS = -std=gnu++20 -ffreestanding -O0 -g -Wall -Wextra \
 - Cross-compiler toolchain, GCC 10 or newer for `-std=gnu++20`: Homebrew on macOS,
   `scripts/cross-compiler-install.sh` (builds all three targets from source) on Ubuntu/Debian
 - Only for `make iso`: `grub-mkrescue` and `xorriso` (`brew install i686-elf-grub xorriso`)
+- A host C++17 compiler (`c++`) for `tools/mkdiskfs`, built automatically by `make run` / `make test`
 
 ### Common Commands
 
@@ -86,12 +87,16 @@ make ARCH=x86_64
 make ARCH=arm64
 make build-all
 
-make run                # Run in QEMU, serial console on stdio; attaches disk.img (created on
-                        # first use) and a virtio-net card on QEMU user networking
+make run                # Run in QEMU, serial console on stdio; attaches disk-<arch>.img (the root
+                        # file system: system files refreshed on every run, your own files kept)
+                        # and a virtio-net card on QEMU user networking
 make run QEMU_DISPLAY=cocoa   # Same with QEMU's window: the VGA screen, keys typed there go to the PS/2 keyboard driver (x86)
 make debug              # Same, waiting for GDB on :1234
-make iso                # Bootable image with GRUB for a real PC (x86; needs grub-mkrescue and xorriso)
-make run-iso            # Boot that image in QEMU: BIOS -> GRUB -> kernel
+make iso                # System image for a real PC (x86; needs grub-mkrescue and xorriso): GRUB and
+                        # the kernel, followed by a partition holding the root file system. Written
+                        # to a hard disk as is, the machine boots from it with its root on that disk
+make run-iso            # Boot that image in QEMU as a hard disk: BIOS -> GRUB -> kernel, root on the partition
+make run-cd             # Boot it as a CD: the partition cannot be read, the root is in memory
 
 make test               # Build with in-kernel tests (KTEST=1), boot, and check kernel tests + selftest + shell checks
 make test-all
@@ -134,17 +139,18 @@ CastorOS/
 │   ├── kbd/                # PS/2 keyboard driver (module, allowed the keyboard controller; x86 only): hands characters to console
 │   ├── blk/                # Block device driver (module, allowed the disk): blk.cpp (server), virtio_blk.cpp (virtio-pci on x86, virtio-mmio on arm64), ata.cpp (IDE disk, x86 only)
 │   ├── net/                # Network service (module, allowed the network card): nic.cpp (virtio-net), ip.cpp (Ethernet/ARP/IPv4/ICMP), udp.cpp, tcp.cpp, dhcp.cpp, net.cpp (main loop)
-│   ├── diskfs/             # Persistent file service on the block device (module, no hardware)
-│   ├── ramfs/              # In-memory file service (module, no hardware), holds the boot image
+│   ├── diskfs/             # File service on the block device (module, no hardware): the root file system
+│   ├── ramfs/              # In-memory file service (module, no hardware): /tmp, and the whole tree (from the boot image it holds) when there is no root on disk
 │   ├── sh/                 # Command line (module, no hardware): runs programs, background jobs, Ctrl-C
-│   ├── selftest/           # User-space self-checks, in the boot image, run from rc at boot
-│   ├── ls/ cat/ cp/ rm/ mv/ mkdir/ echo/ write/ grep/ wc/ sleep/ clear/ disk/ ping/ ifconfig/ dns/ http/ echod/ hello/   # Programs in the boot image
-│   ├── bootfs/             # Static files for the boot image (rc, readme.txt, docs/)
+│   ├── selftest/           # User-space self-checks, in /bin, run from /etc/rc at boot
+│   ├── ls/ cat/ cp/ rm/ mv/ mkdir/ echo/ write/ grep/ wc/ sleep/ clear/ disk/ ping/ ifconfig/ dns/ http/ echod/ hello/   # Programs, installed in /bin
+│   ├── bootfs/             # Static files of the system's tree (etc/rc, usr/share/doc/)
 │   ├── program.mk          # Shared build rules for user programs
 │   ├── arch.mk             # Compiler and flags shared by the user library and all programs
 │   └── linker/             # User linker scripts
 ├── docs/                   # Documentation (Chinese), see the Documentation section above
 ├── scripts/                # cross-compiler-install.sh, shell-test.sh (used by make test)
+├── tools/                  # Host-side build tools: mkdiskfs.cpp (makes the root file system image)
 ├── build/                  # Build output: build/<arch>/, build/<arch>-ktest/
 ├── Makefile
 └── linker.ld, linker_x86_64.ld, linker_arm64.ld
@@ -154,7 +160,7 @@ CastorOS/
 
 **Library and init.** `user/lib` is the user library (syscall wrappers, printf, string, math).
 `user/init` is the first process; its ELF is embedded into the kernel image by
-`src/kernel/init_image.S` (`.incbin`), so there is no disk image. init starts the modules and is
+`src/kernel/init_image.S` (`.incbin`), so the kernel needs no disk to get there. init starts the modules and is
 the name server (`names.h` in `user/lib`).
 
 **Resident modules** are embedded into init the same way (`user/init/modules.S`):
@@ -170,10 +176,21 @@ the name server (`names.h` in `user/lib`).
 - `user/net`: virtio-net driver plus a small ARP/IPv4/ICMP/UDP/TCP stack with a DHCP client;
   protocol and client in `net.h`
 - `user/ramfs`: in-memory file service
-- `user/diskfs`: persistent file service on top of blk; files are addressed with a `disk:` prefix.
-  It formats only a blank disk (first 4KB all zero). A disk holding anything else is left
-  untouched, and selftest only reads from it: on a real machine that is someone's data. Keep it
-  that way: nothing that runs at boot may write to a disk that is not blank or diskfs's own.
+- `user/diskfs`: file service on top of blk. It never formats: the file system is made at build
+  time by `tools/mkdiskfs` (on-disk format in `diskfs_format.h`, shared by both). It looks for
+  the file system at sector 0 and in the MBR partitions, and exits without writing anything
+  when there is none. selftest writes to the raw disk only when the whole disk is our file
+  system. Keep it that way: on a real machine a disk that is not ours is someone's data, and
+  nothing that runs at boot may write to it.
+
+**One directory tree.** `/bin` (programs), `/etc/rc`, `/usr/share/doc`, `/home`, `/tmp`. The tree
+is laid out once at build time (`user/ramfs/Makefile`, from `user/bootfs/` plus `BOOT_PROGRAMS`)
+and used twice: as the root file system image on disk, and as the boot image embedded in ramfs.
+Which service a path belongs to is decided in the client library (`user/lib/src/fs.cpp`): with
+our file system on the disk the root is diskfs and only `/tmp` is ramfs; without it (no disk, a
+foreign disk, booted from CD) everything is ramfs. The library asks once, with
+`name_settle("diskfs")`, which waits until diskfs has registered or exited, so the answer does
+not depend on timing. There are no `disk:` / `ram:` prefixes.
 - `user/sh`: command line
 
 **Privilege and devices.** Only init is privileged. Every module drops privilege before it
@@ -196,12 +213,12 @@ paths). The current directory, relative paths, `.` and `..` are resolved in the 
 (`user/lib/src/fs.cpp`); a server only ever sees full paths from the root; virtio drivers
 share `virtio.h`; servers that take a shared buffer from each client use `clients.h`.
 
-**Programs in the boot image.** Other programs (`user/selftest`, `user/ls`, `user/cat`,
+**Programs in /bin.** Other programs (`user/selftest`, `user/ls`, `user/cat`,
 `user/cp`, `user/rm`, `user/mv`, `user/mkdir`, `user/echo`, `user/write`, `user/grep`, `user/wc`,
 `user/clear`, `user/disk`, `user/ping`, `user/ifconfig`, `user/dns`, `user/http`, `user/echod`, `user/sleep`,
-`user/hello`) go into the boot image: a ustar archive of `user/bootfs/` (subdirectories become
-directories) plus the programs in `BOOT_PROGRAMS` (`user/ramfs/Makefile`), embedded in ramfs and
-unpacked at startup. sh runs them with fork + exec, and runs the `rc` file (which starts
+`user/hello`) are the programs in `BOOT_PROGRAMS` (`user/ramfs/Makefile`); they are installed in
+`/bin` of the tree. sh looks a bare command name up in `/bin` (a program or script elsewhere
+needs a path, e.g. `./tool`), runs it with fork + exec, and runs `/etc/rc` (which starts
 `selftest`) at boot.
 
 **Build.** To add a program, create `user/<name>/` and add it to `BOOT_PROGRAMS`. Every user
@@ -334,7 +351,7 @@ nowhere else. The kernel Makefile rebuilds all of it when `user/` changes.
   the runner (`run_all_tests`) resets the counters before each module and prints its summary
   afterwards. Do not call `unittest_init()` / `unittest_print_summary()` in a module, and register
   every new module in `src/tests/framework/test_runner.cpp` — a module that is not listed there never runs.
-- **`user/selftest`** runs inside the system from `rc`; add checks there for anything a program
+- **`user/selftest`** runs inside the system from `/etc/rc`; add checks there for anything a program
   can observe.
 - **`scripts/shell-test.sh`** drives the command line over the serial port from the host; add
   checks there for anything that needs typed input, such as job control. Patterns in
@@ -356,6 +373,7 @@ make test-all                  # all three architectures; non-zero if any of the
 make test TEST_TIMEOUT=300     # raise the limit on a busy machine (default 180 seconds)
 make test ARCH=arm64 SMP=4     # give the VM 4 CPUs (default 1, at most 8; all three architectures)
 make test DISK_BUS=ide         # x86: attach the disk as an IDE drive instead of virtio-blk (also for make run)
+make test LIVE=1               # no disk: the root is in memory; the disk-related selftest checks may be skipped
 make test ARCH=x86_64 QEMU_MEMORY=3G   # more memory for the VM (default is QEMU's 128MB); the
                                # "high physical memory" kernel tests only have content above 1GB
 ```
@@ -378,7 +396,8 @@ stopped when the steps are done.
 At the end the `Total/Passed/Failed tests` counts of all modules are summed. `make test` returns
 non-zero if a test case failed, user space did not come up, the selftest did not pass (no
 `selftest: all passed`), the selftest skipped anything (the test environment has the disk, the
-network card and the echo service), or not all shell checks passed.
+network card and the echo service; with `LIVE=1` the "no disk" skips are allowed), or not all
+shell checks passed. Each run boots from a freshly made 4MB root disk (`build/<arch>-ktest/test-disk.img`).
 
 When the host is extremely loaded (load in the hundreds), QEMU may print nothing for tens of
 seconds and selftest checks with a time limit may time out; look at `uptime` before deciding
@@ -390,15 +409,15 @@ Every push to `main` and every pull request runs `make test` for each architectu
 Actions (`.github/workflows/test.yml`, three jobs on macOS runners with the Homebrew cross
 compilers), plus `make lib-test`. The logs of each run (`test.log`, `shell-test.log`) are
 uploaded as artifacts. Each architecture also runs with `SMP=2`, and i686 once more with
-`DISK_BUS=ide`. If you add a build dependency, add it to the workflow's `brew install`
+`DISK_BUS=ide` and once with `LIVE=1`. If you add a build dependency, add it to the workflow's `brew install`
 line too.
 
 ### Running by Hand
 
 ```bash
-# These commands attach no disk and no network card (blk, diskfs and net exit at once, selftest
-# skips the related checks). To attach them, add:
-#   x86:   -drive file=disk.img,format=raw,if=none,id=disk0 -device virtio-blk-pci,drive=disk0
+# These commands attach no disk and no network card (blk, diskfs and net exit at once, the root is
+# in memory, selftest skips the related checks). To attach them (make disk builds the image), add:
+#   x86:   -drive file=disk-i686.img,format=raw,if=none,id=disk0 -device virtio-blk-pci,drive=disk0
 #          -netdev user,id=net0,guestfwd=tcp:10.0.2.100:7-cmd:cat -device virtio-net-pci,netdev=net0
 #   arm64: the same, with the device names virtio-blk-device / virtio-net-device
 timeout 20 qemu-system-i386 -kernel build/i686/castor.bin -serial stdio -display none

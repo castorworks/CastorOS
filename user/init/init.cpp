@@ -112,6 +112,26 @@ static struct module modules[] = {
 /** 每隔这么久看一眼有没有模块退出了（没有人来问名字的时候，init 靠定时器醒来） */
 #define REAP_INTERVAL_MS 100
 
+// 在等一个模块“登记了，或者不会来登记了”的进程（NAME_SETTLE）
+#define MAX_WAITERS 16
+static struct {
+    int pid;                    // 0 表示空闲
+    struct module *module;
+} waiters[MAX_WAITERS];
+
+/** 模块 m 有定论了：告诉等它的进程。pid 是它登记的进程，0 表示它不在了 */
+static void settle(struct module *m, int pid) {
+    for (int i = 0; i < MAX_WAITERS; i++) {
+        if (waiters[i].pid != 0 && waiters[i].module == m) {
+            struct ipc_msg reply = {};
+            reply.label = NAME_SETTLE;
+            reply.data[0] = (uint64_t)pid;
+            ipc_reply(waiters[i].pid, &reply);
+            waiters[i].pid = 0;
+        }
+    }
+}
+
 /** 登记了（或者有权登记）服务名 name 的模块；不是模块的服务名返回 NULL */
 static struct module *module_of_service(const char *name) {
     for (int i = 0; i < MODULE_COUNT; i++) {
@@ -162,10 +182,12 @@ static void module_exited(struct module *m) {
     bool worked = m->service == NULL || m->registered;
     m->pid = 0;
     if (!worked) {
+        settle(m, 0);
         return;
     }
     if (m->restarts >= MAX_RESTARTS) {
         printf("init: %s keeps exiting, giving up on it\n", m->name);
+        settle(m, 0);
         return;
     }
     m->restarts++;
@@ -232,6 +254,7 @@ static bool register_name(const char *name, int pid) {
             names[i].pid = pid;
             if (owner) {
                 owner->registered = true;
+                settle(owner, pid);
             }
             return true;
         }
@@ -268,6 +291,24 @@ int main() {
         } else if (m.label == NAME_LOOKUP) {
             int i = find_name(name);
             result = i >= 0 ? (uint64_t)names[i].pid : 0;
+        } else if (m.label == NAME_SETTLE) {
+            int i = find_name(name);
+            struct module *owner = module_of_service(name);
+            result = i >= 0 ? (uint64_t)names[i].pid : 0;
+            if (i < 0 && owner && owner->pid != 0) {
+                // 它在运行，还没登记：先不应答，等它登记或者退出（settle）
+                bool parked = false;
+                for (int w = 0; w < MAX_WAITERS && !parked; w++) {
+                    if (waiters[w].pid == 0) {
+                        waiters[w].pid = (int)m.sender;
+                        waiters[w].module = owner;
+                        parked = true;
+                    }
+                }
+                if (parked) {
+                    continue;
+                }
+            }
         } else {
             continue;   // 不认识的请求：不应答
         }

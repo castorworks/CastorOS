@@ -1,4 +1,4 @@
-// cp - 复制文件，可以跨文件系统：cp hello disk:hello
+// cp - 复制文件：cp /bin/hello /home/hello
 
 #include <stdio.h>
 #include <fs.h>

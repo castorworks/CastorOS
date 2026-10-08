@@ -1,5 +1,5 @@
 /**
- * 文件服务的客户端：按文件名前缀把请求发给对应的服务进程，内容经共享缓冲区传递
+ * 文件服务的客户端：按路径把请求发给对应的服务进程，内容经共享缓冲区传递
  */
 
 #include <fs.h>
@@ -21,6 +21,8 @@ static struct conn conns[] = {
     { FS_SERVICE_NAME, true, 0, NULL, 0 },
     { FS_DISK_SERVICE_NAME, false, 0, NULL, 0 },
 };
+#define FS_RAM  0
+#define FS_DISK 1
 
 #define CONN_SHIFT  8
 #define FD_MASK     ((1 << CONN_SHIFT) - 1)
@@ -54,30 +56,39 @@ static struct conn *fs_connect(int index) {
     return c;
 }
 
-// 当前目录：哪个文件系统（conns 的下标），和从它的根写起的路径（根是空串）
-static int cwd_fs = 0;
+// 当前目录：从根写起的路径（根是空串）
 static char cwd_path[FS_NAME_MAX] = "";
 
 /**
- * 把调用者给的路径变成"哪个文件系统 + 从根写起的完整路径"（不带开头的 '/'，根是空串）：
- * 认前缀、接上当前目录、把 "." 和 ".." 算掉。服务端不认识这些，它只收完整的路径。
+ * 根在磁盘上吗。只问一次，问的是有定论的答案：开机时磁盘文件服务可能还在挂载，
+ * 这里一直等到它登记了，或者退出了（没有磁盘，或者盘上没有我们的文件系统）。
+ */
+static bool root_on_disk(void) {
+    static int known = -1;
+    if (known < 0) {
+        known = name_settle(FS_DISK_SERVICE_NAME) > 0;
+    }
+    return known;
+}
+
+/** 从根写起的路径 path 归哪个服务：根在磁盘上时，只有 /tmp 这棵子树在内存里 */
+static int service_of(const char *path) {
+    size_t n = strlen(FS_TMP_DIR);
+    bool in_tmp = strncmp(path, FS_TMP_DIR, n) == 0 && (path[n] == '\0' || path[n] == '/');
+    return root_on_disk() && !in_tmp ? FS_DISK : FS_RAM;
+}
+
+/**
+ * 把调用者给的路径变成"哪个服务 + 从根写起的完整路径"（不带开头的 '/'，根是空串）：
+ * 接上当前目录、把 "." 和 ".." 算掉。服务端不认识这些，它只收完整的路径。
  * @return 路径太长，或者 ".." 走到了根的上面，返回 false
  */
 static bool resolve(const char *path, int *fs, char *out) {
     size_t len = 0;
     out[0] = '\0';
-    if (strncmp(path, FS_DISK_PREFIX, strlen(FS_DISK_PREFIX)) == 0) {
-        *fs = 1;
-        path += strlen(FS_DISK_PREFIX);
-    } else if (strncmp(path, FS_RAM_PREFIX, strlen(FS_RAM_PREFIX)) == 0) {
-        *fs = 0;
-        path += strlen(FS_RAM_PREFIX);
-    } else {
-        *fs = cwd_fs;
-        if (path[0] != '/') {           // 相对路径：从当前目录出发
-            strcpy(out, cwd_path);
-            len = strlen(out);
-        }
+    if (path[0] != '/') {               // 相对路径：从当前目录出发
+        strcpy(out, cwd_path);
+        len = strlen(out);
     }
 
     while (*path) {
@@ -114,6 +125,7 @@ static bool resolve(const char *path, int *fs, char *out) {
         }
         path += n;
     }
+    *fs = service_of(out);
     return true;
 }
 
@@ -313,8 +325,6 @@ int fs_list(const char *dir, int index, char *name, uint32_t *size, bool *is_dir
 // 当前目录
 // ============================================================================
 
-static const char *const fs_prefixes[] = { FS_RAM_PREFIX, FS_DISK_PREFIX };
-
 int fs_chdir(const char *path) {
     char full[FS_NAME_MAX];
     int fs;
@@ -323,7 +333,7 @@ int fs_chdir(const char *path) {
     }
     if (full[0] != '\0') {
         // 它得是一个存在的目录：在它的上一级里找到它，看是不是目录
-        char parent[FS_NAME_MAX + 8];
+        char parent[FS_NAME_MAX + 1] = "/";
         char *slash = NULL;
         for (char *p = full; *p; p++) {
             if (*p == '/') {
@@ -331,11 +341,9 @@ int fs_chdir(const char *path) {
             }
         }
         const char *leaf = slash ? slash + 1 : full;
-        strcpy(parent, fs_prefixes[fs]);
         if (slash) {
-            size_t n = strlen(parent);
-            memcpy(parent + n, full, (size_t)(slash - full));
-            parent[n + (size_t)(slash - full)] = '\0';
+            memcpy(parent + 1, full, (size_t)(slash - full));
+            parent[1 + (size_t)(slash - full)] = '\0';
         }
         char name[FS_NAME_MAX];
         bool is_dir = false, found = false;
@@ -345,30 +353,20 @@ int fs_chdir(const char *path) {
         if (!found || !is_dir) {
             return -1;
         }
-    } else if (!fs_connect(fs)) {
-        return -1;      // 那个文件系统不存在（没有磁盘）
     }
-    cwd_fs = fs;
     strcpy(cwd_path, full);
     return 0;
 }
 
 void fs_getcwd(char *buf) {
-    snprintf(buf, FS_NAME_MAX + 8, "%s/%s", cwd_fs == 0 ? "" : FS_DISK_PREFIX, cwd_path);
+    snprintf(buf, FS_NAME_MAX + 8, "/%s", cwd_path);
 }
 
 const char *fs_cwd_spec(void) {
-    static char spec[FS_NAME_MAX + 8];
-    snprintf(spec, sizeof(spec), "%s%s", cwd_fs == 0 ? "" : FS_DISK_PREFIX, cwd_path);
-    return spec;
+    return cwd_path;
 }
 
 void fs_set_cwd_spec(const char *spec) {
-    cwd_fs = 0;
-    if (strncmp(spec, FS_DISK_PREFIX, strlen(FS_DISK_PREFIX)) == 0) {
-        cwd_fs = 1;
-        spec += strlen(FS_DISK_PREFIX);
-    }
     if (strlen(spec) < FS_NAME_MAX) {
         strcpy(cwd_path, spec);
     }

@@ -37,3 +37,7 @@ int name_wait(const char *name) {
         usleep(20000);
     }
 }
+
+int name_settle(const char *name) {
+    return (int)name_request(NAME_SETTLE, name);
+}

@@ -5,7 +5,7 @@
 // 行尾加 & 让程序在后台运行；前台程序运行期间按 Ctrl-C 终止它。
 // cmd < in > out 2> err 把程序的标准输入/输出/错误输出换成文件，cmd1 | cmd2 把前一个的输出
 // 接到后一个的输入；引号里的内容原样作为参数。
-// 不是 ELF 映像的文件当作脚本，逐行执行；启动时先执行脚本 "rc"。
+// 不是 ELF 映像的文件当作脚本，逐行执行；启动时先执行脚本 /etc/rc。
 //
 // sh 是终端的主人（见 <console.h>）：程序在前台运行期间，键盘输入归那个程序，
 // sh 只收到 Ctrl-C。
@@ -24,17 +24,21 @@
 // 运行程序
 // ============================================================================
 
+/** 程序都在这个目录里 */
+#define BIN_DIR     "/bin"
+/** 开机时执行的脚本 */
+#define RC_FILE     "/etc/rc"
+
 /**
- * 一个命令名对应哪个文件。只是一个名字（没有 '/'，也没有 "disk:" 这样的前缀）时到内存
- * 文件系统的根目录里找：程序都在那里，换了当前目录也要找得到。带路径的照路径来
- * （"./tool"、"disk:bin/tool"）。
+ * 一个命令名对应哪个文件。只是一个名字（没有 '/'）时到 /bin 里找：程序都在那里，换了
+ * 当前目录也要找得到。带路径的照路径来（"./tool"、"/home/bin/tool"）。
  */
 static const char *command_file(const char *name) {
     static char path[FS_NAME_MAX + 8];
-    if (strchr(name, '/') || strchr(name, ':') || strlen(name) >= FS_NAME_MAX) {
+    if (strchr(name, '/') || strlen(name) >= FS_NAME_MAX) {
         return name;
     }
-    snprintf(path, sizeof(path), "%s/%s", FS_RAM_PREFIX, name);
+    snprintf(path, sizeof(path), BIN_DIR "/%s", name);
     return path;
 }
 
@@ -540,7 +544,7 @@ static void run_command(char *line) {
         }
         // 当前目录是命令行自己的状态，所以换目录只能是内置命令：一个程序换的是它自己的
         if (strcmp(st->argv[0], "cd") == 0) {
-            const char *where = st->argc >= 2 ? st->argv[1] : FS_RAM_PREFIX;
+            const char *where = st->argc >= 2 ? st->argv[1] : "/";
             if (st->argc > 2 || fs_chdir(where) != 0) {
                 printf("cd: %s: not a directory\n", st->argc == 2 ? where : "usage: cd [directory]");
             }
@@ -714,8 +718,8 @@ int main(int argc, char **argv) {
     }
     // 启动脚本。命令行自己崩溃后被 init 重启时不再执行：那是开机时做一次的事
     bool restarted = argc > 1 && strcmp(argv[1], "restarted") == 0;
-    if (!restarted && is_script("rc")) {
-        char rc_name[] = "rc";
+    if (!restarted && is_script(RC_FILE)) {
+        char rc_name[] = RC_FILE;
         char *rc_argv[] = { rc_name };
         run_script(rc_argv, 1);
     }

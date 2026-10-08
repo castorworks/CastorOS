@@ -32,7 +32,7 @@ make build-all          # 所有架构
 
 make run                # 在 QEMU 中运行，串口控制台接到当前终端
 make debug              # 同上，等待 GDB 连接 :1234
-make iso                # 带 GRUB 的可引导映像（x86），用来在真机上启动
+make iso                # 系统映像（x86）：GRUB、内核和根文件系统，可以原样写进真机的硬盘
 
 make test               # 构建带内核测试的版本 (KTEST=1) 并运行：内核测试 + 用户态自检 + 命令行检查
 make test-all           # 所有架构；任何一个失败就返回非零
@@ -47,23 +47,23 @@ make help
 
 ## 运行起来是什么样
 
-内核启动后加载内嵌的 `user/init`：它启动用户态的终端输入服务 `user/console`、串口驱动 `user/uart`、键盘驱动 `user/kbd`（x86）、块设备驱动 `user/blk`、网络服务 `user/net`、内存文件系统 `user/ramfs`、磁盘文件系统 `user/diskfs` 和命令行 `user/sh`，自己充当名字服务。ramfs 从构建时打好的启动映像里装载文件和程序；sh 先执行 `rc`（运行用户态自检 `selftest`），然后接受命令：
+内核启动后加载内嵌的 `user/init`：它启动用户态的终端输入服务 `user/console`、串口驱动 `user/uart`、键盘驱动 `user/kbd`（x86）、块设备驱动 `user/blk`、网络服务 `user/net`、内存文件系统 `user/ramfs`、磁盘文件系统 `user/diskfs` 和命令行 `user/sh`，自己充当名字服务。文件都在一棵目录树里（`/bin`、`/etc`、`/home`、`/tmp`……），根在磁盘上；sh 先执行 `/etc/rc`（运行用户态自检 `selftest`），然后接受命令：
 
 ```text
-> ls
-   24960  cat
-   24960  cp
-   16820  hello
-   ...
+> ls /
+          bin/
+          etc/
+          home/
+          tmp/
+          usr/
 > hello one two
 hello from pid 17 (parent 7)
   argv[1] = one
   argv[2] = two
-> write disk:note.txt saved on disk
-> cp hello disk:hello
-> ls disk:
-      14  disk:note.txt
-   16820  disk:hello
+> cd /home
+> write note.txt saved on disk
+> ls
+      14  note.txt
 > ping 10.0.2.2
 reply from 10.0.2.2: seq=1 time<10ms
 ...
@@ -75,7 +75,7 @@ HTTP/1.1 200 OK
 
 命令行支持重定向和管道：`cmd > file`、`cmd < file`、`cmd 2> file`、`cmd1 | cmd2`（如 `ls | grep sh | wc`），`"带 空格"` 的参数用引号。文本文件可以当脚本运行（每行一条命令，`$1`-`$9` 是参数）。行尾加 `&` 让程序在后台运行（`jobs` 查看，`kill <pid>` 终止），Ctrl-C 终止前台程序。
 
-带 `disk:` 前缀的文件在磁盘（`disk.img`，`make run` 第一次运行时创建）上，重启后还在；磁盘上的程序同样可以直接运行（`disk:hello`）。
+除了 `/tmp`（在内存里），整棵树都在磁盘上（`make run` 用的是 `disk-<arch>.img`），改的东西重启后还在。没有磁盘、或者磁盘上没有这个系统时，根退回到内存里，用的是内核带着的那一份。`make iso` 做出的系统映像可以原样写进一台 PC 的硬盘，从硬盘启动。
 
 这些都发生在用户态：键盘输入经串口中断 → uart 驱动 → console 服务 → IPC 到达 sh（PC 的键盘则是键盘中断 → kbd 驱动 → console 服务）；文件操作经 IPC 和共享缓冲区交给文件服务，磁盘文件再经块设备服务到 virtio-blk 驱动；网络请求交给 `user/net`（virtio-net 驱动加 ARP/IPv4/ICMP/UDP/TCP 协议栈，启动时用 DHCP 取地址，接 QEMU 的用户网络）；运行程序是从文件服务读出 ELF 后 `fork` + `exec`，这一行的其余部分作为参数传给 `main(argc, argv)`。
 
@@ -97,13 +97,14 @@ user/uart/     串口输入驱动
 user/kbd/      PS/2 键盘驱动（x86）
 user/blk/      块设备驱动（virtio-blk，x86 上还有 IDE 硬盘）
 user/net/      网络服务（virtio-net 驱动 + 协议栈）
-user/ramfs/    内存文件系统服务（内嵌启动映像）
-user/diskfs/   磁盘文件系统服务
+user/ramfs/    内存文件系统服务（/tmp；没有磁盘时也是根，内嵌启动映像）
+user/diskfs/   磁盘文件系统服务（根文件系统）
 user/sh/       命令行
-user/selftest/ 用户态自检程序（在启动映像里）
+user/selftest/ 用户态自检程序（在 /bin 里）
 user/ls/ cat/ cp/ rm/ mv/ mkdir/ echo/ write/ grep/ wc/ sleep/ clear/ disk/ ping/ ifconfig/ dns/ http/ echod/ hello/
-               小程序（在启动映像里）
-user/bootfs/   启动映像里的静态文件
+               小程序（在 /bin 里）
+user/bootfs/   系统文件树里的静态文件（etc/rc、usr/share/doc）
+tools/         宿主机上运行的构建工具（mkdiskfs：做根文件系统的映像）
 
 scripts/       交叉编译器安装脚本、make test 用的命令行检查脚本
 docs/          文档

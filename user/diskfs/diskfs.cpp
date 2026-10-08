@@ -1,18 +1,15 @@
 // diskfs - 磁盘文件系统服务
 //
-// 非特权的用户态服务，以 "diskfs" 登记；客户用带 "disk:" 前缀的文件名访问它。
-// 协议的处理在 user/lib 的 fs_server 里，这里是存储后端，数据经块设备服务
-// （blk.h）落在磁盘上，所以内容跨重启保留。
+// 非特权的用户态服务，以 "diskfs" 登记。磁盘上有我们的文件系统时它就是根文件系统
+// （见 <fs.h>）。协议的处理在 user/lib 的 fs_server 里，这里是存储后端，数据经块设备服务
+// （blk.h）落在磁盘上，所以内容跨重启保留。磁盘上的格式在 <diskfs_format.h>。
 //
-// 磁盘格式（块大小 4096 字节）：
-//   块 0            超级块
-//   块 1..          FAT：每个块一个 32 位表项，记录文件的块链
-//   之后 DIR_BLOCKS 块   目录表：定长表项，每一项是一个文件或一个目录，名字是完整的路径
-//                   （"docs/notes.txt"）。目录的规则在 fs_server 里，这里只是一张平的表
-//   其余            数据块
 // FAT 和目录在内存里各有一份完整的副本；每次修改立刻把涉及的块写回磁盘，
 // 没有延迟写，所以不需要 sync。最近用过的数据块也留在内存里（缓存），读的时候不用再去
-// 找驱动；写仍然立刻落盘。磁盘上没有有效的超级块时自动格式化。
+// 找驱动；写仍然立刻落盘。
+//
+// 这里从不格式化：文件系统是构建时做好的（tools/mkdiskfs.cpp）。磁盘上找不到它——
+// 没有磁盘，或者盘上是别的东西——就退出，一个字节也不写。
 
 #include <syscall.h>
 #include <stdio.h>
@@ -21,42 +18,22 @@
 #include <blk.h>
 #include <fs.h>
 #include <fs_server.h>
+#include <diskfs_format.h>
 
-#define BLOCK_SIZE          4096
+static_assert(DISKFS_NAME_MAX == FS_NAME_MAX && DISKFS_SECTOR_SIZE == BLK_SECTOR_SIZE);
+
+#define BLOCK_SIZE          DISKFS_BLOCK_SIZE
 #define SECTORS_PER_BLOCK   (BLOCK_SIZE / BLK_SECTOR_SIZE)
+#define FAT_FREE            DISKFS_FAT_FREE
+#define FAT_END             DISKFS_FAT_END
+#define ENTRY_DIR           DISKFS_ENTRY_DIR
+#define ENTRIES_PER_BLOCK   DISKFS_ENTRIES_PER_BLOCK
+#define MAX_FILES           DISKFS_MAX_FILES
 
-#define FAT_FREE            0u
-#define FAT_END             0xFFFFFFFFu
-#define FAT_RESERVED        0xFFFFFFFEu     // 超级块、FAT、目录自己占的块
+#define superblock          diskfs_superblock
+#define dir_entry           diskfs_dir_entry
 
-#define DIR_BLOCKS          2
-#define MAX_BLOCKS          (256u * 1024)   // 最多管理 1GB
-
-static const char MAGIC[FS_DISK_MAGIC_SIZE + 1] = FS_DISK_MAGIC;
-
-struct superblock {
-    char magic[FS_DISK_MAGIC_SIZE];
-    uint32_t version;
-    uint32_t total_blocks;
-    uint32_t fat_start;
-    uint32_t fat_blocks;
-    uint32_t dir_start;
-    uint32_t dir_blocks;
-    uint32_t data_start;
-};
-
-struct dir_entry {
-    char name[FS_NAME_MAX];     // 完整的路径；name[0] == 0 表示空闲
-    uint32_t size;
-    uint32_t first_block;       // FAT_END 表示还没有数据块
-    uint32_t flags;             // ENTRY_DIR：这一项是目录（没有数据块）
-    uint32_t reserved[13];      // 凑成 128 字节
-};
-#define ENTRY_DIR   0x1
-
-#define ENTRIES_PER_BLOCK   (BLOCK_SIZE / sizeof(struct dir_entry))
-#define MAX_FILES           (DIR_BLOCKS * ENTRIES_PER_BLOCK)
-
+static uint64_t fs_start;                   // 文件系统从磁盘的第几个扇区开始（在分区里时不是 0）
 static struct superblock sb;
 static uint32_t *fat;                       // 内存里的 FAT，sb.total_blocks 项
 static struct dir_entry dir[MAX_FILES];     // 内存里的目录
@@ -68,11 +45,11 @@ static char block_buf[BLOCK_SIZE];          // 读改写数据块用
 
 /** 直接读写磁盘上的一块。元数据（超级块、FAT、目录）用这两个：它们在内存里本来就有完整的副本 */
 static bool disk_read(uint32_t block, void *buf) {
-    return blk_read((uint64_t)block * SECTORS_PER_BLOCK, buf, SECTORS_PER_BLOCK) == 0;
+    return blk_read(fs_start + (uint64_t)block * SECTORS_PER_BLOCK, buf, SECTORS_PER_BLOCK) == 0;
 }
 
 static bool disk_write(uint32_t block, const void *buf) {
-    return blk_write((uint64_t)block * SECTORS_PER_BLOCK, buf, SECTORS_PER_BLOCK) == 0;
+    return blk_write(fs_start + (uint64_t)block * SECTORS_PER_BLOCK, buf, SECTORS_PER_BLOCK) == 0;
 }
 
 // 数据块的缓存：最近用过的几块留在内存里，再读就不用去找块设备驱动了（每次去都是一次
@@ -350,99 +327,85 @@ static const struct fs_backend diskfs_backend = {
 };
 
 // ============================================================================
-// 挂载和格式化
+// 挂载
 // ============================================================================
 
-static bool format(uint32_t total_blocks) {
-    memset(&sb, 0, sizeof(sb));
-    memcpy(sb.magic, MAGIC, FS_DISK_MAGIC_SIZE);
-    sb.version = 1;
-    sb.total_blocks = total_blocks;
-    sb.fat_start = 1;
-    sb.fat_blocks = (total_blocks * sizeof(uint32_t) + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    sb.dir_start = sb.fat_start + sb.fat_blocks;
-    sb.dir_blocks = DIR_BLOCKS;
-    sb.data_start = sb.dir_start + sb.dir_blocks;
-
-    // 先写 FAT 和目录，最后写超级块：超级块在，说明其余部分都已经就位
-    memset(fat, 0, (size_t)sb.fat_blocks * BLOCK_SIZE);
-    for (uint32_t b = 0; b < sb.data_start; b++) {
-        fat[b] = FAT_RESERVED;
+/** 从第 start 个扇区开始、最多 sectors 个扇区的地方是不是我们的文件系统；是的话 sb 里是它的超级块 */
+static bool probe(uint64_t start, uint64_t sectors) {
+    fs_start = start;
+    if (sectors < SECTORS_PER_BLOCK || !disk_read(0, block_buf)) {
+        return false;
     }
-    memset(dir, 0, sizeof(dir));
-    for (uint32_t i = 0; i < sb.fat_blocks; i++) {
-        if (!disk_write(sb.fat_start + i, (char *)fat + (size_t)i * BLOCK_SIZE)) {
-            return false;
-        }
-    }
-    for (uint32_t i = 0; i < sb.dir_blocks; i++) {
-        if (!disk_write(sb.dir_start + i, (char *)dir + (size_t)i * BLOCK_SIZE)) {
-            return false;
-        }
-    }
-    memset(block_buf, 0, BLOCK_SIZE);
-    memcpy(block_buf, &sb, sizeof(sb));
-    return disk_write(0, block_buf);
+    memcpy(&sb, block_buf, sizeof(sb));
+    return memcmp(sb.magic, DISKFS_MAGIC, DISKFS_MAGIC_SIZE) == 0 && sb.version == DISKFS_VERSION &&
+           sb.total_blocks >= 16 && sb.total_blocks <= DISKFS_MAX_BLOCKS &&
+           sb.total_blocks <= sectors / SECTORS_PER_BLOCK &&
+           sb.fat_start == 1 && sb.fat_blocks == DISKFS_FAT_BLOCKS(sb.total_blocks) &&
+           sb.dir_start == sb.fat_start + sb.fat_blocks && sb.dir_blocks == DISKFS_DIR_BLOCKS &&
+           sb.data_start == sb.dir_start + sb.dir_blocks && sb.data_start < sb.total_blocks;
 }
 
-/** @return 1 挂载了已有的文件系统，2 新格式化的，0 失败，-1 盘上是别的东西 */
-static int mount(void) {
+static uint32_t le32(const uint8_t *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+/**
+ * 在磁盘上找我们的文件系统：它占着整块盘，或者在分区表的某个分区里（系统映像写进硬盘后
+ * 是这样：前面是引导程序和内核）。认的是分区开头的内容，不是分区类型。
+ */
+static bool find_fs(void) {
     uint64_t sectors = blk_capacity();
-    uint32_t total_blocks = sectors / SECTORS_PER_BLOCK > MAX_BLOCKS
-                            ? MAX_BLOCKS : (uint32_t)(sectors / SECTORS_PER_BLOCK);
-    if (total_blocks < 16) {
-        return 0;
+    if (probe(0, sectors)) {
+        return true;
     }
-
-    size_t fat_bytes = (((size_t)total_blocks * sizeof(uint32_t)) + BLOCK_SIZE - 1) & ~(size_t)(BLOCK_SIZE - 1);
-    fat = (uint32_t *)mmap(NULL, fat_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (fat == MAP_FAILED || !disk_read(0, block_buf)) {
-        return 0;
+    // 不是：第 0 个扇区（刚读进 block_buf）也许是分区表
+    static uint8_t mbr[BLK_SECTOR_SIZE];
+    memcpy(mbr, block_buf, sizeof(mbr));
+    if (sectors == 0 || mbr[MBR_SIGNATURE_OFFSET] != 0x55 || mbr[MBR_SIGNATURE_OFFSET + 1] != 0xAA) {
+        return false;
     }
-
-    memcpy(&sb, block_buf, sizeof(sb));
-    bool valid = memcmp(sb.magic, MAGIC, FS_DISK_MAGIC_SIZE) == 0 && sb.version == 1 &&
-                 sb.total_blocks == total_blocks && sb.dir_blocks == DIR_BLOCKS &&
-                 sb.fat_start == 1 && sb.dir_start == sb.fat_start + sb.fat_blocks &&
-                 sb.data_start == sb.dir_start + sb.dir_blocks &&
-                 (size_t)sb.fat_blocks * BLOCK_SIZE == fat_bytes;
-    if (!valid) {
-        // 不是我们的文件系统。只有空白的盘（第一块全是 0）才格式化：盘上有别的东西的话
-        // ——真机的硬盘上多半是另一个系统——格式化就把它毁了
-        for (size_t i = 0; i < BLOCK_SIZE; i++) {
-            if (block_buf[i] != 0) {
-                return -1;
-            }
+    for (int i = 0; i < MBR_ENTRIES; i++) {
+        const uint8_t *entry = mbr + MBR_TABLE_OFFSET + i * MBR_ENTRY_SIZE;
+        uint64_t start = le32(entry + MBR_ENTRY_START);
+        uint64_t count = le32(entry + MBR_ENTRY_SECTORS);
+        if (entry[MBR_ENTRY_TYPE] != 0 && start != 0 && start < sectors && count <= sectors - start &&
+            probe(start, count)) {
+            return true;
         }
-        return format(total_blocks) ? 2 : 0;
     }
+    return false;
+}
 
+static bool mount(void) {
+    if (!find_fs()) {
+        return false;
+    }
+    size_t fat_bytes = (size_t)sb.fat_blocks * BLOCK_SIZE;
+    fat = (uint32_t *)mmap(NULL, fat_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (fat == MAP_FAILED) {
+        return false;
+    }
     for (uint32_t i = 0; i < sb.fat_blocks; i++) {
         if (!disk_read(sb.fat_start + i, (char *)fat + (size_t)i * BLOCK_SIZE)) {
-            return 0;
+            return false;
         }
     }
     for (uint32_t i = 0; i < sb.dir_blocks; i++) {
         if (!disk_read(sb.dir_start + i, (char *)dir + (size_t)i * BLOCK_SIZE)) {
-            return 0;
+            return false;
         }
     }
-    return 1;
+    return true;
 }
 
 int main() {
-    // 块设备驱动与我们同时启动：给它一点时间；没有磁盘时它不会出现
-    for (int i = 0; i < 50 && name_lookup(BLK_SERVICE_NAME) == 0; i++) {
-        usleep(20000);
-    }
-    int mounted = mount();
-    if (mounted < 0) {
-        printf("diskfs: the disk holds something else, leaving it untouched "
-               "(to use it: disk erase, then restart)\n");
+    // 块设备驱动与我们同时启动：等它登记，或者等到它退出了（没有磁盘）
+    if (name_settle(BLK_SERVICE_NAME) <= 0) {
+        printf("diskfs: no disk\n");
         return 1;
     }
-    if (!mounted) {
-        printf("diskfs: no usable block device\n");
+    if (!mount()) {
+        printf("diskfs: no CastorOS file system on the disk, leaving it untouched\n");
         return 1;
     }
 
@@ -450,11 +413,8 @@ int main() {
     for (int i = 0; i < (int)MAX_FILES; i++) {
         count += dir[i].name[0] != '\0';
     }
-    printf("diskfs: ready (pid %d), %u blocks, %s\n", getpid(), sb.total_blocks,
-           mounted == 2 ? "newly formatted" : "mounted");
-    if (mounted == 1) {
-        printf("diskfs: %d files on disk\n", count);
-    }
+    printf("diskfs: ready (pid %d), %u blocks at sector %u, %d files\n", getpid(), sb.total_blocks,
+           (uint32_t)fs_start, count);
 
     fs_serve(FS_DISK_SERVICE_NAME, &diskfs_backend);
     printf("diskfs: cannot register name\n");

@@ -26,7 +26,7 @@ make test ARCH=x86_64 QEMU_MEMORY=3G   # 给虚拟机更多内存（默认是 QE
                                # 超过 1GB 时“高处的物理内存”那组内核测试才有内容
 ```
 
-`make test` 构建到 `build/<arch>-ktest/`，和普通构建（`build/<arch>/`）分开。
+`make test` 构建到 `build/<arch>-ktest/`，和普通构建（`build/<arch>/`）分开。每次运行用一块新做的磁盘，根文件系统在上面。`make test LIVE=1` 不接磁盘：根在内存里（从光盘启动时是这样），自检里和磁盘有关的几项跳过不算失败。
 
 ### make test 做了什么
 
@@ -57,7 +57,7 @@ make test ARCH=x86_64 QEMU_MEMORY=3G   # 给虚拟机更多内存（默认是 QE
 
 ## 持续集成
 
-每次推送到 `main`、每个 PR，GitHub Actions 都会对三个架构各跑一遍 `make test ARCH=<arch>`（`.github/workflows/test.yml`），每个架构再带着两个 CPU 跑一遍（`SMP=2`），i686 再把磁盘接成 IDE 硬盘跑一遍（`DISK_BUS=ide`），另外还有一个只跑 `make lib-test` 的任务。
+每次推送到 `main`、每个 PR，GitHub Actions 都会对三个架构各跑一遍 `make test ARCH=<arch>`（`.github/workflows/test.yml`），每个架构再带着两个 CPU 跑一遍（`SMP=2`），i686 再把磁盘接成 IDE 硬盘跑一遍（`DISK_BUS=ide`）、不接磁盘跑一遍（`LIVE=1`），另外还有一个只跑 `make lib-test` 的任务。
 
 - 用的是 macOS 的 runner 和 Homebrew 的交叉编译器（见 [开发环境搭建](setup.md) 的方法一），所以和在 macOS 上本地开发是同一套工具。加了构建依赖的话，workflow 的 `brew install` 一行也要加。
 - 三个架构各是一个独立的任务，一个失败不影响另外两个跑完。
@@ -66,7 +66,7 @@ make test ARCH=x86_64 QEMU_MEMORY=3G   # 给虚拟机更多内存（默认是 QE
 
 ## 手动运行
 
-`make run` 在 QEMU 里运行当前架构，带上磁盘 `disk.img`（第一次运行时创建）和一块接 QEMU 用户网络的 virtio-net 网卡。控制台是串口，接到当前终端；命令行能做什么见 [启动映像和命令行](reference/shell.md)。x86 上内核的输出同时写到 VGA 屏幕：`make run QEMU_DISPLAY=cocoa`（macOS；Linux 上是 `gtk` 或 `sdl`）打开 QEMU 的窗口就能看到，在窗口里敲的键走 PS/2 键盘驱动。
+`make run` 在 QEMU 里运行当前架构，带上磁盘 `disk-<arch>.img`（根文件系统在上面；每次运行前把系统自带的文件换成刚构建的，自己放进去的留着）和一块接 QEMU 用户网络的 virtio-net 网卡。控制台是串口，接到当前终端；命令行能做什么见 [启动映像和命令行](reference/shell.md)。x86 上内核的输出同时写到 VGA 屏幕：`make run QEMU_DISPLAY=cocoa`（macOS；Linux 上是 `gtk` 或 `sdl`）打开 QEMU 的窗口就能看到，在窗口里敲的键走 PS/2 键盘驱动。
 
 直接调用 QEMU 的话，最少只需要 `-kernel`：
 
@@ -76,11 +76,11 @@ timeout 20 qemu-system-x86_64 -kernel build/x86_64/castor32.elf -serial stdio -d
 timeout 20 qemu-system-aarch64 -M virt -cpu cortex-a72 -kernel build/arm64/castor.bin -serial stdio -display none
 ```
 
-这样运行不带磁盘和网卡：blk、diskfs、net 会直接退出，selftest 跳过相关的检查。要带上就加：
+这样运行不带磁盘和网卡：blk、diskfs、net 会直接退出，根在内存里，selftest 跳过相关的检查。要带上就加（磁盘先用 `make disk` 做出来）：
 
 ```bash
 # x86
--drive file=disk.img,format=raw,if=none,id=disk0 -device virtio-blk-pci,drive=disk0
+-drive file=disk-i686.img,format=raw,if=none,id=disk0 -device virtio-blk-pci,drive=disk0
 -netdev user,id=net0,guestfwd=tcp:10.0.2.100:7-cmd:cat -device virtio-net-pci,netdev=net0
 
 # arm64：同上，设备名换成 virtio-blk-device / virtio-net-device
@@ -90,15 +90,18 @@ timeout 20 qemu-system-aarch64 -M virt -cpu cortex-a72 -kernel build/arm64/casto
 
 ## 在真机上运行
 
-`qemu -kernel` 是 QEMU 自己把内核装进内存，真机上要有引导程序来做这件事。`make iso`（i686 或 x86_64）做一个带 GRUB 的可引导映像 `build/<arch>/castor.iso`：刻成光盘，或者原样写进 U 盘（`dd if=build/i686/castor.iso of=/dev/<U 盘>`，会覆盖整个 U 盘），从它启动。init 和所有模块都嵌在内核映像里，映像里除了 GRUB 只有这一个文件。需要 `grub-mkrescue` 和 `xorriso`（macOS：`brew install i686-elf-grub xorriso`）。
+`qemu -kernel` 是 QEMU 自己把内核装进内存，真机上要有引导程序来做这件事。`make iso`（i686 或 x86_64）做出完整的系统映像 `build/<arch>/castor.iso`：前面是 GRUB 和内核，后面跟着一个 16MB 的分区，里面是根文件系统。需要 `grub-mkrescue` 和 `xorriso`（macOS：`brew install i686-elf-grub xorriso`）。它有两种用法：
 
-`make run-iso` 在 QEMU 里走同一条路（BIOS → 光盘上的 GRUB → 内核），写进 U 盘之前先用它看一眼；加 `QEMU_DISPLAY=cocoa` 看屏幕。
+- **写进硬盘**：把映像原样写到机器的硬盘上（`dd if=build/i686/castor.iso of=/dev/<那块硬盘>`），从硬盘启动。根在硬盘的那个分区上，改的东西都留得下来。**这会覆盖整块硬盘，上面原有的系统和数据就没有了。** 硬盘要接在能运行 `dd` 的机器上写：拆下来接转接线，或者在那台机器上用别的系统的启动盘来写。
+- **刻成光盘**：从光盘启动。光盘上的分区读不到（没有光驱的驱动），根在内存里，用的是内核带着的那一份文件，什么都留不下来。这样启动不往硬盘上写任何东西，适合先看一眼硬件认得对不对。
 
-真机上能用的是屏幕（VGA 文本模式）、PS/2 键盘、IDE 硬盘和启动映像里的程序。机器有串口的话串口控制台照常可用（COM1，38400 8N1），没有就自动不用。
+`make run-iso` 在 QEMU 里把映像当硬盘启动（BIOS → 硬盘上的 GRUB → 内核，根在分区上；运行时改的东西写回映像文件），`make run-cd` 把它当光盘启动；加 `QEMU_DISPLAY=cocoa` 看屏幕。写进真机之前先用它们各走一遍。
 
-**硬盘上原有的东西。** CastorOS 不认分区表，`disk:` 用的是整块硬盘。启动本身不往一块装着别的系统的硬盘上写任何东西：`diskfs` 只格式化空白的盘，自检在这样的盘上只读。但 `disk erase`（之后重启）会把整块盘交给 `diskfs`，原来的系统和数据就没有了；`disk write` 也是直接写扇区。不想动硬盘的话，不要运行这两个命令。写进真机之前可以先在 QEMU 里用 IDE 硬盘走一遍：`make run DISK_BUS=ide`。
+真机上能用的是屏幕（VGA 文本模式）、PS/2 键盘和 IDE 硬盘。机器有串口的话串口控制台照常可用（COM1，38400 8N1），没有就自动不用。
 
-当前的限制：只支持 BIOS 启动（UEFI 启动的机器没有 VGA 文本模式，屏幕上什么都看不到）；硬盘只认 IDE（SATA、NVMe 和 USB 存储都没有驱动）；网卡只有 virtio 的驱动，真机上 `net` 找不到设备直接退出，没有网络；只在 QEMU 里验证过。
+**硬盘上原有的东西。** 系统启动时不往一块不是它自己的硬盘上写任何东西：`diskfs` 从不格式化，找不到自己的文件系统就退出；自检只在整块盘都是我们的文件系统时才做写入测试，否则只读。会写硬盘的只有 `disk write`（直接写扇区），以及根在硬盘上时对文件的正常修改。
+
+当前的限制：只支持 BIOS 启动（UEFI 启动的机器没有 VGA 文本模式，屏幕上什么都看不到）；硬盘只认 IDE（SATA、NVMe 和 USB 存储都没有驱动），所以从 U 盘启动时根只能在内存里；根分区的大小是做映像时定的（`ROOT_SIZE_MB`，默认 16），不会随硬盘变大；系统里没有把自己装到硬盘上的命令；网卡只有 virtio 的驱动，真机上 `net` 找不到设备直接退出，没有网络；只在 QEMU 里验证过。
 
 ## GDB
 

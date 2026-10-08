@@ -1,0 +1,19 @@
+Files are named by a path, the parts separated by /.
+
+  /home/notes/today.txt   from the root
+  notes/today.txt         from the current directory
+  .   the directory itself          ..   the one above it
+
+  pwd                     where am I
+  cd /home                go somewhere (cd alone goes to /)
+  ls                      the current directory (directories end in /)
+  ls /usr/share/doc
+  mkdir notes
+  write notes/today.txt hello
+  cat notes/today.txt
+  mv notes/today.txt notes/monday.txt
+  rm notes/monday.txt
+  rm notes                a directory can be removed once it is empty
+
+A command that is just a name (ls) is looked for in /bin. One with a / in it
+(./tool, /home/bin/tool) is taken as the path of the program.
